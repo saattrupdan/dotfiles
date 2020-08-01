@@ -1,6 +1,9 @@
 " Set colour scheme
 colorscheme evening
 
+" Set menu colour
+highlight Pmenu guibg=Black
+
 " Automatically change the current working directory to the present file
 set autochdir
 
@@ -82,6 +85,9 @@ call plug#begin('~/.vim/plugged')
 
   " Setting up remote Vim
   Plug 'wannesm/rmvim.vim'
+
+  " Code completion
+  Plug 'neoclide/coc.nvim', {'branch': 'release'}
 
 call plug#end()
 
