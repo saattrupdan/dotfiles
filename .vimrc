@@ -1,6 +1,9 @@
 " Set colour scheme
 colorscheme evening
 
+" Disable bell
+set noerrorbells visualbell
+
 " Set menu colour
 highlight Pmenu guibg=Black
 
