@@ -92,6 +92,9 @@ call plug#begin('~/.vim/plugged')
   " Code completion
   Plug 'neoclide/coc.nvim', {'branch': 'release'}
 
+  " Julia syntax highlighting
+  Plug 'JuliaEditorSupport/julia-vim'
+
 call plug#end()
 
 
