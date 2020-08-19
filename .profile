@@ -27,7 +27,7 @@ if [ -d "$HOME/.local/bin" ] ; then
 fi
 
 # Julia environment variables
-PATH="$PATH:$HOME/julia-1.5.0/bin"
+PATH="$HOME/julia-1.5.0/bin:$PATH"
 
 # TeXLive environment variables
 PATH="/usr/local/texlive/2020/bin/x86_64-linux:$PATH"
