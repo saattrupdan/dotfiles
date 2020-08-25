@@ -1,6 +1,9 @@
 " Set colour scheme
 colorscheme evening
 
+" Disable bell
+set noerrorbells visualbell
+
 " Set menu colour
 highlight Pmenu guibg=Black
 
@@ -89,8 +92,13 @@ call plug#begin('~/.vim/plugged')
   " Code completion
   Plug 'neoclide/coc.nvim', {'branch': 'release'}
 
+<<<<<<< HEAD
   " Git integration
   Plug 'tpope/vim-fugitive'
+=======
+  " Julia syntax highlighting
+  Plug 'JuliaEditorSupport/julia-vim'
+>>>>>>> ac0e38d8e712a4d313c60d7c25c4c6deac1934a7
 
 call plug#end()
 
