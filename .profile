@@ -26,10 +26,4 @@ if [ -d "$HOME/.local/bin" ] ; then
     PATH="$HOME/.local/bin:$PATH"
 fi
 
-# Julia environment variables
-PATH="$HOME/julia-1.5.0/bin:$PATH"
-
-# TeXLive environment variables
-PATH="/usr/local/texlive/2020/bin/x86_64-linux:$PATH"
-MANPATH="/usr/local/texlive/2020/texmf-dist/doc/man:$PATH"
-INFOPATH="/usr/local/texlive/2020/texmf-dist/doc/info:$PATH"
+export PATH="$HOME/.cargo/bin:$PATH"
