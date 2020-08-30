@@ -14,7 +14,7 @@ pdf(){
 
 # Open files faster
 o(){
-  ls | grep $1 | xargs gvim
+  ls | grep $1 | xargs xdg-open
 }
 
 # ERST vim
