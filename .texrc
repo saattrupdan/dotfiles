@@ -1,6 +1,10 @@
-imap 3 \
-imap 7 {
-imap 8 [
-imap 9 ]
-inoremap ´ 0
+inoremap 3 \
+inoremap \ 3
+inoremap 7 {
+inoremap { 7
+inoremap 8 [
+inoremap [ 8
+inoremap 9 ]
+inoremap ] 9
 inoremap 0 }
+inoremap } 0
