@@ -27,3 +27,4 @@ if [ -d "$HOME/.local/bin" ] ; then
 fi
 
 export PATH="$HOME/.cargo/bin:$PATH"
+export PATH="/usr/local/texlive/2020/bin/x86_64-linux:$PATH"
