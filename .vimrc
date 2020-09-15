@@ -117,28 +117,17 @@ function MarkdownToPDF()
   !pandoc '%' -o '%:r.pdf'
 endfunction
 
-function Compile()
-  " Saves and compiles the current document
-  w
-  !pdflatex %
+function SmallFont()
+  set guifont=Monospace\ 8
+  echo 'Small font set!'
 endfunction
 
-function BibTeXCompile()
-  " Saves, compiles and bibtex-compiles the current document
-  w
-  !pdflatex % && bibtex %:r && pdflatex % && pdflatex %
-endfunction
-
-function CompileMaster()
-  " PhD specific macro that saves, compiles, bibtex-compiles, git adds,
-  " commits, pulls and pushes the document
-  w
-  let title = input('Enter commit message: ')
-  execute "!cd ~/gitsky/phd && pdflatex main.tex && bibtex main && pdflatex main.tex && pdflatex main.tex && git add . && git commit -m '" . title . "' && git pull && git push"
+function NormalFont()
+  set guifont=Monospace\ 10
+  echo 'Small font set!'
 endfunction
 
 command P call MarkdownToPDF()
 command T call EnableTeXKeyBindings()
-command C call Compile()
-command CB call BibTeXCompile()
-command CM call CompileMaster()
+command SF call SmallFont()
+command NF call NormalFont()
