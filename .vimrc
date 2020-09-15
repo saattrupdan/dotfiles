@@ -119,11 +119,13 @@ endfunction
 
 function SmallFont()
   set guifont=Monospace\ 8
+  set lines=150
   echo 'Small font set!'
 endfunction
 
 function NormalFont()
   set guifont=Monospace\ 10
+  set lines=100
   echo 'Small font set!'
 endfunction
 
