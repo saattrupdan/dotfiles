@@ -17,7 +17,7 @@ set number
 set guifont=Monospace\ 10
 
 " Set editor size; the extra 4 lines is because of line numbering
-set lines=100 columns=84
+set lines=63 columns=84
 
 " No menu bar
 set guioptions-=m  
