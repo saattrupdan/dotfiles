@@ -129,6 +129,11 @@ function NormalFont()
   echo 'Small font set!'
 endfunction
 
+function Remote(fname)
+  let g:path = matchstr(expand('<sfile>:p:h'), '\(gitsky/\)\@<=.*')
+  exe "e scp://dansat@balthazar.erst.dk//home/dansat/" . g:path . "/" . a:fname
+endfunction
+
 command P call MarkdownToPDF()
 command T call EnableTeXKeyBindings()
 command SF call SmallFont()
