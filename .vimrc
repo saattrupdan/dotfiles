@@ -1,5 +1,46 @@
+"=========================================
+" Load external Vim plugins with vim-plug
+"=========================================
+
+call plug#begin('~/.vim/plugged')
+
+  " File manager
+  Plug 'preservim/nerdtree'
+
+  " Tab completion
+  Plug 'ervandew/supertab'
+
+  " Dealing with LaTeX files
+  Plug 'lervag/vimtex'
+
+  " Setting up remote Vim
+  Plug 'wannesm/rmvim.vim'
+
+  " Code completion
+  Plug 'neoclide/coc.nvim', {'branch': 'release'}
+
+  " Git integration
+  Plug 'tpope/vim-fugitive'
+
+  " Julia syntax highlighting
+  Plug 'JuliaEditorSupport/julia-vim'
+
+  " Colour scheme
+  Plug 'morhetz/gruvbox'
+
+call plug#end()
+
+
+"================
+" General set up
+"================
+"
 " Set colour scheme
-colorscheme evening
+colorscheme gruvbox
+
+" Set background scheme
+set background=dark
+set bg=dark
 
 " Disable bell
 set noerrorbells visualbell
@@ -16,8 +57,9 @@ set number
 " Set font for gVim
 set guifont=Monospace\ 10
 
-" Set editor size; the extra 4 lines is because of line numbering
-set lines=63 columns=84
+" Set column width
+set textwidth=79
+set wrapmargin=2
 
 " No menu bar
 set guioptions-=m  
@@ -47,6 +89,9 @@ imap ½ $
 " Set the standard editor to be gVim when using rmvim
 let g:rmvim_cmd = 'gvim'
 
+" Set tex to be latex
+let g:tex_flavor = 'latex'
+
 
 "==============================
 " Deal with clipboard nonsense
@@ -69,36 +114,6 @@ vnoremap d "_d
 
 " Set 'p' to paste into selection without copying the previous content
 vnoremap p "_dP
-
-
-"=========================================
-" Load external Vim plugins with vim-plug
-"=========================================
-
-call plug#begin('~/.vim/plugged')
-
-  " File manager
-  Plug 'preservim/nerdtree'
-
-  " Tab completion
-  Plug 'ervandew/supertab'
-
-  " Dealing with LaTeX files
-  Plug 'lervag/vimtex'
-
-  " Setting up remote Vim
-  Plug 'wannesm/rmvim.vim'
-
-  " Code completion
-  Plug 'neoclide/coc.nvim', {'branch': 'release'}
-
-  " Git integration
-  Plug 'tpope/vim-fugitive'
-
-  " Julia syntax highlighting
-  Plug 'JuliaEditorSupport/julia-vim'
-
-call plug#end()
 
 
 "===============
