@@ -26,7 +26,7 @@ call plug#begin('~/.vim/plugged')
   Plug 'JuliaEditorSupport/julia-vim'
 
   " Colour scheme
-  Plug 'morhetz/gruvbox'
+  Plug 'gruvbox-community/gruvbox'
 
 call plug#end()
 
