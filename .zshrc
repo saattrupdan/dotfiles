@@ -77,3 +77,10 @@ alias ll='ls -l'
 alias la='ls -a'
 alias lla='ls -l -a'
 alias bz='ssh dansat@balthazar.erst.dk'
+alias minicpu='gcloud beta compute ssh --zone "us-central1-a" "mini-cpu" --project "chrome-lane-293610"'
+
+# The next line updates PATH for the Google Cloud SDK.
+if [ -f '/home/saattrupdan/google-cloud-sdk/path.zsh.inc' ]; then . '/home/saattrupdan/google-cloud-sdk/path.zsh.inc'; fi
+
+# The next line enables shell command completion for gcloud.
+if [ -f '/home/saattrupdan/google-cloud-sdk/completion.zsh.inc' ]; then . '/home/saattrupdan/google-cloud-sdk/completion.zsh.inc'; fi
