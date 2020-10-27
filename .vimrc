@@ -59,7 +59,7 @@ set guifont=Monospace\ 10
 
 " Set column width
 set textwidth=79
-set wrapmargin=2
+set wrapmargin=10
 
 " No menu bar
 set guioptions-=m  
