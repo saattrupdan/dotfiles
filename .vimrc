@@ -61,6 +61,9 @@ set guifont=Monospace\ 10
 set textwidth=79
 set wrapmargin=10
 
+" Colour column
+set colorcolumn=80
+
 " No menu bar
 set guioptions-=m  
 
