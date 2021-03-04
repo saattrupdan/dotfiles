@@ -17,12 +17,6 @@ o(){
   ls | grep -i $1 | sed 's/^\(.*\)$/"\1"/g' | xargs -n 1 xdg-open
 }
 
-# ERST vim
-evim(){
-  eval "gvim scp://dansat@balthazar.erst.dk//home/dansat/${PWD#*gitsky/}/$1"
-}
-
-
 #====================
 # ZSH Suffix aliases
 #====================
@@ -66,6 +60,7 @@ alias -s gov='xdg-open'
 #=========
 
 alias python='python3.8'
+alias pip='pip3'
 alias ls='exa'
 alias grep='ack'
 alias gt='cd ~/gitsky'
@@ -76,9 +71,3 @@ alias bb='brave-browser'
 alias ll='ls -l'
 alias la='ls -a'
 alias lla='ls -l -a'
-
-# The next line updates PATH for the Google Cloud SDK.
-if [ -f '/home/saattrupdan/google-cloud-sdk/path.zsh.inc' ]; then . '/home/saattrupdan/google-cloud-sdk/path.zsh.inc'; fi
-
-# The next line enables shell command completion for gcloud.
-if [ -f '/home/saattrupdan/google-cloud-sdk/completion.zsh.inc' ]; then . '/home/saattrupdan/google-cloud-sdk/completion.zsh.inc'; fi
