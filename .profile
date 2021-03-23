@@ -29,3 +29,4 @@ fi
 export PATH="/usr/local/texlive/2020/bin/x86_64-linux:$PATH"
 export PATH="$HOME/julia-1.5.0:$PATH"
 export PATH="$HOME/.local/bin:$PATH"
+export UUID="D0EE0CAF57800490F62358BAEB70BD47A93C7338"

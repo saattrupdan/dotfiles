@@ -17,6 +17,29 @@ o(){
   ls | grep -i $1 | sed 's/^\(.*\)$/"\1"/g' | xargs -n 1 xdg-open
 }
 
+# Backup dotfiles
+rc(){
+  touch ~/.profile
+  touch ~/.gitconfig
+
+  cp ~/.*rc ~/gitsky/dotfiles
+  cp ~/.profile ~/gitsky/dotfiles
+  cp ~/.gitconfig ~/gitsky/dotfiles
+
+  cd ~/gitsky/dotfiles
+  git add .
+  git commit -m "chore: Update dot files"
+  git pull
+  git push
+
+  cd -
+  cp ~/gitsky/dotfiles/.*rc ~/
+  cp ~/gitsky/dotfiles/.profile ~/
+  cp ~/gitsky/dotfiles/.gitconfig ~/
+
+  echo "Dot files synced up!"
+}
+
 #====================
 # ZSH Suffix aliases
 #====================
@@ -65,9 +88,13 @@ alias ls='exa'
 alias grep='ack'
 alias gt='cd ~/gitsky'
 alias pc='cd ~/pCloudDrive'
-alias gs='cd ~/gitsky && /usr/src/git-summary/git-summary && cd -'
-alias rc='cp ~/.*rc ~/gitsky/dotfiles; cp ~/.profile ~/gitsky/dotfiles; cd ~/gitsky/dotfiles; git add .; git commit -m "chore: Update dot files"; git pull; git push; cd -; cp ~/gitsky/dotfiles/.*rc ~/; cp ~/gitsky/dotfiles/.profile ~/; echo "Dot files synced up!"'
+alias gsum='cd ~/gitsky && /usr/src/git-summary/git-summary && cd -'
 alias bb='brave-browser'
 alias ll='ls -l'
 alias la='ls -a'
 alias lla='ls -l -a'
+alias sandbox='ssh -i /home/saattrupdan/mllab-sandbox dansat@20.86.81.38'
+alias gs='git status --short'
+alias ga='git add'
+alias gc='git commit -m'
+alias gl='git log --pretty=format:"%Cgreen%h - %Cred%an - %Cblue%ar - %Creset %w(135,1,2)%s" --graph'
