@@ -2,6 +2,14 @@
 " Load external Vim plugins with vim-plug
 "=========================================
 
+" Set up VimPlug if it is not already
+if empty(glob('~/.vim/autoload/plug.vim'))                                      
+  silent !curl -fLo ~/.vim/autoload/plug.vim --create-dirs                      
+    \ https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim       
+  autocmd VimEnter * PlugInstall --sync | source $MYVIMRC                       
+endif 
+
+" Install plugins
 call plug#begin('~/.vim/plugged')
 
   " File manager
