@@ -156,3 +156,11 @@ command P call MarkdownToPDF()
 command T call EnableTeXKeyBindings()
 command SF call SmallFont()
 command NF call NormalFont()
+
+
+"=====================                                                          
+" Automatic functions                                                           
+"=====================                                                          
+
+" Remove trailing whitespace everytime :w is called
+autocmd BufWritePre *.py %s/\s\+$//e   
