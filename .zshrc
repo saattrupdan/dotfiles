@@ -82,7 +82,6 @@ alias -s gov='xdg-open'
 # Aliases
 #=========
 
-alias python='python3.8'
 alias pip='pip3'
 alias ls='exa'
 alias grep='ack'
