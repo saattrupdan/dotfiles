@@ -65,13 +65,6 @@ set number
 " Set font for gVim
 set guifont=Monospace\ 10
 
-" Set column width
-set textwidth=79
-set wrapmargin=10
-
-" Colour column
-set colorcolumn=80
-
 " No menu bar
 set guioptions-=m  
 
@@ -171,4 +164,9 @@ command NF call NormalFont()
 "=====================                                                          
 
 " Remove trailing whitespace everytime :w is called
-autocmd BufWritePre *.py %s/\s\+$//e   
+autocmd BufWritePre *.py %s/\s\+$//e|norm!``
+
+" Settings for files (and not Athame shell)
+autocmd BufRead,BufNewFile * set textwidth=79
+autocmd BufRead,BufNewFile * set wrapmargin=79
+autocmd BufRead,BufNewFile * set colorcolumn=80
