@@ -40,6 +40,21 @@ rc(){
   echo "Dot files synced up!"
 }
 
+# Jump into a virtual environment
+vv(){
+    if [ ! -d '.venv' ]; then
+        python3 -m venv .venv
+        source .venv/bin/activate
+        pip3 install --upgrade pip setuptools wheel jedi pylint \
+                               pytest pytest-flake8
+        if [ -f 'requirements.txt' ]; then
+            pip3 install -r requirements.txt
+        fi
+    else
+        source .venv/bin/activate
+    fi
+}
+
 #====================
 # ZSH Suffix aliases
 #====================
@@ -98,3 +113,4 @@ alias ga='git add'
 alias gb='git branches'
 alias gc='git commit -m'
 alias gl='git log --graph --pretty=format:"%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset" --abbrev-commit --date=relative'
+alias pf='pip freeze | sed "/pkg-resources/d" > requirements.txt'
