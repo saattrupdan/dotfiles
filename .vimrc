@@ -124,10 +124,6 @@ vnoremap y "+y
 nnoremap d "_d
 vnoremap d "_d
 
-" Disable copying when deleting with 'x'
-nnoremap x "_x
-vnoremap x "_x
-
 " Set 'p' to paste into selection without copying the previous content
 vnoremap p "_dP
 
