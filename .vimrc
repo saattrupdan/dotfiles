@@ -41,7 +41,7 @@ call plug#end()
 "================
 " General set up
 "================
-"
+
 " Set colour scheme
 colorscheme gruvbox
 

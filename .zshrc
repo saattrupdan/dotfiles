@@ -40,7 +40,7 @@ rc(){
   echo "Dot files synced up!"
 }
 
-# Jump into a virtual environment
+# Jump into a virtual environment, or build it if it is not there
 vv(){
     if [ ! -d '.venv' ]; then
         python3 -m venv .venv
@@ -97,7 +97,6 @@ alias -s gov='xdg-open'
 # Aliases
 #=========
 
-alias pip='pip3'
 alias ls='exa'
 alias grep='ack'
 alias gt='cd ~/gitsky'
@@ -105,9 +104,8 @@ alias pc='cd ~/pCloudDrive'
 alias gsum='cd ~/gitsky && /usr/src/git-summary/git-summary && cd -'
 alias bb='brave-browser'
 alias ll='ls -l'
-alias la='ls -a'
-alias lla='ls -l -a'
-alias sandbox='ssh -i /home/saattrupdan/mllab-sandbox dansat@20.86.81.38'
+alias la='ls -ah'
+alias lla='ls -lah'
 alias gs='git status --short'
 alias ga='git add'
 alias gd='git diff'
