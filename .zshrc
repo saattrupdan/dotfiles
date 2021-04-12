@@ -1,7 +1,19 @@
-# Set prompt to show trailing component of current path
-# The '%F{154}...%f' enables colour 154, known as GreenYellow
-# See all the colours available here: https://jonasjacek.github.io/colors/
-PROMPT='%F{154}%1d$ %f'
+# A bunch of fancy ZSH code to enable git integration. Taken from
+# https://scriptingosx.com/2019/07/moving-to-zsh-06-customizing-the-zsh-prompt/
+autoload -Uz vcs_info
+setopt prompt_subst
+zstyle ':vcs_info:*' enable git
+precmd_vcs_info() { vcs_info }
+precmd_functions+=( precmd_vcs_info )
+
+# Set prompt to be "[current_branch] [parent_path/current_path]$"
+# Here %b is the current branch name, and %F{xxx} ... %f colours the text
+# colour xxx, where 170 is the colour "orchid" and 154 the colour
+# "GreenYellow". See all colours available here:
+# https://jonasjacek.github.io/colors/
+zstyle ':vcs_info:git:*' formats '%F{170}[%b]%f '
+PROMPT=\$vcs_info_msg_0_
+PROMPT+='%F{154}%2~$ %f'
 
 # Athame config
 unset zle_bracketed_paste
