@@ -32,6 +32,9 @@ call plug#begin('~/.vim/plugged')
     " Julia syntax highlighting
     Plug 'JuliaEditorSupport/julia-vim'
 
+    " Status bar, with current branch information
+    Plug 'vim-airline/vim-airline'
+
     " Colour scheme
     Plug 'gruvbox-community/gruvbox'
 
