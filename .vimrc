@@ -131,6 +131,28 @@ vnoremap d "_d
 vnoremap p "_dP
 
 
+"========
+" Remaps
+"========
+
+" Set leader key
+let mapleader = ','
+
+" Open terminal in vim
+nnoremap <leader>t :bot vert term<CR>
+
+" Reload all buffers
+nnoremap <leader>e :bufdo e!<CR>
+
+" Git status
+nnoremap <leader>g :Git<CR>
+
+" Git diff handling
+nnoremap <leader>gd :Gdiff<CR>
+vnoremap <leader>dg :diffget<CR>
+vnoremap <leader>dp :diffput<CR>
+
+
 "===============
 " Custom macros
 "===============
@@ -156,7 +178,7 @@ endfunction
 function NormalFont()
     set guifont=Monospace\ 10
     set lines=100
-    echo 'Small font set!'
+    echo 'Normal font set!'
 endfunction
 
 function Remote(fname)
