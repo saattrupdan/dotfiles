@@ -29,14 +29,20 @@ call plug#begin('~/.vim/plugged')
     " Git integration
     Plug 'tpope/vim-fugitive'
 
+    " Fugitive extension for branches
+    Plug 'idanarye/vim-merginal'
+
     " Julia syntax highlighting
     Plug 'JuliaEditorSupport/julia-vim'
 
     " Status bar, with current branch information
-    Plug 'vim-airline/vim-airline'
+    Plug 'itchyny/lightline.vim'
 
     " Colour scheme
     Plug 'gruvbox-community/gruvbox'
+
+    " Switch to absolute line numbers when relative numbers don't make sense
+    Plug 'jeffkreeftmeijer/vim-numbertoggle'
 
 call plug#end()
 
@@ -44,6 +50,21 @@ call plug#end()
 "================
 " General set up
 "================
+
+" Enable lightline status bar when only one buffer is open
+set laststatus=2
+
+" Show current branch in lightline status bar
+let g:lightline = {
+      \ 'colorscheme': 'one',
+      \ 'active': {
+      \   'left': [ [ 'mode', 'paste' ],
+      \             [ 'gitbranch', 'readonly', 'filename', 'modified' ] ]
+      \ },
+      \ 'component_function': {
+      \   'gitbranch': 'FugitiveHead'
+      \ },
+      \ }
 
 " Set colour scheme
 colorscheme gruvbox
@@ -61,8 +82,11 @@ highlight Pmenu guibg=Black
 " Automatically change the current working directory to the present file
 set autochdir
 
-" Enable line numbering
+" Enable absolute line numbering
 set number
+
+" Enable relative line numbering
+set relativenumber
 
 " Extra linting column
 set signcolumn=yes
@@ -145,12 +169,15 @@ nnoremap <leader>t :bot vert term<CR>
 nnoremap <leader>e :bufdo e!<CR>
 
 " Git status
-nnoremap <leader>g :Git<CR>
+nnoremap <leader>gs :Git<CR>
 
 " Git diff handling
 nnoremap <leader>gd :Gdiff<CR>
 vnoremap <leader>dg :diffget<CR>
 vnoremap <leader>dp :diffput<CR>
+
+" Git branches with vim-merginal extension
+nnoremap <leader>gb :Merginal<CR>
 
 
 "===============
@@ -216,5 +243,9 @@ augroup SAATTRUPDAN
     autocmd BufRead,BufNewFile * set textwidth=79
     autocmd BufRead,BufNewFile * set wrapmargin=79
     autocmd BufRead,BufNewFile * set colorcolumn=80
+
+    " See relative line numbers only in current buffer
+    "autocmd BufEnter,FocusGained,InsertLeave * set relativenumber
+    "autocmd BufLeave,FocusLost,InsertEnter   * set norelativenumber
 
 augroup END
