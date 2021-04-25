@@ -160,7 +160,7 @@ vnoremap p "_dP
 "========
 
 " Set leader key
-let mapleader = ','
+let mapleader = ' '
 
 " Open terminal in vim
 nnoremap <leader>t :bot vert term<CR>
@@ -178,6 +178,12 @@ vnoremap <leader>dp :diffput<CR>
 
 " Git branches with vim-merginal extension
 nnoremap <leader>gb :Merginal<CR>
+
+" Toggle NERD tree
+nnoremap <C-n> :NERDTreeToggle<CR>
+
+" Focus NERD tree
+nnoremap <leader>n :NERDTreeFocus<CR>
 
 
 "===============
@@ -244,8 +250,7 @@ augroup SAATTRUPDAN
     autocmd BufRead,BufNewFile * set wrapmargin=79
     autocmd BufRead,BufNewFile * set colorcolumn=80
 
-    " See relative line numbers only in current buffer
-    "autocmd BufEnter,FocusGained,InsertLeave * set relativenumber
-    "autocmd BufLeave,FocusLost,InsertEnter   * set norelativenumber
+    " Start NERDTree and put the cursor back in the other window.
+    autocmd VimEnter * NERDTree | wincmd p
 
 augroup END
