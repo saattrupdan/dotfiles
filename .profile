@@ -25,7 +25,3 @@ fi
 if [ -d "$HOME/.local/bin" ] ; then
     PATH="$HOME/.local/bin:$PATH"
 fi
-
-export PATH="/usr/local/texlive/2020/bin/x86_64-linux:$PATH"
-export PATH="$HOME/julia-1.5.0:$PATH"
-export PATH="$HOME/.local/bin:$PATH"
