@@ -67,43 +67,6 @@ vv(){
     fi
 }
 
-#====================
-# ZSH Suffix aliases
-#====================
-
-# PDFs
-alias -s pdf='xdg-open'
-
-# Images
-alias -s jpg='xdg-open'
-alias -s jpeg='xdg-open'
-alias -s png='xdg-open'
-alias -s bmp='xdg-open'
-
-# Text-based
-alias -s md='xdg-open'
-alias -s py='xdg-open'
-alias -s pyx='xdg-open'
-alias -s c='xdg-open'
-alias -s txt='xdg-open'
-alias -s css='xdg-open'
-alias -s html='xdg-open'
-alias -s js='xdg-open'
-alias -s go='xdg-open'
-alias -s R='xdg-open'
-alias -s sql='xdg-open'
-
-# URLs
-alias -s com='xdg-open'
-alias -s uk='xdg-open'
-alias -s dk='xdg-open'
-alias -s io='xdg-open'
-alias -s net='xdg-open'
-alias -s org='xdg-open'
-alias -s ai='xdg-open'
-alias -s edu='xdg-open'
-alias -s gov='xdg-open'
-
 
 #=========
 # Aliases
