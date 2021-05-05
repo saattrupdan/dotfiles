@@ -1,61 +1,61 @@
-"=========================================
-" Load external Vim plugins with vim-plug
-"=========================================
+    "=========================================
+    " Load external Vim plugins with vim-plug
+    "=========================================
 
-" Set up VimPlug if it is not already
-if empty(glob('~/.vim/autoload/plug.vim'))
-    silent !curl -fLo ~/.vim/autoload/plug.vim --create-dirs
-        \ https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
-endif
+    " Set up VimPlug if it is not already
+    if empty(glob('~/.vim/autoload/plug.vim'))
+        silent !curl -fLo ~/.vim/autoload/plug.vim --create-dirs
+            \ https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
+    endif
 
-" Install plugins
-call plug#begin('~/.vim/plugged')
+    " Install plugins
+    call plug#begin('~/.vim/plugged')
 
-    " File manager
-    Plug 'preservim/nerdtree'
+        " File manager
+        Plug 'preservim/nerdtree'
 
-    " Tab completion
-    Plug 'ervandew/supertab'
+        " Tab completion
+        Plug 'ervandew/supertab'
 
-    " Dealing with LaTeX files
-    Plug 'lervag/vimtex'
+        " Dealing with LaTeX files
+        Plug 'lervag/vimtex'
 
-    " Setting up remote Vim
-    Plug 'wannesm/rmvim.vim'
+        " Setting up remote Vim
+        Plug 'wannesm/rmvim.vim'
 
-    " Code completion
-    Plug 'neoclide/coc.nvim', {'branch': 'release'}
+        " Code completion
+        Plug 'neoclide/coc.nvim', {'branch': 'release'}
 
-    " Git integration
-    Plug 'tpope/vim-fugitive'
+        " Git integration
+        Plug 'tpope/vim-fugitive'
 
-    " Fugitive extension for branches
-    Plug 'idanarye/vim-merginal'
+        " Fugitive extension for branches
+        Plug 'idanarye/vim-merginal'
 
-    " Julia syntax highlighting
-    Plug 'JuliaEditorSupport/julia-vim'
+        " Julia syntax highlighting
+        Plug 'JuliaEditorSupport/julia-vim'
 
-    " Status bar, with current branch information
-    Plug 'itchyny/lightline.vim'
+        " Status bar, with current branch information
+        Plug 'itchyny/lightline.vim'
 
-    " Colour scheme
-    Plug 'gruvbox-community/gruvbox'
+        " Colour scheme
+        Plug 'gruvbox-community/gruvbox'
 
-    " Switch to absolute line numbers when relative numbers don't make sense
-    Plug 'jeffkreeftmeijer/vim-numbertoggle'
+        " Switch to absolute line numbers when relative numbers don't make sense
+        Plug 'jeffkreeftmeijer/vim-numbertoggle'
 
-call plug#end()
+    call plug#end()
 
 
-"================
-" General set up
-"================
+    "================
+    " General set up
+    "================
 
-" Enable lightline status bar when only one buffer is open
-set laststatus=2
+    " Enable lightline status bar when only one buffer is open
+    set laststatus=2
 
-" Show current branch in lightline status bar
-let g:lightline = {
+    " Show current branch in lightline status bar
+    let g:lightline = {
       \ 'colorscheme': 'one',
       \ 'active': {
       \   'left': [ [ 'mode', 'paste' ],
@@ -76,9 +76,6 @@ set bg=dark
 " Disable bell
 set noerrorbells visualbell
 
-" Set menu colour
-highlight Pmenu guibg=Black
-
 " Automatically change the current working directory to the present file
 set autochdir
 
@@ -90,18 +87,6 @@ set relativenumber
 
 " Extra linting column
 set signcolumn=yes
-
-" Set font for gVim
-set guifont=Monospace\ 10
-
-" No menu bar
-set guioptions-=m
-
-" No toolbar
-set guioptions-=T
-
-" No scrollbar
-set guioptions-=r
 
 " Tab size
 set tabstop=4
@@ -124,9 +109,8 @@ set updatetime=50
 " Map ½ to $ to enable easier navigation
 map ½ $
 imap ½ $
-
-" Set the standard editor to be gVim when using rmvim
-let g:rmvim_cmd = 'gvim'
+map § $
+imap § $
 
 " Set tex to be latex
 let g:tex_flavor = 'latex'
@@ -136,12 +120,10 @@ let g:tex_flavor = 'latex'
 " Deal with clipboard nonsense
 "==============================
 
-" Set the gvim clipboard to be the standard clipboard
+" Set the clipboard to be the standard clipboard
 set clipboard=unnamed
 
 " Disable automatic copying selected text
-" Here guioptions handles the GUI case and clipboard the other
-set guioptions-=a
 set clipboard-=autoselect
 
 " Always copy into the standard clipboard register
@@ -202,23 +184,6 @@ function MarkdownToPDF()
     !pandoc '%' -o '%:r.pdf'
 endfunction
 
-function SmallFont()
-    set guifont=Monospace\ 8
-    set lines=150
-    echo 'Small font set!'
-endfunction
-
-function NormalFont()
-    set guifont=Monospace\ 10
-    set lines=100
-    echo 'Normal font set!'
-endfunction
-
-function Remote(fname)
-    let g:path = matchstr(expand('<sfile>:p:h'), '\(gitsky/\)\@<=.*')
-    exe "e scp://dansat@balthazar.erst.dk//home/dansat/" . g:path . "/" . a:fname
-endfunction
-
 function RemoveTrailingWhitespace()
     let currentline=line(".")
     %s/\s\+$//e
@@ -229,8 +194,6 @@ endfunction
 
 command P call MarkdownToPDF()
 command T call EnableTeXKeyBindings()
-command SF call SmallFont()
-command NF call NormalFont()
 
 
 "=====================

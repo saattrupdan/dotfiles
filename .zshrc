@@ -15,8 +15,8 @@ zstyle ':vcs_info:git:*' formats '%F{170}[%b]%f '
 PROMPT=\$vcs_info_msg_0_
 PROMPT+='%F{154}%2~$ %f'
 
-# Athame config
-unset zle_bracketed_paste
+# Enable vi mode
+bindkey -v
 
 # PDF creation using Pandoc
 pdf(){
