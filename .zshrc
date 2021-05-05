@@ -75,7 +75,7 @@ vv(){
 alias ls='exa'
 alias grep='ack'
 alias gt='cd ~/gitsky'
-alias pc='cd ~/pCloudDrive'
+alias pc='cd ~/pCloud\ Drive'
 alias gsum='cd ~/gitsky && /usr/src/git-summary/git-summary && cd -'
 alias bb='brave-browser'
 alias ll='ls -l'
