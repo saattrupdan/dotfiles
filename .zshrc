@@ -34,24 +34,11 @@ o(){
 
 # Backup dotfiles
 rc(){
-  touch ~/.profile
-  touch ~/.gitconfig
-
-  cp ~/.*rc ~/gitsky/dotfiles
-  cp ~/.profile ~/gitsky/dotfiles
-  cp ~/.gitconfig ~/gitsky/dotfiles
-
   cd ~/gitsky/dotfiles
   git add .
   git commit -m "chore: Update dot files"
   git pull
   git push
-
-  cd -
-  cp ~/gitsky/dotfiles/.*rc ~/
-  cp ~/gitsky/dotfiles/.profile ~/
-  cp ~/gitsky/dotfiles/.gitconfig ~/
-
   echo "Dot files synced up!"
 }
 
