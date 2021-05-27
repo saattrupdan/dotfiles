@@ -1,70 +1,69 @@
-    "=========================================
-    " Load external Vim plugins with vim-plug
-    "=========================================
+"=========================================
+" Load external Vim plugins with vim-plug
+"=========================================
 
-    " Set up VimPlug if it is not already
-    if empty(glob('~/.vim/autoload/plug.vim'))
-        silent !curl -fLo ~/.vim/autoload/plug.vim --create-dirs
-            \ https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
-    endif
+" Set up VimPlug if it is not already
+if empty(glob('~/.vim/autoload/plug.vim'))
+    silent !curl -fLo ~/.vim/autoload/plug.vim --create-dirs
+        \ https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
+endif
 
-    " Install plugins
-    call plug#begin('~/.vim/plugged')
+" Install plugins
+call plug#begin('~/.vim/plugged')
+" File manager
+    Plug 'preservim/nerdtree'
 
-        " File manager
-        Plug 'preservim/nerdtree'
+    " Tab completion
+    Plug 'ervandew/supertab'
 
-        " Tab completion
-        Plug 'ervandew/supertab'
+    " Dealing with LaTeX files
+    Plug 'lervag/vimtex'
 
-        " Dealing with LaTeX files
-        Plug 'lervag/vimtex'
+    " Setting up remote Vim
+    Plug 'wannesm/rmvim.vim'
 
-        " Setting up remote Vim
-        Plug 'wannesm/rmvim.vim'
+    " Code completion
+    Plug 'neoclide/coc.nvim', {'branch': 'release'}
 
-        " Code completion
-        Plug 'neoclide/coc.nvim', {'branch': 'release'}
+    " Git integration
+    Plug 'tpope/vim-fugitive'
 
-        " Git integration
-        Plug 'tpope/vim-fugitive'
+    " Fugitive extension for branches
+    Plug 'idanarye/vim-merginal'
 
-        " Fugitive extension for branches
-        Plug 'idanarye/vim-merginal'
+    " Julia syntax highlighting
+    Plug 'JuliaEditorSupport/julia-vim'
 
-        " Julia syntax highlighting
-        Plug 'JuliaEditorSupport/julia-vim'
+    " Status bar, with current branch information
+    Plug 'itchyny/lightline.vim'
 
-        " Status bar, with current branch information
-        Plug 'itchyny/lightline.vim'
+    " Colour scheme
+    Plug 'gruvbox-community/gruvbox'
 
-        " Colour scheme
-        Plug 'gruvbox-community/gruvbox'
+    " Switch to absolute line numbers when relative numbers don't make sense
+    Plug 'jeffkreeftmeijer/vim-numbertoggle'
 
-        " Switch to absolute line numbers when relative numbers don't make sense
-        Plug 'jeffkreeftmeijer/vim-numbertoggle'
-
-    call plug#end()
+call plug#end()
 
 
-    "================
-    " General set up
-    "================
+"================
+" General set up
+"================
 
-    " Enable lightline status bar when only one buffer is open
-    set laststatus=2
+" Enable lightline status bar when only one buffer is open
+set laststatus=2
 
-    " Show current branch in lightline status bar
-    let g:lightline = {
-      \ 'colorscheme': 'one',
-      \ 'active': {
-      \   'left': [ [ 'mode', 'paste' ],
-      \             [ 'gitbranch', 'readonly', 'filename', 'modified' ] ]
-      \ },
-      \ 'component_function': {
-      \   'gitbranch': 'FugitiveHead'
-      \ },
-      \ }
+" Show current branch in lightline status bar
+let g:lightline = {
+  \ 'colorscheme': 'one',
+  \ 'active': {
+  \   'left': [ [ 'mode', 'paste' ],
+  \             [ 'gitbranch', 'readonly', 'filename', 'modified' ] ]
+  \ },
+  \ 'component_function': {
+  \   'gitbranch': 'FugitiveHead'
+  \ },
+  \ }
 
 " Set colour scheme
 colorscheme gruvbox
@@ -166,6 +165,10 @@ nnoremap <C-n> :NERDTreeToggle<CR>
 
 " Focus NERD tree
 nnoremap <leader>n :NERDTreeFocus<CR>
+
+" Wrap text
+nnoremap <leader><CR> gwgw
+vnoremap <leader><CR> gw<CR>
 
 
 "===============
