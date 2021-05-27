@@ -18,6 +18,9 @@ PROMPT+='%F{154}%2~$ %f'
 # Enable vi mode
 bindkey -v
 
+# Configure thefuck plugin
+eval $(thefuck --alias)
+
 # PDF creation using Pandoc
 pdf(){
   pandoc $1 -o ${1:0:(-3)}.pdf;
@@ -67,6 +70,10 @@ vv(){
     fi
 }
 
+iterm2_print_user_vars() {
+  iterm2_set_user_var gitBranch $((git branch 2> /dev/null) | grep \* | cut -c3-)
+}
+
 
 #=========
 # Aliases
@@ -88,3 +95,5 @@ alias gb='git branches'
 alias gc='git checkout'
 alias gl='git log --graph --pretty=format:"%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset" --abbrev-commit --date=relative'
 alias pf='pip freeze | sed "/pkg-resources/d" > requirements.txt'
+
+eval $(thefuck --alias)
