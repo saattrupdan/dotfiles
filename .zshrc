@@ -40,6 +40,7 @@ rc(){
   git pull
   git push
   echo "Dot files synced up!"
+  cd -
 }
 
 # Jump into a virtual environment, or build it if it is not there
