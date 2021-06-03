@@ -34,6 +34,9 @@ call plug#begin('~/.vim/plugged')
     " Julia syntax highlighting
     Plug 'JuliaEditorSupport/julia-vim'
 
+    " Cypher syntax highlighting
+    Plug 'memgraph/cypher.vim'
+
     " Status bar, with current branch information
     Plug 'itchyny/lightline.vim'
 
