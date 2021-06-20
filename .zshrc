@@ -46,7 +46,7 @@ rc(){
 # Jump into a virtual environment, or build it if it is not there
 vv(){
     if [ ! -d '.venv' ]; then
-        python3 -m venv .venv
+        python3.8 -m venv .venv
         source .venv/bin/activate
         pip3 install --upgrade pip setuptools wheel jedi pylint \
                                pytest pytest-flake8
@@ -68,7 +68,6 @@ iterm2_print_user_vars() {
 #=========
 
 alias ls='exa'
-alias grep='ack'
 alias gt='cd ~/gitsky'
 alias pc='cd ~/pCloud\ Drive'
 alias gsum='cd ~/gitsky && /usr/src/git-summary/git-summary && cd -'
@@ -83,5 +82,8 @@ alias gb='git branches'
 alias gc='git checkout'
 alias gl='git log --graph --pretty=format:"%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset" --abbrev-commit --date=relative'
 alias pf='pip freeze | sed "/pkg-resources/d" > requirements.txt'
+alias tcc='tmux -CC'
 
 eval $(thefuck --alias)
+
+test -e "${HOME}/.iterm2_shell_integration.zsh" && source "${HOME}/.iterm2_shell_integration.zsh"

@@ -19,9 +19,6 @@ call plug#begin('~/.vim/plugged')
     " Dealing with LaTeX files
     Plug 'lervag/vimtex'
 
-    " Setting up remote Vim
-    Plug 'wannesm/rmvim.vim'
-
     " Code completion
     Plug 'neoclide/coc.nvim', {'branch': 'release'}
 
@@ -52,6 +49,9 @@ call plug#end()
 "================
 " General set up
 "================
+
+" Disable swap files
+set noswapfile
 
 " Enable lightline status bar when only one buffer is open
 set laststatus=2
