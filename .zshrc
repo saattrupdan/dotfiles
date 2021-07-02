@@ -83,7 +83,14 @@ alias gc='git checkout'
 alias gl='git log --graph --pretty=format:"%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset" --abbrev-commit --date=relative'
 alias pf='pip freeze | sed "/pkg-resources/d" > requirements.txt'
 alias tcc='tmux -CC'
+alias tpu='gcloud alpha compute tpus tpu-vm ssh forebrain --zone us-central1-a --project hf-flax'
 
 eval $(thefuck --alias)
 
 test -e "${HOME}/.iterm2_shell_integration.zsh" && source "${HOME}/.iterm2_shell_integration.zsh"
+
+# The next line updates PATH for the Google Cloud SDK.
+if [ -f '/Users/saattrupdan/google-cloud-sdk/path.zsh.inc' ]; then . '/Users/saattrupdan/google-cloud-sdk/path.zsh.inc'; fi
+
+# The next line enables shell command completion for gcloud.
+if [ -f '/Users/saattrupdan/google-cloud-sdk/completion.zsh.inc' ]; then . '/Users/saattrupdan/google-cloud-sdk/completion.zsh.inc'; fi
