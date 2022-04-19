@@ -86,6 +86,7 @@ alias pf='pip freeze | sed "/pkg-resources/d" > requirements.txt'
 alias tcc='tmux -CC'
 alias tpu='gcloud alpha compute tpus tpu-vm ssh forebrain --zone us-central1-a --project hf-flax'
 alias tpu2='gcloud alpha compute tpus tpu-vm ssh barrack --zone us-central1-a --project hf-flax'
+alias record='sh ~/pCloud\ Drive/record.sh'
 
 eval $(thefuck --alias)
 

@@ -27,3 +27,4 @@ if [ -d "$HOME/.local/bin" ] ; then
 fi
 
 PATH="$HOME/Applications/nvim/bin:$PATH"
+. "$HOME/.cargo/env"
