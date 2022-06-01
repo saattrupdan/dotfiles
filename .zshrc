@@ -46,7 +46,7 @@ rc(){
 # Jump into a virtual environment, or build it if it is not there
 vv(){
     if [ ! -d '.venv' ]; then
-        python3.8 -m venv .venv
+        python3 -m venv .venv
         source .venv/bin/activate
         pip3 install --upgrade pip setuptools wheel jedi pylint \
                                pytest pytest-flake8
@@ -87,6 +87,7 @@ alias tcc='tmux -CC'
 alias tpu='gcloud alpha compute tpus tpu-vm ssh forebrain --zone us-central1-a --project hf-flax'
 alias tpu2='gcloud alpha compute tpus tpu-vm ssh barrack --zone us-central1-a --project hf-flax'
 alias record='sh ~/pCloud\ Drive/record.sh'
+alias python='python3'
 
 eval $(thefuck --alias)
 

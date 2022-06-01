@@ -3,9 +3,10 @@
 "=========================================
 
 " Set up VimPlug if it is not already
-if empty(glob('~/.vim/autoload/plug.vim'))
-    silent !curl -fLo ~/.vim/autoload/plug.vim --create-dirs
-        \ https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
+let data_dir = has('nvim') ? stdpath('data') . '/site' : '~/.vim'
+if empty(glob(data_dir . '/autoload/plug.vim'))
+  silent execute '!curl -fLo '.data_dir.'/autoload/plug.vim --create-dirs  https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim'
+  autocmd VimEnter * PlugInstall --sync | source $MYVIMRC
 endif
 
 " Install plugins
@@ -187,6 +188,18 @@ nnoremap <leader>w :lua require("harpoon.ui").nav_file(2)<CR>
 nnoremap <leader>e :lua require("harpoon.ui").nav_file(3)<CR>
 nnoremap <C-m> :lua require("harpoon.ui").toggle_quick_menu()<CR>
 
+" Colon
+nnoremap Æ :
+
+" Slash
+nnoremap - /
+
+" Tilde
+inoremap > ~
+
+" Code block
+inoremap < `
+
 
 "===============
 " Custom macros
@@ -234,7 +247,7 @@ augroup SAATTRUPDAN
     autocmd BufRead,BufNewFile * set colorcolumn=80
 
     " Start NERDTree and put the cursor back in the other window.
-    autocmd VimEnter * NERDTree | wincmd p
+    autocmd VimEnter * silent NERDTree | wincmd p
 
     " Exit Vim if NERDTree is the only window left.
     autocmd BufEnter * if tabpagenr('$') == 1 && winnr('$') == 1 && exists('b:NERDTree') && b:NERDTree.isTabTree() |
