@@ -188,18 +188,6 @@ nnoremap <leader>w :lua require("harpoon.ui").nav_file(2)<CR>
 nnoremap <leader>e :lua require("harpoon.ui").nav_file(3)<CR>
 nnoremap <C-m> :lua require("harpoon.ui").toggle_quick_menu()<CR>
 
-" Colon
-nnoremap Æ :
-
-" Slash
-nnoremap - /
-
-" Tilde
-inoremap > ~
-
-" Code block
-inoremap < `
-
 
 "===============
 " Custom macros
