@@ -81,7 +81,6 @@ venvd(){
         deactivate
         rm -rf .venv
     elif [ -f pyproject.toml ]; then
-        deactivate
         poetry env remove python3
     fi
 }
