@@ -43,24 +43,46 @@ rc(){
   cd -
 }
 
-# Jump into a virtual environment, or build it if it is not there
-vv(){
+# Activate a virtual environment, or build it if it is not there
+venva(){
     if [ -f pyproject.toml ]; then
         if [ ! -d "$HOME/.poetry" ]; then
             curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python -
         fi
         poetry shell
-        poetry install
     elif [ ! -d '.venv' ]; then
         python3 -m venv .venv
         source .venv/bin/activate
-        pip3 install --upgrade pip setuptools wheel jedi pylint \
-                               pytest pytest-flake8
+    else
+        source .venv/bin/activate
+    fi
+}
+
+# Install dependencies for a project
+venvi(){
+    if [ -f pyproject.toml ]; then
+        if [ ! -d "$HOME/.poetry" ]; then
+            curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python -
+        fi
+        poetry install
+    elif [ -d '.venv' ]; then
+        pip3 install --upgrade pip setuptools wheel jedi pylint pytest pytest-flake8
         if [ -f 'requirements.txt' ]; then
             pip3 install -r requirements.txt
         fi
     else
-        source .venv/bin/activate
+        echo "No virtual environment found!"
+    fi
+}
+
+# Delete a virtual environment
+venvd(){
+    if [ -d '.venv' ]; then
+        deactivate
+        rm -rf .venv
+    elif [ -f pyproject.toml ]; then
+        deactivate
+        poetry env remove python3
     fi
 }
 
@@ -123,7 +145,8 @@ if [ -f '/Applications/google-cloud-sdk/path.zsh.inc' ]; then . '/Applications/g
 # The next line enables shell command completion for gcloud.
 if [ -f '/Applications/google-cloud-sdk/completion.zsh.inc' ]; then . '/Applications/google-cloud-sdk/completion.zsh.inc'; fi
 
-# Update path to newer version of nvim
+# Update path with nvim
 PATH="$HOME/Applications/nvim/bin:$PATH"
 
-export PATH="$HOME/.poetry/bin:$PATH"
+# Update path with poetry
+PATH="$HOME/.poetry/bin:$PATH"
