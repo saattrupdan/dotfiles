@@ -44,17 +44,37 @@ rc(){
 }
 
 # Jump into a virtual environment, or build it if it is not there
+#vv(){
+#    if [ ! -d '.venv' ]; then
+#        python3 -m venv .venv
+#        source .venv/bin/activate
+#        pip3 install --upgrade pip setuptools wheel jedi pylint \
+#                               pytest pytest-flake8
+#        if [ -f 'requirements.txt' ]; then
+#            pip3 install -r requirements.txt
+#        fi
+#    else
+#        source .venv/bin/activate
+#    fi
+#}
 vv(){
-    if [ ! -d '.venv' ]; then
-        python3 -m venv .venv
-        source .venv/bin/activate
-        pip3 install --upgrade pip setuptools wheel jedi pylint \
-                               pytest pytest-flake8
-        if [ -f 'requirements.txt' ]; then
-            pip3 install -r requirements.txt
+    if [ ! -f Makefile ]; then
+        if [ ! -d ".venv" ]; then
+            python3 -m venv .venv
+            source .venv/bin/activate
+            pip3 install --upgrade pip wheel setuptools
+            pip3 install --upgrade cookiecutter
+        else
+            source .venv/bin/activate
         fi
+        if [ ! -d "$HOME/.cookiecutters/saattrupdan-template" ]; then
+            cookiecutter gh:saattrupdan/saattrupdan-template
+        else
+            cookiecutter saattrupdan-template
+        fi
+        deactivate
     else
-        source .venv/bin/activate
+        make activate
     fi
 }
 
@@ -101,3 +121,5 @@ if [ -f '/Applications/google-cloud-sdk/completion.zsh.inc' ]; then . '/Applicat
 
 # Update path to newer version of nvim
 PATH="$HOME/Applications/nvim/bin:$PATH"
+
+export PATH="$HOME/.poetry/bin:$PATH"

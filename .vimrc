@@ -230,9 +230,9 @@ augroup SAATTRUPDAN
     autocmd BufWritePre * :call RemoveTrailingWhitespace()
 
     " Settings for files (and not Athame shell)
-    autocmd BufRead,BufNewFile * set textwidth=79
-    autocmd BufRead,BufNewFile * set wrapmargin=79
-    autocmd BufRead,BufNewFile * set colorcolumn=80
+    autocmd BufRead,BufNewFile * set textwidth=87
+    autocmd BufRead,BufNewFile * set wrapmargin=87
+    autocmd BufRead,BufNewFile * set colorcolumn=88
 
     " Start NERDTree and put the cursor back in the other window.
     autocmd VimEnter * silent NERDTree | wincmd p

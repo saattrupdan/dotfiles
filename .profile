@@ -28,3 +28,5 @@ fi
 
 PATH="$HOME/Applications/nvim/bin:$PATH"
 . "$HOME/.cargo/env"
+
+export PATH="$HOME/.poetry/bin:$PATH"
