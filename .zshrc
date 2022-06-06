@@ -44,38 +44,42 @@ rc(){
 }
 
 # Jump into a virtual environment, or build it if it is not there
-#vv(){
-#    if [ ! -d '.venv' ]; then
-#        python3 -m venv .venv
-#        source .venv/bin/activate
-#        pip3 install --upgrade pip setuptools wheel jedi pylint \
-#                               pytest pytest-flake8
-#        if [ -f 'requirements.txt' ]; then
-#            pip3 install -r requirements.txt
-#        fi
-#    else
-#        source .venv/bin/activate
-#    fi
-#}
 vv(){
-    if [ ! -f Makefile ]; then
-        if [ ! -d ".venv" ]; then
-            python3 -m venv .venv
-            source .venv/bin/activate
-            pip3 install --upgrade pip wheel setuptools
-            pip3 install --upgrade cookiecutter
-        else
-            source .venv/bin/activate
+    if [ -f pyproject.toml ]; then
+        if [ ! -d "$HOME/.poetry" ]; then
+            curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python -
         fi
-        if [ ! -d "$HOME/.cookiecutters/saattrupdan-template" ]; then
-            cookiecutter gh:saattrupdan/saattrupdan-template
-        else
-            cookiecutter saattrupdan-template
+        poetry shell
+        poetry install
+    elif [ ! -d '.venv' ]; then
+        python3 -m venv .venv
+        source .venv/bin/activate
+        pip3 install --upgrade pip setuptools wheel jedi pylint \
+                               pytest pytest-flake8
+        if [ -f 'requirements.txt' ]; then
+            pip3 install -r requirements.txt
         fi
-        deactivate
     else
-        make activate
+        source .venv/bin/activate
     fi
+}
+
+# Create new project
+newproj(){
+    if [ ! -d "$HOME/.venv" ]; then
+        python3 -m venv "$HOME/.venv"
+        source "$HOME/.venv/bin/activate"
+        pip3 install --upgrade pip wheel setuptools
+        pip3 install --upgrade cookiecutter
+    else
+        source "$HOME/.venv/bin/activate"
+    fi
+    if [ ! -d "$HOME/.cookiecutters/saattrupdan-template" ]; then
+        cookiecutter gh:saattrupdan/saattrupdan-template -o "$HOME/gitsky"
+    else
+        cookiecutter saattrupdan-template -o "$HOME/gitsky"
+    fi
+    deactivate
 }
 
 iterm2_print_user_vars() {
