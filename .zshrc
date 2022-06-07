@@ -24,11 +24,18 @@ autoload -U compinit && compinit
 # Configure thefuck plugin
 eval $(thefuck --alias)
 
+# Set up shell integration
+test -e "${HOME}/.iterm2_shell_integration.zsh" && source "${HOME}/.iterm2_shell_integration.zsh"
+
 # PDF creation using Pandoc
 pdf(){
   pandoc $1 -o ${1:0:(-3)}.pdf;
   echo "Created ${1:0:(-3)}.pdf"
 }
+
+# Set up PATH
+PATH="$HOME/.poetry/bin:$PATH"
+PATH="$HOME/Applications/nvim/bin:$PATH"
 
 # Open files faster
 o(){
@@ -109,7 +116,3 @@ alias tpu='gcloud alpha compute tpus tpu-vm ssh forebrain --zone us-central1-a -
 alias tpu2='gcloud alpha compute tpus tpu-vm ssh barrack --zone us-central1-a --project hf-flax'
 alias record='sh ~/pCloud\ Drive/record.sh'
 alias python='python3'
-
-eval $(thefuck --alias)
-
-test -e "${HOME}/.iterm2_shell_integration.zsh" && source "${HOME}/.iterm2_shell_integration.zsh"
