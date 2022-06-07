@@ -44,7 +44,7 @@ rc(){
 }
 
 # Activate a virtual environment, or build it if it is not there
-venva(){
+ea(){
     if [ -f pyproject.toml ]; then
         if [ ! -d "$HOME/.poetry" ]; then
             curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python -
@@ -59,7 +59,7 @@ venva(){
 }
 
 # Install dependencies for a project
-venvi(){
+ei(){
     if [ -f pyproject.toml ]; then
         if [ ! -d "$HOME/.poetry" ]; then
             curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python -
@@ -76,7 +76,7 @@ venvi(){
 }
 
 # Delete a virtual environment
-venvd(){
+ed(){
     if [ -d '.venv' ]; then
         deactivate
         rm -rf .venv
