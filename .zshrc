@@ -61,11 +61,11 @@ ea(){
 
 # Install dependencies for a project
 ei(){
-    if [ -f pyproject.toml ]; then
+    if [ -f Makefile ]; then
         if [ ! -d "$HOME/.poetry" ]; then
             curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python -
         fi
-        poetry install
+        make install
     elif [ -d '.venv' ]; then
         pip3 install --upgrade pip setuptools wheel jedi pylint pytest pytest-flake8
         if [ -f 'requirements.txt' ]; then
