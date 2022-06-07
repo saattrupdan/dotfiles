@@ -44,45 +44,16 @@ rc(){
 }
 
 # Activate a virtual environment, or build it if it is not there
-ea(){
-    if [ -f pyproject.toml ]; then
-        if [ ! -d "$HOME/.poetry" ]; then
-            curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python -
-        fi
-        poetry shell
-        source "$( poetry env list --full-path | grep Activated | cut -d' ' -f1 )/bin/activate"
-    elif [ ! -d '.venv' ]; then
+vv(){
+    if [ ! -d '.venv' ]; then
         python3 -m venv .venv
         source .venv/bin/activate
-    else
-        source .venv/bin/activate
-    fi
-}
-
-# Install dependencies for a project
-ei(){
-    if [ -f Makefile ]; then
-        if [ ! -d "$HOME/.poetry" ]; then
-            curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python -
-        fi
-        make install
-    elif [ -d '.venv' ]; then
         pip3 install --upgrade pip setuptools wheel jedi pylint pytest pytest-flake8
         if [ -f 'requirements.txt' ]; then
             pip3 install -r requirements.txt
         fi
     else
-        echo "No virtual environment found!"
-    fi
-}
-
-# Delete a virtual environment
-ed(){
-    if [ -d '.venv' ]; then
-        deactivate
-        rm -rf .venv
-    elif [ -f pyproject.toml ]; then
-        poetry env remove python3
+        source .venv/bin/activate
     fi
 }
 
