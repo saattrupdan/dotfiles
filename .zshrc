@@ -50,6 +50,7 @@ ea(){
             curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python -
         fi
         poetry shell
+        source "$( poetry env list --full-path | grep Activated | cut -d' ' -f1 )/bin/activate"
     elif [ ! -d '.venv' ]; then
         python3 -m venv .venv
         source .venv/bin/activate
