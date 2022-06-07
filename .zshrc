@@ -18,6 +18,9 @@ PROMPT+='%F{154}%2~$ %f'
 # Enable vi mode
 bindkey -v
 
+# Enable autocompletion
+autoload -U compinit && compinit
+
 # Configure thefuck plugin
 eval $(thefuck --alias)
 
@@ -73,6 +76,7 @@ newproj(){
         cookiecutter saattrupdan-template -o "$HOME/gitsky"
     fi
     deactivate
+    cd "$HOME/gitsky"
 }
 
 iterm2_print_user_vars() {
@@ -109,15 +113,3 @@ alias python='python3'
 eval $(thefuck --alias)
 
 test -e "${HOME}/.iterm2_shell_integration.zsh" && source "${HOME}/.iterm2_shell_integration.zsh"
-
-# The next line updates PATH for the Google Cloud SDK.
-if [ -f '/Applications/google-cloud-sdk/path.zsh.inc' ]; then . '/Applications/google-cloud-sdk/path.zsh.inc'; fi
-
-# The next line enables shell command completion for gcloud.
-if [ -f '/Applications/google-cloud-sdk/completion.zsh.inc' ]; then . '/Applications/google-cloud-sdk/completion.zsh.inc'; fi
-
-# Update path with nvim
-PATH="$HOME/Applications/nvim/bin:$PATH"
-
-# Update path with poetry
-PATH="$HOME/.poetry/bin:$PATH"
