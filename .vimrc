@@ -47,10 +47,6 @@ call plug#begin('~/.vim/plugged')
     " Switch to absolute line numbers when relative numbers don't make sense
     Plug 'jeffkreeftmeijer/vim-numbertoggle'
 
-    " Harpoon mark handler
-    Plug 'nvim-lua/plenary.nvim'
-    Plug 'ThePrimeagen/harpoon'
-
 call plug#end()
 
 
@@ -180,13 +176,6 @@ nnoremap <leader>n :NERDTreeFocus<CR>
 " Wrap text
 nnoremap <leader><CR> gwgw
 vnoremap <leader><CR> gw<CR>
-
-" Harpoon
-nnoremap <leader>m :lua require("harpoon.mark").add_file()<CR>
-nnoremap <leader>q :lua require("harpoon.ui").nav_file(1)<CR>
-nnoremap <leader>w :lua require("harpoon.ui").nav_file(2)<CR>
-nnoremap <leader>e :lua require("harpoon.ui").nav_file(3)<CR>
-nnoremap <C-m> :lua require("harpoon.ui").toggle_quick_menu()<CR>
 
 
 "===============
