@@ -35,11 +35,6 @@ PATH="$HOME/.poetry/bin:$PATH"
 PATH="$HOME/Applications/nvim/bin:$PATH"
 PATH="/opt/homebrew/bin:$PATH"
 
-# Open files faster
-o(){
-  ls | grep -i $1 | sed 's/^\(.*\)$/"\1"/g' | xargs -n 1 xdg-open
-}
-
 # Backup dotfiles
 rc(){
   cd ~/gitsky/dotfiles
@@ -97,7 +92,6 @@ alias ls='exa'
 alias vim='nvim'
 alias gt='cd ~/gitsky'
 alias pc='cd ~/pCloud\ Drive'
-alias gsum='cd ~/gitsky && /usr/src/git-summary/git-summary && cd -'
 alias bb='/Applications/Brave\ Browser.app/Contents/MacOS/Brave\ Browser'
 alias ll='ls -l'
 alias la='ls -ah'
@@ -108,9 +102,5 @@ alias gd='git diff'
 alias gb='git branches'
 alias gc='git checkout'
 alias gl='git log --graph --pretty=format:"%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset" --abbrev-commit --date=relative'
-alias pf='pip freeze | sed "/pkg-resources/d" > requirements.txt'
 alias tcc='tmux -CC'
-alias tpu='gcloud alpha compute tpus tpu-vm ssh forebrain --zone us-central1-a --project hf-flax'
-alias tpu2='gcloud alpha compute tpus tpu-vm ssh barrack --zone us-central1-a --project hf-flax'
-alias record='sh ~/pCloud\ Drive/record.sh'
 alias python='python3'
