@@ -21,9 +21,6 @@ bindkey -v
 # Enable autocompletion
 autoload -U compinit && compinit
 
-# Configure thefuck plugin
-eval $(thefuck --alias)
-
 # Set up shell integration
 test -e "${HOME}/.iterm2_shell_integration.zsh" && source "${HOME}/.iterm2_shell_integration.zsh"
 
@@ -36,6 +33,7 @@ pdf(){
 # Set up PATH
 PATH="$HOME/.poetry/bin:$PATH"
 PATH="$HOME/Applications/nvim/bin:$PATH"
+PATH="/opt/homebrew/bin:$PATH"
 
 # Open files faster
 o(){
