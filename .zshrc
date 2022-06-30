@@ -35,6 +35,9 @@ PATH="$HOME/.poetry/bin:$PATH"
 PATH="$HOME/Applications/nvim/bin:$PATH"
 PATH="/opt/homebrew/bin:$PATH"
 
+# Ensure openblas has been set up, which is used for Numpy to work
+OPENBLAS="$(brew --prefix openblas)"
+
 # Backup dotfiles
 rc(){
   cd ~/gitsky/dotfiles
