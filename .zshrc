@@ -18,9 +18,6 @@ PROMPT+='%F{154}%2~$ %f'
 # Enable vi mode
 bindkey -v
 
-# Enable autocompletion
-autoload -U compinit && compinit
-
 # Set up shell integration
 test -e "${HOME}/.iterm2_shell_integration.zsh" && source "${HOME}/.iterm2_shell_integration.zsh"
 
@@ -107,3 +104,5 @@ alias gc='git checkout'
 alias gl='git log --graph --pretty=format:"%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset" --abbrev-commit --date=relative'
 alias tcc='tmux -CC'
 alias python='python3'
+
+export PATH="$HOME/.poetry/bin:$PATH"
