@@ -23,7 +23,7 @@ call plug#begin('~/.vim/plugged')
     " Dealing with LaTeX files
     Plug 'lervag/vimtex'
 
-    " Code completion and Linting through "CocInstall coc-pyright"
+    " Code completion and Linting through 'CocInstall coc-pyright'
     Plug 'neoclide/coc.nvim', {'branch': 'release'}
 
     " Git integration
@@ -229,5 +229,8 @@ augroup SAATTRUPDAN
     " Exit Vim if NERDTree is the only window left.
     autocmd BufEnter * if tabpagenr('$') == 1 && winnr('$') == 1 && exists('b:NERDTree') && b:NERDTree.isTabTree() |
         \ quit | endif
+
+    " Popup when hovering cursor
+    "autocmd CursorHold * if ! coc#util#has_float() | call CocActionAsync('doHover') | endif
 
 augroup END
