@@ -231,6 +231,6 @@ augroup SAATTRUPDAN
         \ quit | endif
 
     " Popup when hovering cursor
-    "autocmd CursorHold * if ! coc#util#has_float() | call CocActionAsync('doHover') | endif
+    " autocmd CursorHold * if ! coc#float#has_float() | call CocActionAsync('doHover') | endif
 
 augroup END
