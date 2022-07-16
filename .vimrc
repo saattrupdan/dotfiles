@@ -23,7 +23,7 @@ call plug#begin('~/.vim/plugged')
     " Dealing with LaTeX files
     Plug 'lervag/vimtex'
 
-    " Code completion
+    " Code completion and Linting through "CocInstall coc-pyright"
     Plug 'neoclide/coc.nvim', {'branch': 'release'}
 
     " Git integration
