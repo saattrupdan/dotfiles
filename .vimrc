@@ -210,6 +210,9 @@ command T call EnableTeXKeyBindings()
 " Automatic functions
 "=====================
 
+" Popup when hovering cursor
+"autocmd CursorHold * if ! coc#float#has_float() | call CocActionAsync('doHover') | endif
+
 augroup SAATTRUPDAN
 
     " Remove previous autocommands
@@ -229,8 +232,5 @@ augroup SAATTRUPDAN
     " Exit Vim if NERDTree is the only window left.
     autocmd BufEnter * if tabpagenr('$') == 1 && winnr('$') == 1 && exists('b:NERDTree') && b:NERDTree.isTabTree() |
         \ quit | endif
-
-    " Popup when hovering cursor
-    " autocmd CursorHold * if ! coc#float#has_float() | call CocActionAsync('doHover') | endif
 
 augroup END

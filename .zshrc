@@ -51,7 +51,7 @@ vv(){
     if [ ! -d '.venv' ]; then
         python3 -m venv .venv
         source .venv/bin/activate
-        pip3 install --upgrade pip setuptools wheel jedi pylint pytest pytest-flake8
+        pip3 install --upgrade pip setuptools wheel
         if [ -f 'requirements.txt' ]; then
             pip3 install -r requirements.txt
         fi
