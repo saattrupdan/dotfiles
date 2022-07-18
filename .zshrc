@@ -1,3 +1,25 @@
+#=====================================
+# Load external ZSH plugins with Znap
+#=====================================
+
+# Set up Znap
+if [ ! -d ~/znap-plugins ]; then
+    git clone --depth 1 -- https://github.com/marlonrichert/zsh-snap.git
+    source zsh-snap/install.zsh
+fi
+source ~/znap-plugins/zsh-snap/znap.zsh
+
+# Autocompletion
+if [ ! -d ~/znap-plugins/zsh-autocomplete ]; then
+    znap source marlonrichert/zsh-autocomplete
+fi
+source ~/znap-plugins/zsh-autocomplete/zsh-autocomplete.plugin.zsh
+
+
+#=====================
+# Set up Git commands
+#=====================
+
 # A bunch of fancy ZSH code to enable git integration. Taken from
 # https://scriptingosx.com/2019/07/moving-to-zsh-06-customizing-the-zsh-prompt/
 autoload -Uz vcs_info
@@ -15,6 +37,11 @@ zstyle ':vcs_info:git:*' formats '%F{170}[%b]%f '
 PROMPT=\$vcs_info_msg_0_
 PROMPT+='%F{154}%2~$ %f'
 
+
+#=============================
+# Set up general ZSH settings
+# ============================
+
 # Enable vi mode
 bindkey -v
 
@@ -27,13 +54,24 @@ pdf(){
   echo "Created ${1:0:(-3)}.pdf"
 }
 
+
+#==================================
+# Set up general terminal settings
+#==================================
+
 # Set up PATH
 PATH="$HOME/.poetry/bin:$PATH"
 PATH="$HOME/Applications/nvim/bin:$PATH"
 PATH="/opt/homebrew/bin:$PATH"
+PATH="$HOME/.poetry/bin:$PATH"
 
 # Ensure openblas has been set up, which is used for Numpy to work
 OPENBLAS="$(brew --prefix openblas)"
+
+
+#=======================
+# Convenience shortcuts
+#=======================
 
 # Backup dotfiles
 rc(){
@@ -79,10 +117,6 @@ newproj(){
     cd "$HOME/gitsky"
 }
 
-iterm2_print_user_vars() {
-  iterm2_set_user_var gitBranch $((git branch 2> /dev/null) | grep \* | cut -c3-)
-}
-
 
 #=========
 # Aliases
@@ -104,5 +138,3 @@ alias gc='git checkout'
 alias gl='git log --graph --pretty=format:"%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset" --abbrev-commit --date=relative'
 alias tcc='tmux -CC'
 alias python='python3'
-
-export PATH="$HOME/.poetry/bin:$PATH"
