@@ -68,6 +68,9 @@ PATH="$HOME/.poetry/bin:$PATH"
 # Ensure openblas has been set up, which is used for Numpy to work
 OPENBLAS="$(brew --prefix openblas)"
 
+# Enable MPS fallback
+PYTORCH_ENABLE_MPS_FALLBACK="1"
+
 
 #=======================
 # Convenience shortcuts
