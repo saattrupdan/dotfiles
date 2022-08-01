@@ -111,11 +111,10 @@ newproj(){
     else
         source "$HOME/.venv/bin/activate"
     fi
-    if [ ! -d "$HOME/.cookiecutters/saattrupdan-template" ]; then
-        cookiecutter gh:saattrupdan/saattrupdan-template -o "$HOME/gitsky"
-    else
-        cookiecutter saattrupdan-template -o "$HOME/gitsky"
+    if [ -d "$HOME/.cookiecutters/saattrupdan-template" ]; then
+        rm -rf "$HOME/.cookiecutters/saattrupdan-template"
     fi
+    cookiecutter gh:saattrupdan/saattrupdan-template -o "$HOME/gitsky"
     deactivate
     cd "$HOME/gitsky"
 }
