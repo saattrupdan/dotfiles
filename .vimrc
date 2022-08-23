@@ -177,6 +177,10 @@ nnoremap <leader>n :NERDTreeFocus<CR>
 nnoremap <leader><CR> gwgw
 vnoremap <leader><CR> gw<CR>
 
+" Copilot
+inoremap <silent><script><expr> $ copilot#Accept("\<CR>")
+let g:copilot_no_tab_map = v:true
+
 
 "===============
 " Custom macros
