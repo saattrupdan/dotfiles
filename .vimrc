@@ -47,6 +47,9 @@ call plug#begin('~/.vim/plugged')
     " Switch to absolute line numbers when relative numbers don't make sense
     Plug 'jeffkreeftmeijer/vim-numbertoggle'
 
+    " R support
+    Plug 'jalvesaq/Nvim-R', {'branch': 'stable'}
+
 call plug#end()
 
 
@@ -107,7 +110,7 @@ set expandtab
 set ai
 
 " Offset lines when scrolling
-set scrolloff=8
+set scrolloff=30
 
 " Faster update time, default is 4000 = 4s
 set updatetime=50
@@ -178,8 +181,8 @@ nnoremap <leader><CR> gwgw
 vnoremap <leader><CR> gw<CR>
 
 " Copilot
-inoremap <silent><script><expr> $ copilot#Accept("\<CR>")
 let g:copilot_no_tab_map = v:true
+inoremap <silent><script><expr> $ copilot#Accept("\<CR>")
 
 
 "===============
