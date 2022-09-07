@@ -185,8 +185,8 @@ let g:copilot_no_tab_map = v:true
 inoremap <silent><script><expr> $ copilot#Accept("\<CR>")
 
 " Breakpoints in Python
-nnoremap <leader><leader> obreakpoint()<esc>
-inoremap <C-b> breakpoint()
+nnoremap <leader><leader> obreakpoint()<esc>:w<CR>
+inoremap <C-b> breakpoint()<esc>:w<CR>
 
 "===============
 " Custom macros
