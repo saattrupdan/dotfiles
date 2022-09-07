@@ -187,6 +187,7 @@ inoremap <silent><script><expr> $ copilot#Accept("\<CR>")
 " Breakpoints in Python
 nnoremap <leader><leader> obreakpoint()<esc>:w<CR>
 inoremap <C-b> breakpoint()<esc>:w<CR>
+vnoremap <leader><leader> :s/\n/<temp>/g<CR>:s/\( *\)\([^ ].*\)/\1try:\r\1\t\2\r\1except:\r\1\tbreakpoint()\r<CR><esc>:nohlsearch<CR>kkk:s/<temp>/\r\t/g<CR>ddjj:w<CR>
 
 "===============
 " Custom macros
