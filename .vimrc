@@ -17,9 +17,6 @@ call plug#begin('~/.vim/plugged')
     " File manager
     Plug 'preservim/nerdtree'
 
-    " Tab completion
-    "Plug 'ervandew/supertab'
-
     " Dealing with LaTeX files
     Plug 'lervag/vimtex'
 
