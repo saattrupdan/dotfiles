@@ -18,7 +18,7 @@ call plug#begin('~/.vim/plugged')
     Plug 'preservim/nerdtree'
 
     " Tab completion
-    Plug 'ervandew/supertab'
+    "Plug 'ervandew/supertab'
 
     " Dealing with LaTeX files
     Plug 'lervag/vimtex'
@@ -48,7 +48,7 @@ call plug#begin('~/.vim/plugged')
     Plug 'jeffkreeftmeijer/vim-numbertoggle'
 
     " R support
-    Plug 'jalvesaq/Nvim-R', {'branch': 'stable'}
+    Plug 'jalvesaq/Nvim-R'
 
 call plug#end()
 
@@ -188,6 +188,9 @@ inoremap <silent><script><expr> $ copilot#Accept("\<CR>")
 nnoremap <leader><leader> obreakpoint()<esc>:w<CR>
 inoremap <C-b> breakpoint()<esc>:w<CR>
 vnoremap <leader><leader> :s/\n/<temp>/g<CR>:s/\( *\)\([^ ].*\)/\1try:\r\1\t\2\r\1except:\r\1\tbreakpoint()\r<CR><esc>:nohlsearch<CR>kkk:s/<temp>/\r\t/g<CR>ddjj:w<CR>
+
+" Enable tab completion for Coc
+inoremap <silent><expr> <tab> coc#pum#visible() ? coc#pum#confirm() : "\<tab>"
 
 "===============
 " Custom macros
