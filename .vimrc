@@ -190,8 +190,8 @@ vnoremap <leader><leader> :s/\n/<temp>/g<CR>:s/\( *\)\([^ ].*\)/\1try:\r\1\t\2\r
 inoremap <silent><expr> <tab> coc#pum#visible() ? coc#pum#confirm() : "\<tab>"
 
 " Enable using j and k for Coc autocompletion
-inoremap <silent><expr> <C-j> coc#pum#visible() ? coc#pum#next(0) : "\<C-j>"
-inoremap <silent><expr> <C-k> coc#pum#visible() ? coc#pum#prev(0) : "\<C-k>"
+inoremap <silent><expr> J coc#pum#visible() ? coc#pum#next(0) : "\J"
+inoremap <silent><expr> K coc#pum#visible() ? coc#pum#prev(0) : "\K"
 
 "===============
 " Custom macros
