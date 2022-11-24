@@ -193,8 +193,8 @@ inoremap <silent><expr> <tab> coc#pum#visible() ? coc#pum#confirm() : "\<tab>"
 inoremap <silent><expr> J coc#pum#visible() ? coc#pum#next(0) : "\J"
 inoremap <silent><expr> K coc#pum#visible() ? coc#pum#prev(0) : "\K"
 
-# Switch from Terminal mode to Normal mode using <Esc>
-tnoremap <Esc> <C-\><C-n>
+" Switch from Terminal mode to Normal mode
+tnoremap <leader>nn <C-\><C-n>
 
 "===============
 " Custom macros
