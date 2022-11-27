@@ -47,6 +47,11 @@ call plug#begin('~/.vim/plugged')
     " R support
     Plug 'jalvesaq/Nvim-R'
 
+    " Fuzzy finder
+    Plug 'nvim-lua/plenary.nvim'
+    Plug 'nvim-telescope/telescope.nvim', { 'tag': '0.1.0' }
+    Plug 'nvim-telescope/telescope-fzf-native.nvim', { 'do': 'make' }
+
 call plug#end()
 
 
@@ -195,6 +200,12 @@ inoremap <silent><expr> K coc#pum#visible() ? coc#pum#prev(0) : "\K"
 
 " Switch from Terminal mode to Normal mode
 tnoremap <leader>nn <C-\><C-n>
+
+" Find files using Telescope command-line sugar
+nnoremap <leader>ff <cmd>Telescope git_files<cr>
+nnoremap <leader>fg <cmd>Telescope live_grep<cr>
+nnoremap <leader>fb <cmd>Telescope buffers<cr>
+nnoremap <leader>fh <cmd>Telescope help_tags<cr>
 
 "===============
 " Custom macros
