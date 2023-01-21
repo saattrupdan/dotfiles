@@ -141,3 +141,5 @@ alias gl='git log --graph --pretty=format:"%Cred%h%Creset -%C(yellow)%d%Creset %
 alias tcc='tmux -CC'
 alias python='python3'
 alias code='open -a "Visual Studio Code"'
+
+eval $(thefuck --alias)

@@ -52,6 +52,9 @@ call plug#begin('~/.vim/plugged')
     Plug 'nvim-telescope/telescope.nvim', { 'tag': '0.1.0' }
     Plug 'nvim-telescope/telescope-fzf-native.nvim', { 'do': 'make' }
 
+    " Vim Be Good
+    Plug 'ThePrimeagen/vim-be-good'
+
 call plug#end()
 
 
@@ -98,12 +101,6 @@ set relativenumber
 
 " Extra linting column
 set signcolumn=yes
-
-" Tab size
-set tabstop=4
-
-" Shift size using > and <
-set shiftwidth=4
 
 " Convert tabs into spaces
 set expandtab
@@ -261,5 +258,19 @@ augroup SAATTRUPDAN
     " Exit Vim if NERDTree is the only window left.
     autocmd BufEnter * if tabpagenr('$') == 1 && winnr('$') == 1 && exists('b:NERDTree') && b:NERDTree.isTabTree() |
         \ quit | endif
+
+    " Set tab size depending on filetype
+    autocmd FileType python set tabstop=4
+    autocmd FileType html set tabstop=2
+    autocmd FileType css set tabstop=2
+    autocmd FileType javascript set tabstop=2
+    autocmd FileType vue set tabstop=2
+
+    " Set shift size using > and < depending on filetype
+    autocmd FileType python set shiftwidth=4
+    autocmd FileType html set shiftwidth=2
+    autocmd FileType css set shiftwidth=2
+    autocmd FileType javascript set shiftwidth=2
+    autocmd FileType vue set shiftwidth=2
 
 augroup END
