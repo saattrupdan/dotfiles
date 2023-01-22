@@ -2,7 +2,7 @@
 " Load external Vim plugins with vim-plug
 "=========================================
 
-" Set up VimPlug if it is not already
+" Set up VimPlug if it is not already installed
 let data_dir = has('nvim') ? stdpath('data') . '/site' : '~/.vim'
 if empty(glob(data_dir . '/autoload/plug.vim'))
   silent execute '!curl -fLo '.data_dir.'/autoload/plug.vim --create-dirs  https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim'
@@ -114,7 +114,7 @@ set scrolloff=30
 " Faster update time, default is 4000 = 4s
 set updatetime=50
 
-" Map ½ to $ to enable easier navigation
+" Map ½ and § to $ to enable easier navigation
 map ½ $
 imap ½ $
 map § $
@@ -179,9 +179,9 @@ nnoremap <leader>n :NERDTreeFocus<CR>
 nnoremap <leader><CR> gwgw
 vnoremap <leader><CR> gw<CR>
 
-" Copilot
+" Copilot completion
 let g:copilot_no_tab_map = v:true
-inoremap <silent><script><expr> $ copilot#Accept("\<CR>")
+inoremap <silent><script><expr> $ copilot#Accept("$")
 
 " Breakpoints in Python
 nnoremap <leader><leader> obreakpoint()<esc>:w<CR>
