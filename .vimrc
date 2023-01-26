@@ -105,6 +105,10 @@ set signcolumn=yes
 " Convert tabs into spaces
 set expandtab
 
+" Set default number of tab spaces
+set tabstop=4
+set shiftwidth=4
+
 " Enable auto-indent
 set ai
 
