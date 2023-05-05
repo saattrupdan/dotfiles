@@ -90,7 +90,7 @@ rc(){
 # Activate a virtual environment, or build it if it is not there
 vv(){
     if [ ! -d '.venv' ]; then
-        python3 -m venv .venv
+        python3.10 -m venv .venv
         source .venv/bin/activate
         pip3 install --upgrade pip setuptools wheel
         if [ -f 'requirements.txt' ]; then
