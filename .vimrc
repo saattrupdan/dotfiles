@@ -127,6 +127,9 @@ imap § $
 " Set tex to be latex
 let g:tex_flavor = 'latex'
 
+" NERDTree set up
+let g:NERDTreeIgnore = ['^__pycache__$']
+
 
 "==============================
 " Deal with clipboard nonsense
