@@ -197,10 +197,15 @@ vnoremap <leader><leader> :s/\n/<temp>/g<CR>:s/\( *\)\([^ ].*\)/\1try:\r\1\t\2\r
 
 " Enable tab completion for Coc
 inoremap <silent><expr> <tab> coc#pum#visible() ? coc#pum#confirm() : "\<tab>"
+inoremap <silent><expr> <ESC> coc#pum#visible() ? coc#pum#cancel() : "\<ESC>"
 
-" Enable using j and k for Coc autocompletion
-inoremap <silent><expr> J coc#pum#visible() ? coc#pum#next(0) : "\J"
-inoremap <silent><expr> K coc#pum#visible() ? coc#pum#prev(0) : "\K"
+" Coc autocompletion scrolling
+inoremap <silent><expr> j coc#pum#visible() ? coc#pum#next(0) : "\j"
+inoremap <silent><expr> k coc#pum#visible() ? coc#pum#prev(0) : "\k"
+
+" Coc tooltip scrolling
+inoremap <silent><nowait><expr> J coc#float#has_scroll() ? "\<c-r>=coc#float#scroll(1)\<cr>" : "\J"
+inoremap <silent><nowait><expr> K coc#float#has_scroll() ? "\<c-r>=coc#float#scroll(0)\<cr>" : "\K"
 
 " Switch from Terminal mode to Normal mode
 tnoremap <leader>nn <C-\><C-n>
@@ -211,9 +216,6 @@ nnoremap <leader>fg <cmd>Telescope live_grep<cr>
 nnoremap <leader>fb <cmd>Telescope buffers<cr>
 nnoremap <leader>fh <cmd>Telescope help_tags<cr>
 
-" Coc.nvim scrolling
-inoremap <silent><nowait><expr> J coc#float#has_scroll() ? "\<c-r>=coc#float#scroll(1)\<cr>" : "\<Right>"
-inoremap <silent><nowait><expr> K coc#float#has_scroll() ? "\<c-r>=coc#float#scroll(0)\<cr>" : "\<Left>"
 
 
 "===============
