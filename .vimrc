@@ -199,12 +199,12 @@ vnoremap <leader><leader> :s/\n/<temp>/g<CR>:s/\( *\)\([^ ].*\)/\1try:\r\1\t\2\r
 " Coc autocompletion
 inoremap <silent><expr> <tab> coc#pum#visible() ? coc#pum#confirm() : "\<tab>"
 inoremap <silent><expr> <esc> coc#pum#visible() ? "\<c-r>=coc#pum#cancel()\<cr><esc>" : "\<esc>"
-inoremap <silent><expr> j coc#pum#visible() ? coc#pum#next(0) : "\j"
-inoremap <silent><expr> k coc#pum#visible() ? coc#pum#prev(0) : "\k"
+inoremap <silent><expr> J coc#pum#visible() ? coc#pum#next(0) : "\J"
+inoremap <silent><expr> K coc#pum#visible() ? coc#pum#prev(0) : "\K"
 
 " Coc tooltip scrolling
-inoremap <silent><nowait><expr> J coc#float#has_scroll() ? "\<c-r>=coc#float#scroll(1)\<cr>" : "\J"
-inoremap <silent><nowait><expr> K coc#float#has_scroll() ? "\<c-r>=coc#float#scroll(0)\<cr>" : "\K"
+inoremap <silent><nowait><expr> <c-j> coc#float#has_scroll() ? "\<c-r>=coc#float#scroll(1)\<cr>" : "\<c-j>"
+inoremap <silent><nowait><expr> <c-k> coc#float#has_scroll() ? "\<c-r>=coc#float#scroll(0)\<cr>" : "\<c-k>"
 
 " Switch from Terminal mode to Normal mode
 tnoremap <leader>nn <C-\><C-n>
