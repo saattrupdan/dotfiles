@@ -196,11 +196,9 @@ nnoremap <leader><leader> obreakpoint()<esc>:w<CR>
 inoremap <C-b> breakpoint()<esc>:w<CR>
 vnoremap <leader><leader> :s/\n/<temp>/g<CR>:s/\( *\)\([^ ].*\)/\1try:\r\1\t\2\r\1except:\r\1\tbreakpoint()\r<CR><esc>:nohlsearch<CR>kkk:s/<temp>/\r\t/g<CR>ddjj:w<CR>
 
-" Enable tab completion for Coc
+" Coc autocompletion
 inoremap <silent><expr> <tab> coc#pum#visible() ? coc#pum#confirm() : "\<tab>"
-inoremap <silent><expr> <ESC> coc#pum#visible() ? coc#pum#cancel() : "\<ESC>"
-
-" Coc autocompletion scrolling
+inoremap <silent><expr> <esc> coc#pum#visible() ? "\<c-r>=coc#pum#cancel()\<cr><esc>" : "\<esc>"
 inoremap <silent><expr> j coc#pum#visible() ? coc#pum#next(0) : "\j"
 inoremap <silent><expr> k coc#pum#visible() ? coc#pum#prev(0) : "\k"
 
