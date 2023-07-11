@@ -211,7 +211,7 @@ nnoremap <leader>fg <cmd>Telescope live_grep<cr>
 nnoremap <leader>fb <cmd>Telescope buffers<cr>
 nnoremap <leader>fh <cmd>Telescope help_tags<cr>
 
-# Coc.nvim scrolling
+" Coc.nvim scrolling
 nnoremap <silent><nowait><expr> J coc#float#has_scroll() ? coc#float#scroll(1) : "\<C-f>"
 nnoremap <silent><nowait><expr> K coc#float#has_scroll() ? coc#float#scroll(0) : "\<C-b>"
 inoremap <silent><nowait><expr> J coc#float#has_scroll() ? "\<c-r>=coc#float#scroll(1)\<cr>" : "\<Right>"
@@ -251,9 +251,6 @@ command T call EnableTeXKeyBindings()
 "=====================
 " Automatic functions
 "=====================
-
-" Popup when hovering cursor
-"autocmd CursorHold * if ! coc#float#has_float() | call CocActionAsync('doHover') | endif
 
 augroup SAATTRUPDAN
 
