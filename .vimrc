@@ -38,7 +38,7 @@ call plug#begin('~/.vim/plugged')
     " Status bar, with current branch information
     Plug 'itchyny/lightline.vim'
 
-    " Colour scheme
+    " Colour schemes
     Plug 'gruvbox-community/gruvbox'
 
     " Switch to absolute line numbers when relative numbers don't make sense
@@ -210,6 +210,15 @@ nnoremap <leader>ff <cmd>Telescope git_files<cr>
 nnoremap <leader>fg <cmd>Telescope live_grep<cr>
 nnoremap <leader>fb <cmd>Telescope buffers<cr>
 nnoremap <leader>fh <cmd>Telescope help_tags<cr>
+
+# Coc.nvim scrolling
+nnoremap <silent><nowait><expr> J coc#float#has_scroll() ? coc#float#scroll(1) : "\<C-f>"
+nnoremap <silent><nowait><expr> K coc#float#has_scroll() ? coc#float#scroll(0) : "\<C-b>"
+inoremap <silent><nowait><expr> J coc#float#has_scroll() ? "\<c-r>=coc#float#scroll(1)\<cr>" : "\<Right>"
+inoremap <silent><nowait><expr> K coc#float#has_scroll() ? "\<c-r>=coc#float#scroll(0)\<cr>" : "\<Left>"
+vnoremap <silent><nowait><expr> J coc#float#has_scroll() ? coc#float#scroll(1) : "\<C-f>"
+vnoremap <silent><nowait><expr> K coc#float#has_scroll() ? coc#float#scroll(0) : "\<C-b>"
+
 
 "===============
 " Custom macros
