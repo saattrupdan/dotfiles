@@ -274,6 +274,7 @@ augroup SAATTRUPDAN
     autocmd FileType html set tabstop=2
     autocmd FileType css set tabstop=2
     autocmd FileType javascript set tabstop=2
+    autocmd FileType typescript set tabstop=2
     autocmd FileType vue set tabstop=2
 
     " Set shift size using > and < depending on filetype
@@ -281,6 +282,7 @@ augroup SAATTRUPDAN
     autocmd FileType html set shiftwidth=2
     autocmd FileType css set shiftwidth=2
     autocmd FileType javascript set shiftwidth=2
+    autocmd FileType typescript set shiftwidth=2
     autocmd FileType vue set shiftwidth=2
 
 augroup END

@@ -100,37 +100,8 @@ vv(){
     fi
 }
 
-newpersonalproject(){
-    if [ ! -d "$HOME/.venv" ]; then
-        python3 -m venv "$HOME/.venv"
-        source "$HOME/.venv/bin/activate"
-        pip3 install --upgrade pip wheel setuptools
-        pip3 install --upgrade cookiecutter
-    else
-        source "$HOME/.venv/bin/activate"
-    fi
-    if [ -d "$HOME/.cookiecutters/saattrupdan-template" ]; then
-        rm -rf "$HOME/.cookiecutters/saattrupdan-template"
-    fi
-    cookiecutter gh:saattrupdan/saattrupdan-template -o "$HOME/gitsky"
-    deactivate
-    cd "$HOME/gitsky"
-}
-
-newalexandraproject(){
-    if [ ! -d "$HOME/.venv" ]; then
-        python3 -m venv "$HOME/.venv"
-        source "$HOME/.venv/bin/activate"
-        pip3 install --upgrade pip wheel setuptools
-        pip3 install --upgrade cookiecutter
-    else
-        source "$HOME/.venv/bin/activate"
-    fi
-    if [ -d "$HOME/.cookiecutters/alexandra-ml-template" ]; then
-        rm -rf "$HOME/.cookiecutters/alexandra-ml-template"
-    fi
-    cookiecutter gh:alexandrainst/alexandra-ml-template -o "$HOME/gitsky"
-    deactivate
+newproject(){
+    cookiecutter -f gh:alexandrainst/alexandra-ml-template -o "$HOME/gitsky"
     cd "$HOME/gitsky"
 }
 
