@@ -49,7 +49,7 @@ call plug#begin('~/.vim/plugged')
 
     " Fuzzy finder
     Plug 'nvim-lua/plenary.nvim'
-    Plug 'nvim-telescope/telescope.nvim', { 'tag': '0.1.0' }
+    Plug 'nvim-telescope/telescope.nvim', { 'tag': '0.1.4' }
     Plug 'nvim-telescope/telescope-fzf-native.nvim', { 'do': 'make' }
     Plug 'nvim-treesitter/nvim-treesitter', {'do': ':TSUpdate'}
 

@@ -129,3 +129,6 @@ alias python='python3'
 alias code='open -a "Visual Studio Code"'
 
 eval $(thefuck --alias)
+
+# Created by `pipx` on 2023-10-20 14:58:32
+export PATH="$PATH:/Users/dan/.local/bin"
