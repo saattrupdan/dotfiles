@@ -25,5 +25,5 @@ fi
 if [ -d "$HOME/.local/bin" ]; then
     PATH="$HOME/.local/bin:$PATH"
 fi
-. "$HOME/.cargo/env"
 source /opt/homebrew/opt/nvm/nvm.sh
+. "$HOME/.cargo/env"

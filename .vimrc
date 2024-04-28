@@ -131,6 +131,9 @@ let g:tex_flavor = 'latex'
 " NERDTree set up
 let g:NERDTreeIgnore = ['^__pycache__$']
 
+" Merginal set up
+let g:merginal_remoteVisible = 0
+
 
 "==============================
 " Deal with clipboard nonsense
