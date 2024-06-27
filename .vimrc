@@ -17,9 +17,6 @@ call plug#begin('~/.vim/plugged')
     " File manager
     Plug 'preservim/nerdtree'
 
-    " Dealing with LaTeX files
-    Plug 'lervag/vimtex'
-
     " Code completion and Linting through 'CocInstall coc-pyright'
     Plug 'neoclide/coc.nvim', {'branch': 'release'}
 
@@ -28,12 +25,6 @@ call plug#begin('~/.vim/plugged')
 
     " Fugitive extension for branches
     Plug 'idanarye/vim-merginal'
-
-    " Julia syntax highlighting
-    Plug 'JuliaEditorSupport/julia-vim'
-
-    " Cypher syntax highlighting
-    Plug 'memgraph/cypher.vim'
 
     " Status bar, with current branch information
     Plug 'itchyny/lightline.vim'
@@ -44,17 +35,23 @@ call plug#begin('~/.vim/plugged')
     " Switch to absolute line numbers when relative numbers don't make sense
     Plug 'jeffkreeftmeijer/vim-numbertoggle'
 
+    " LaTeX supoort
+    Plug 'lervag/vimtex'
+
     " R support
     Plug 'jalvesaq/Nvim-R'
+
+    " Julia support
+    Plug 'JuliaEditorSupport/julia-vim'
+
+    " Cypher support
+    Plug 'memgraph/cypher.vim'
 
     " Fuzzy finder
     Plug 'nvim-lua/plenary.nvim'
     Plug 'nvim-telescope/telescope.nvim', { 'tag': '0.1.4' }
     Plug 'nvim-telescope/telescope-fzf-native.nvim', { 'do': 'make' }
     Plug 'nvim-treesitter/nvim-treesitter', {'do': ':TSUpdate'}
-
-    " Vim Be Good
-    Plug 'ThePrimeagen/vim-be-good'
 
 call plug#end()
 
