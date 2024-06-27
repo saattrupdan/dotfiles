@@ -219,7 +219,6 @@ nnoremap <leader>fb <cmd>Telescope buffers<cr>
 nnoremap <leader>fh <cmd>Telescope help_tags<cr>
 
 
-
 "===============
 " Custom macros
 "===============
@@ -261,9 +260,9 @@ augroup SAATTRUPDAN
     autocmd BufWritePre * :call RemoveTrailingWhitespace()
 
     " Settings for files (and not Athame shell)
-    autocmd BufRead,BufNewFile * set textwidth=87
-    autocmd BufRead,BufNewFile * set wrapmargin=87
-    autocmd BufRead,BufNewFile * set colorcolumn=88
+    autocmd BufRead,BufNewFile * set textwidth=88
+    autocmd BufRead,BufNewFile * set wrapmargin=88
+    autocmd BufRead,BufNewFile * set colorcolumn=89
 
     " Start NERDTree and put the cursor back in the other window.
     autocmd VimEnter * silent NERDTree | wincmd p
