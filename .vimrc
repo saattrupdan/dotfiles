@@ -275,6 +275,7 @@ augroup SAATTRUPDAN
     autocmd FileType javascript set tabstop=2
     autocmd FileType typescript set tabstop=2
     autocmd FileType vue set tabstop=2
+    autocmd FileType markdown set tabstop=2
 
     " Set shift size using > and < depending on filetype
     autocmd FileType python set shiftwidth=4
@@ -283,5 +284,6 @@ augroup SAATTRUPDAN
     autocmd FileType javascript set shiftwidth=2
     autocmd FileType typescript set shiftwidth=2
     autocmd FileType vue set shiftwidth=2
+    autocmd FileType markdown set shiftwidth=2
 
 augroup END
