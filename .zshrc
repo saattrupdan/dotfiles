@@ -46,13 +46,7 @@ PROMPT+='%F{154}%2~$ %f'
 bindkey -v
 
 # Set up shell integration
-test -e "${HOME}/.iterm2_shell_integration.zsh" && source "${HOME}/.iterm2_shell_integration.zsh"
-
-# PDF creation using Pandoc
-pdf(){
-  pandoc $1 -o ${1:0:(-3)}.pdf;
-  echo "Created ${1:0:(-3)}.pdf"
-}
+# test -e "${HOME}/.iterm2_shell_integration.zsh" && source "${HOME}/.iterm2_shell_integration.zsh"
 
 
 #==================================
@@ -60,17 +54,20 @@ pdf(){
 #==================================
 
 # Set up PATH
-PATH="$HOME/.poetry/bin:$PATH"
-PATH="$HOME/Applications/nvim/bin:$PATH"
-PATH="/opt/homebrew/bin:$PATH"
-PATH="$HOME/.poetry/bin:$PATH"
+export PATH="$HOME/.poetry/bin:$PATH"
+export PATH="$HOME/Applications/nvim/bin:$PATH"
+export PATH="/opt/homebrew/bin:$PATH"
+export PATH="$HOME/.poetry/bin:$PATH"
+export PATH="$PATH:/Users/dan/.local/bin"
 
 # Ensure openblas has been set up, which is used for Numpy to work
-OPENBLAS="$(brew --prefix openblas)"
+export OPENBLAS="$(brew --prefix openblas)"
 
 # Enable MPS fallback
-PYTORCH_ENABLE_MPS_FALLBACK="1"
+export PYTORCH_ENABLE_MPS_FALLBACK="1"
 
+# NVM directory
+export NVM_DIR="$HOME/.config/nvm"
 
 #=======================
 # Convenience shortcuts
@@ -105,6 +102,15 @@ newproject(){
     cd "$HOME/gitsky"
 }
 
+top(){
+    gotop -c monokai
+}
+
+nvm(){
+    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+    [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
+}
+
 
 #=========
 # Aliases
@@ -129,6 +135,3 @@ alias python='python3'
 alias code='open -a "Visual Studio Code"'
 
 eval $(thefuck --alias)
-
-# Created by `pipx` on 2023-10-20 14:58:32
-export PATH="$PATH:/Users/dan/.local/bin"

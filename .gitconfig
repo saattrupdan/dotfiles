@@ -20,3 +20,5 @@
 	smudge = git-lfs smudge -- %f
 [maintenance]
 	repo = /Users/dan/zsh-snap
+[commit]
+	gpgsign = false

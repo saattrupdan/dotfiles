@@ -35,6 +35,12 @@ call plug#begin('~/.vim/plugged')
     " Switch to absolute line numbers when relative numbers don't make sense
     Plug 'jeffkreeftmeijer/vim-numbertoggle'
 
+    " Fuzzy finder
+    Plug 'nvim-lua/plenary.nvim'
+    Plug 'nvim-telescope/telescope.nvim', { 'tag': '0.1.4' }
+    Plug 'nvim-telescope/telescope-fzf-native.nvim', { 'do': 'make' }
+    Plug 'nvim-treesitter/nvim-treesitter', {'do': ':TSUpdate'}
+
     " LaTeX supoort
     Plug 'lervag/vimtex'
 
@@ -47,11 +53,9 @@ call plug#begin('~/.vim/plugged')
     " Cypher support
     Plug 'memgraph/cypher.vim'
 
-    " Fuzzy finder
-    Plug 'nvim-lua/plenary.nvim'
-    Plug 'nvim-telescope/telescope.nvim', { 'tag': '0.1.4' }
-    Plug 'nvim-telescope/telescope-fzf-native.nvim', { 'do': 'make' }
-    Plug 'nvim-treesitter/nvim-treesitter', {'do': ':TSUpdate'}
+    " SQLite support
+    Plug 'tpope/vim-dadbod'
+    Plug 'kristijanhusak/vim-dadbod-ui'
 
 call plug#end()
 
