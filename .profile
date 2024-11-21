@@ -27,3 +27,6 @@ if [ -d "$HOME/.local/bin" ]; then
 fi
 source /opt/homebrew/opt/nvm/nvm.sh
 . "$HOME/.cargo/env"
+
+# Added by LM Studio CLI (lms)
+export PATH="$PATH:/Users/dan/.cache/lm-studio/bin"

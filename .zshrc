@@ -57,6 +57,7 @@ bindkey -v
 export PATH="$HOME/.poetry/bin:$PATH"
 export PATH="$HOME/Applications/nvim/bin:$PATH"
 export PATH="/opt/homebrew/bin:$PATH"
+export PATH="/usr/local/sbin:$PATH"
 export PATH="$HOME/.poetry/bin:$PATH"
 export PATH="$PATH:/Users/dan/.local/bin"
 
@@ -87,7 +88,7 @@ rc(){
 # Activate a virtual environment, or build it if it is not there
 vv(){
     if [ ! -d '.venv' ]; then
-        python3.10 -m venv --upgrade-deps .venv
+        python3.11 -m venv --upgrade-deps .venv
         source .venv/bin/activate
         if [ -f 'requirements.txt' ]; then
             pip3 install -r requirements.txt
@@ -135,3 +136,8 @@ alias python='python3'
 alias code='open -a "Visual Studio Code"'
 
 eval $(thefuck --alias)
+
+. "$HOME/.cargo/env"
+
+# Added by LM Studio CLI (lms)
+export PATH="$PATH:/Users/dan/.cache/lm-studio/bin"

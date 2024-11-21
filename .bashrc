@@ -112,3 +112,6 @@ if ! shopt -oq posix; then
   fi
 fi
 . "$HOME/.cargo/env"
+
+# Added by LM Studio CLI (lms)
+export PATH="$PATH:/Users/dan/.cache/lm-studio/bin"
