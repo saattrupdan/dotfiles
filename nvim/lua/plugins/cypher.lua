@@ -1,0 +1,1 @@
+return { "memgraph/cypher.vim" }
