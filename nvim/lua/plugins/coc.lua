@@ -21,6 +21,7 @@ return {
       "coc-pyright",
       "@yaegassy/coc-volar",
       "coc-tsserver",
+      "coc-lua",
     }
   end,
 }
