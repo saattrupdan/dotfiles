@@ -25,6 +25,6 @@ vim.api.nvim_create_autocmd("BufLeave", {
 })
 
 return {
-  "saattrupdan/let-it-snow.nvim",
+  "marcussimonsen/let-it-snow.nvim",
   opts = { delay = 300 },
 }
