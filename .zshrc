@@ -132,5 +132,5 @@ alias code='open -a "Visual Studio Code"'
 # Misc setup
 #============
 
-eval $(thefuck --alias)
-eval $(uv generate-shell-completion zsh)
+eval "$(thefuck --alias)"
+eval "$(uv generate-shell-completion zsh)"
