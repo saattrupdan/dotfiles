@@ -54,12 +54,13 @@ bindkey -v
 #==================================
 
 # Set up PATH
-export PATH="$HOME/.poetry/bin:$PATH"
-export PATH="$HOME/Applications/nvim/bin:$PATH"
 export PATH="/opt/homebrew/bin:$PATH"
 export PATH="/usr/local/sbin:$PATH"
 export PATH="$HOME/.poetry/bin:$PATH"
+export PATH="$HOME/Applications/nvim/bin:$PATH"
 export PATH="$PATH:/Users/dan/.local/bin"
+export PATH="$PATH:/Users/dan/.cache/lm-studio/bin"
+export PATH="$HOME/.cargo/bin:$PATH"
 
 # Ensure openblas has been set up, which is used for Numpy to work
 export OPENBLAS="$(brew --prefix openblas)"
@@ -103,15 +104,6 @@ newproject(){
     cd "$HOME/gitsky"
 }
 
-top(){
-    gotop -c monokai
-}
-
-nvm(){
-    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-    [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
-}
-
 
 #=========
 # Aliases
@@ -135,9 +127,10 @@ alias tcc='tmux -CC'
 alias python='python3'
 alias code='open -a "Visual Studio Code"'
 
+
+#============
+# Misc setup
+#============
+
 eval $(thefuck --alias)
-
-. "$HOME/.cargo/env"
-
-# Added by LM Studio CLI (lms)
-export PATH="$PATH:/Users/dan/.cache/lm-studio/bin"
+eval $(uv generate-shell-completion zsh)
