@@ -2,7 +2,7 @@ vim.api.nvim_create_augroup("SnowGroup", {})
 
 vim.api.nvim_create_autocmd("BufEnter", {
   group = "SnowGroup",
-  pattern = "*",
+  pattern = { "*.py", "*.lua", "*.md", "*.txt", "*.json", "*.yaml", "*.toml", "*.sh" },
   callback = function()
     local snow = require("let-it-snow.snow")
     buf = vim.api.nvim_get_current_buf()
@@ -14,7 +14,7 @@ vim.api.nvim_create_autocmd("BufEnter", {
 
 vim.api.nvim_create_autocmd("BufLeave", {
   group = "SnowGroup",
-  pattern = "*",
+  pattern = { "*.py", "*.lua", "*.md", "*.txt", "*.json", "*.yaml", "*.toml", "*.sh" },
   callback = function()
     local snow = require("let-it-snow.snow")
     buf = vim.api.nvim_get_current_buf()
@@ -26,5 +26,5 @@ vim.api.nvim_create_autocmd("BufLeave", {
 
 return {
   "marcussimonsen/let-it-snow.nvim",
-  opts = { delay = 300 },
+  opts = { delay = 500 },
 }
