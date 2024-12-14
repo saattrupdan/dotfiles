@@ -2,7 +2,7 @@ vim.api.nvim_create_augroup("SnowGroup", {})
 
 vim.api.nvim_create_autocmd("BufEnter", {
   group = "SnowGroup",
-  pattern = "*.py",
+  pattern = "*",
   callback = function()
     local snow = require("let-it-snow.snow")
     buf = vim.api.nvim_get_current_buf()
@@ -14,7 +14,7 @@ vim.api.nvim_create_autocmd("BufEnter", {
 
 vim.api.nvim_create_autocmd("BufLeave", {
   group = "SnowGroup",
-  pattern = "*.py",
+  pattern = "*",
   callback = function()
     local snow = require("let-it-snow.snow")
     buf = vim.api.nvim_get_current_buf()
