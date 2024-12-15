@@ -25,8 +25,8 @@ vim.opt.signcolumn = "yes"
 vim.opt.expandtab = true
 
 -- Set default number of tab spaces
-vim.opt.tabstop = 4
-vim.opt.shiftwidth = 4
+vim.opt.tabstop = 2
+vim.opt.shiftwidth = 2
 
 -- Enable auto-indent
 vim.opt.ai = true
@@ -42,9 +42,3 @@ vim.opt.clipboard = "unnamed"
 
 -- Disable automatic copying selected text
 vim.opt.clipboard:remove "autoselect"
-
--- Tab size
-vim.opt.tabstop = 2
-
--- Shift size, using > and < will move text by this value
-vim.opt.shiftwidth = 2

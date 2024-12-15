@@ -133,4 +133,3 @@ alias code='open -a "Visual Studio Code"'
 #============
 
 eval "$(thefuck --alias)"
-eval "$(uv generate-shell-completion zsh)"
