@@ -3,14 +3,16 @@
 #=====================================
 
 # Set up Znap
-if [ ! -d ~/znap-plugins ]; then
+if [ ! -d ~/znap-plugins ]
+then
     git clone --depth 1 -- https://github.com/marlonrichert/zsh-snap.git
     source zsh-snap/install.zsh
 fi
 source ~/znap-plugins/zsh-snap/znap.zsh
 
 # Autocompletion
-if [ ! -d ~/znap-plugins/zsh-autocomplete ]; then
+if [ ! -d ~/znap-plugins/zsh-autocomplete ]
+then
     znap source marlonrichert/zsh-autocomplete
 fi
 source ~/znap-plugins/zsh-autocomplete/zsh-autocomplete.plugin.zsh
@@ -88,20 +90,32 @@ rc(){
 
 # Activate a virtual environment, or build it if it is not there
 vv(){
-    if [ ! -d '.venv' ]; then
-        python3.11 -m venv --upgrade-deps .venv
-        source .venv/bin/activate
-        if [ -f 'requirements.txt' ]; then
-            pip3 install -r requirements.txt
-        fi
-    else
-        source .venv/bin/activate
+  if [ ! -d '.venv' ]
+  then
+    python3.11 -m venv --upgrade-deps .venv
+    source .venv/bin/activate
+    if [ -f 'requirements.txt' ]
+    then
+      pip3 install -r requirements.txt
     fi
+  else
+    source .venv/bin/activate
+  fi
 }
 
 newproject(){
-    cookiecutter -f gh:alexandrainst/alexandra-ml-template -o "$HOME/gitsky"
-    cd "$HOME/gitsky"
+  cookiecutter -f gh:alexandrainst/alexandra-ml-template -o "$HOME/gitsky"
+  cd "$HOME/gitsky"
+}
+
+online(){
+  ping_std_err=$(ping -c 1 google.com 2>&1 1>/dev/null)
+  if [[ $ping_std_err == *"Unknown host"* ]]
+  then
+    echo "You are offline"
+  else
+    echo "You are online"
+  fi
 }
 
 

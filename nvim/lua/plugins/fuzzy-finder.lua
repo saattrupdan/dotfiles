@@ -5,7 +5,7 @@ return {
     { "BurntSushi/ripgrep" },
     {
       "nvim-tree/nvim-web-devicons",
-      opts = { default = true },
+      opts = {},
     },
     {
       "nvim-telescope/telescope-fzf-native.nvim",
