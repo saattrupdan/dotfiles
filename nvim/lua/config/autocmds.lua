@@ -27,5 +27,5 @@ vim.api.nvim_create_autocmd("FileType", {
 vim.api.nvim_create_autocmd("FileType", {
   group = "BasicGroup",
   pattern = "markdown",
-  command = "set tabstop=2 | set shiftwidth=2",
+  command = "set tabstop=4 | set shiftwidth=4",
 })
