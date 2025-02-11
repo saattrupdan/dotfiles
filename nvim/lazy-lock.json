@@ -6,7 +6,6 @@
   "lightline.vim": { "branch": "master", "commit": "e358557e1a9f9fc860416c8eb2e34c0404078155" },
   "markview.nvim": { "branch": "main", "commit": "c095a7c7c6343863fb3046781e295103e3e081ab" },
   "nerdtree": { "branch": "master", "commit": "9b465acb2745beb988eff3c1e4aa75f349738230" },
-  "nvim-treesitter": { "branch": "master", "commit": "a840137349fcc35b5ad2c718a9b034b93012fa43" },
   "nvim-web-devicons": { "branch": "master", "commit": "402377242b04be3f4f0f3720bd952df86e946c30" },
   "plenary.nvim": { "branch": "master", "commit": "3707cdb1e43f5cea73afb6037e6494e7ce847a66" },
   "ripgrep": { "branch": "master", "commit": "e2362d4d5185d02fa857bf381e7bd52e66fafc73" },
