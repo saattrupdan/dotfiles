@@ -146,4 +146,4 @@ alias code='open -a "Visual Studio Code"'
 # Misc setup
 #============
 
-eval "$(thefuck --alias)"
+export PATH="/usr/local/opt/openjdk/bin:$PATH"
