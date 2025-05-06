@@ -1,34 +1,59 @@
--- Ignore these files and directories
-vim.g.NERDTreeIgnore = {
-  "^__pycache__$",
-  "^\\.mypy_cache$",
-  "^\\.pytest_cache$",
-  "^\\.git$",
-  "^\\.DS_Store$",
-}
-
 -- Remaps
-vim.keymap.set("n", "<c-n>", ":NERDTreeToggle<cr>")
-vim.keymap.set("n", "<leader>n", ":NERDTreeFocus<cr>")
+vim.keymap.set("n", "<c-n>", ":NvimTreeToggle<cr>")
+vim.keymap.set("n", "<leader>n", ":NvimTreeFocus<cr>")
+
+vim.g.loaded_netrw = 1
+vim.g.loaded_netrwPlugin = 1
+
+vim.opt.termguicolors = true
 
 return {
-  "preservim/nerdtree",
+  "nvim-tree/nvim-tree.lua",
+  version = "*",
+  lazy = false,
+  requires = {
+    "nvim-tree/nvim-web-devicons"
+  },
   config = function()
-    -- Auto command group
-    vim.api.nvim_create_augroup("NERDTreeGroup", {})
-
-    -- Start NERDTree and put the cursor back in the other window
-    vim.api.nvim_create_autocmd("VimEnter", {
-      group = "NERDTreeGroup",
-      pattern = "*",
-      command = "silent NERDTree | wincmd p",
+    require("nvim-tree").setup({
+      git = {
+        enable = true,
+        ignore = true,
+      },
+      filters = {
+        dotfiles = false,
+        custom = { "^.git$" },
+      },
+      renderer = {
+        icons = {
+          show = {
+            file = true,
+            folder = false,
+            folder_arrow = true,
+            git = false,
+          },
+        },
+      },
     })
 
-    -- Exit Vim if NERDTree is the only window left.
+    local api = require("nvim-tree.api")
+    local view = require("nvim-tree.view")
+
+    -- Auto open NvimTree on startup
+    vim.api.nvim_create_autocmd("VimEnter", {
+      callback = function()
+        api.tree.open()
+        vim.cmd("wincmd p")
+      end
+    })
+
+    -- Close Neovim if NvimTree is the only window
     vim.api.nvim_create_autocmd("BufEnter", {
-      group = "NERDTreeGroup",
-      pattern = "*",
-      command = "if tabpagenr('$') == 1 && winnr('$') == 1 && exists('b:NERDTree') && b:NERDTree.isTabTree() | quit | endif",
+      callback = function()
+        if view.is_visible() and #vim.api.nvim_list_wins() == 1 then
+          vim.cmd("quit")
+        end
+      end
     })
   end,
 }

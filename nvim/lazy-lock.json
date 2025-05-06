@@ -1,10 +1,10 @@
 {
   "coc.nvim": { "branch": "release", "commit": "89226ea7f1c16db12edce9a7f6fc4076bc162df7" },
   "copilot.vim": { "branch": "release", "commit": "18f485d892b56b311fd752039d6977333ebc2a0f" },
-  "gruvbox-baby": { "branch": "main", "commit": "bd52e62d8134647090108189e69c8b3cd18bdbbf" },
+  "gruvbox": { "branch": "master", "commit": "3c28bcc11969fd0d79a43b45993a96205c63546c" },
   "lazy.nvim": { "branch": "main", "commit": "6c3bda4aca61a13a9c63f1c1d1b16b9d3be90d7a" },
   "lightline.vim": { "branch": "master", "commit": "e358557e1a9f9fc860416c8eb2e34c0404078155" },
-  "nerdtree": { "branch": "master", "commit": "9b465acb2745beb988eff3c1e4aa75f349738230" },
+  "nvim-tree.lua": { "branch": "master", "commit": "ea5097a1e2702b4827cb7380e7fa0bd6da87699c" },
   "nvim-treesitter": { "branch": "master", "commit": "28d480e0624b259095e56f353ec911f9f2a0f404" },
   "nvim-web-devicons": { "branch": "master", "commit": "2c2b4eafce6cdd0cb165036faa17396eff18f847" },
   "plenary.nvim": { "branch": "master", "commit": "857c5ac632080dba10aae49dba902ce3abf91b35" },
