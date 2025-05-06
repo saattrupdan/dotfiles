@@ -3,6 +3,7 @@
   "python.linting.ruffEnabled": true,
   "python.formatting.provider": "ruff",
   "python.analysis.typeCheckingMode": "standard",
+  "python.analysis.autoImportCompletions": true,
   "pyright.organizeimports.provider": "ruff",
   "pyright.inlayHints.functionReturnTypes": false,
   "pyright.inlayHints.variableTypes": false,
