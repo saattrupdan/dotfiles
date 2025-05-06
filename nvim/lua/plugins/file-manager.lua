@@ -34,6 +34,13 @@ return {
           },
         },
       },
+      actions = {
+        open_file = {
+          window_picker = {
+            enable = false,
+          },
+        },
+      },
     })
 
     local api = require("nvim-tree.api")
