@@ -29,7 +29,9 @@ vim.opt.tabstop=2
 vim.opt.shiftwidth=2
 
 -- Enable auto-indent
+vim.opt.filetype.indent="on"
 vim.opt.ai=true
+vim.opt.si=true
 
 -- Offset lines when scrolling
 vim.opt.scrolloff=30
