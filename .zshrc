@@ -109,7 +109,7 @@ newproject(){
 }
 
 online(){
-  ping_std_err=$(ping -c 1 google.com 2>&1 1>/dev/null)
+  ping_std_err=$(ping -c 1 -t 1 google.com 2>&1 1>/dev/null)
   if [[ $ping_std_err == *"Unknown host"* ]]
   then
     echo "You are offline"
@@ -147,3 +147,12 @@ alias code='open -a "Visual Studio Code"'
 #============
 
 export PATH="/usr/local/opt/openjdk/bin:$PATH"
+
+export NVM_DIR="$HOME/.config/nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
+[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
+
+# Added by LM Studio CLI (lms)
+export PATH="$PATH:/Users/dan/.lmstudio/bin"
+# End of LM Studio CLI section
+
