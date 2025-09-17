@@ -47,6 +47,19 @@ PROMPT+='%F{154}%2~$ %f'
 # Enable vi mode
 bindkey -v
 
+# SSH autocompletion
+_ssh_complete() {
+    local cur prev opts
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+    opts=$(awk '/^Host / {print $2}' ~/.ssh/config)
+
+    COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+    return 0
+}
+complete -F _ssh_complete ssh
+
 
 #==================================
 # Set up general terminal settings
