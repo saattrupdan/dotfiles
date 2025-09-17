@@ -47,9 +47,6 @@ PROMPT+='%F{154}%2~$ %f'
 # Enable vi mode
 bindkey -v
 
-# Set up shell integration
-# test -e "${HOME}/.iterm2_shell_integration.zsh" && source "${HOME}/.iterm2_shell_integration.zsh"
-
 
 #==================================
 # Set up general terminal settings
@@ -63,6 +60,8 @@ export PATH="$HOME/Applications/nvim/bin:$PATH"
 export PATH="$PATH:/Users/dan/.local/bin"
 export PATH="$PATH:/Users/dan/.cache/lm-studio/bin"
 export PATH="$HOME/.cargo/bin:$PATH"
+export PATH="/usr/local/opt/openjdk/bin:$PATH"
+export PATH="$PATH:/Users/dan/.lmstudio/bin"
 
 # Ensure openblas has been set up, which is used for Numpy to work
 export OPENBLAS="$(brew --prefix openblas)"
@@ -72,6 +71,8 @@ export PYTORCH_ENABLE_MPS_FALLBACK="1"
 
 # NVM directory
 export NVM_DIR="$HOME/.config/nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
+[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
 
 #=======================
 # Convenience shortcuts
@@ -145,14 +146,4 @@ alias code='open -a "Visual Studio Code"'
 #============
 # Misc setup
 #============
-
-export PATH="/usr/local/opt/openjdk/bin:$PATH"
-
-export NVM_DIR="$HOME/.config/nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
-[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
-
-# Added by LM Studio CLI (lms)
-export PATH="$PATH:/Users/dan/.lmstudio/bin"
-# End of LM Studio CLI section
 
