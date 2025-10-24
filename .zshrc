@@ -106,11 +106,11 @@ rc(){
 vv(){
   if [ ! -d '.venv' ]
   then
-    python3.11 -m venv --upgrade-deps .venv
+    python3 -m venv --upgrade-deps .venv
     source .venv/bin/activate
     if [ -f 'requirements.txt' ]
     then
-      pip3 install -r requirements.txt
+      python3 -m pip install -r requirements.txt
     fi
   else
     source .venv/bin/activate
@@ -160,3 +160,5 @@ alias code='open -a "Visual Studio Code"'
 # Misc setup
 #============
 
+
+fpath+=~/.zfunc; autoload -Uz compinit; compinit
