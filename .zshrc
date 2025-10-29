@@ -122,14 +122,12 @@ newproject(){
   cd "$HOME/gitsky"
 }
 
-online(){
-  ping_std_err=$(ping -c 1 -t 1 google.com 2>&1 1>/dev/null)
-  if [[ $ping_std_err == *"Unknown host"* ]]
-  then
-    echo "You are offline"
-  else
-    echo "You are online"
-  fi
+online() {
+    if curl -s --head --max-time 1 --connect-timeout 1 http://captive.apple.com/hotspot-detect.html > /dev/null; then
+        echo "You are online"
+    else
+        echo "You are offline"
+    fi
 }
 
 
