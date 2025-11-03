@@ -1,8 +1,5 @@
 vim.g.merginal_remoteVisible = 0
 
--- Enable lightline status bar when only one buffer is open
-vim.opt.laststatus = 2
-
 -- Show current branch in lightline status bar
 vim.g.lightline = {
   colorscheme = "one",

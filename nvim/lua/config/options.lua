@@ -46,3 +46,6 @@ vim.opt.clipboard="unnamed"
 vim.opt.textwidth=88
 vim.opt.wrapmargin=88
 vim.opt.colorcolumn="+1"
+
+-- Width of bottom status line, used with lightline and avante
+vim.opt.laststatus = 3
