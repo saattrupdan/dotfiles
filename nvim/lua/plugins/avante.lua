@@ -7,11 +7,11 @@ return {
   version = false,
   opts = {
     instructions_file = "avante.md",
-    provider = "ollama",
+    provider = "gemini",
     providers = {
       ollama = {
         endpoint = "http://localhost:11434",
-        model = "qwen3-coder:30b-a3b-q4_K_M",
+        model = "opencoder:1.5b",
         is_env_set = function()
           return true
         end,
