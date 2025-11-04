@@ -87,6 +87,7 @@ export NVM_DIR="$HOME/.config/nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
 
+
 #=======================
 # Convenience shortcuts
 #=======================
@@ -154,9 +155,19 @@ alias python='python3'
 alias code='open -a "Visual Studio Code"'
 
 
+#=========
+# Secret environment variables
+#=========
+
+# Load secret environment variables from .env
+if [ -f ~/.env ]
+then
+    export $(cat ~/.env | xargs)
+fi
+
+
 #============
 # Misc setup
 #============
-
 
 fpath+=~/.zfunc; autoload -Uz compinit; compinit

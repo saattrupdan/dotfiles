@@ -7,8 +7,13 @@ return {
   version = false,
   opts = {
     instructions_file = "avante.md",
-    provider = "claude",
+    provider = "claude_sonnet",
     providers = {
+      claude_sonnet = {
+        __inherited_from = "claude",
+        model = "claude-sonnet-4-5-20250929",
+        api_key_name = "AVANTE_ANTHROPIC_API_KEY",
+      },
       alexandra = {
         __inherited_from = "openai",
         endpoint = "https://inference.projects.alexandrainst.dk/v1",
