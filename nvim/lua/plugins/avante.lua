@@ -7,11 +7,17 @@ return {
   version = false,
   opts = {
     instructions_file = "avante.md",
-    provider = "gemini",
+    provider = "claude",
     providers = {
-      ollama = {
-        endpoint = "http://localhost:11434",
-        model = "opencoder:1.5b",
+      alexandra = {
+        __inherited_from = "openai",
+        endpoint = "https://inference.projects.alexandrainst.dk/v1",
+        model = "Qwen/Qwen3-Coder-30B-A3B-Instruct",  -- "synquid/gemma-3-27b-it-FP8",
+        api_key_name = "INFERENCE_SERVER_API_KEY",
+      },
+      qwen3_coder = {
+        __inherited_from = "ollama",
+        model = "qwen3-coder:30b",
         is_env_set = function()
           return true
         end,
