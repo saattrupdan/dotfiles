@@ -6,7 +6,7 @@ return {
   event = "VeryLazy",
   version = false,
   opts = {
-    instructions_file = "avante.md",
+    instructions_file = "~/gitsky/dotfiles/avante.md",
     provider = "claude_sonnet",
     providers = {
       claude_sonnet = {
@@ -17,12 +17,24 @@ return {
       alexandra = {
         __inherited_from = "openai",
         endpoint = "https://inference.projects.alexandrainst.dk/v1",
-        model = "Qwen/Qwen3-Coder-30B-A3B-Instruct",  -- "synquid/gemma-3-27b-it-FP8",
+        model = "synquid/gemma-3-27b-it-FP8",
         api_key_name = "INFERENCE_SERVER_API_KEY",
+        extra_request_body = {
+          max_tokens = 8192,
+        },
       },
-      qwen3_coder = {
+      qwen3 = {
         __inherited_from = "ollama",
-        model = "qwen3-coder:30b",
+        model = "qwen3:4b-instruct-2507-q8_0",
+        use_ReAct_prompt = true,
+        extra_request_body = {
+          options = {
+            stream = true,
+            temperature = 0.6,
+            num_ctx = 40960,
+            num_predict = -1,
+          },
+        },
         is_env_set = function()
           return true
         end,
