@@ -75,6 +75,7 @@ export PATH="$PATH:/Users/dan/.cache/lm-studio/bin"
 export PATH="$HOME/.cargo/bin:$PATH"
 export PATH="/usr/local/opt/openjdk/bin:$PATH"
 export PATH="$PATH:/Users/dan/.lmstudio/bin"
+export PATH="$PATH:/Users/dan/.local/share/nvim/mason/bin"
 
 # Ensure openblas has been set up, which is used for Numpy to work
 export OPENBLAS="$(brew --prefix openblas)"
