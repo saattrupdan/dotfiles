@@ -18,7 +18,6 @@ return {
     vim.g.coc_global_extensions = {
       "coc-json",
       "coc-rust-analyzer",
-      "coc-pyright",
       "@yaegassy/coc-volar",
       "coc-tsserver",
       "coc-lua",
