@@ -11,6 +11,7 @@
   uv run ruff format
   uv run ruff check --fix
   ```
+
 - Verify all tests pass with `uv run pytest`
 - If tests fail, fix them before proceeding with other changes
 
@@ -27,7 +28,7 @@
 - Example:
 
   ```python
-  async def process_items(items: list[Item]) -> list[Result]:
+  def process_items(items: list[Item]) -> list[Result]:
       """Process items and return results.
 
       Args:
@@ -51,10 +52,12 @@
   - Use `list[T]`, `dict[K, V]`, `set[T]` (not `List`, `Dict`, `Set` from typing)
   - Use `X | Y` for unions (not `Union[X, Y]`)
   - Use `X | None` for optional types (not `Optional[X]`)
+- Always use `import typing as t` and use the `t.` prefix for types from the typing
+  module, such as `t.Any`, `t.Callable`, `t.TypeVar`, etc.
 - Example:
 
   ```python
-  def fetch_data(url: str, timeout: float = 30.0) -> dict[str, Any] | None:
+  def fetch_data(url: str, timeout: float = 30.0) -> dict[str, t.Any] | None:
       ...
   ```
 
@@ -65,31 +68,6 @@
 - Favor immutability and pure functions where practical
 - Prefer composition over inheritance
 - Use dataclasses or Pydantic models for data structures
-
-### Asynchronous Code
-
-- Prefer `async`/`await` for I/O-bound operations
-- Use `asyncio` patterns consistently
-- Consider `aiohttp`, `httpx`, or similar for HTTP requests
-- Always await coroutines properly
-- Example:
-
-  ```python
-  async def fetch_multiple(urls: list[str]) -> list[dict[str, Any]]:
-      """Fetch data from multiple URLs concurrently.
-
-      Args:
-          urls:
-            List of URLs to fetch.
-
-        Returns:
-            List of JSON responses.
-      """
-      async with httpx.AsyncClient() as client:
-          tasks = [client.get(url) for url in urls]
-          responses = await asyncio.gather(*tasks)
-          return [r.json() for r in responses]
-  ```
 
 ### Performance
 
@@ -111,12 +89,10 @@
 
 - Follow the same conventions as production code
 - Use descriptive test names that explain the scenario
-- Prefer `async` tests for async code using `pytest-asyncio`
 - Example:
 
   ```python
-  @pytest.mark.asyncio
-  async def test_fetch_data_returns_valid_json():
+  def test_fetch_data_returns_valid_json() -> None:
       """Test that fetch_data returns properly formatted JSON."""
       result = await fetch_data("https://api.example.com/data")
       assert isinstance(result, dict)
@@ -126,12 +102,14 @@
 ## Code Organisation
 
 ### Module Structure
+
 - Keep modules focused and cohesive
 - Prefer many small modules over few large ones
 - Use clear, descriptive names
 - Organise imports: stdlib, third-party, local (separated by blank lines)
 
 ### Function Design
+
 - Keep functions small and single-purpose
 - Use descriptive names (prefer `calculate_total_price` over `calc`)
 - Limit arguments (consider using dataclasses for many parameters)
@@ -140,5 +118,4 @@
 ## Summary
 
 **Remember:** Write code that is clear, fast, and well-typed. Let the code speak for
-itself with minimal comments. Use async for I/O. Run formatters, linters, and tests
-before committing.
+itself with minimal comments. Run formatters, linters, and tests before committing.

@@ -21,6 +21,11 @@ return {
       },
     },
     memory = {
+      default = {
+        files = {
+          "~/gitsky/dotfiles/AGENTS.md",
+        },
+      },
       opts = {
         chat = {
           enabled = true,
