@@ -3,7 +3,6 @@ vim.keymap.set('n', '<leader>cc', ':CodeCompanionChat<CR>')
 
 return {
   "olimorris/codecompanion.nvim",
-  event = "VeryLazy",
   dependencies = {
     { "nvim-lua/plenary.nvim" },
     { "neoclide/coc.nvim" },
