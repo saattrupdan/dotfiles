@@ -1,6 +1,9 @@
 -- Open the chat
 vim.keymap.set('n', '<leader>cc', ':CodeCompanionChat<CR>')
 
+-- Expand 'cc' into 'CodeCompanion' in the command line
+vim.cmd([[cab cc CodeCompanion]])
+
 return {
   "olimorris/codecompanion.nvim",
   dependencies = {
@@ -28,13 +31,7 @@ return {
       chat = {
         -- adapter = "ollama",
         -- model = "qwen3-coder:30b",
-        variables = {
-          ["buffer"] = {
-            opts = {
-              default_params = 'pin'
-            },
-          },
-        },
+        -- num_ctx = 256000,
         tools = {
           opts = {
             auto_submit_errors = true,
@@ -51,6 +48,7 @@ return {
       -- inline = {
       --   adapter = "ollama",
       --   model = "qwen3-coder:30b",
+      --   num_ctx = 256000,
       -- },
     },
     opts = {
