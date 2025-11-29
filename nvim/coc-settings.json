@@ -10,7 +10,12 @@
       "command": "pyrefly",
       "args": ["lsp"],
       "filetypes": ["python"],
-      "rootPatterns": ["pyrefly.toml", "pyproject.toml", ".git"]
+      "rootPatterns": ["pyrefly.toml", "pyproject.toml", ".git"],
+      "initializationOptions": {
+        "pyrefly": {
+          "displayTypeErrors": "force-on"
+        }
+      }
     }
   }
 }
