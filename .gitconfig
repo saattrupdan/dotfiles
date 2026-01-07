@@ -7,7 +7,6 @@
   incoming = !sh -c 'git log --pretty=format:\"%C(green)%h - %Cred%an -%Cblue %ar -%Creset %w(135,1,2)%s\" ..@{u}'
   incomingdetail = !sh -c 'git log --stat -p ..@{u}'
   branches = for-each-ref --sort=-committerdate refs/heads/ --format='%(HEAD) %(color:yellow)%(refname:short)%(color:reset) - %(color:red)%(objectname:short)%(color:reset) - %(contents:subject) - %(authorname) (%(color:green)%(committerdate:relative)%(color:reset))'
-  squash-all = "!f(){ git reset $(git commit-tree \"HEAD^{tree}\" \"$@\");};f"
 [init]
 	defaultBranch = main
 [pull]
