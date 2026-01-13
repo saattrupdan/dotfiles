@@ -1,3 +1,5 @@
+vim.keymap.set("n", "<leader>rr", ":RemoteStart<cr>", { desc = "Start remote session" })
+
 return {
    "amitds1997/remote-nvim.nvim",
    version = "*", -- Pin to GitHub releases
