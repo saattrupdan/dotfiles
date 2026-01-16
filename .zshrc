@@ -1,22 +1,9 @@
 #=====================================
-# Load external ZSH plugins with Znap
+# Load external ZSH plugins
 #=====================================
 
-# Set up Znap
-if [ ! -d ~/znap-plugins ]
-then
-    git clone --depth 1 -- https://github.com/marlonrichert/zsh-snap.git
-    source zsh-snap/install.zsh
-fi
-source ~/znap-plugins/zsh-snap/znap.zsh
-
-# Autocompletion
-if [ ! -d ~/znap-plugins/zsh-autocomplete ]
-then
-    znap source marlonrichert/zsh-autocomplete
-fi
-source ~/znap-plugins/zsh-autocomplete/zsh-autocomplete.plugin.zsh
-
+# Auto-completion
+source /opt/homebrew/share/zsh-autocomplete/zsh-autocomplete.plugin.zsh
 
 #=====================
 # Set up Git commands
@@ -165,10 +152,3 @@ if [ -f ~/.env ]
 then
     export $(cat ~/.env | xargs)
 fi
-
-
-#============
-# Misc setup
-#============
-
-fpath+=~/.zfunc; autoload -Uz compinit; compinit
