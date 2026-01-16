@@ -137,7 +137,7 @@ online() {
 # Aliases
 #=========
 
-alias ls='exa'
+alias ls='eza'
 alias vim='nvim'
 alias gt='cd ~/gitsky'
 alias pc='cd ~/pCloud\ Drive'
