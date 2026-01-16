@@ -2,8 +2,16 @@
 # Load external ZSH plugins
 #=====================================
 
-# Auto-completion
-source /opt/homebrew/share/zsh-autocomplete/zsh-autocomplete.plugin.zsh
+# Download Znap, if it's not there yet.
+[[ -r ~/znap-plugins/znap/znap.zsh ]] ||
+  git clone --depth 1 -- https://github.com/marlonrichert/zsh-snap.git ~/znap-plugins/znap
+source ~/znap-plugins/znap/znap.zsh  # Start Znap
+
+# Autocomplete plugin
+[[ -r ~/znap-plugins/marlonrichert/zsh-autocomplete ]] ||
+  znap clone marlonrichert/zsh-autocomplete
+znap source zsh-autocomplete
+
 
 #=====================
 # Set up Git commands
