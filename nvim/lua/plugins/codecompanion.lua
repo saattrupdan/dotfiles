@@ -32,11 +32,34 @@ return {
         },
       },
     },
-    strategies = {
+    adapters = {
+      http = {
+        ["llama.cpp"] = function()
+          return require("codecompanion.adapters").extend("openai_compatible", {
+            env = {
+              url = "http://localhost:1234",
+               model = "openai/gpt-oss-20b",
+              api_key = "TERM",
+            },
+            handlers = {
+              parse_message_meta = function(self, data)
+                local extra = data.extra
+                if extra and extra.reasoning_content then
+                  data.output.reasoning = { content = extra.reasoning_content }
+                  if data.output.content == "" then
+                    data.output.content = nil
+                  end
+                end
+                return data
+              end,
+            },
+          })
+        end,
+      },
+    },
+    interactions = {
       chat = {
-        -- adapter = "ollama",
-        -- model = "qwen3-coder:30b",
-        -- num_ctx = 256000,
+        adapter = "llama.cpp",
         tools = {
           opts = {
             auto_submit_errors = true,
@@ -50,14 +73,15 @@ return {
           completion_provider = "coc",
         },
       },
-      -- inline = {
-      --   adapter = "ollama",
-      --   model = "qwen3-coder:30b",
-      --   num_ctx = 256000,
-      -- },
-    },
-    opts = {
-      log_level = "DEBUG"
+      inline = {
+        adapter = "llama.cpp",
+      },
+      cmd = {
+        adapter = "llama.cpp",
+      },
+      background = {
+        adapter = "llama.cpp",
+      },
     },
   },
 }

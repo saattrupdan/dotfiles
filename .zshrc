@@ -160,3 +160,8 @@ if [ -f ~/.env ]
 then
     export $(cat ~/.env | xargs)
 fi
+
+# Added by LM Studio CLI (lms)
+export PATH="$PATH:/Users/dansmart/.lmstudio/bin"
+# End of LM Studio CLI section
+
