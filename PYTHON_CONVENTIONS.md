@@ -5,15 +5,15 @@
 ### Tool Execution
 
 - Use `uv run` for all script and command execution
-- Always run formatters and linters before committing:
+- Always run formatters and linters after making any changes:
 
   ```bash
   uv run ruff format
   uv run ruff check --fix
   ```
 
-- Verify all tests pass with `uv run pytest`
-- If tests fail, fix them before proceeding with other changes
+- If formatters or linters report issues, fix them, and run them again, and repeat
+  until there are no issues
 
 ## Code Style
 
