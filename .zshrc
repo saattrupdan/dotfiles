@@ -165,3 +165,5 @@ fi
 export PATH="$PATH:/Users/dansmart/.lmstudio/bin"
 # End of LM Studio CLI section
 
+
+. "$HOME/.local/share/../bin/env"

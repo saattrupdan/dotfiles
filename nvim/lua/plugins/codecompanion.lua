@@ -20,15 +20,16 @@ return {
         },
       },
     },
-    memory = {
-      default = {
+    rules = {
+      python = {
+        description = "Python conventions",
         files = {
-          "~/gitsky/dotfiles/AGENTS.md",
+          "~/gitsky/dotfiles/PYTHON_CONVENTIONS.md",
         },
       },
       opts = {
         chat = {
-          enabled = true,
+          autoload = "python",
         },
       },
     },
@@ -40,18 +41,6 @@ return {
               url = "http://localhost:1234",
               model = "openai/gpt-oss-20b",
               api_key = "TERM",
-            },
-            handlers = {
-              parse_message_meta = function(self, data)
-                local extra = data.extra
-                if extra and extra.reasoning_content then
-                  data.output.reasoning = { content = extra.reasoning_content }
-                  if data.output.content == "" then
-                    data.output.content = nil
-                  end
-                end
-                return data
-              end,
             },
           })
         end,
