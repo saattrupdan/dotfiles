@@ -38,7 +38,7 @@ return {
           return require("codecompanion.adapters").extend("openai_compatible", {
             env = {
               url = "http://localhost:1234",
-               model = "openai/gpt-oss-20b",
+              model = "openai/gpt-oss-20b",
               api_key = "TERM",
             },
             handlers = {
