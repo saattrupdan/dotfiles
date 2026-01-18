@@ -132,12 +132,16 @@
   ├── src
   │   ├── scripts
   │   │   ├── fix_dot_env_file.py
-  │   │   └── script.py
-  │   └── project_name
+  │   │   └── <script_name>.py
+  │   └── <project_name>
   │       ├── __init__.py
-  │       └── module.py
+  │       └── <module_name>.py
   ├── tests
   │   ├── __init__.py
-  │   └── test_module.py
+  │   └── <test_module_name>.py
   └── uv.lock
   ```
+
+  Here `<project_name>` is the name of the project (if there is already a project
+  directory in `src/` then use that), and `<module_name>` and `<test_module_name>` are
+  just placeholders for the actual module names.
