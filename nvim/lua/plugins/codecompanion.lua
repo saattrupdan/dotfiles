@@ -1,8 +1,5 @@
--- Open the chat
+-- Open the chat with <leader>cc
 vim.keymap.set('n', '<leader>cc', ':CodeCompanionChat<CR>')
-
--- Expand 'cc' into 'CodeCompanion' in the command line
-vim.cmd([[cab cc CodeCompanion]])
 
 return {
   "olimorris/codecompanion.nvim",

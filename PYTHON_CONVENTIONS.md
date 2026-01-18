@@ -19,10 +19,10 @@
 
 ### Documentation
 
-- Use Google-style docstrings for all public functions, classes, and modules
+- Use Google-style docstrings for all public functions, classes, and modules.
 - Always include a newline after the name of each argument and exception in the
   docstring.
-- Avoid tutorial-style `#` comments that explain what code does
+- Avoid tutorial-style `#` comments that explain what code does.
 - Comments should explain **why**, not **what** (the code itself should be
   self-explanatory)
 - Example:
@@ -61,22 +61,6 @@
       ...
   ```
 
-### Programming Paradigm
-
-- Prefer functional programming patterns over OOP when appropriate
-- Use the best tool for the job (don't force FP or OOP dogmatically)
-- Favor immutability and pure functions where practical
-- Prefer composition over inheritance
-- Use dataclasses or Pydantic models for data structures
-
-### Performance
-
-- Write code with performance in mind
-- Profile before optimising
-- Use appropriate data structures (sets for membership, deques for queues, etc.)
-- Leverage list/dict/set comprehensions over explicit loops when clearer
-- Consider generators for memory efficiency with large datasets
-
 ## Testing
 
 ### Test Execution
@@ -101,21 +85,59 @@
 
 ## Code Organisation
 
-### Module Structure
-
 - Keep modules focused and cohesive
 - Prefer many small modules over few large ones
-- Use clear, descriptive names
-- Organise imports: stdlib, third-party, local (separated by blank lines)
+- We normally use the following structure (some of the following might not be present
+  in all projects):
 
-### Function Design
-
-- Keep functions small and single-purpose
-- Use descriptive names (prefer `calculate_total_price` over `calc`)
-- Limit arguments (consider using dataclasses for many parameters)
-- Return early to reduce nesting
-
-## Summary
-
-**Remember:** Write code that is clear, fast, and well-typed. Let the code speak for
-itself with minimal comments. Run formatters, linters, and tests before committing.
+  ```text
+    .
+  ├── .devcontainer
+  │   └── devcontainer.json
+  ├── .editorconfig
+  ├── .github
+  │   └── workflows
+  │       └── ci.yaml
+  ├── .gitignore
+  ├── .markdownlint.jsonc
+  ├── .pre-commit-config.yaml
+  ├── CODE_OF_CONDUCT.md
+  ├── config
+  │   ├── __init__.py
+  │   ├── config.yaml
+  │   └── hydra
+  │       └── job_logging
+  │           └── custom.yaml
+  ├── CONTRIBUTING.md
+  ├── data
+  │   ├── final
+  │   │   └── .gitkeep
+  │   ├── processed
+  │   │   └── .gitkeep
+  │   └── raw
+  │       └── .gitkeep
+  ├── dependabot.yaml
+  ├── Dockerfile
+  ├── docs
+  │   └── index.md
+  ├── LICENSE
+  ├── makefile
+  ├── mkdocs.yaml
+  ├── models
+  │   └── .gitkeep
+  ├── notebooks
+  │   └── .gitkeep
+  ├── pyproject.toml
+  ├── README.md
+  ├── src
+  │   ├── scripts
+  │   │   ├── fix_dot_env_file.py
+  │   │   └── script.py
+  │   └── project_name
+  │       ├── __init__.py
+  │       └── module.py
+  ├── tests
+  │   ├── __init__.py
+  │   └── test_module.py
+  └── uv.lock
+  ```
