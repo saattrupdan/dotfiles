@@ -77,6 +77,7 @@ _ssh_complete() {
     return 0
 }
 complete -F _ssh_complete ssh
+complete -F _ssh_complete scp
 
 
 #==================================
