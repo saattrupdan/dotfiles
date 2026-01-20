@@ -24,7 +24,7 @@ bindkey -a 'k' up-line-or-search
 [[ -r ~/znap-plugins/zsh-users/zsh-autosuggestions ]] ||
   znap clone zsh-users/zsh-autosuggestions
 znap source zsh-autosuggestions
-bindkey '\t' autosuggest-accept
+bindkey '§' autosuggest-accept
 
 # Syntax highlighting plugin
 [[ -r ~/znap-plugins/zsh-users/zsh-syntax-highlighting ]] ||
@@ -94,6 +94,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 export PATH="/usr/local/opt/openjdk/bin:$PATH"
 export PATH="$PATH:/Users/dan/.lmstudio/bin"
 export PATH="$PATH:/Users/dan/.local/share/nvim/mason/bin"
+export PATH="$PATH:/Users/dansmart/.lmstudio/bin"
 
 # Ensure openblas has been set up, which is used for Numpy to work
 export OPENBLAS="$(brew --prefix openblas)"
@@ -183,10 +184,3 @@ if [ -f ~/.env ]
 then
     export $(cat ~/.env | xargs)
 fi
-
-# Added by LM Studio CLI (lms)
-export PATH="$PATH:/Users/dansmart/.lmstudio/bin"
-# End of LM Studio CLI section
-
-
-. "$HOME/.local/share/../bin/env"
