@@ -11,6 +11,17 @@ source ~/znap-plugins/znap/znap.zsh  # Start Znap
 [[ -r ~/znap-plugins/marlonrichert/zsh-autocomplete ]] ||
   znap clone marlonrichert/zsh-autocomplete
 znap source zsh-autocomplete
+bindkey -M menuselect '\r' .accept-line
+
+# Vim mode plugin
+[[ -r ~/znap-plugins/jeffreytse/zsh-vi-mode ]] ||
+  znap clone jeffreytse/zsh-vi-mode
+znap source zsh-vi-mode
+export ZVM_VI_HIGHLIGHT_BACKGROUND=#89e051
+export ZVM_VI_HIGHLIGHT_FOREGROUND=#1d202f
+export ZVM_SYSTEM_CLIPBOARD_ENABLED=true
+bindkey -a 'j' down-line-or-search
+bindkey -a 'k' up-line-or-search
 
 
 #=====================
@@ -38,9 +49,6 @@ PROMPT+='%F{154}%2~$ %f'
 #=============================
 # Set up general ZSH settings
 # ============================
-
-# Enable vi mode
-bindkey -v
 
 # SSH autocompletion
 _ssh_complete() {
