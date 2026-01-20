@@ -15,17 +15,29 @@ source ~/znap-plugins/znap/znap.zsh  # Start Znap
   znap clone marlonrichert/zsh-autocomplete
 znap source zsh-autocomplete
 bindkey -M menuselect '\r' .accept-line
-
-# Vim mode plugin
-[[ -r ~/znap-plugins/jeffreytse/zsh-vi-mode ]] ||
-  znap clone jeffreytse/zsh-vi-mode
-znap source zsh-vi-mode
-export ZVM_VI_HIGHLIGHT_BACKGROUND=#89e051
-export ZVM_VI_HIGHLIGHT_FOREGROUND=#1d202f
-export ZVM_SYSTEM_CLIPBOARD_ENABLED=true
 bindkey -a 'j' down-line-or-search
 bindkey -a 'k' up-line-or-search
 
+# Another autocomplete plugin
+# NOTE: This has a bug of being unable to autocomplete with Tab when VIm mode is set.
+# Maybe it's possible to fix it
+[[ -r ~/znap-plugins/zsh-users/zsh-autosuggestions ]] ||
+  znap clone zsh-users/zsh-autosuggestions
+znap source zsh-autosuggestions
+bindkey '\t' autosuggest-accept
+
+# Syntax highlighting plugin
+[[ -r ~/znap-plugins/zsh-users/zsh-syntax-highlighting ]] ||
+  znap clone zsh-users/zsh-syntax-highlighting
+znap source zsh-syntax-highlighting
+
+# Vim mode plugin
+# [[ -r ~/znap-plugins/jeffreytse/zsh-vi-mode ]] ||
+#   znap clone jeffreytse/zsh-vi-mode
+# znap source zsh-vi-mode
+# export ZVM_VI_HIGHLIGHT_BACKGROUND=#89e051
+# export ZVM_VI_HIGHLIGHT_FOREGROUND=#1d202f
+# export ZVM_SYSTEM_CLIPBOARD_ENABLED=true
 
 #=====================
 # Set up Git commands
