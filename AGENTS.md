@@ -16,6 +16,8 @@ Speak either English or Danish, nothing else. Use the same language of the user.
   uv run ruff format
   uv run ruff check --fix
   ```
+- Finish all todos on the todo list without asking for permission to continue to the
+  next task
 
 ### Documentation
 
@@ -71,61 +73,8 @@ Speak either English or Danish, nothing else. Use the same language of the user.
 
 - Keep modules focused and cohesive
 - Prefer many small modules over few large ones
-- We normally use the following structure (some of the following might not be present
-  in all projects):
-
-  ```text
-    .
-  ├── .devcontainer
-  │   └── devcontainer.json
-  ├── .editorconfig
-  ├── .github
-  │   └── workflows
-  │       └── ci.yaml
-  ├── .gitignore
-  ├── .markdownlint.jsonc
-  ├── .pre-commit-config.yaml
-  ├── CODE_OF_CONDUCT.md
-  ├── config
-  │   ├── __init__.py
-  │   ├── config.yaml
-  │   └── hydra
-  │       └── job_logging
-  │           └── custom.yaml
-  ├── CONTRIBUTING.md
-  ├── data
-  │   ├── final
-  │   │   └── .gitkeep
-  │   ├── processed
-  │   │   └── .gitkeep
-  │   └── raw
-  │       └── .gitkeep
-  ├── dependabot.yaml
-  ├── Dockerfile
-  ├── docs
-  │   └── index.md
-  ├── LICENSE
-  ├── makefile
-  ├── mkdocs.yaml
-  ├── models
-  │   └── .gitkeep
-  ├── notebooks
-  │   └── .gitkeep
-  ├── pyproject.toml
-  ├── README.md
-  ├── src
-  │   ├── scripts
-  │   │   ├── fix_dot_env_file.py
-  │   │   └── <script_name>.py
-  │   └── <project_name>
-  │       ├── __init__.py
-  │       └── <module_name>.py
-  ├── tests
-  │   ├── __init__.py
-  │   └── <test_module_name>.py
-  └── uv.lock
-  ```
-
-  Here `<project_name>` is the name of the project (if there is already a project
-  directory in `src/` then use that), and `<module_name>` and `<test_module_name>` are
-  just placeholders for the actual module names.
+- All code is in the `src/<project_name>` directory
+- All tests are in the `tests/` directory
+- Configs are sometimes available and if so, they are in the `config/` directory
+- There will always be a `pyproject.toml` file in the root directory
+- Use the `tree -a --gitignore -I .git .` command to see the directory structure
