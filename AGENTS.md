@@ -1,21 +1,21 @@
-# Python Project Conventions
+# Conventions
 
-## Development Workflow
+## Natural language
 
-### Tool Execution
+Speak either English or Danish, nothing else. Use the same language of the user.
+
+## Python
+
+### Development Workflow
 
 - Use `uv run` for all script and command execution
-- Always run formatters and linters after making any changes:
+- Make a todo list of all the things that need to be done, and always add running
+  formatters and linters to the list (and ensure that they pass before continuing):
 
   ```bash
   uv run ruff format
   uv run ruff check --fix
   ```
-
-- If formatters or linters report issues, fix them, and run them again, and repeat
-  until there are no issues
-
-## Code Style
 
 ### Documentation
 
@@ -42,7 +42,7 @@
           ValueError:
             If items list is empty.
       """
-      return await batch_process(items)
+      return batch_process(items=items)
   ```
 
 ### Type Annotations
@@ -61,29 +61,13 @@
       ...
   ```
 
-## Testing
-
-### Test Execution
+### Testing
 
 - Run tests with `uv run pytest`
 - All tests must pass before pushing code
-- Fix broken tests immediately—do not commit failing tests
+- Fix broken tests immediately - do not commit failing tests
 
-### Test Style
-
-- Follow the same conventions as production code
-- Use descriptive test names that explain the scenario
-- Example:
-
-  ```python
-  def test_fetch_data_returns_valid_json() -> None:
-      """Test that fetch_data returns properly formatted JSON."""
-      result = await fetch_data("https://api.example.com/data")
-      assert isinstance(result, dict)
-      assert "id" in result
-  ```
-
-## Code Organisation
+### Code Organisation
 
 - Keep modules focused and cohesive
 - Prefer many small modules over few large ones

@@ -21,7 +21,7 @@ return {
       python = {
         description = "Python conventions",
         files = {
-          "~/gitsky/dotfiles/PYTHON_CONVENTIONS.md",
+          "~/gitsky/dotfiles/AGENTS.md",
         },
       },
       opts = {
