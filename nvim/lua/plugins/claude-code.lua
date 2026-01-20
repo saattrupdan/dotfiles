@@ -11,7 +11,7 @@ return {
         position = "float",
         split_ratio = 0.5,
       },
-      command = "ANTHROPIC_AUTH_TOKEN=ollama ANTHROPIC_BASE_URL=http://127.0.0.1:11434 OLLAMA_KEEP_ALIVE=5m claude --model gpt-oss:20b --tools default",
+      command = "ANTHROPIC_AUTH_TOKEN=ollama ANTHROPIC_BASE_URL=http://127.0.0.1:11434 claude --model gpt-oss:20b --tools default",
     })
   end
 }
