@@ -8,6 +8,9 @@
 source ~/znap-plugins/znap/znap.zsh  # Start Znap
 
 # Autocomplete plugin
+# NOTE: This has a known bug of always trimming last character in history mode when
+# using VIm mode (both the plugin below and the regular `bindkey -v`). Issue tracker:
+# https://github.com/marlonrichert/zsh-autocomplete/issues/822
 [[ -r ~/znap-plugins/marlonrichert/zsh-autocomplete ]] ||
   znap clone marlonrichert/zsh-autocomplete
 znap source zsh-autocomplete
