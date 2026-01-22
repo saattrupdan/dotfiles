@@ -25,6 +25,8 @@ bindkey -a 'k' up-line-or-search
   znap clone zsh-users/zsh-autosuggestions
 znap source zsh-autosuggestions
 bindkey '§' autosuggest-accept
+bindkey -M menuselect  '^[[D' .backward-char  '^[OD' .backward-char
+bindkey -M menuselect  '^[[C'  .forward-char  '^[OC'  .forward-char
 
 # Syntax highlighting plugin
 [[ -r ~/znap-plugins/zsh-users/zsh-syntax-highlighting ]] ||
@@ -108,6 +110,9 @@ export NVM_DIR="$HOME/.config/nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
 
+# Set up uv
+. "$HOME/.local/share/../bin/env"
+
 
 #=======================
 # Convenience shortcuts
@@ -185,3 +190,4 @@ if [ -f ~/.env ]
 then
     export $(cat ~/.env | xargs)
 fi
+
