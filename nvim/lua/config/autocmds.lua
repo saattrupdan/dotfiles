@@ -21,6 +21,13 @@ vim.api.nvim_create_autocmd("BufWritePre", {
 -- Set tab size depending on filetype
 vim.api.nvim_create_autocmd("FileType", {
   group = "BasicGroup",
-  pattern = "python",
+  pattern = "*.py",
   command = "set tabstop=4 | set shiftwidth=4",
+})
+
+-- Automatically run ruff on save
+vim.api.nvim_create_autocmd("BufWritePost", {
+  group = "BasicGroup",
+  pattern = "*.py",
+  command = "silent !ruff check --fix % && ruff format %",
 })
