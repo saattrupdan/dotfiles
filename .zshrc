@@ -8,19 +8,15 @@
 source ~/znap-plugins/znap/znap.zsh  # Start Znap
 
 # Autocomplete plugin
-# NOTE: This has a known bug of always trimming last character in history mode when
-# using VIm mode (both the plugin below and the regular `bindkey -v`). Issue tracker:
-# https://github.com/marlonrichert/zsh-autocomplete/issues/822
 [[ -r ~/znap-plugins/marlonrichert/zsh-autocomplete ]] ||
   znap clone marlonrichert/zsh-autocomplete
 znap source zsh-autocomplete
+zstyle ':autocomplete:*' append-semicolon no
 bindkey -M menuselect '\r' .accept-line
 bindkey -a 'j' down-line-or-search
 bindkey -a 'k' up-line-or-search
 
 # Another autocomplete plugin
-# NOTE: This has a bug of being unable to autocomplete with Tab when VIm mode is set.
-# Maybe it's possible to fix it
 [[ -r ~/znap-plugins/zsh-users/zsh-autosuggestions ]] ||
   znap clone zsh-users/zsh-autosuggestions
 znap source zsh-autosuggestions
@@ -33,13 +29,16 @@ bindkey -M menuselect  '^[[C'  .forward-char  '^[OC'  .forward-char
   znap clone zsh-users/zsh-syntax-highlighting
 znap source zsh-syntax-highlighting
 
-# Vim mode plugin
-# [[ -r ~/znap-plugins/jeffreytse/zsh-vi-mode ]] ||
-#   znap clone jeffreytse/zsh-vi-mode
-# znap source zsh-vi-mode
-# export ZVM_VI_HIGHLIGHT_BACKGROUND=#89e051
-# export ZVM_VI_HIGHLIGHT_FOREGROUND=#1d202f
-# export ZVM_SYSTEM_CLIPBOARD_ENABLED=true
+
+#=========================================
+# General plugin-agnostic ZSH keybindings
+#=========================================
+
+bindkey '^[[H' beginning-of-line  # Home moves cursor to the beginning of the line
+bindkey '^[[F' end-of-line  # End moves cursor to the end of the line
+bindkey '^[[1;3D' backward-word  # Ctrl+left moves cursor one word to the left
+bindkey '^[[1;3C' forward-word  # Ctrl+right moves cursor one word to the right
+
 
 #=====================
 # Set up Git commands
@@ -190,4 +189,3 @@ if [ -f ~/.env ]
 then
     export $(cat ~/.env | xargs)
 fi
-
