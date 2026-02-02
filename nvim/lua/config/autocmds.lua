@@ -29,5 +29,5 @@ vim.api.nvim_create_autocmd("FileType", {
 vim.api.nvim_create_autocmd("BufWritePost", {
   group = "BasicGroup",
   pattern = "*.py",
-  command = "silent !ruff check --fix % && ruff format %",
+  command = "silent !ruff check --fix --unsafe-fixes %; ruff format %",
 })
