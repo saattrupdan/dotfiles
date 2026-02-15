@@ -1,4 +1,5 @@
 {
+  "coc.preferences.enableMarkdown": false,
   "diagnostic.checkCurrentLine": true,
   "python.linting.ruffEnabled": true,
   "python.formatting.provider": "ruff",
