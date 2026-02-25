@@ -1,6 +1,9 @@
 #=====================================
 # Load external ZSH plugins
 #=====================================
+#
+# Initialise Zsh function path and completion system
+fpath+=~/.zfunc; autoload -Uz compinit; compinit
 
 # Download Znap, if it's not there yet.
 [[ -r ~/znap-plugins/znap/znap.zsh ]] ||
