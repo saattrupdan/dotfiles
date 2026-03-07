@@ -10,7 +10,7 @@ return {
       window = {
         position = "float",
       },
-      command = "ANTHROPIC_AUTH_TOKEN=lmstudio ANTHROPIC_BASE_URL=http://127.0.0.1:1234 claude --model qwen/qwen3.5-35b-a3b --tools default",
+      command = "ANTHROPIC_AUTH_TOKEN=llamacpp ANTHROPIC_BASE_URL=http://127.0.0.1:8080 claude --model Qwen3.5-35B-A3B-Q4_K_M --tools default",
       keymaps = {
         toggle = {
           normal = "<C-,>",

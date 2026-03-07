@@ -93,7 +93,8 @@ Speak either English or Danish, nothing else. Use the same language of the user.
 - For `Iterable`, `Generator` and `Callable`, use these from the `collections.abc`
   module, not from `typing`. Import this as `import collections.abc as c` and refer to
   the types as `c.Iterable`, `c.Generator` and `c.Callable`, etc.
-- Never use the `Any` type
+- Never use the `Any` type. Use `t.TypeVar` instead, but always give such type variables
+  meaningful names, and not just single letter names like `T`.
 - Example:
 
   ```python
