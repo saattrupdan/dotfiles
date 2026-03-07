@@ -28,9 +28,20 @@ Speak either English or Danish, nothing else. Use the same language of the user.
 
 ### Code Formatting and Linting
 
-- Code should always fit within 88 characters
 - Run code formatters with `uv run ruff format`
 - Run linters with `uv run ruff check`
+- Code should always fit within 88 characters
+- When we import things in modules from other modules in the package, we always do it
+  using relative imports:
+  ```python title="src/mypackage/module.py"
+  from .another_module import some_function
+  ```
+- When we import things in scripts from other modules or other scripts, we always do it
+  using absolute imports:
+  ```python title="src/scripts/script.py"
+  from mypackage.module import some_function
+  from another_script import some_other_function
+  ```
 
 ### Testing
 
