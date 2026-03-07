@@ -21,12 +21,17 @@ Speak either English or Danish, nothing else. Use the same language of the user.
 
 ### Documentation
 
-- Use Google-style docstrings for all public functions, classes, and modules.
-- Always include a newline after the name of each argument and exception in the
-  docstring.
+#### Comments
+
 - Avoid tutorial-style `#` comments that explain what code does.
 - Comments should explain **why**, not **what** (the code itself should be
   self-explanatory)
+
+#### Docstrings
+
+- Use Google-style docstrings for all public functions, classes, and modules.
+- Always include a newline after the name of each argument and exception in the
+  docstring.
 - Example:
 
   ```python
@@ -55,12 +60,33 @@ Speak either English or Danish, nothing else. Use the same language of the user.
   - Use `X | Y` for unions (not `Union[X, Y]`)
   - Use `X | None` for optional types (not `Optional[X]`)
 - Always use `import typing as t` and use the `t.` prefix for types from the typing
-  module, such as `t.Any`, `t.Callable`, `t.TypeVar`, etc.
+  module, such as `t.Literal`, `t.TypeAlias` or `t.TYPE_CHECKING`
+- For `Iterable`, `Generator` and `Callable`, use these from the `collections.abc`
+  module, not from `typing`. Import this as `import collections.abc as c` and refer to
+  the types as `c.Iterable`, `c.Generator` and `c.Callable`, etc.
+- Never use the `Any` type
 - Example:
 
   ```python
-  def fetch_data(url: str, timeout: float = 30.0) -> dict[str, t.Any] | None:
+  def fetch_data(
+      url: str, timeout: float = 30.0
+  ) -> dict[str, t.Literal["success", "error"]]:
       ...
+  ```
+
+### Functions
+
+- Never use protected names for functions. I.e., function names should never start with
+  a single underscore (`_`). Built-in dunder functions are okay, e.g., `__init__` or
+  `__str__`
+- Always use keyword arguments when calling functions, never positional arguments
+- Example:
+
+  ```python
+  def process_items(items: list[Item]) -> list[Result]:
+      ...
+
+  process_items(items=items)
   ```
 
 ### Testing
@@ -73,7 +99,9 @@ Speak either English or Danish, nothing else. Use the same language of the user.
 
 - Keep modules focused and cohesive
 - Prefer many small modules over few large ones
-- All code is in the `src/<project_name>` directory
+- All code modules are in the `src/<project_name>` directory. These are not executed but
+  are imported by the scripts
+- All scripts are in the `src/scripts` directory. These are executed with `uv run`
 - All tests are in the `tests/` directory
 - Configs are sometimes available and if so, they are in the `config/` directory
 - There will always be a `pyproject.toml` file in the root directory
