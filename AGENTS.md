@@ -60,6 +60,7 @@ Speak either English or Danish, nothing else. Use the same language of the user.
 - Use Google-style docstrings for all public functions, classes, and modules.
 - Always include a newline after the name of each argument and exception in the
   docstring.
+- Always prefer ascii characters over unicode (e.g., arrows as -> over →)
 - Example:
 
   ```python
