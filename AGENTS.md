@@ -2,7 +2,7 @@
 
 ## Natural language
 
-Speak either English or Danish, nothing else. Use the same language of the user.
+Speak either British English or Danish, nothing else. Use the same language of the user.
 
 ## Python
 
