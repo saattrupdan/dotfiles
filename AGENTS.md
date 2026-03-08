@@ -106,6 +106,9 @@ Speak either English or Danish, nothing else. Use the same language of the user.
 
 ### Functions
 
+- Use a single leading underscore (`_`) for protected functions which should not be
+  imported from outside the module, or for protected methods which should not be used
+  outside the class they are defined in
 - Always use keyword arguments when calling functions, never positional arguments
 - Example:
 
