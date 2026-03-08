@@ -95,16 +95,12 @@ Speak either English or Danish, nothing else. Use the same language of the user.
 - For `Iterable`, `Generator` and `Callable`, use these from the `collections.abc`
   module, not from `typing`. Import this as `import collections.abc as c` and refer to
   the types as `c.Iterable`, `c.Generator` and `c.Callable`, etc.
-- Never use the `Any` type. Use `t.TypeVar` instead, but always give such type variables
-  meaningful names, and not just single letter names like `T`.
-- Example:
+- Try not to use the `Any` type. You can often use`t.TypeVar` instead, but always give
+  such type variables meaningful names, and not just single letter names like `T`. The
+  main place where `Any` types can be acceptable is as the return type of a dictionary
+  with mixed outputs, e.g., `dict[str, t.Any]`, since otherwise you would encounter
+  issues with the type checker.
 
-  ```python
-  def fetch_data(
-      url: str, timeout: float = 30.0
-  ) -> dict[str, t.Literal["success", "error"]]:
-      ...
-  ```
 
 ### Functions
 
