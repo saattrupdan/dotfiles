@@ -107,8 +107,8 @@ Speak either English or Danish, nothing else. Use the same language of the user.
 ### Functions
 
 - Never use protected names for functions. I.e., function names should never start with
-  a single underscore (`_`). Built-in dunder functions are okay, e.g., `__init__` or
-  `__str__`
+  a single underscore (`_`). Protected names for methods are completely fine, and
+  indicates that the method is only intended for use within the class.
 - Always use keyword arguments when calling functions, never positional arguments
 - Example:
 
