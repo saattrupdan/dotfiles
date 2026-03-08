@@ -30,7 +30,7 @@ Speak either English or Danish, nothing else. Use the same language of the user.
 
 - In most projects, you can simply run `make check` to run formatters, linters and type
   checkers. If this doesn't work, then you can code formatters with
-  `uv run ruff format`, linters with `uv run ruff check` and type checkers with
+  `uv run ruff format`, linters with `uv run ruff check --fix` and type checkers with
   `uv run pyrefly check`.
 - Code should always fit within 88 characters
 - When we import things in modules from other modules in the package, we always do it
