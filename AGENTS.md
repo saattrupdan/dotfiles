@@ -26,10 +26,12 @@ Speak either English or Danish, nothing else. Use the same language of the user.
 - There will always be a `pyproject.toml` file in the root directory
 - Use the `tree -a --gitignore -I .git .` command to see the directory structure
 
-### Code Formatting and Linting
+### Code Formatting, Linting and Type Checking
 
-- Run code formatters with `uv run ruff format`
-- Run linters with `uv run ruff check`
+- In most projects, you can simply run `make check` to run formatters, linters and type
+  checkers. If this doesn't work, then you can code formatters with
+  `uv run ruff format`, linters with `uv run ruff check` and type checkers with
+  `uv run pyrefly check`.
 - Code should always fit within 88 characters
 - When we import things in modules from other modules in the package, we always do it
   using relative imports:
