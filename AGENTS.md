@@ -33,6 +33,9 @@ Speak either British English or Danish, nothing else. Use the same language of t
   `uv run ruff format`, linters with `uv run ruff check --fix` and type checkers with
   `uv run pyrefly check`.
 - Code should always fit within 88 characters
+- All imports should happen at the top of each file. The only excuse for not doing this
+  is if the import would cause a circular import, in which case this should be stated in
+  a comment next to the import statement
 - When we import things in modules from other modules in the package, we always do it
   using relative imports:
   ```python title="src/mypackage/module.py"
