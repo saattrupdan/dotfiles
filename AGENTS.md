@@ -36,6 +36,10 @@ Speak either British English or Danish, nothing else. Use the same language of t
 - All imports should happen at the top of each file. The only excuse for not doing this
   is if the import would cause a circular import, in which case this should be stated in
   a comment next to the import statement
+- Functions and classes in a module or script should be ordered from the most high-level
+  to the most low-level. For example, if a function is a helper function that is only
+  used by another function, then the helper function should come after the function that
+  uses it. If there is a `main` function, then it should always be first
 - When we import things in modules from other modules in the package, we always do it
   using relative imports:
   ```python title="src/mypackage/module.py"
