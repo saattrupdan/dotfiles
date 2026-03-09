@@ -100,6 +100,8 @@ Speak either British English or Danish, nothing else. Use the same language of t
   main place where `Any` types can be acceptable is as the return type of a dictionary
   with mixed outputs, e.g., `dict[str, t.Any]`, since otherwise you would encounter
   issues with the type checker.
+- Use the `None` return type for functions that do not return anything. Never use the
+  `NoReturn` type.
 
 
 ### Functions
