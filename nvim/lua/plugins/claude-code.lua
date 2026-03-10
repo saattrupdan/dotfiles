@@ -16,6 +16,8 @@ return {
           normal = "<C-,>",
           terminal = "<C-,>",
         },
+        window_navigation = false,
+        scrolling = false,
       },
     })
   end
