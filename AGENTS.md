@@ -9,6 +9,11 @@ Speak either British English or Danish, nothing else. Use the same language of t
 ### Development Workflow
 
 - Use `uv run` for all script and command execution
+- When you just need an overview of a module, don't read the entire file, but instead
+  just use the `help` Python function:
+  ```bash
+  uv run python -c "import <package_name>; help(<package_name>.<module_name>)"
+  ```
 - Make a todo list of all the things that need to be done, and always add running
   formatters and linters to the list
 - Finish all todos on the todo list without asking for permission to continue to the
