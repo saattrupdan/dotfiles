@@ -12,8 +12,9 @@ Speak either British English or Danish, nothing else. Use the same language of t
 - Do not read entire files, find the relevant line(s) with command-line tools, and only
   read those lines.
 - Make a todo list of all the things that need to be done
-- Assign subagents to handle the todo list items
-- Always ensure that
+- Each todo item should be small, precise and solveable independently of the other todos
+- For each todo item, assign it to a subagent and wait for it to deliver the result, and
+  then move on to the next todo
 
 ### Code Organisation
 
