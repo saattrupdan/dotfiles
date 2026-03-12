@@ -11,10 +11,9 @@ Speak either British English or Danish, nothing else. Use the same language of t
 - Use `uv run` for all script and command execution
 - Do not read entire files, find the relevant line(s) with command-line tools, and only
   read those lines.
-- Make a todo list of all the things that need to be done, and always add running
-  formatters and linters to the list
-- Finish all todos on the todo list without asking for permission to continue to the
-  next task
+- Make a todo list of all the things that need to be done
+- Assign subagents to handle the todo list items
+- Always ensure that
 
 ### Code Organisation
 
@@ -28,12 +27,19 @@ Speak either British English or Danish, nothing else. Use the same language of t
 - There will always be a `pyproject.toml` file in the root directory
 - Use the `tree -a --gitignore -I .git .` command to see the directory structure
 
-### Code Formatting, Linting and Type Checking
+### Code Quality
+
+#### Quality Checkers
 
 - In most projects, you can simply run `make check` to run formatters, linters and type
   checkers. If this doesn't work, then you can code formatters with
   `uv run ruff format`, linters with `uv run ruff check --fix` and type checkers with
   `uv run pyrefly check`.
+- You can usually run tests with `make test`. If this doesn't work, you can use `uv run
+  pytest` instead
+
+#### General Code Conventions
+
 - Code should always fit within 88 characters
 - All imports should happen at the top of each file. The only excuse for not doing this
   is if the import would cause a circular import, in which case this should be stated in
@@ -54,20 +60,46 @@ Speak either British English or Danish, nothing else. Use the same language of t
   from another_script import some_other_function
   ```
 
-### Testing
+#### Type Hints
 
-- Run tests with `uv run pytest`
-- All tests must pass before pushing code
-- Fix broken tests immediately - do not commit failing tests
+- Fully type-annotate all functions, methods, and variables
+- Target Python 3.12+ syntax:
+  - Use `list[T]`, `dict[K, V]`, `set[T]` (not `List`, `Dict`, `Set` from typing)
+  - Use `X | Y` for unions (not `Union[X, Y]`)
+  - Use `X | None` for optional types (not `Optional[X]`)
+- Always use `import typing as t` and use the `t.` prefix for types from the typing
+  module, such as `t.Literal`, `t.TypeAlias` or `t.TYPE_CHECKING`
+- For `Iterable`, `Generator` and `Callable`, use these from the `collections.abc`
+  module, not from `typing`. Import this as `import collections.abc as c` and refer to
+  the types as `c.Iterable`, `c.Generator` and `c.Callable`, etc.
+- Try not to use the `Any` type. You can often use`t.TypeVar` instead, but always give
+  such type variables meaningful names, and not just single letter names like `T`. The
+  main place where `Any` types can be acceptable is as the return type of a dictionary
+  with mixed outputs, e.g., `dict[str, t.Any]`, since otherwise you would encounter
+  issues with the type checker.
+- Use the `None` return type for functions that do not return anything. Never use the
+  `NoReturn` type.
 
-### Comments
+#### Functions
+
+- Use a single leading underscore (`_`) for protected functions which should not be
+  imported from outside the module, or for protected methods which should not be used
+  outside the class they are defined in
+- Always use keyword arguments when calling functions, never positional arguments
+- Example:
+
+  ```python
+  def process_items(items: list[Item]) -> list[Result]:
+      ...
+
+  process_items(items=items)
+  ```
+
+### Documentation
 
 - Avoid tutorial-style `#` comments that explain what code does.
 - Comments should explain **why**, not **what** (the code itself should be
   self-explanatory)
-
-### Docstrings
-
 - Use Google-style docstrings for all public functions, classes, and modules.
 - Always include a newline after the name of each argument and exception in the
   docstring.
@@ -90,40 +122,4 @@ Speak either British English or Danish, nothing else. Use the same language of t
             If items list is empty.
       """
       return batch_process(items=items)
-  ```
-
-### Type Annotations
-
-- Fully type-annotate all functions, methods, and variables
-- Target Python 3.12+ syntax:
-  - Use `list[T]`, `dict[K, V]`, `set[T]` (not `List`, `Dict`, `Set` from typing)
-  - Use `X | Y` for unions (not `Union[X, Y]`)
-  - Use `X | None` for optional types (not `Optional[X]`)
-- Always use `import typing as t` and use the `t.` prefix for types from the typing
-  module, such as `t.Literal`, `t.TypeAlias` or `t.TYPE_CHECKING`
-- For `Iterable`, `Generator` and `Callable`, use these from the `collections.abc`
-  module, not from `typing`. Import this as `import collections.abc as c` and refer to
-  the types as `c.Iterable`, `c.Generator` and `c.Callable`, etc.
-- Try not to use the `Any` type. You can often use`t.TypeVar` instead, but always give
-  such type variables meaningful names, and not just single letter names like `T`. The
-  main place where `Any` types can be acceptable is as the return type of a dictionary
-  with mixed outputs, e.g., `dict[str, t.Any]`, since otherwise you would encounter
-  issues with the type checker.
-- Use the `None` return type for functions that do not return anything. Never use the
-  `NoReturn` type.
-
-
-### Functions
-
-- Use a single leading underscore (`_`) for protected functions which should not be
-  imported from outside the module, or for protected methods which should not be used
-  outside the class they are defined in
-- Always use keyword arguments when calling functions, never positional arguments
-- Example:
-
-  ```python
-  def process_items(items: list[Item]) -> list[Result]:
-      ...
-
-  process_items(items=items)
   ```
