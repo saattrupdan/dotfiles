@@ -1,7 +1,7 @@
 #=====================================
 # Load external ZSH plugins
 #=====================================
-#
+
 # Initialise Zsh function path and completion system
 fpath+=~/.zfunc; autoload -Uz compinit; compinit
 
