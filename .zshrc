@@ -81,7 +81,6 @@ _ssh_complete() {
     return 0
 }
 complete -F _ssh_complete ssh
-complete -F _ssh_complete scp
 
 
 #==================================
@@ -101,6 +100,7 @@ export PATH="$PATH:/Users/dan/.lmstudio/bin"
 export PATH="$PATH:/Users/dan/.local/share/nvim/mason/bin"
 export PATH="$PATH:/Users/dansmart/.lmstudio/bin"
 export PATH="$HOME/.local/bin:$PATH"
+export PATH="$HOME/.local/share/../bin:$PATH"
 
 # Ensure openblas has been set up, which is used for Numpy to work
 export OPENBLAS="$(brew --prefix openblas)"
@@ -112,9 +112,6 @@ export PYTORCH_ENABLE_MPS_FALLBACK="1"
 export NVM_DIR="$HOME/.config/nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
-
-# Set up uv
-. "$HOME/.local/share/../bin/env"
 
 
 #=======================
