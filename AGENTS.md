@@ -77,7 +77,7 @@ Speak either British English or Danish, nothing else. Use the same language of t
   such type variables meaningful names, and not just single letter names like `T`. The
   main place where `Any` types can be acceptable is as the return type of a dictionary
   with mixed outputs, e.g., `dict[str, t.Any]`, since otherwise you would encounter
-  issues with the type checker.
+  issues with the type checker. Note that `list[t.Any]` is not okay.
 - Use the `None` return type for functions that do not return anything. Never use the
   `NoReturn` type.
 
