@@ -1,6 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "gemma-4-26B-A4B-it-MXFP4_MOE",
+  "model": "gemma-4-26B-A4B-it",
   "autoupdate": true,
   "provider": {
     "llamacpp": {
@@ -10,11 +10,8 @@
         "baseURL": "http://localhost:8080"
       },
       "models": {
-        "gemma-4-26B-A4B-it-MXFP4_MOE" : {
-          "name": "gemma-4-26B-A4B-it-MXFP4_MOE"
-        },
-        "Qwen3.5-35B-A3B-Q4_K_M": {
-          "name": "Qwen3.5-35B-A3B-Q4_K_M"
+        "gemma-4-26B-A4B-it" : {
+          "name": "gemma-4-26B-A4B-it"
         }
       }
     },
@@ -25,7 +22,7 @@
         "baseURL": "http://spark-0774.local/api"
       },
       "models": {
-        "google/gemma-4-26B-A4B-it": {
+        "gemma-4-26B-A4B-it": {
           "name": "Gemma-4-26B-A4B"
         }
       }
