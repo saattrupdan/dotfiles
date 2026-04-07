@@ -8,7 +8,7 @@ return {
       model_fim = "qwen2.5-coder-7b",
 
       endpoint_inst = "http://localhost:8080/v1/chat/completions",
-      model_inst = "gemma-4-26B-A4B-it",
+      model_inst = "gemma-4-26B-A4B",
 
       keymap_fim_accept_full = "§",
       keymap_fim_accept_line = "±",

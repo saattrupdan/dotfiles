@@ -108,12 +108,14 @@ Speak either British English or Danish, nothing else. Use the same language of t
 - Example:
 
   ```python
-  def process_items(items: list[Item]) -> list[Result]:
+  def process_items(items: list[Item], log: bool) -> list[Result]:
       """Process items and return results.
 
       Args:
           items:
             List of items to process.
+          log:
+            Whether to log progress.
 
       Returns:
           List of processed results.
@@ -122,5 +124,7 @@ Speak either British English or Danish, nothing else. Use the same language of t
           ValueError:
             If items list is empty.
       """
+      if log:
+          logger.info("Processing items")
       return batch_process(items=items)
   ```

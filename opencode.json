@@ -1,6 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "gemma-4-26B-A4B-it",
+  "model": "llamacpp/gemma-4-26B-A4B",
   "autoupdate": true,
   "provider": {
     "llamacpp": {
@@ -10,8 +10,11 @@
         "baseURL": "http://localhost:8080"
       },
       "models": {
-        "gemma-4-26B-A4B-it" : {
-          "name": "gemma-4-26B-A4B-it"
+        "gemma-4-26B-A4B" : {
+          "name": "gemma-4-26B-A4B"
+        },
+        "Qwen3-35B-A3B" : {
+          "name": "Qwen3-35B-A3B"
         }
       }
     },
@@ -22,7 +25,7 @@
         "baseURL": "http://spark-0774.local/api"
       },
       "models": {
-        "gemma-4-26B-A4B-it": {
+        "gemma-4-26B-A4B": {
           "name": "Gemma-4-26B-A4B"
         }
       }
