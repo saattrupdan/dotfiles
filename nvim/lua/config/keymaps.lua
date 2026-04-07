@@ -23,7 +23,8 @@ vim.keymap.set('n', '<leader><cr>', 'gwgw')
 vim.keymap.set('v', '<leader><cr>', 'gw<cr>')
 
 -- Switch from Terminal mode to Normal mode
-vim.keymap.set('t', '<C-B>[', '<C-\\><C-n>')
+-- vim.keymap.set('t', '<C-B>[', '<C-\\><C-n>')
+vim.keymap.set('t', '<esc>', '<C-\\><C-n>')
 
 -- Breakpoints in Python
 vim.keymap.set("n", "<leader><leader>", "obreakpoint()<esc>:w<cr>")
