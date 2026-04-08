@@ -3,6 +3,7 @@ return {
   dependencies = {
     "mason-org/mason.nvim",
     "mason-org/mason-lspconfig.nvim",
+    "saghen/blink.cmp",
   },
   build = ":MasonInstall pyrefly",
   config = function()
