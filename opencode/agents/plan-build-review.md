@@ -1,7 +1,6 @@
 ---
 description: Plans a code change, implement it, and review it
 mode: primary
-model: llamacpp/gemma-4-26B-A4B
 temperature: 1.0
 permission:
   bash: allow

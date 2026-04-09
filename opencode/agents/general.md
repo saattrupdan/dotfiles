@@ -1,7 +1,6 @@
 ---
 description: Answer questions about the codebase
 mode: primary
-model: llamacpp/gemma-4-26B-A4B
 temperature: 1.0
 permission:
   bash: deny

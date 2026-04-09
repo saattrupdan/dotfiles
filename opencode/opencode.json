@@ -1,7 +1,11 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "llamacpp/Qwen3-35B-A3B",
   "autoupdate": true,
+  "enabled_providers": [
+    "llamacpp",
+    "sparkie"
+  ],
+  "model": "llamacpp/qwen3-35B-A3B",
   "provider": {
     "llamacpp": {
       "npm": "@ai-sdk/openai-compatible",
@@ -12,6 +16,9 @@
       "models": {
         "qwen3-35B-A3B" : {
           "name": "Qwen3-35B-A3B"
+        },
+        "gemma-4-26B-A4B": {
+          "name": "Gemma-4-26B-A4B"
         }
       }
     },

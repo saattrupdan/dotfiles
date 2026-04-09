@@ -1,7 +1,6 @@
 ---
 description: Build agent
 mode: subagent
-model: llamacpp/gemma-4-26B-A4B
 temperature: 1.0
 permission:
   bash: allow
