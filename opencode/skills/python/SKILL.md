@@ -39,7 +39,7 @@ compatibility: opencode
   `uv run ruff format`, linters with `uv run ruff check --fix` and type checkers with
   `uv run pyrefly check`.
 - You can usually run tests with `make test`. If this doesn't work, you can use `uv run
-  pytest` instead
+  pytest` instead. Only run tests if the `tests/` directory exists.
 
 #### General Code Conventions
 
