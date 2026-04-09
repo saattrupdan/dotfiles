@@ -5,7 +5,8 @@ skill: false
 permission:
   bash:
     "*": deny
-    "tree*": allow
+    "tree *": allow
+    "head *": allow
   edit:
     "*": deny
     "PLAN.md": allow
