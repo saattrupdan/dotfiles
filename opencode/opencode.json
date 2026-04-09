@@ -7,6 +7,11 @@
   ],
   "model": "llamacpp/qwen3-35B-A3B",
   "default_agent": "orchestrator",
+  "agent": {
+    "explore": {
+      "disable": true
+    }
+  },
   "provider": {
     "llamacpp": {
       "npm": "@ai-sdk/openai-compatible",

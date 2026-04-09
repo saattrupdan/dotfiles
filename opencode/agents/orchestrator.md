@@ -9,7 +9,9 @@ permission:
     "*": deny
     "PLAN.md": allow
   grep: deny
-  glob: deny
+  glob:
+    "*": deny
+    "PLAN.md": allow
   list: deny
   todowrite: allow
   webfetch: deny
