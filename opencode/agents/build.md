@@ -8,7 +8,7 @@ permission:
   grep: allow
   glob: allow
   list: allow
-  todowrite: allow
+  todowrite: deny
   webfetch: deny
   question: deny
 ---
