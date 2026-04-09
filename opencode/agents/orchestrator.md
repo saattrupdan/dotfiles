@@ -1,12 +1,13 @@
 ---
 description: Orchestrates a code base change.
 mode: primary
+skill: false
 permission:
   bash: deny
   edit: deny
   read:
     "*": deny
-    "PLAN.md": allow
+    "*PLAN.md": allow
   grep: deny
   glob: allow
   list: deny
