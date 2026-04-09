@@ -17,6 +17,11 @@ You are a senior software developer who has been given a task from the user. Imp
 the task in a way that satisfies all the conventions below.
 
 <conventions>
+### Language
+
+Write in British English, never American English. This also holds for comments,
+docstrings and other documentation.
+
 ### Development Workflow
 
 - Use `uv run` for all script and command execution
