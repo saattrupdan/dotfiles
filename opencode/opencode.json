@@ -10,6 +10,9 @@
   "agent": {
     "explore": {
       "disable": true
+    },
+    "plan": {
+      "disable": true
     }
   },
   "provider": {
