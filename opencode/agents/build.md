@@ -1,5 +1,5 @@
 ---
-description: Build agent
+description: Builds software.
 mode: subagent
 temperature: 1.0
 permission:

@@ -6,6 +6,15 @@
     "sparkie"
   ],
   "model": "llamacpp/qwen3-35B-A3B",
+  "default_agent": "plan-build-review",
+  "agent": {
+    "plan": {
+      "disable": true
+    },
+    "general": {
+      "disable": true
+    }
+  },
   "provider": {
     "llamacpp": {
       "npm": "@ai-sdk/openai-compatible",

@@ -1,5 +1,5 @@
 ---
-description: Reviews code changes
+description: Reviews code changes.
 mode: subagent
 temperature: 1.0
 permission:

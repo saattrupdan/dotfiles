@@ -1,5 +1,5 @@
 ---
-description: Answer questions about the codebase
+description: Answers general questions, which can also be about the codebase.
 mode: primary
 temperature: 1.0
 permission:

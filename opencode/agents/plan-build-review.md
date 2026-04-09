@@ -1,5 +1,5 @@
 ---
-description: Plans a code change, implement it, and review it
+description: Plans a code change, implement it, and review it.
 mode: primary
 temperature: 1.0
 permission:
