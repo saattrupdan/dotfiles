@@ -9,8 +9,8 @@ permission:
     "head *": allow
   edit:
     "*": deny
-    "PLAN.md": allow
-    ".gitignore": allow
+    "*PLAN.md": allow
+    "*.gitignore": allow
   read: allow
   grep: allow
   glob: allow
