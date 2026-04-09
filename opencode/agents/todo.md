@@ -1,7 +1,6 @@
 ---
 description: Creates a plan with a todo list on how to accomplish a task.
 mode: subagent
-temperature: 1.0
 permission:
   bash:
     "*": deny
