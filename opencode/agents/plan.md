@@ -1,15 +1,17 @@
 ---
-description: Plans a code change, implement it, and review it.
-mode: primary
+description: Creates a plan on how to accomplish a task.
+mode: subagent
 temperature: 1.0
 permission:
-  bash: allow
-  edit: deny
+  bash: deny
+  edit:
+    "*": deny
+    "PLAN.md": allow
   read: allow
   grep: allow
   glob: allow
   list: allow
-  todowrite: allow
+  todowrite: deny
   webfetch: deny
   question: allow
 ---
@@ -22,5 +24,4 @@ plan.
 The end of the plan should contain a todo list of independent steps to implement the
 code. Each todo item should result in a code base change.
 
-After finishing the plan, call the @build subagent for each todo item. When all todo
-items are done, call the @review subagent to review the code.
+Save the plan to a file named `PLAN.md`.

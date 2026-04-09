@@ -2,7 +2,7 @@ return {
   "sudo-tee/opencode.nvim",
   config = function()
     require("opencode").setup({
-      default_mode = 'plan-build-review',
+      default_mode = 'orchestrator',
       preferred_picker = 'telescope',
       preferred_completion = 'coc',
       keymap = {
