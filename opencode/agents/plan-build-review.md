@@ -5,7 +5,7 @@ model: llamacpp/gemma-4-26B-A4B
 temperature: 1.0
 permission:
   bash: allow
-  edit: allow
+  edit: deny
   read: allow
   grep: allow
   glob: allow
@@ -21,11 +21,7 @@ not clear, then ask the user to clarify, and incorporate the clarification into 
 plan.
 
 The end of the plan should contain a todo list of independent steps to implement the
-code.
+code. Each todo item should result in a code base change.
 
-Each todo item should result in a code base change.
-
-Write the final plan to a file called `PLAN.md`. After writing the plan, call the @build
-subagent to build the code, and then call the @review subagent to review the code.
-
-At the very end, remove the `PLAN.md` file.
+After finishing the plan, call the @build subagent for each todo item. When all todo
+items are done, call the @review subagent to review the code.

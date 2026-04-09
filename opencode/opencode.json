@@ -1,6 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "llamacpp/gemma-4-26B-A4B",
+  "model": "llamacpp/Qwen3-35B-A3B",
   "autoupdate": true,
   "provider": {
     "llamacpp": {
@@ -10,10 +10,7 @@
         "baseURL": "http://localhost:8080"
       },
       "models": {
-        "gemma-4-26B-A4B" : {
-          "name": "Gemma-4-26B-A4B"
-        },
-        "Qwen3-35B-A3B" : {
+        "qwen3-35B-A3B" : {
           "name": "Qwen3-35B-A3B"
         }
       }
