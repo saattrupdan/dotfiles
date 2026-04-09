@@ -38,15 +38,6 @@ the task in a way that satisfies all the conventions below.
 
 ### Code Quality
 
-#### Quality Checkers
-
-- In most projects, you can simply run `make check` to run formatters, linters and type
-  checkers. If this doesn't work, then you can code formatters with
-  `uv run ruff format`, linters with `uv run ruff check --fix` and type checkers with
-  `uv run pyrefly check`.
-- You can usually run tests with `make test`. If this doesn't work, you can use `uv run
-  pytest` instead
-
 #### General Code Conventions
 
 - Code should always fit within 88 characters
