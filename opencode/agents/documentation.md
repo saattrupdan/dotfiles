@@ -1,9 +1,10 @@
 ---
 description: Creates and updates documentation in a code base.
-mode: primary
+mode: subagent
 permission:
   bash:
     "*": deny
+    "git diff*": allow
     "tree *": allow
     "head *": allow
   edit:

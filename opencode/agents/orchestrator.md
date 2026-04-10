@@ -26,9 +26,8 @@ you should do the following:
    tool to make an identical todo list, and for each todo item, call the @build subagent
    to implement that todo item.
 3. When all todo items are done, call the @review subagent to review the code.
-4. At this point no further code changes are needed. Call the @documentation subagent
-   to document the changes made.
-5. Lastly, remove the `PLAN.md` file.
+4. At this point no further code changes are needed. Remove the `PLAN.md` file.
+5. Lastly, call the @documentation subagent to document the changes made.
 
 Never read other files other than the `PLAN.md`. Never make your own plan, use your
 subagent for that.
