@@ -19,8 +19,9 @@ metadata:
 
 ### User Questions
 
-You should ask the user if they expect to have several concurrent users or not. If they
-do, you should use a PostgreSQL database. If they don't, you can use SQLite.
+You should ask the user if they expect to have several concurrent users or not with your
+question tool. If they do, you should use a PostgreSQL database. If they don't, you can
+use SQLite.
 
 ### Project Structure
 
