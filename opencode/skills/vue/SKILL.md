@@ -1,8 +1,10 @@
 ---
 name: vue
-description: Conventions when coding in Vue.js.
+description: Conventions when coding in Vue.js. Use whenever you're building a frontend.
 license: MIT
 compatibility: opencode
+metadata:
+  triggers: vue, vuejs, vue.js, frontend
 ---
 
 ## Vue.js Conventions

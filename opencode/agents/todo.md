@@ -36,6 +36,9 @@ guessing. Always ask all questions up front, rather than doing it mid-planning.
 If the user supplied any background URLs that could be useful, then use your webfetch
 tool to fetch the content and incorporate it into the plan, if relevant.
 
+Consider whether any of your available skills could be useful in the implementation, and
+use them if they are.
+
 The end of the plan should contain a todo list of independent steps to implement the
 code. Each todo item should result in a code base change. Note that you don't have to
 worry about linting, formatting and testing - this will be handled later.
