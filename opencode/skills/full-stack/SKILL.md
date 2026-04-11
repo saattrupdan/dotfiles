@@ -94,6 +94,9 @@ In full stack apps, use the following structure:
     └── (...)
 ```
 
+When building a full-stack application, ensure that this structure is scaffolded before
+continuing on with anything else.
+
 ### NGINX config
 
 ```nginx title="docker-compose.nginx.conf"
