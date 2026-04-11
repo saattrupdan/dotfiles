@@ -70,6 +70,7 @@ metadata:
 - All script tags should be typescript: `<script setup lang="ts">`
 - All style tags should be scoped: `<style scoped>`
 - All imports should happen at the top of each file
+- Never use TailwindCSS, just use regular CSS classes
 
 ### Standard packages
 
