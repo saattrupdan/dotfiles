@@ -32,6 +32,128 @@ metadata:
 - There will always be a `pyproject.toml` file in the root directory
 - Use the `tree -a --gitignore -I .git .` command to see the directory structure
 
+### Pyproject.toml
+
+- Use `uv add <package>` to add packages to the project, do not just add them manually
+  to `pyproject.toml`.
+- Adhere to this standard `pyproject.toml` template:
+  ```toml
+  [project]
+  name = "<project_name>"
+  version = "0.0.1"
+  description = "<project_description>"
+  readme = "README.md"
+  authors = [
+    {name = "<name>", email = "<email>"},
+  ]
+  maintainers = [
+    {name = "<name>", email = "<email>"},
+  ]
+  requires-python = ">=3.12,<4.0"
+  dependencies = [
+  ]
+
+  [dependency-groups]
+  dev = [
+  ]
+
+  [tool.ruff]
+  target-version = "py312"
+  line-length = 88
+  exclude = [
+    ".git",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+  ]
+  extend-include = [
+    "*.ipynb",
+  ]
+
+  [tool.ruff.format]
+  quote-style = "double"
+  indent-style = "space"
+  docstring-code-format = true
+  skip-magic-trailing-comma = true
+
+  [tool.ruff.lint]
+  preview = true
+  select = [
+    # isort (imports)
+    "I",
+    # Docstrings
+    "D",
+    "DOC",
+    # pycodestyle errors and warnings (PEP8)
+    "E",
+    "W",
+    # flake-annotations (type hints)
+    "ANN",
+    # Pyflakes
+    "F",
+  ]
+  ignore = [
+    # Type annotations for "self" arguments
+    "ANN101",
+    # Type annotations for "cls" arguments
+    "ANN102",
+    # Type annotations for *args
+    "ANN002",
+    # Type annotations for **kwargs
+    "ANN003",
+    # Always add blank line before class docstring
+    "D203",
+    # No new-line as first line of docstring
+    "D213",
+  ]
+
+  [tool.ruff.lint.isort]
+  split-on-trailing-comma = false
+
+  [tool.ruff.lint.pydocstyle]
+  convention = "google"
+
+  [tool.pyrefly.errors]
+  missing-import = false
+  missing-attribute = false
+  not-iterable = false
+  no-matching-overload = false
+
+  [tool.pytest.ini_options]
+  minversion = "7.0"
+  addopts = [
+    '--durations=10',
+    '--color=yes',
+    '--doctest-modules',
+    '--cov=src/<project_name>',
+  ]
+  xfail_strict = true
+  filterwarnings = [
+    "error",
+    "ignore::UserWarning",
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+    "ignore::ImportWarning",
+    "ignore::ResourceWarning",
+    "ignore::FutureWarning",
+  ]
+  log_cli_level = "info"
+  testpaths = [
+    "tests",
+    "src/<project_name>",
+  ]
+
+  [tool.pyrefly]
+  site-package-path = [".venv/lib/python3.12/site-packages"]
+
+  [build-system]
+  requires = ["hatchling"]
+  build-backend = "hatchling.build"
+  ```
+
+  Ask the user about the `<name>` and `<email>` values. Should be their full name and
+  email.
+
 ### Code Quality
 
 #### Quality Checkers
