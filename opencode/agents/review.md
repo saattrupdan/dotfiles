@@ -2,15 +2,21 @@
 description: Reviews code changes.
 mode: subagent
 permission:
-  bash: allow
-  edit: allow
   read: allow
-  grep: allow
+  edit: allow
   glob: allow
+  grep: allow
   list: allow
-  todowrite: deny
-  webfetch: deny
+  bash: allow
+  task: deny
+  skill: allow
+  lsp: deny
   question: deny
+  webfetch: deny
+  websearch: deny
+  external_directory: deny
+  doom_loop: deny
+  todowrite: deny
 ---
 
 You are a senior software developer. Changes have been made to the codebase, and you

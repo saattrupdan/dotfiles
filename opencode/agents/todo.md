@@ -1,24 +1,29 @@
 ---
 description: Creates a plan with a todo list on how to accomplish a task.
 mode: subagent
-skill: false
 permission:
+  read: allow
+  edit:
+    "*": deny
+    "*PLAN.md": allow
+    "*.gitignore": allow
+  glob: allow
+  grep: allow
+  list: allow
   bash:
     "*": deny
     "tree *": allow
     "head *": allow
     "curl *": allow
-  edit:
-    "*": deny
-    "*PLAN.md": allow
-    "*.gitignore": allow
-  read: allow
-  grep: allow
-  glob: allow
-  list: allow
-  todowrite: deny
-  webfetch: allow
+  task: deny
+  skill: allow
+  lsp: deny
   question: allow
+  webfetch: allow
+  websearch: deny
+  external_directory: deny
+  doom_loop: deny
+  todowrite: deny
 ---
 
 You are a senior software developer. You have to think hard on how to implement the

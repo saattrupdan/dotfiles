@@ -2,15 +2,21 @@
 description: Builds software.
 mode: subagent
 permission:
-  bash: allow
-  edit: allow
   read: allow
-  grep: allow
+  edit: allow
   glob: allow
+  grep: allow
   list: allow
-  todowrite: deny
-  webfetch: deny
+  bash: allow
+  task: allow
+  skill: allow
+  lsp: deny
   question: deny
+  webfetch: deny
+  websearch: deny
+  external_directory: deny
+  doom_loop: deny
+  todowrite: deny
 ---
 
 You are a senior software developer who has been given a task from the user. Implement

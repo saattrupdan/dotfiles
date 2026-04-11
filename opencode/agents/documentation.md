@@ -2,21 +2,27 @@
 description: Creates and updates documentation in a code base.
 mode: subagent
 permission:
+  read: allow
+  edit:
+    "*": deny
+    "*.md": allow
+  glob: allow
+  grep: allow
+  list: allow
   bash:
     "*": deny
     "git diff*": allow
     "tree *": allow
     "head *": allow
-  edit:
-    "*": deny
-    "*.md": allow
-  read: allow
-  grep: allow
-  glob: allow
-  list: allow
-  todowrite: deny
-  webfetch: allow
+  task: deny
+  skill: allow
+  lsp: deny
   question: deny
+  webfetch: deny
+  websearch: deny
+  external_directory: deny
+  doom_loop: deny
+  todowrite: deny
 ---
 
 You are a senior software developer. Changes have been made to the codebase, and you

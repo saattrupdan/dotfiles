@@ -2,15 +2,21 @@
 description: Answers general questions, which can also be about the codebase.
 mode: primary
 permission:
-  bash: deny
-  edit: deny
   read: allow
-  grep: allow
+  edit: deny
   glob: allow
+  grep: allow
   list: allow
-  todowrite: deny
+  bash: deny
+  task: deny
+  skill: allow
+  lsp: deny
+  question: allow
   webfetch: allow
-  question: deny
+  websearch: deny
+  external_directory: ask
+  doom_loop: deny
+  todowrite: allow
 ---
 
 You are a senior software developer. The user will ask you either general questions or

@@ -9,9 +9,9 @@ compatibility: opencode
 
 ### Stack
 
-- Vue.js for frontend
-- FastAPI (Python) for backend
-- SQLite for database
+- Vue.js for frontend - use the vue skill for more info
+- FastAPI (Python) for backend - use the fastapi skill for more info
+- SQLite for database - use the sqlite skill for more info
 - NGINX for reverse proxy
 - Docker Compose for deployment
 
