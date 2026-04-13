@@ -28,17 +28,15 @@ you should do the following:
    base request from the user as an argument to the subagent. This should create a file
    called `PLAN.md` in the project root directory . If this file doesn't exist when the
    subagent is finished, you should call the @todo subagent again.
-2. Ask the @plan-review subagent to review the plan and make any changes to it if
-   needed.
-3. Read the `PLAN.md` file, which also contains a list of todo items. For each todo
+2. Read the `PLAN.md` file, which also contains a list of todo items. For each todo
    item, do the following:
    1. Call the @build subagent to implement that todo item
    2. Mark it as done in the `PLAN.md` file, which is done by replacing the relevant
      `[ ]` with `[x]` in the file.
-4. When all todo items are done, call the @review subagent to review the code.
-5. At this point no further code changes are needed. Remove the `PLAN.md` file.
-6. Lastly, call the @documentation subagent to document the changes made.
-7. Celebrate that you've successfully done it!
+3. When all todo items are done, call the @review subagent to review the code.
+4. At this point no further code changes are needed. Remove the `PLAN.md` file.
+5. Lastly, call the @documentation subagent to document the changes made.
+6. Celebrate that you've successfully done it!
 
 Never read other files other than the `PLAN.md`. Never make your own plan, use your
 subagent for that.
