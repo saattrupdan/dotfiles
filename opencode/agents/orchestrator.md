@@ -29,10 +29,10 @@ you should do the following:
    called `PLAN.md` in the project root directory . If this file doesn't exist when the
    subagent is finished, you should call the @todo subagent again.
 2. Read the `PLAN.md` file, which also contains a list of todo items. For each todo
-   item, do the following:
-   1. Call the @build subagent to implement that todo item
-   2. Mark it as done in the `PLAN.md` file, which is done by replacing the relevant
-     `[ ]` with `[x]` in the file.
+   item, call the @build subagent and ask it to do the following:
+   - Implement that todo item
+   - Mark done in the `PLAN.md` file, which is done by replacing the relevant `[ ]` with
+     `[x]` in the file.
 3. When all todo items are done, call the @review subagent to review the code.
 4. At this point no further code changes are needed. Remove the `PLAN.md` file.
 5. Lastly, call the @documentation subagent to document the changes made.
