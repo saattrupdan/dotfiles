@@ -53,4 +53,6 @@ user's code request, and write up a detailed plan of how to do it. Do the follow
    - The end of the plan should contain a todo list of independent steps to implement
      the code. These should be prefixes with "[ ]", as in "[ ] <todo-item>"
    - Each todo item should result in a code base change.
-9. Add `PLAN.md` to `.gitignore` if it's not already there.
+9. Have a look at the todo list and make sure that they don't contradict neither the
+   plan, conventions as stated any of the skills you loaded, nor each other
+10. Add `PLAN.md` to `.gitignore` if it's not already there.

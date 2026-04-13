@@ -14,11 +14,12 @@ metadata:
 - Write in British English, never American English. This also holds for comments,
   docstrings and other documentation.
 
-### Development Workflow
+### General Conventions
 
 - Use `uv run` for all script and command execution
+- Use `pyproject.toml`, not `requirements.txt` for dependency management
 - Do not read entire files, find the relevant line(s) with command-line tools, and only
-  read those lines.
+  read those lines
 
 ### New Python Projects
 
