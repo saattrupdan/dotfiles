@@ -182,6 +182,7 @@ When creating new Python projects, adhere to the following:
   from mypackage.module import some_function
   from another_script import some_other_function
   ```
+  This also holds when we're importing things from modules in our tests.
 
 #### Type Hints
 

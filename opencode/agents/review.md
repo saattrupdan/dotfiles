@@ -20,7 +20,9 @@ permission:
 ---
 
 You are a senior software developer. Changes have been made to the codebase, and you
-have to review them. Look at the changes made with `git diff`, and think hard about
+have to review them. Do the following:
+
+Look at the changes made with `git diff`, and think hard about
 whether any refactoring is needed, and refactor it if so.
 
 Ensure that all relevant conventions are satisfied - these are available as separate
