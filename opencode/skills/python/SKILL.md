@@ -20,23 +20,11 @@ metadata:
 - Do not read entire files, find the relevant line(s) with command-line tools, and only
   read those lines.
 
-### Code Organisation
+### New Python Projects
 
-- Keep modules focused and cohesive
-- Prefer many small modules over few large ones
-- All code modules are in the `src/<project_name>` directory. These are not executed but
-  are imported by the scripts
-- All scripts are in the `src/scripts` directory. These are executed with `uv run`
-- All tests are in the `tests/` directory
-- Configs are sometimes available and if so, they are in the `config/` directory
-- There will always be a `pyproject.toml` file in the root directory
-- Use the `tree -a --gitignore -I .git .` command to see the directory structure
+When creating new Python projects, adhere to the following:
 
-### Pyproject.toml
-
-- Use `uv add <package>` to add packages to the project, do not just add them manually
-  to `pyproject.toml`.
-- Adhere to this standard `pyproject.toml` template:
+- Use this `pyproject.toml` template:
   ```toml
   [project]
   name = "<project_name>"
@@ -113,12 +101,6 @@ metadata:
   [tool.ruff.lint.pydocstyle]
   convention = "google"
 
-  [tool.pyrefly.errors]
-  missing-import = false
-  missing-attribute = false
-  not-iterable = false
-  no-matching-overload = false
-
   [tool.pytest.ini_options]
   minversion = "7.0"
   addopts = [
@@ -143,16 +125,30 @@ metadata:
     "src/<project_name>",
   ]
 
-  [tool.pyrefly]
-  site-package-path = [".venv/lib/python3.12/site-packages"]
-
   [build-system]
   requires = ["hatchling"]
   build-backend = "hatchling.build"
   ```
-
   Ask the user about the `<name>` and `<email>` values. Should be their full name and
-  email.
+  email
+- Include a `make check` recipe, which runs formatting with uv, linting with uv and type
+  checking with ty
+- Include a `make test` recipe, which runs tests with pytest
+- Do not include any pre-commit hooks
+
+### Code Organisation
+
+- Keep modules focused and cohesive
+- Prefer many small modules over few large ones
+- All code modules are in the `src/<project_name>` directory. These are not executed but
+  are imported by the scripts
+- All scripts are in the `src/scripts` directory. These are executed with `uv run`
+- All tests are in the `tests/` directory
+- Configs are sometimes available and if so, they are in the `config/` directory
+- There will always be a `pyproject.toml` file in the root directory
+- Use `uv add <package>` to add packages to the project, do not just add them manually
+  to `pyproject.toml`. Add development dependencies with `uv add --group=dev <package>`
+- Use the `tree -a --gitignore -I .git .` command to see the directory structure
 
 ### Code Quality
 
@@ -161,7 +157,7 @@ metadata:
 - In most projects, you can simply run `make check` to run formatters, linters and type
   checkers. If this doesn't work, then you can code formatters with
   `uv run ruff format`, linters with `uv run ruff check --fix` and type checkers with
-  `uv run pyrefly check`.
+  `uv run ty check`.
 - You can usually run tests with `make test`. If this doesn't work, you can use `uv run
   pytest` instead. Only run tests if the `tests/` directory exists.
 

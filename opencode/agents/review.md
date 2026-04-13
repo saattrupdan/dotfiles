@@ -25,4 +25,7 @@ whether any refactoring is needed, and refactor it if so.
 
 Ensure that all relevant conventions are satisfied - these are available as separate
 skills (for example, the `python` skill for Python code). Also run formatters, linters
-and tests as appropriate, as described in the conventions.
+and tests as appropriate, as described in the conventions. Documentation is handled at a
+later stage, so you don't need to worry about that.
+
+You have to implement all the changes, not simply to suggest them.

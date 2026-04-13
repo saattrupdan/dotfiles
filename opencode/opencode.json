@@ -3,7 +3,8 @@
   "autoupdate": true,
   "enabled_providers": [
     "llamacpp",
-    "sparkie"
+    "sparkie",
+    "inference-server"
   ],
   "model": "llamacpp/qwen3-35B-A3B",
   "default_agent": "orchestrator",
@@ -35,11 +36,23 @@
       "npm": "@ai-sdk/openai-compatible",
       "name": "Sparkie",
       "options": {
-        "baseURL": "http://spark-0774.local/api"
+        "baseURL": "http://192.168.0.28/api"
       },
       "models": {
-        "google/gemma-4-26B-A4B-it": {
-          "name": "Gemma-4-26B-A4B"
+        "openai/gpt-oss-20b": {
+          "name": "GPT-OSS-20B"
+        }
+      }
+    },
+    "inference-server": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Alexandra Inference Server",
+      "options": {
+        "baseURL": "https://inference-test.projects.alexandrainst.dk/api"
+      },
+      "models": {
+        "openai/gpt-oss-20b": {
+          "name": "GPT-OSS-20B"
         }
       }
     }
