@@ -20,35 +20,6 @@ metadata:
 - Prefer many small modules over few large ones
 - All frontend code is in the `src/frontend/` directory.
 - Use the `tree -a --gitignore -I .git .` command to see the directory structure
-- Aim for the following overall structure:
-  ```bash
-  index.html
-  vite.config.ts
-  tsconfig.json
-  package.json
-  eslint.config.js
-  .prettier.config.js
-  makefile
-  src/frontend/
-  ├── App.vue
-  ├── main.ts
-  ├── vite-env.d.ts
-  ├── views/
-  │   ├── ...
-  ├── components/
-  │   ├── ...
-  ├── routes/
-  │   ├── index.ts
-  │   ├── ...
-  ├── stores/
-  │   ├── ...
-  ├── types/
-  │   ├── ...
-  ├── assets/
-  │   ├── main.css
-  │   ├── ...
-  └── ...
-  ```
 
 ### Code Quality
 
