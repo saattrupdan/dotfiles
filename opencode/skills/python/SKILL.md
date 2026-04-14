@@ -21,122 +21,6 @@ metadata:
 - Do not read entire files, find the relevant line(s) with command-line tools, and only
   read those lines
 
-### New Python Projects
-
-When creating new Python projects, adhere to the following:
-
-- Use this `pyproject.toml` template:
-  ```toml
-  [project]
-  name = "<project_name>"
-  version = "0.0.1"
-  description = "<project_description>"
-  readme = "README.md"
-  authors = [
-    {name = "<name>", email = "<email>"},
-  ]
-  maintainers = [
-    {name = "<name>", email = "<email>"},
-  ]
-  requires-python = ">=3.12,<4.0"
-  dependencies = [
-  ]
-
-  [dependency-groups]
-  dev = [
-  ]
-
-  [tool.ruff]
-  target-version = "py312"
-  line-length = 88
-  exclude = [
-    ".git",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".venv",
-  ]
-  extend-include = [
-    "*.ipynb",
-  ]
-
-  [tool.ruff.format]
-  quote-style = "double"
-  indent-style = "space"
-  docstring-code-format = true
-  skip-magic-trailing-comma = true
-
-  [tool.ruff.lint]
-  preview = true
-  select = [
-    # isort (imports)
-    "I",
-    # Docstrings
-    "D",
-    "DOC",
-    # pycodestyle errors and warnings (PEP8)
-    "E",
-    "W",
-    # flake-annotations (type hints)
-    "ANN",
-    # Pyflakes
-    "F",
-  ]
-  ignore = [
-    # Type annotations for "self" arguments
-    "ANN101",
-    # Type annotations for "cls" arguments
-    "ANN102",
-    # Type annotations for *args
-    "ANN002",
-    # Type annotations for **kwargs
-    "ANN003",
-    # Always add blank line before class docstring
-    "D203",
-    # No new-line as first line of docstring
-    "D213",
-  ]
-
-  [tool.ruff.lint.isort]
-  split-on-trailing-comma = false
-
-  [tool.ruff.lint.pydocstyle]
-  convention = "google"
-
-  [tool.pytest.ini_options]
-  minversion = "7.0"
-  addopts = [
-    '--durations=10',
-    '--color=yes',
-    '--doctest-modules',
-    '--cov=src/<project_name>',
-  ]
-  xfail_strict = true
-  filterwarnings = [
-    "error",
-    "ignore::UserWarning",
-    "ignore::DeprecationWarning",
-    "ignore::PendingDeprecationWarning",
-    "ignore::ImportWarning",
-    "ignore::ResourceWarning",
-    "ignore::FutureWarning",
-  ]
-  log_cli_level = "info"
-  testpaths = [
-    "tests",
-    "src/<project_name>",
-  ]
-
-  [build-system]
-  requires = ["hatchling"]
-  build-backend = "hatchling.build"
-  ```
-  Ask the user about the `<name>` and `<email>` values. Should be their full name and
-  email
-- Include a `make check` recipe, which runs formatting with uv, linting with uv and type
-  checking with ty
-- Include a `make test` recipe, which runs tests with pytest
-- Do not include any pre-commit hooks
-
 ### Code Organisation
 
 - Keep modules focused and cohesive
@@ -168,21 +52,27 @@ When creating new Python projects, adhere to the following:
 - All imports should happen at the top of each file. The only excuse for not doing this
   is if the import would cause a circular import, in which case this should be stated in
   a comment next to the import statement
+- Never use the old %-style string formatting. Use f-strings instead
+- Never use `print` statements - use a logger instead
 - Functions and classes in a module or script should be ordered from the most high-level
   to the most low-level. For example, if a function is a helper function that is only
   used by another function, then the helper function should come after the function that
   uses it. If there is a `main` function, then it should always be first
 - When we import things in modules from other modules in the package, we always do it
   using relative imports:
+
   ```python title="src/mypackage/module.py"
   from .another_module import some_function
   ```
+
 - When we import things in scripts from other modules or other scripts, we always do it
   using absolute imports:
+
   ```python title="src/scripts/script.py"
   from mypackage.module import some_function
   from another_script import some_other_function
   ```
+
   This also holds when we're importing things from modules in our tests.
 
 #### Type Hints

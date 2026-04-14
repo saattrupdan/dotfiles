@@ -9,11 +9,6 @@ metadata:
 
 ## Vue.js Conventions
 
-### Natural Language
-
-- Write in British English, never American English. This also holds for comments,
-  docstrings and other documentation.
-
 ### Code Organisation
 
 - Keep modules focused and cohesive
