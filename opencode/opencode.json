@@ -4,6 +4,7 @@
   "enabled_providers": [
     "llamacpp",
     "sparkie",
+    "internal-inference-server",
     "inference-server"
   ],
   "model": "llamacpp/qwen3-35B-A3B",
@@ -47,6 +48,18 @@
     "inference-server": {
       "npm": "@ai-sdk/openai-compatible",
       "name": "Alexandra Inference Server",
+      "options": {
+        "baseURL": "https://inference.projects.alexandrainst.dk/v1"
+      },
+      "models": {
+        "qwen-235b": {
+          "name": "Qwen 235B"
+        }
+      }
+    },
+    "internal-inference-server": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Alexandra Internal Inference Server",
       "options": {
         "baseURL": "https://inference-test.projects.alexandrainst.dk/api"
       },
