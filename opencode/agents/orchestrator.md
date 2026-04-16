@@ -9,7 +9,9 @@ permission:
   glob: allow
   grep: deny
   list: deny
-  bash: deny
+  bash:
+    "*": deny
+    "git *": allow
   task: allow
   skill: deny
   lsp: deny
@@ -35,8 +37,9 @@ you should do the following:
      `[x]` in the file.
 3. When all todo items are done, call the @review subagent to review the code.
 4. At this point no further code changes are needed. Remove the `PLAN.md` file.
-5. Lastly, call the @documentation subagent to document the changes made.
-6. Celebrate that you've successfully done it!
+5. Add and commit the changes.
+6. Make a little poem or song about the change to celebrate! No need to include any
+   preamble, just the poem or song itself. Include 🎵 emojis.
 
 Never read other files other than the `PLAN.md`. Never make your own plan, use your
 subagent for that.
