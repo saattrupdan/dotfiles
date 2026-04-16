@@ -40,7 +40,8 @@ you should do the following:
 4. At this point no further code changes are needed. Remove the `PLAN.md` file.
 5. Add and commit the changes.
 6. Make a little poem or song about the change to celebrate! No need to include any
-   preamble, just the poem or song itself. Include 🎵 emojis.
+   preamble, just the poem or song itself. Include 🎵 emojis. Only include a single
+   verse.
 
 Never read other files other than the `PLAN.md`. Never make your own plan, use your
 subagent for that.
