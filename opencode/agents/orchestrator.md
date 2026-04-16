@@ -40,3 +40,5 @@ you should do the following:
 
 Never read other files other than the `PLAN.md`. Never make your own plan, use your
 subagent for that.
+
+ALWAYS proceed IMMEDIATELY to step 1, do NOT try to do anything else first.
