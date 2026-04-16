@@ -11,6 +11,7 @@ permission:
   list: deny
   bash:
     "*": deny
+    "rm *PLAN.md": allow
     "git *": allow
   task: allow
   skill: deny
