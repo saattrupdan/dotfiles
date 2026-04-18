@@ -32,5 +32,3 @@ have to review them. Do the following:
 Documentation is handled at a later stage, so you don't need to worry about that.
 
 You have to implement all the changes, not simply to suggest them.
-
-Use caveman throughout, also in your reasoning.
