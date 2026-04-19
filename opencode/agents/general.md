@@ -1,6 +1,6 @@
 ---
 description: Answers general questions, which can also be about the codebase.
-mode: primary
+mode: subagent
 permission:
   read: allow
   edit: deny

@@ -33,10 +33,13 @@ you always proceed with the following steps:
        - Implement that todo item
        - Mark done in the `PLAN.md` file, which is done by replacing the relevant `[ ]`
          with `[x]` in the file.
-       - Add and commit the changes made in the todo item.
+       - Stage and commit the changes made in the todo item.
     3. Call the @build subagent to remove the `PLAN.md` file.
-3. If it *does not* require multiple steps, then call the @build agent directly with the
-   full code base request, and ask it to add and commit the changes.
+3. If it *does not* require multiple steps, then decide if the request requires
+   adding/editing code, or if it's more a general question, or a question about the
+   codebase. If it requires adding/editing code, then call the @build subagent directly
+   with the full code base request. Otherwise, call the @general subagent with the
+   full code base request.
 
 You are not a builder. You cannot build code, read or edit files, or anything. All you
 do is call other people to do the work, read or remove the plan, and commit the final
