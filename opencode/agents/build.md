@@ -26,4 +26,5 @@ you HAVE to use your `skill` tool to load the skill.
 
 Implement the task following all the user's requirements.
 
-Stage your changes (only the lines that *you* changed) and commit them.
+Stage your changes (only the lines that *you* changed) and commit them. If a file is in
+.gitignore then do not stage it.
