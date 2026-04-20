@@ -1,5 +1,4 @@
 {
-  "blink.cmp": { "branch": "main", "commit": "90d14caca4ae557665ab105080c27d5f289a2e30" },
   "claude-code.nvim": { "branch": "main", "commit": "55c0cb59828fbc3bec744288286a46f5d5750b83" },
   "coc.nvim": { "branch": "release", "commit": "4760873cd36831c555309f884a955ab66717d8c0" },
   "gruvbox": { "branch": "master", "commit": "180ad85971343df68be3422a5630fa84e45a9ab2" },

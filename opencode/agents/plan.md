@@ -49,17 +49,15 @@ user's code request, and write up a detailed plan of how to do it. Do the follow
    initialise the git repository with `git init`.
 6. If `.gitignore` doesn't exist, then make a todo item to create it with sensible
    defaults.
-7. Explore the repository to get an idea of the current state of the project.
-8. Create a plan to implement the code, and store it in the `PLAN.md` file. This should
-   adhere to the following:
-   - The structure of the repository (as a tree) should be mentioned in the plan.
+7. Create a plan to handle the user's request, and store it in the `PLAN.md` file. This
+   should adhere to the following:
+   - The plan should be minimal, be straight to the point and only contain the absolute
+     essentials needed to implement the code.
    - The end of the plan should contain a todo list of independent steps to implement
      the code. These should be prefixes with "[ ]", as in "[ ] <todo-item>"
    - Each todo item should result in a code base change.
    - Include todo items at the end to make sure that formatting, linting, and testing is
      done, and also that whatever documentation exists is up to date with the new
      changes.
-9. Have a look at the todo list and make sure that they don't contradict neither the
-   plan, conventions as stated any of the skills you loaded, nor each other
-10. Add `PLAN.md` to `.gitignore` if it's not already there.
-11. Return the full plan as a string.
+8. Add `PLAN.md` to `.gitignore` if it's not already there.
+9. Return the full plan as a string.
