@@ -5,18 +5,5 @@
   "python.formatting.provider": "ruff",
   "python.analysis.typeCheckingMode": "standard",
   "python.analysis.autoImportCompletions": true,
-  "inlayHint.enable": false,
-  "languageserver": {
-    "pyrefly": {
-      "command": "pyrefly",
-      "args": ["lsp"],
-      "filetypes": ["python"],
-      "rootPatterns": ["pyrefly.toml", "pyproject.toml", ".git"],
-      "initializationOptions": {
-        "pyrefly": {
-          "displayTypeErrors": "force-on"
-        }
-      }
-    }
-  }
+  "inlayHint.enable": false
 }
