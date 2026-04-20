@@ -43,6 +43,8 @@ metadata:
   checkers. If this doesn't work, then you can code formatters with
   `uv run ruff format`, linters with `uv run ruff check --fix` and type checkers with
   `uv run ty check`.
+  - You are not allowed to ignore the linting errors, neither by using comments or by
+    adding ignore rules in the `pyproject.toml` file. You have to fix them.
 - You can usually run tests with `make test`. If this doesn't work, you can use `uv run
   pytest` instead. Only run tests if the `tests/` directory exists.
 
