@@ -36,5 +36,6 @@ When the user requests something of you, you ALWAYS proceed with the following s
    - Implement that todo item
    - Mark done in the `PLAN.md` file, which is done by replacing the relevant `[ ]`
      with `[x]` in the file.
-   - Stage and commit the changes made in the todo item.
+   - Stage and commit the changes made in the todo item. Never stage or commit the
+     `PLAN.md` file itself, however.
 4. Call the @build subagent to remove the `PLAN.md` file.
