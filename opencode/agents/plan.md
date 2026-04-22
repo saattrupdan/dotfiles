@@ -30,7 +30,7 @@ permission:
   webfetch: allow
   websearch: deny
   external_directory: deny
-  doom_loop: deny
+  doom_loop: allow
   todowrite: deny
 ---
 
