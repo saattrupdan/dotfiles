@@ -56,6 +56,7 @@ metadata:
   a comment next to the import statement
 - Never use the old %-style string formatting. Use f-strings instead
 - Never use `print` statements - use a logger instead
+- Use `pathlib.Path` objects over strings for file paths
 - Functions and classes in a module or script should be ordered from the most high-level
   to the most low-level. For example, if a function is a helper function that is only
   used by another function, then the helper function should come after the function that
@@ -89,11 +90,9 @@ metadata:
 - For `Iterable`, `Generator` and `Callable`, use these from the `collections.abc`
   module, not from `typing`. Import this as `import collections.abc as c` and refer to
   the types as `c.Iterable`, `c.Generator` and `c.Callable`, etc.
-- Try not to use the `Any` type. You can often use`t.TypeVar` instead, but always give
-  such type variables meaningful names, and not just single letter names like `T`. The
-  main place where `Any` types can be acceptable is as the return type of a dictionary
-  with mixed outputs, e.g., `dict[str, t.Any]`, since otherwise you would encounter
-  issues with the type checker. Note that `list[t.Any]` is not okay.
+- Do not use the `Any` type. You can often use`t.TypeVar` instead, but always give
+  such type variables meaningful names, and not just single letter names like `T`. If
+  it's a dictionary, you can use `t.TypedDict` instead.
 - Use the `None` return type for functions that do not return anything. Never use the
   `NoReturn` type.
 
@@ -139,6 +138,44 @@ metadata:
       Raises:
           ValueError:
             If items list is empty.
+      """
+      if log:
+          logger.info("Processing items")
+      return batch_process(items=items)
+  ```
+
+- You don't have to include the "Returns" section if the function doesn't return
+  anything - example:
+
+  ```python
+  def process_items(items: list[Item], log: bool) -> None:
+      """Process items and return results.
+
+      Args:
+          items:
+            List of items to process.
+          log:
+            Whether to log progress.
+      """
+      if log:
+          logger.info("Processing items")
+      batch_process(items=items)
+  ```
+
+- If an argument has a default value, mark it as optional in the docstring - example:
+
+  ```python
+  def process_items(items: list[Item], log: bool = False) -> list[Result]:
+      """Process items and return results.
+
+      Args:
+          items:
+            List of items to process.
+          log (optional):
+            Whether to log progress. Defaults to False.
+
+      Returns:
+          List of processed results.
       """
       if log:
           logger.info("Processing items")
