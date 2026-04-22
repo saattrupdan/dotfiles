@@ -1,4 +1,5 @@
 ---
+name: orchestrator
 description: Orchestrates a code base change.
 mode: primary
 permission:

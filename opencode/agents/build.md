@@ -1,4 +1,5 @@
 ---
+name: build
 description: Builds software.
 mode: subagent
 permission:
