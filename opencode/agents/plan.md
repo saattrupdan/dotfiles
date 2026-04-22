@@ -11,18 +11,7 @@ permission:
   glob: allow
   grep: allow
   list: allow
-  bash:
-    "*": deny
-    "tree *": allow
-    "head *": allow
-    "tail *": allow
-    "curl *": allow
-    "ls *": allow
-    "echo *": allow
-    "find *": allow
-    "rm *PLAN.md": allow
-    "git status*": allow
-    "git diff*": allow
+  bash: allow
   task: deny
   skill: allow
   lsp: deny
@@ -61,4 +50,4 @@ user's code request, and write up a detailed plan of how to do it. Do the follow
      done, and also that whatever documentation exists is up to date with the new
      changes.
 8. Add `PLAN.md` to `.gitignore` if it's not already there.
-9. Return the full plan as a string.
+9. Return the full plan as a string, do not refer to `PLAN.md` in your output.
