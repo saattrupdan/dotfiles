@@ -8,6 +8,12 @@ return {
       default_mode = 'orchestrator',
       preferred_picker = 'telescope',
       preferred_completion = 'coc',
+      context = {
+        enabled = false
+      },
+      ui = {
+        position = 'right'
+      },
       keymap = {
         editor = {
           ['<C-,>'] = { 'toggle' },
