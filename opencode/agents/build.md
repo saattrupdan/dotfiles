@@ -29,5 +29,6 @@ When you get a requests, you ALWAYS proceed with the following steps.
 2. Implement the task following all the user's requirements.
 3. Stage your changes with `git add <paths-that-you-changed>`. Don't worry about staging
    `PLAN.md`.
-4. Commit your changes with `git commit -m "<commit_message>"`.
+4. Commit your changes with `git commit -m "<commit_message>"`. Read your `commit` skill
+   for more information.
 5. Report back that you have completed the task.
