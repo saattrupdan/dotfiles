@@ -45,6 +45,8 @@ metadata:
   `uv run ty check`.
   - You are not allowed to ignore the linting errors, neither by using comments or by
     adding ignore rules in the `pyproject.toml` file. You have to fix them.
+  - If you have linting mistakes, then they can often be fixed automatically by running
+    `make check`, since that runs the checks with the `--fix` flag.
 - You can usually run tests with `make test`. If this doesn't work, you can use `uv run
   pytest` instead. Only run tests if the `tests/` directory exists.
 

@@ -8,7 +8,9 @@ permission:
   glob: deny
   grep: deny
   list: deny
-  bash: deny
+  bash:
+    "*": deny
+    "rm *PLAN.md": allow
   task: allow
   skill: deny
   lsp: deny
@@ -40,4 +42,4 @@ When the user requests something of you, you ALWAYS proceed with the following s
    - Stage and commit the changes made in the todo item. Never stage or commit the
      `PLAN.md` file itself, however.
    Also ask the subagent to remember to follow its worktree flow in its instructions.
-4. Use your `task` tool with the @build subagent to remove the `PLAN.md` file.
+4. Remove the `PLAN.md` file, using `rm PLAN.md` or `rm path/to/PLAN.md`.
