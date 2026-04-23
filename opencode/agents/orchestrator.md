@@ -41,5 +41,4 @@ When the user requests something of you, you ALWAYS proceed with the following s
      with `[x]` in the file.
    - Stage and commit the changes made in the todo item. Never stage or commit the
      `PLAN.md` file itself, however.
-   Also ask the subagent to remember to follow its worktree flow in its instructions.
 4. Remove the `PLAN.md` file, using `rm PLAN.md` or `rm path/to/PLAN.md`.
