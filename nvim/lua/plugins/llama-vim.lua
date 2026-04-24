@@ -5,10 +5,10 @@ return {
       show_info = false,
 
       endpoint_fim = "http://localhost:8080/infill",
-      model_fim = "qwen2.5-coder-7b",
+      model_fim = "qwen2.5-coder-3b",
 
       endpoint_inst = "http://localhost:8080/v1/chat/completions",
-      model_inst = "qwen3.6-35B-A3B",
+      model_inst = "qwen3.6-35B-A3B-no-thinking",
 
       keymap_fim_accept_full = "§",
       keymap_fim_accept_line = "±",

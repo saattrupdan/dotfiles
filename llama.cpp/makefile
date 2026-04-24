@@ -2,7 +2,6 @@ start-server:
 	@llama-server \
 		--models-preset ./preset.ini \
 		--models-dir ./ \
-		--models-max 2 \
 		--cache-prompt \
 		--ubatch-size 2048 \
 		--batch-size 2048 \
