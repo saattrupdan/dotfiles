@@ -44,10 +44,10 @@ you ALWAYS proceed with the following steps:
 
 You have to obey the following rules:
 
-- Never ask any agent to read files for you, trust that they will build the code
+- Never ask any agent to read files for you - just trust that they will build the code
   themselves - you don't need to micromanage their work
-- Only run the @build subagents in parallel if they're working on different files
-- Only run the @build subagents in parallel if there isn't a dependency between their
-  tasks (for instance, final checks can only be run after all the previous tasks have
-  been completed, and test modules can only be created after the module they're testing
-  has been implemented).
+- Only run the @build subagents in parallel if they're working on different files AND if
+  there isn't a dependency between their tasks. Some examples:
+  - Final checks can only be run after all the previous tasks have been completed
+  - Test modules (e.g., `test_X.py`) can only be created after the module they're
+    testing has been implemented (e.g., `X.py`), so you can't run them in parallel
