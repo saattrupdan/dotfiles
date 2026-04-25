@@ -82,6 +82,11 @@ _ssh_complete() {
 }
 complete -F _ssh_complete ssh
 
+# Docker autocompletion
+fpath=(/Users/dansmart/.docker/completions $fpath)
+autoload -Uz compinit
+compinit
+
 
 #==================================
 # Set up general terminal settings
@@ -166,7 +171,6 @@ alias ls='eza'
 alias vim='nvim'
 alias gt='cd ~/gitsky'
 alias pc='cd ~/pCloud\ Drive'
-alias bb='/Applications/Brave\ Browser.app/Contents/MacOS/Brave\ Browser'
 alias ll='ls -l'
 alias la='ls -ah'
 alias lla='ls -lah'
@@ -176,9 +180,7 @@ alias gd='git diff'
 alias gb='git branches'
 alias gc='git checkout'
 alias gl='git log --graph --pretty=format:"%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset" --abbrev-commit --date=relative'
-alias tcc='tmux -CC'
 alias python='python3'
-alias code='open -a "Visual Studio Code"'
 
 
 #=========
@@ -190,8 +192,3 @@ if [ -f ~/.env ]
 then
     export $(cat ~/.env | xargs)
 fi
-# The following lines have been added by Docker Desktop to enable Docker CLI completions.
-fpath=(/Users/dansmart/.docker/completions $fpath)
-autoload -Uz compinit
-compinit
-# End of Docker CLI completions

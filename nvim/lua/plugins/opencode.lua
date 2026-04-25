@@ -8,11 +8,19 @@ return {
       default_mode = 'orchestrator',
       preferred_picker = 'telescope',
       preferred_completion = 'coc',
-      context = {
-        enabled = false
-      },
       ui = {
-        position = 'right'
+        position = 'right',
+        output = {
+          tools = {
+            show_output = true,
+            show_reasoning_output = false,
+          },
+        },
+      },
+      context = {
+        current_file = {
+          enabled = false,
+        },
       },
       keymap = {
         editor = {

@@ -28,9 +28,6 @@
       "models": {
         "qwen3.6-35B-A3B" : {
           "name": "Qwen3.6-35B-A3B"
-        },
-        "gemma-4-e4b-it": {
-          "name": "Gemma-4-E4B-it"
         }
       }
     },
@@ -38,7 +35,7 @@
       "npm": "@ai-sdk/openai-compatible",
       "name": "Sparkie",
       "options": {
-        "baseURL": "http://192.168.0.28:8000/v1"
+        "baseURL": "http://192.168.0.28/api"
       },
       "models": {
         "Qwen/Qwen3.6-35B-A3B-FP8": {

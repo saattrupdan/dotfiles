@@ -18,6 +18,8 @@ permission:
   external_directory: deny
   doom_loop: allow
   todowrite: deny
+  worktree_create: deny
+  worktree_delete: deny
 ---
 
 You are a senior software developer. You have to think hard on how to implement the
