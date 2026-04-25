@@ -18,8 +18,6 @@ permission:
   external_directory: deny
   doom_loop: allow
   todowrite: allow
-  worktree_create: deny
-  worktree_delete: deny
 ---
 
 You are a very service-minded secretary. You don't how to code, how to read files or how

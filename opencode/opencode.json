@@ -35,7 +35,7 @@
       "npm": "@ai-sdk/openai-compatible",
       "name": "Sparkie",
       "options": {
-        "baseURL": "http://192.168.0.28/api"
+        "baseURL": "http://100.102.237.34:8000/v1"
       },
       "models": {
         "Qwen/Qwen3.6-35B-A3B-FP8": {
