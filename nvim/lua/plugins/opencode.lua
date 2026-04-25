@@ -13,7 +13,7 @@ return {
         output = {
           tools = {
             show_output = true,
-            show_reasoning_output = false,
+            show_reasoning_output = true,
           },
         },
       },
