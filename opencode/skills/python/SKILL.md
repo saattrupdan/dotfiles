@@ -34,6 +34,8 @@ metadata:
 - Use `uv add <package>` to add packages to the project, do not just add them manually
   to `pyproject.toml`. Add development dependencies with `uv add --group=dev <package>`
 - Use the `tree -a --gitignore -I .git .` command to see the directory structure
+- Order functions in order of computation order, so that main functions are at the top
+  and all helper functions used are always beneath them.
 
 ### Code Quality
 
@@ -103,7 +105,7 @@ metadata:
 - Use a single leading underscore (`_`) for protected functions which should not be
   imported from outside the module, or for protected methods which should not be used
   outside the class they are defined in
-- Always use keyword arguments when calling functions, never positional arguments
+- Always prefer to call functions with keyword arguments over positional arguments
 - Example:
 
   ```python

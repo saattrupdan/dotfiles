@@ -38,9 +38,13 @@ you ALWAYS proceed with the following steps:
 5. For each todo item, call the @build subagent and ask it to do the following:
    - Implement that todo item
    - Ensure that formatters, linters, type checkers pass
-   - If it added any tests, make sure that they pass
-   - Stage and commit the changes made in the todo item
-   You can run these @build subagents in parallel, under the conditions below.
+   - If it adds any tests, it should make sure that they pass. It should only run the
+     relevant tests however, not run the entire test suite unless explicitly told to
+   - Stage and commit the changes made - it should only stage and commit the changes
+     that it implemented itself
+   If a subagent didn't report back with a statement that they fixed the todo item, then
+   try assigning a different subagent to the same todo item. You can run these @build
+   subagents in parallel, under the conditions below.
 
 You have to obey the following rules:
 

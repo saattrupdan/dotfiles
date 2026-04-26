@@ -23,7 +23,9 @@
       "npm": "@ai-sdk/openai-compatible",
       "name": "Llama.cpp",
       "options": {
-        "baseURL": "http://localhost:8080"
+        "baseURL": "http://localhost:8080",
+        "timeout": 3600000,
+        "chunkTimeout": 3600000
       },
       "models": {
         "qwen3.6-35B-A3B" : {
@@ -35,7 +37,9 @@
       "npm": "@ai-sdk/openai-compatible",
       "name": "Sparkie",
       "options": {
-        "baseURL": "http://100.102.237.34:8000/v1"
+        "baseURL": "http://100.102.237.34:8000/v1",
+        "timeout": 3600000,
+        "chunkTimeout": 3600000
       },
       "models": {
         "Qwen/Qwen3.6-35B-A3B-FP8": {
@@ -47,7 +51,9 @@
       "npm": "@ai-sdk/openai-compatible",
       "name": "Alexandra Inference Server",
       "options": {
-        "baseURL": "https://inference.projects.alexandrainst.dk/v1"
+        "baseURL": "https://inference.projects.alexandrainst.dk/v1",
+        "timeout": 3600000,
+        "chunkTimeout": 3600000
       },
       "models": {
         "qwen-235b": {
@@ -59,7 +65,9 @@
       "npm": "@ai-sdk/openai-compatible",
       "name": "Alexandra Internal Inference Server",
       "options": {
-        "baseURL": "https://inference-test.projects.alexandrainst.dk/api"
+        "baseURL": "https://inference-test.projects.alexandrainst.dk/api",
+        "timeout": 3600000,
+        "chunkTimeout": 3600000
       },
       "models": {
         "openai/gpt-oss-20b": {

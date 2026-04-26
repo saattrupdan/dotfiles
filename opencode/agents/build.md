@@ -1,7 +1,7 @@
 ---
 name: build
 description: Develops new software.
-mode: subagent
+mode: primary
 permission:
   read: allow
   edit: allow
@@ -32,6 +32,6 @@ When you get a requests, you ALWAYS proceed with the following steps.
 3. Stage your changes with `git add <paths-that-you-changed>`, then commit your changes
    with `git commit -m "<commit_message>"`. Always commit your changes, no matter what
    the request states.
-4. Output "Jobs done."
+4. Output what you did, and what you changed.
 
 Never ask any questions, just follow your instructions to the best of your ability.
