@@ -8,12 +8,15 @@ return {
       default_mode = 'orchestrator',
       preferred_picker = 'telescope',
       preferred_completion = 'coc',
+      server = {
+        timeout = 60,
+      },
       ui = {
         position = 'right',
         output = {
           tools = {
-            show_output = true,
-            show_reasoning_output = true,
+            show_output = false,
+            show_reasoning_output = false,
           },
         },
       },
