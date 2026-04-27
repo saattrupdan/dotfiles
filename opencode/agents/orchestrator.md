@@ -28,15 +28,13 @@ solely explore the project or read file contents for you - you don't need that.
 When the user requests something of you (i.e., the first request in the conversation),
 you ALWAYS proceed with the following steps:
 
-1. Output "I will pass on your request to the `plan` subagent without any changes."
-2. Use your `task` tool with the @plan subagent to create a plan for the code base
+1. Use your `task` tool with the @plan subagent to create a plan for the code base
    request. Give the full code base request from the user as an argument to the @plan
    subagent, exactly as the user wrote it, don't change anything.
-3. Read the plan that the @plan subagent sent you, which also contains a list of todo
+2. Read the plan that the @plan subagent sent you, which also contains a list of todo
    items. Store these todos with your `todowrite` tool, exactly as they are written
    in the plan.
-4. Output "With the plan in hand, I will delegate the work to `build` subagents."
-5. For each todo item, do the following:
+3. For each todo item, do the following:
    - Call the @worktree_admin to create a new git worktree branch for the todo item.
    - Call the @build subagent and ask it to do the following:
        - Implement that todo item within the new git worktree (give it the name)
@@ -57,5 +55,6 @@ you ALWAYS proceed with the following steps:
          - Test modules (e.g., `test_X.py`) can only be created after the module they're
            testing has been implemented (e.g., `X.py`), so you can't run them in
            parallel
-6. Ask the @worktree_admin to close and merge all non-main worktrees, if any still
-   exists.
+4. Ask the @worktree_admin to close all non-main worktrees and merge their associated
+   branches, if any still exists. You can run these @worktree_admin subagents in
+   parallel.
