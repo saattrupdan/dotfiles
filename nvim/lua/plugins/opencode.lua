@@ -24,6 +24,11 @@ return {
         current_file = {
           enabled = false,
         },
+        diagnostics = {
+          info = false,
+          warning = false,
+          error = false,
+        }
       },
       keymap = {
         editor = {
