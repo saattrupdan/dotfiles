@@ -9,9 +9,6 @@ metadata:
 
 ## Commit Conventions
 
-We use the Conventional Commits specification for our commit messages. You can find the
-documentation of this here: <https://www.conventionalcommits.org/>
-
 The Conventional Commits specification is a lightweight convention on top of commit
 messages. Commit messages should be structured as follows:
 
@@ -26,7 +23,7 @@ The types can be the following:
 - `fix`: Fixed a bug
 - `feat`: Added a new feature
 - `docs`: Documentation only changes
-- `test`: Anything that only affected tests
+- `tests`: Added or modofied tests
 - `style`: Changes that do not affect the meaning of the code (e.g., formatting)
 - `chore`: Changes that don’t modify src or test files (e.g., dependencies, makefile)
 

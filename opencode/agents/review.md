@@ -54,7 +54,7 @@ The types can be the following:
 - `fix`: Fixed a bug
 - `feat`: Added a new feature
 - `docs`: Documentation only changes
-- `test`: Anything that only affected tests
+- `tests`: Added or modofied tests
 - `style`: Changes that do not affect the meaning of the code (e.g., formatting)
 - `chore`: Changes that don’t modify src or test files (e.g., dependencies, makefile)
 
