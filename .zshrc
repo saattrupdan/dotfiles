@@ -95,6 +95,9 @@ compinit
 # Set up general terminal settings
 #==================================
 
+# Set up Bun
+export BUN_INSTALL="$HOME/.bun"
+
 # Set up PATH
 export PATH="/opt/homebrew/bin:$PATH"
 export PATH="/usr/local/sbin:$PATH"
@@ -111,9 +114,6 @@ export PATH="$HOME/.local/bin:$PATH"
 export PATH="$HOME/.local/share/../bin:$PATH"
 export PATH="/opt/homebrew/opt/openjdk/bin:$PATH"
 export PATH="$BUN_INSTALL/bin:$PATH"
-
-# Set up Bun
-export BUN_INSTALL="$HOME/.bun"
 
 # Ensure openblas has been set up, which is used for Numpy to work
 export OPENBLAS="$(brew --prefix openblas)"
