@@ -1,6 +1,9 @@
 -- Set the `OPENCODE_DISABLE_PROJECT_CONFIG` to '1' to disable project configuration:
 vim.env.OPENCODE_DISABLE_PROJECT_CONFIG = '1'
 
+-- Enables websearch
+vim.env.OPENCODE_ENABLE_EXA = '1'
+
 return {
   "sudo-tee/opencode.nvim",
   config = function()
