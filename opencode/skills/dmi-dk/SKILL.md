@@ -1,153 +1,197 @@
 ---
 name: dmi-dk
-description: DMI (Danmarks Meteorologiske Institut) weather data and forecasts. Use for querying Denmark/Greenland weather, radar/satellite images, sea conditions, warnings, and tide tables via the internal JSON API or website.
+description: DMI (Danmarks Meteorologiske Institut) weather data and forecasts. Use for querying Denmark/Greenland weather, radar/satellite images, sea conditions, warnings, and tide tables.
 last-updated: 2026-05-09
 ---
 
-# dmi.dk — Denmark's meteorological institute
+# dmi-dk
 
-DMI is the Danish national weather service. Powered by TYPO3 CMS with a React SPA layer. All content in Danish (some English variants); no login required.
+DMI (Danmarks Meteorologiske Institut) weather data and forecasts. Use for querying Denmark/Greenland weather, radar/satellite images, sea conditions, warnings, and tide tables.
 
-Base URL: `https://www.dmi.dk/`. URL slugs use spelled-out Danish letters: `æ`→`ae`, `ø`→`oe`, `å`→`aa`.
+## Quick Start
 
-## Internal JSON API
+The easiest way to use DMI data is via the bundled CLI script:
 
-Undocumented REST API at `https://www.dmi.dk/dmidk_byvejrWS/rest/`. No auth needed. All endpoints return JSON (images are binary). Responses cached with ~5 min freshness. **Always prefer API over browser automation.**
+```bash
+python3 dmi_dk_api.py <command> [options]
+```
 
-### Endpoints
+### Weather Forecast for a City
 
-#### `GET /json/Danmark/DK/land` — National forecast (3 days)
-Returns meteorologist's written forecast for Denmark.
-- `date` — Date of issue
-- `valid` — Validity period
-- `weatherForecast` — Main forecast text
-- `slipperyWarning` — Road ice warning (if any)
+The `forecast-city` command searches for a city by name and fetches its forecast in one step. **Daily output is the default** — use `--hours` or `--days` for hourly data.
 
-#### `GET /json/Danmark/DK/land7` — 7-day national forecast
-Extended forecast with daily sections and uncertainty assessment.
-- `date`, `valid`, `headline`, `synopsis`, `weatherForecast`, `uncertainty`
-- `sections[]` — Per-day forecast objects with `headline` + `weatherForecast`
+```bash
+# Daily forecast (default)
+python3 dmi_dk_api.py forecast-city København
 
-#### `GET /json/Grønland/DK/land` — National forecast for Greenland
-Same shape as `/land` but with Greenland regional sections (Qaanaaq, Vestgrønland, Sydgrønland, Tasiilaq, Ittoqqortoormiit).
+# Tomorrow only
+python3 dmi_dk_api.py forecast-city København --tomorrow
 
-#### `GET /json/Farvandsudsigter/<area>` — Sea area forecasts
-Marine weather for Danish/Greenlandic waters. `<area>` = `Danmark` or `Gronland`.
-Returns wind speed/direction, wave heights, ice conditions, fog warnings per sub-area.
+# Today only
+python3 dmi-dk_api.py forecast-city København --today
 
-#### `GET /texts/<gid>` — Shore station text forecast
-Detailed XML forecast for a shore station. `gid` found via `/waters/<searchTerm>`.
+# Hourly for the next 24 hours
+python3 dmi_dk_api.py forecast-city København --hours 24
 
-#### `GET /waters/<searchTerm>` — Search weather stations
-Search by name/keyword. Returns array with: `id`, `name`, `latitude`, `longitude`, `country`, `hassealevel`, `hasseatemp`, `haswave`, `hastide`.
+# Hourly for the next 3 days
+python3 dmi_dk_api.py forecast-city København --days 3
 
-#### `GET /location/area/<latMin>/<lonMin>/<latMax>/<lonMax>/<zoom>` — Geolocation
-Returns stations within a bounding box. Response: `mapWeatherSymbols`, `mapTempSymbols`, `mapLocationLatitudes`, `mapLocationLongitudes`, `mapLocationNames`, `mapCountry`, `ids`.
+# Raw JSON
+python3 dmi_dk_api.py forecast-city København --raw
+```
 
-#### `GET /vandstand/active` — Active water level stations
-Stations reporting sea level data with statistics (`year20event`, `mlws`, `lowastrotide`, `year100event`, `year50event`).
+**Auto-detect location.** If you omit the city name, the script tries to detect your city from your IP address (via ip-api.com or ipinfo.io). It only trusts results from Nordic countries (DK, NO, SE, FI).
 
-### Image endpoints (static maps)
+```bash
+# Try to detect your city from IP
+python3 dmi_dk_api.py forecast-city
 
-| Endpoint | Description |
-|---|---|
-| `/rest/image/gif/Radar/` | Radar (animation-ready GIF) |
-| `/rest/image/png/<param>` | Weather parameter maps |
-| `/rest/image/png/polarsat` | Polar satellite image |
+# Override auto-detected city
+python3 dmi_dk_api.py forecast-city Aarhus
+```
 
-Parameters include: `Lufttryk`, `Nedbør`, `Vind`, `Vindstød`, `Temperatur`, `RelativFugtighed`, `Skydække`, `Tåge`, `Iskoncentration`, `Bølgehøjde`, `Bølgeperiode`, `Strøm`, `Vindkraft`, `Is`, `Opstigning`, `Vandstand`, `VandstandObs`, `Badevand`. Suffixes like `24`, `48`, `72`, `120` for future periods.
+### City Search
 
-### What the API does NOT cover
+Search for a city and get its ID (useful for scripting or debugging):
 
-- **Articles/news** — server-rendered HTML at `/nyheder/<slug>`
-- **Climate Atlas** — interactive tool at `/klimaatlas`; use browser automation
-- **Historical measurement data** — rendered pages only
-- **Site search** — server-rendered HTML at `/sog/?k=<query>`
-- **Warnings** — React SPA-driven; use browser automation
+```bash
+# List matching cities
+python3 dmi_dk_api.py city-search København
 
-## Website navigation
+# Get just the city ID
+python3 dmi_dk_api.py city-search København --id-only
+# → 2618425
 
-| Section | URL | Description |
-|---|---|---|
-| Varsling | `/varsler` | Weather warnings for Denmark |
-| Varsler for Grønland | `/varsler-gronland` | Warnings for Greenland |
-| Pollen | `/pollen` | Pollen forecast |
-| UV-indeks | `/uv-indeks` | UV index forecast |
-| **Vejr** | `/danmark` | Denmark weather overview |
-| Danmark | `/danmark` | 7-day forecast for Denmark |
-| Grønland | `/gronland` | Greenland weather |
-| Færøerne | `/faeroeerne/farvandsudsigter-frn` | Faroe Islands sea forecasts |
-| Forecasts in English | `/products-in-english` | English-language forecasts |
-| Vejrkort | `/vejrkort` | Interactive weather maps |
-| Frontkort | `/vejret/frontkort` | Front analysis maps |
-| Radar | `/radar` | Weather radar |
-| Satellitbilleder | `/satellitbilleder` | Satellite imagery |
-| Tørke | `/toerke` | Drought monitoring |
-| **Vejrdata** | `/vejrdata/maalinger` | Measurements & archives |
-| Målinger | `/vejrdata/maalinger` | Current weather measurements |
-| Vejrarkiv | `/vejrarkiv` | Historical weather data |
-| Frie data | `/frie-data` | Free/open data |
-| Publikationer | `/publikationer` | Publications & reports |
-| **Hav** | `/vind` | Sea & ocean data |
-| Vind | `/vind` | Wind conditions |
-| Bølger | `/bolger` | Wave conditions |
-| Strøm | `/strom` | Ocean currents |
-| Havtemperatur | `/havtemperatur` | Sea temperature |
-| Vandstand | `/vandstand` | Sea level / water level |
-| Badevandstemperatur | `/badevandstemperatur` | Bathing water temperature |
-| Farvandsudsigter | `/farvandsudsigter` | Sea area forecasts |
-| Tidevand | `/hav-og-is/temaforside-tidevand` | Tide tables |
-| Temaer om hav og is | `/hav-og-is` | Sea & ice themes |
-| **Klima** | `/klimaatlas` | Climate atlas |
-| Klimanormaler | `/klimanormaler` | Climate normals & extremes |
-| Klima | `/klima` | Climate themes |
-| **Forskning** | `/research` | Research & publications |
-| Nyheder | `/nyheder` | News & articles |
-| Kontakt | `/kontakt` | Contact information |
+# Raw JSON
+python3 dmi_dk_api.py city-search København --raw
+```
 
-## Quick reference
+### City Forecast by ID
 
-| Task | Method |
-|---|---|
-| National forecast | `curl .../json/Danmark/DK/land` |
-| 7-day forecast | `curl .../json/Danmark/DK/land7` |
-| Greenland forecast | `curl .../json/Grønland/DK/land` |
-| Sea area forecast | `curl .../json/Farvandsudsigter/Danmark` |
-| Search stations | `curl .../waters/<city>` |
-| Shore station text | `curl .../texts/<gid>` |
-| Water level data | `curl .../vandstand/active` |
-| Radar image | `open .../image/gif/Radar/` |
-| Satellite image | `open .../image/png/polarsat` |
-| Pressure map | `open .../image/png/Lufttryk` |
-| City weather | Search on homepage or use `/waters/` |
-| Warnings | `open /varsler` (browser automation) |
-| Radar/satellite maps | `open /radar`, `/vejrkort`, `/satellitbilleder` |
-| Tide tables | `open /hav-og-is/temaforside-tidevand` |
-| News/articles | `open /nyheder/<year>/<slug>` |
-| Climate atlas | `open /klimaatlas` (browser) |
-| Climate normals | `open /klimanormaler` |
-| Pollen forecast | `open /pollen` |
-| UV index | `open /uv-indeks` |
-| Research | `open /research`, `/research/publications` |
-| Bathwater temp | `open /badevandstemperatur` |
+If you already have a city ID, fetch the forecast directly:
 
-## Local weather search
+```bash
+python3 dmi_dk_api.py city-forecast 2618425
+python3 dmi_dk_api.py city-forecast 2618425 --daily
+python3 dmi_dk_api.py city-forecast 2618425 --today
+python3 dmi_dk_api.py city-forecast 2618425 --tomorrow
+python3 dmi_dk_api.py city-forecast 2618425 --hours 24
+python3 dmi_dk_api.py city-forecast 2618425 --raw
+```
 
-Homepage search box (`#citySearch3`) accepts city names, places, and sea areas. Location URLs follow `/<region>/<city-slug>`.
+### National Forecast
 
-## English content
+```bash
+# 3-day national forecast (default)
+python3 dmi_dk_api.py forecast
 
-`/products-in-english` provides English versions of selected forecasts. Not all content has an English equivalent.
+# 7-day national forecast
+python3 dmi_dk_api.py forecast --days DK/land7
 
-## Limits worth flagging
+# Greenland forecast
+python3 dmi_dk_api.py forecast --region Grønland
 
-- API is undocumented and unsupported — endpoint shapes may change without notice
-- Covers **forecasts and current conditions** only — no historical data, articles, or climate atlas
-- Some endpoints (`/waters/`, `/location/area/`) return `204 No Content` for empty results — normal
-- Image endpoints are static; use website for interactive zoom/pan
-- Cookie consent banner on first visit only
+# Raw JSON
+python3 dmi_dk_api.py forecast --raw
+```
 
-## Related hosts
+### Sea Area Forecast
 
-- `https://www.dmi.dk/dmidk_byvejrWS/` — Internal REST API base (JSON + images)
-- `https://livredder.nu/webservice/rest/server.php` — Beach safety data (token visible in React bundle)
+```bash
+python3 dmi_dk_api.py sea
+python3 dmi_dk_api.py sea --area Danmark
+python3 dmi_dk_api.py sea --raw
+```
+
+### Weather Stations
+
+```bash
+# Search weather/water stations
+python3 dmi_dk_api.py waters København
+
+# Shore station text forecast (needs station gid)
+python3 dmi_dk_api.py texts <gid>
+python3 dmi_dk_api.py texts <gid> --raw
+```
+
+### Water Levels
+
+```bash
+# Active water level stations
+python3 dmi_dk_api.py waterlevels
+python3 dmi_dk_api.py waterlevels --raw
+```
+
+### Weather Images
+
+```bash
+# List available image types
+python3 dmi_dk_api.py images
+
+# Print direct URL for a specific type
+python3 dmi_dk_api.py images --type radar
+python3 dmi_dk_api.py images --type satellite
+python3 dmi_dk_api.py images --type pressure
+python3 dmi_dk_api.py images --type precipitation
+python3 dmi_dk_api.py images --type wind
+python3 dmi_dk_api.py images --type temperature
+python3 dmi_dk_api.py images --type waves
+python3 dmi_dk_api.py images --type ice
+```
+
+### Discover Endpoints
+
+```bash
+# List all API paths from the home page
+python3 dmi_dk_api.py endpoints
+
+# List all API paths from the React bundle (more endpoints)
+python3 dmi_dk_api.py endpoints --bundle
+```
+
+## Arguments
+
+### `forecast-city <city>`
+
+Search for a city by name and get its weather forecast.
+
+| Argument | Description |
+|----------|-------------|
+| `city` | City name (optional — auto-detects from IP if omitted). Accepts ASCII approximations like `kobenhavn`, `aarhu`, `aalbu` — these are normalised to æ/ø/å automatically. |
+| `--hours` | Show hourly forecast for N hours (overrides daily default). |
+| `--days` | Show hourly forecast for N days (each day = 24 hours). |
+| `--daily` | Show daily aggregates (this is the default). |
+| `--today` | Show only today's forecast. |
+| `--tomorrow` | Show only tomorrow's forecast. |
+| `--raw` | Print raw JSON output. |
+
+### `city-forecast <city_id>`
+
+Get a weather forecast for a city by its numeric ID.
+
+| Argument | Description |
+|----------|-------------|
+| `city_id` | City ID (from `city-search --id-only`). |
+| `--hours` | Show hourly forecast for N hours. |
+| `--days` | Show hourly forecast for N days. |
+| `--daily` | Show daily aggregates. |
+| `--today` | Show only today's forecast. |
+| `--tomorrow` | Show only tomorrow's forecast. |
+| `--raw` | Print raw JSON output. |
+
+### `city-search <city>`
+
+Search for a city by name and list matching results.
+
+| Argument | Description |
+|----------|-------------|
+| `city` | City name to search for. |
+| `--id-only` | Print only the first matching city ID. |
+| `--raw` | Print raw JSON output. |
+
+## Notes
+
+- The script uses only the Python standard library — no external dependencies.
+- City names are normalised automatically: `aa` → `å`, `oe` → `ø`, `ae` → `æ`.
+- All numeric values in the formatted output are rounded to at most 2 decimal places.
+- The `--today`/`--tomorrow` flags filter the daily table to show only the matching day, using a compact single-line format.

@@ -24,6 +24,53 @@ open https://www.dmi.dk/radar
 open https://www.dmi.dk/nyheder/
 ```
 
+### CLI Script
+
+The `dmi_dk_api.py` script provides convenient one-liners for common tasks:
+
+```bash
+# Search for a city
+python3 dmi_dk_api.py city-search København
+
+# Get a city's weather forecast (search + forecast in one command)
+python3 dmi_dk_api.py forecast-city København
+
+# Get just the city ID
+python3 dmi_dk_api.py city-search København --id-only
+
+# Show daily aggregates instead of hourly
+python3 dmi_dk_api.py forecast-city København --daily
+
+# Limit to N hours
+python3 dmi_dk_api.py forecast-city København --hours 24
+
+# Raw JSON output
+python3 dmi_dk_api.py city-search København --raw
+python3 dmi_dk_api.py city-forecast 2618425 --raw
+```
+
+The script also supports the existing commands:
+```bash
+# National weather forecast
+python3 dmi_dk_api.py forecast
+
+# Sea area forecast
+python3 dmi_dk_api.py sea --area Danmark
+
+# Search weather stations
+python3 dmi_dk_api.py waters "København"
+
+# Water level stations
+python3 dmi_dk_api.py waterlevels
+
+# Weather images
+python3 dmi_dk_api.py images
+python3 dmi_dk_api.py images --type radar
+
+# Shore station text forecast
+python3 dmi_dk_api.py texts <gid>
+```
+
 ## Navigation Reference
 
 ### Top-level sections
@@ -63,6 +110,8 @@ open https://www.dmi.dk/nyheder/
 | `/dmidk_byvejrWS/rest/vandstand/active` | Active water level stations |
 | `/dmidk_byvejrWS/rest/image/gif/Radar/` | Radar image |
 | `/dmidk_byvejrWS/rest/image/png/<param>` | Weather parameter maps |
+| `/solr/city_core/select?wt=json&q={query}` | Search cities by name (returns Solr docs with IDs) |
+| `/NinJo2DmiDk/ninjo2dmidk?cmd=llj&id={id}` | Get NinJo forecast for a city by ID |
 
 ## Troubleshooting
 

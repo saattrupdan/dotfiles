@@ -1,10 +1,7 @@
 ---
 name: vue
-description: Conventions when coding in Vue.js. Use whenever you're building a frontend.
-license: MIT
-compatibility: opencode
-metadata:
-  triggers: vue, vuejs, vue.js, frontend
+description: Conventions for Vue.js frontend development, including component structure, code quality, and standard packages. Use when building Vue.js frontends.
+last-updated: 2026-05-09
 ---
 
 ## Vue.js Conventions

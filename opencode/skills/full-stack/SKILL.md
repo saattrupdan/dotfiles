@@ -1,9 +1,7 @@
 ---
 name: full-stack
-description: Conventions when creating full-stack applications. Use when you have to build a full-stack app, i.e., one with both frontend and backend.
-metadata:
-  triggers: full-stack, fullstack, full stack
-  related-skills: fastapi, vue
+description: Conventions for building full-stack applications with Vue.js frontend, FastAPI backend, PostgreSQL database, and Docker Compose deployment. Use when building full-stack apps.
+last-updated: 2026-05-09
 ---
 
 ## Full-stack Conventions

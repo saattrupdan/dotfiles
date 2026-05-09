@@ -1,10 +1,7 @@
 ---
 name: python
-description: Conventions when coding in Python. Use whenever you're building anything in Python.
-license: MIT
-compatibility: opencode
-metadata:
-  triggers: python
+description: Conventions for Python code style, organisation, quality checks, and documentation. Use when building or reviewing Python projects.
+last-updated: 2026-05-09
 ---
 
 ## Python Conventions

@@ -1,11 +1,7 @@
 ---
 name: sqlmodel
-description: A Python package for interacting with SQL databases.
-license: MIT
-compatibility: opencode
-metadata:
-  triggers: database, orm, sql, postgres, postgresql, sqlite
-  related-skills: python, fastapi
+description: Python ORM package for working with SQL databases. Use when creating database models, performing CRUD operations, or building database-backed APIs.
+last-updated: 2026-05-09
 ---
 
 ## SQLModel

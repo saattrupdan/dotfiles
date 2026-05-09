@@ -37,9 +37,10 @@ return {
       },
       keymap = {
         editor = {
-          ['<C-,>'] = { 'toggle' },
+          ['<C-,>'] = { 'toggle', mode = { 'n', 'i' } },
         },
         input_window = {
+          ['<C-,>'] = { 'toggle', mode = { 'n', 'i' } },
           ['<C-CR>'] = { 'submit_input_prompt', mode = { 'n', 'i' } },
           ['<tab>'] = { 'switch_mode', mode = { 'n', 'i' } },
         },

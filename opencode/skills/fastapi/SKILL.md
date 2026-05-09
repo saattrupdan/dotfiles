@@ -1,11 +1,7 @@
 ---
 name: fastapi
-description: Conventions when building FastAPI apps. Use whenever "fastapi" is mentioned or whenever you're building a full-stack app with a Python backend.
-license: MIT
-compatibility: opencode
-metadata:
-  triggers: fastapi, api
-  related-skills: python
+description: Conventions for building FastAPI applications in Python. Use when building or reviewing FastAPI backends.
+last-updated: 2026-05-09
 ---
 
 ## FastAPI Conventions

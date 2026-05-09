@@ -1,10 +1,7 @@
 ---
 name: commit
-description: Conventions when committing code with git.
-license: MIT
-compatibility: opencode
-metadata:
-  triggers: commit, git
+description: Conventions for structuring git commit messages using the Conventional Commits specification. Use when writing or reviewing commits.
+last-updated: 2026-05-09
 ---
 
 ## Commit Conventions
