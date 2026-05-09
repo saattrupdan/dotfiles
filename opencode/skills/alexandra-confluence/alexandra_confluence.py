@@ -1,27 +1,27 @@
 #!/usr/bin/env python3
-"""CLI for Alexandra's Confluence instance at confluence.alexandra.dk.
+"""CLI for Alexandra's Confluence at confluence.alexandra.dk.
 
-Handles authentication, cookie management, and wraps the Confluence REST API.
-Credentials are read from ``CONFLUENCE_USER`` / ``CONFLUENCE_PASS`` env vars.
+Form-login + session cookie auth. Cookies persist in
+~/.alexandra-confluence/cookies.txt and are reused across invocations;
+on session expiry the script silently re-authenticates and retries once.
 
 Standard library only. See ./SKILL.md for usage.
 """
 from __future__ import annotations
 
-import argparse
+import collections.abc as c
+import getpass
+import html
+import http.cookiejar
 import json
 import os
 import re
 import sys
-import http.cookiejar
+import typing as t
 import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
-
-if TYPE_CHECKING:
-    from argparse import Namespace
 
 sys.stdout.reconfigure(encoding="utf-8")
 
@@ -29,273 +29,208 @@ BASE = "https://confluence.alexandra.dk"
 UA = "Mozilla/5.0 (alexandra-confluence-cli)"
 COOKIE_DIR = Path.home() / ".alexandra-confluence"
 COOKIE_FILE = COOKIE_DIR / "cookies.txt"
+PROJ_ANCESTOR_ID = "208044217"  # "Projektoverblik (The Alexandra Way)"
 
 
 class _ConfluenceError(Exception):
-    """Raised by API helpers on HTTP errors.
-
-    Attributes:
-        code: HTTP status code (0 for non-HTTP errors).
-        message: Human-readable error message.
-    """
-
-    code: int
-    message: str
-
     def __init__(self, code: int, message: str) -> None:
         self.code = code
         self.message = message
         super().__init__(f"HTTP {code}: {message}")
 
 
-# Cached credentials to avoid repeated env-var lookups in the same process run.
 _cached_creds: tuple[str, str] | None = None
 
 
-def _ensure_cookie_dir() -> None:
-    """Create the cookie directory if it does not already exist."""
-    COOKIE_DIR.mkdir(parents=True, exist_ok=True)
+def main() -> None:
+    parser = argparse.ArgumentParser(description="CLI for Alexandra's Confluence.")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    def _add(name: str, **kw: t.Any) -> argparse.ArgumentParser:
+        p = sub.add_parser(name, **kw)
+        p.add_argument("--raw", action="store_true",
+                       help="print raw JSON response")
+        return p
+
+    _add("auth", help="Force re-authentication")
+
+    p = _add("spaces", help="List all spaces")
+    p.add_argument("--limit", type=int, default=100)
+    p.add_argument("--start", type=int, default=0)
+
+    p = _add("pages", help="List pages in a space")
+    p.add_argument("--space-key", required=True)
+    p.add_argument("--limit", type=int, default=20)
+
+    p = _add("search", help="Search Confluence pages")
+    p.add_argument("query", nargs="?", help="Title search shorthand")
+    p.add_argument("--cql", help="Full CQL query (overrides query)")
+    p.add_argument("--limit", type=int, default=20)
+
+    p = _add("page", help="Get a single page by key or ID")
+    p.add_argument("--key")
+    p.add_argument("--id")
+    p.add_argument("--format", choices=["auto", "text", "html"], default="auto")
+
+    p = _add("create", help="Create a new page")
+    p.add_argument("--space-key", required=True)
+    p.add_argument("--title", required=True)
+    p.add_argument("--body", required=True)
+    p.add_argument("--ancestor-id", help="Parent page ID")
+
+    p = _add("create-project",
+              help="Create a project page (Alexandra Way template)")
+    p.add_argument("--space-key", default="PROJ")
+    p.add_argument("--title", required=True)
+    p.add_argument("--client", required=True)
+    p.add_argument("--owner", required=True)
+    p.add_argument("--budget", default="Ikke fastsat")
+
+    p = _add("update", help="Update an existing page")
+    p.add_argument("--id", required=True)
+    p.add_argument("--body", required=True)
+    p.add_argument("--title", help="New title (optional)")
+    p.add_argument("--minor-edit", action="store_true")
+
+    p = _add("delete", help="Delete a page")
+    p.add_argument("--id", required=True)
+
+    _add("whoami", help="Show current user")
+
+    p = _add("api", help="Raw API call")
+    p.add_argument("--method",
+                   choices=["GET", "POST", "PUT", "DELETE"],
+                   default="GET")
+    p.add_argument("--path", required=True)
+    p.add_argument("--body", help="JSON body for POST/PUT")
+
+    args = parser.parse_args()
+    _run_cmd(_COMMANDS[args.cmd], args)
+
+
+def _emit_json(obj: t.Any) -> None:
+    print(json.dumps(obj, ensure_ascii=False, indent=2))
+
+
+def _strip_tags(text: str) -> str:
+    return re.sub(r"<[^>]+>", "", text)
 
 
 def _get_credentials() -> tuple[str, str]:
-    """Return cached credentials or read them from environment variables.
-
-    The first successful call caches the result so subsequent calls return
-    the same tuple without re-reading the environment.
-
-    Returns:
-        A ``(username, password)`` tuple from the cache or environment.
-
-    Raises:
-        SystemExit: If ``CONFLUENCE_USER`` and ``CONFLUENCE_PASS`` are not set
-            in the environment.
-    """
     global _cached_creds
     if _cached_creds is not None:
         return _cached_creds
-
-    user = os.environ.get("CONFLUENCE_USER")
-    passwd = os.environ.get("CONFLUENCE_PASS")
-    if not user or not passwd:
-        sys.stderr.write(
-            "Error: CONFLUENCE_USER and CONFLUENCE_PASS environment variables "
-            "must be set.\n"
-        )
-        sys.exit(2)
+    user = os.environ.get("CONFLUENCE_USER") or input("Confluence username: ")
+    passwd = os.environ.get("CONFLUENCE_PASS") or getpass.getpass(
+        "Confluence password: ")
     _cached_creds = (user, passwd)
     return _cached_creds
 
 
-def _url_encode_password(password: str) -> str:
-    """URL-encode special characters in a password for the login POST body.
-
-    Confluence's login form expects certain characters to be percent-encoded
-    manually rather than relying on ``urllib.parse.quote``.
-
-    Args:
-        password: The raw user password.
-
-    Returns:
-        The password with ``&``, ``@``, ``/``, and ``#`` percent-encoded.
-    """
-    password = password.replace("&", "%26")
-    password = password.replace("@", "%40")
-    password = password.replace("/", "%2F")
-    password = password.replace("#", "%23")
-    return password
-
-
-def _get_atlassian_token(opener: urllib.request.OpenerDirector) -> str:
-    """Fetch the ``atlassian-token`` from the login page for CSRF protection.
-
-    Args:
-        opener: An ``OpenerDirector`` capable of opening the login page.
-
-    Returns:
-        The CSRF token string extracted from the login page HTML.
-
-    Raises:
-        SystemExit: If the login page cannot be fetched or the token is not
-            found in the response.
-    """
-    url = f"{BASE}/login.action"
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    try:
-        with opener.open(req, timeout=30) as r:
-            html_content = r.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace") if e.fp else ""
-        sys.stderr.write(f"HTTP {e.code} {e.reason} on GET {url}\n")
-        sys.stderr.write(body[:200].replace("\n", " ") + "\n")
-        sys.exit(2)
-    m = re.search(r'name="atlassian-token" content="([^"]+)"', html_content)
-    if not m:
-        sys.stderr.write("atlassian-token not found in login page\n")
-        sys.exit(2)
-    return m.group(1)
-
-
-def _authenticate(cj: http.cookiejar.CookieJar) -> None:
-    """Establish a Confluence session and persist cookies to disk.
-
-    Performs a two-step authentication: first visits the index page to
-    establish a session, then submits the login form with the cached
-    credentials.
-
-    Args:
-        cj: A ``CookieJar`` that will receive the session cookies.
-    """
-    # Discard any stale cookies from a previous session.
+def _build_jar() -> http.cookiejar.MozillaCookieJar:
+    COOKIE_DIR.mkdir(parents=True, exist_ok=True)
+    cj = http.cookiejar.MozillaCookieJar(str(COOKIE_FILE))
     if COOKIE_FILE.exists():
         try:
-            COOKIE_FILE.unlink()
-        except OSError:
+            cj.load(ignore_discard=True, ignore_expires=True)
+        except (OSError, http.cookiejar.LoadError):
             pass
+    return cj
 
-    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
 
-    # Step 1: Establish session by visiting the index page.
-    url = f"{BASE}/index.action"
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
+def _clear_jar(opener: urllib.request.OpenerDirector) -> None:
+    for h in opener.handlers:
+        if isinstance(h, urllib.request.HTTPCookieProcessor):
+            h.cookiejar.clear()
+            return
+
+
+def _authenticate(opener: urllib.request.OpenerDirector) -> None:
+    """Form-login. Sets fresh session cookies on the opener's jar."""
+    # Establish session (Confluence sets JSESSIONID here).
     try:
-        with opener.open(req, timeout=30) as r:
-            pass
+        opener.open(urllib.request.Request(
+            f"{BASE}/index.action",
+            headers={"User-Agent": UA},
+        ), timeout=30).close()
     except urllib.error.HTTPError as e:
         sys.stderr.write(f"Failed to establish session: HTTP {e.code}\n")
         sys.exit(2)
 
-    # Step 2: Retrieve CSRF token and submit login form.
-    token = _get_atlassian_token(opener)
-    user, passwd = _get_credentials()
-    encoded_pass = _url_encode_password(passwd)
+    # Fetch CSRF token from the login page.
+    try:
+        with opener.open(urllib.request.Request(
+                f"{BASE}/login.action",
+                headers={"User-Agent": UA},
+        ), timeout=30) as r:
+            page = r.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        sys.stderr.write(f"HTTP {e.code} on GET /login.action\n")
+        sys.exit(2)
+    m = re.search(
+        r'name="atlassian-token" content="([^"]+)"', page)
+    if not m:
+        sys.stderr.write("atlassian-token not found in login page\n")
+        sys.exit(2)
 
-    login_url = f"{BASE}/dologin.action"
-    post_data = (
-        f"os_username={urllib.parse.quote(user, safe='')}"
-        f"&os_password={encoded_pass}"
-        f"&os_authType=basic"
-        f"&atlassian-token={token}"
-    )
-    data = post_data.encode("utf-8")
+    user, passwd = _get_credentials()
+    data = urllib.parse.urlencode({
+        "os_username": user,
+        "os_password": passwd,
+        "os_authType": "basic",
+        "atlassian-token": m.group(1),
+    }).encode("utf-8")
     req = urllib.request.Request(
-        login_url,
+        f"{BASE}/dologin.action",
         data=data,
         headers={
             "User-Agent": UA,
-            "Content-Type": "application/x-www-form-urlencoded",
+            "Content-Type": (
+                "application/x-www-form-urlencoded"),
         },
     )
     try:
         with opener.open(req, timeout=30) as r:
-            code = r.status
+            if r.status != 200:
+                sys.stderr.write(
+                    f"Login returned HTTP {r.status}\n")
+                sys.exit(2)
     except urllib.error.HTTPError as e:
         sys.stderr.write(f"Login failed: HTTP {e.code}\n")
         sys.exit(2)
-
-    if code != 200:
-        sys.stderr.write(f"Login returned HTTP {code}\n")
-        sys.exit(2)
-
-    _save_cookies(cj)
-
-
-def _save_cookies(cj: http.cookiejar.CookieJar) -> None:
-    """Persist the cookie jar to disk in Netscape format.
-
-    Uses the built-in ``CookieJar.save()`` method when available; falls back
-    to manual serialization otherwise.
-
-    Args:
-        cj: The cookie jar to save.
-    """
-    if hasattr(cj, "filename") and cj.filename:
-        cj.save(ignore_discard=True, ignore_expires=True)
-    else:
-        lines: list[str] = []
-        for cookie in cj:
-            domain = getattr(cookie, "domain", "")
-            secure = "TRUE" if cookie.secure else "FALSE"
-            path = getattr(cookie, "path", "/")
-            lines.append(
-                f"{domain}\tTRUE\t{str(path).startswith('/')}\t"
-                f"{cookie.expires or 0}\t{cookie.name}\t{cookie.value}"
-            )
-        with open(COOKIE_FILE, "w") as f:
-            f.write("\n".join(lines) + "\n")
-
-
-def _make_opener(cj: http.cookiejar.CookieJar) -> urllib.request.OpenerDirector:
-    """Build an ``OpenerDirector`` equipped with the given cookie jar.
-
-    Args:
-        cj: The cookie jar to attach to the opener.
-
-    Returns:
-        A configured ``OpenerDirector`` instance.
-    """
-    return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
-
-
-def _get_opener() -> urllib.request.OpenerDirector:
-    """Create a fresh authenticated session and return an HTTP opener.
-
-    Creates a new cookie jar, authenticates against Confluence, saves the
-    resulting cookies, and returns an opener pre-configured with them.
-
-    Returns:
-        An ``OpenerDirector`` ready for authenticated API requests.
-    """
-    _ensure_cookie_dir()
-    cj = http.cookiejar.CookieJar()
-    _authenticate(cj)
-    return _make_opener(cj)
 
 
 def _request(
     opener: urllib.request.OpenerDirector,
     path: str,
     method: str = "GET",
-    body: dict[str, Any] | None = None,
-    headers: dict[str, str] | None = None,
-) -> tuple[int, Any]:
-    """Execute an HTTP request and return the status code with parsed body.
-
-    JSON responses are automatically deserialized; all other responses are
-    returned as UTF-8 text.
-
-    Args:
-        opener: An authenticated ``OpenerDirector``.
-        path: The API path (relative to :data:`BASE` or a full URL).
-        method: The HTTP method (default ``"GET"``).
-        body: Optional dict to serialize as JSON in the request body.
-        headers: Optional extra HTTP headers to merge with defaults.
-
-    Returns:
-        A ``(status_code, body)`` tuple where *body* is either a parsed
-        ``dict``/``list`` (for JSON responses) or a ``str``.
-
-    Raises:
-        _ConfluenceError: On HTTP errors (including 302 redirects) or network
-            failures.
-    """
+    body: dict | None = None,
+) -> tuple[int, t.Any]:
     url = path if path.startswith("http") else BASE + path
+    h: dict[str, str] = {
+        "User-Agent": UA,
+        "Accept": "application/json",
+    }
     data: bytes | None = None
-    h: dict[str, str] = {"User-Agent": UA, "Accept": "application/json"}
-    if headers:
-        h.update(headers)
     if body is not None:
         data = json.dumps(body).encode("utf-8")
         h["Content-Type"] = "application/json"
-    elif method == "POST":
-        sys.stderr.write("POST requires a body dict\n")
-        raise _ConfluenceError(0, "POST requires a body dict")
-
-    req = urllib.request.Request(url, data=data, method=method, headers=h)
+    elif method in ("POST", "PUT"):
+        raise _ConfluenceError(0, f"{method} requires a body dict")
+    req = urllib.request.Request(
+        url, data=data, method=method, headers=h)
     try:
         with opener.open(req, timeout=30) as r:
-            raw = r.read()
+            # urllib auto-follows 302; if we land on the login page our session
+            # has expired. Surface this so the caller can re-authenticate.
+            if ("login.action" in r.url
+                    and "login.action" not in url):
+                raise _ConfluenceError(
+                    401,
+                    "session expired (redirected to login)",
+                )
+            text = r.read().decode("utf-8", errors="replace")
             ctype = r.headers.get("Content-Type", "")
-            text = raw.decode("utf-8", errors="replace")
             if ctype.startswith("application/json"):
                 try:
                     return r.status, json.loads(text)
@@ -303,9 +238,12 @@ def _request(
                     return r.status, text
             return r.status, text
     except urllib.error.HTTPError as e:
-        body_text = e.read().decode("utf-8", errors="replace") if e.fp else ""
-        msg = body_text[:500].replace("\n", " ") if body_text else ""
-        raise _ConfluenceError(e.code, msg)
+        body_text = (e.read().decode("utf-8", errors="replace")
+                     if e.fp else "")
+        raise _ConfluenceError(
+            e.code,
+            body_text[:500].replace("\n", " "),
+        )
     except urllib.error.URLError as e:
         raise _ConfluenceError(0, str(e.reason))
 
@@ -314,572 +252,453 @@ def _request_json(
     opener: urllib.request.OpenerDirector,
     path: str,
     method: str = "GET",
-    body: dict[str, Any] | None = None,
-) -> Any:
-    """Execute a JSON API request and return the parsed response body.
-
-    Convenience wrapper around :func:`_request` that raises
-    :class:`_ConfluenceError` when the server returns a JSON error envelope.
-
-    Args:
-        opener: An authenticated ``OpenerDirector``.
-        path: The API path.
-        method: The HTTP method (default ``"GET"``).
-        body: Optional JSON-serializable dict for POST/PUT requests.
-
-    Returns:
-        The parsed response body (typically a ``dict`` or ``list``).
-
-    Raises:
-        _ConfluenceError: If the response contains a ``statusCode`` field
-            indicating an API error.
-    """
-    status, result = _request(opener, path, method=method, body=body)
+    body: dict | None = None,
+) -> t.Any:
+    _, result = _request(opener, path, method=method, body=body)
     if isinstance(result, dict) and "statusCode" in result:
-        raise _ConfluenceError(status, json.dumps(result, ensure_ascii=False))
+        raise _ConfluenceError(
+            result.get("statusCode", 0),
+            json.dumps(result, ensure_ascii=False),
+        )
     return result
 
 
-def _emit_json(obj: Any) -> None:
-    """Print a pretty-printed JSON representation of *obj* to stdout.
-
-    Uses ``ensure_ascii=False`` so that Unicode characters (e.g. Danish
-    letters æ, ø, å) render directly instead of as escape sequences.
-
-    Args:
-        obj: The object to serialize.
-    """
-    print(json.dumps(obj, ensure_ascii=False, indent=2))
-
-
-def _strip_tags(text: str) -> str:
-    """Remove all HTML/XML tags from *text*, leaving only the raw content.
-
-    Args:
-        text: A string potentially containing HTML markup.
-
-    Returns:
-        The string with all ``<...>`` tag sequences removed.
-    """
-    return re.sub(r"<[^>]+>", "", text)
+def _new_page_payload(
+    title: str,
+    body_xml: str,
+    space_key: str,
+    ancestor_id: str | None = None,
+) -> dict[str, t.Any]:
+    payload: dict[str, t.Any] = {
+        "type": "page",
+        "title": title,
+        "space": {"key": space_key},
+        "body": {
+            "storage": {
+                "value": body_xml,
+                "representation": "storage",
+            },
+        },
+    }
+    if ancestor_id:
+        payload["ancestor"] = {"id": ancestor_id}
+    return payload
 
 
-def _run_cmd(func: Callable[..., None], args: "Namespace") -> None:
-    """Run a CLI command with automatic session recovery on authentication failure.
-
-    If the first attempt fails with HTTP 302 (session expired), the cached
-    credentials are cleared and the command is retried once.
-
-    Args:
-        func: The command callable to invoke.
-        args: Parsed ``argparse.Namespace`` with command-specific arguments.
-
-    Raises:
-        SystemExit: On non-recoverable errors or a second failed attempt.
-    """
-    for attempt in range(2):
+def _run_cmd(
+    func: c.Callable[..., None],
+    args: argparse.Namespace,
+) -> None:
+    """Reuse persisted cookies; on session expiry re-auth and retry once."""
+    cj = _build_jar()
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPCookieProcessor(cj))
+    authenticated = False
+    for _ in range(2):
         try:
-            opener = _get_opener()
             func(opener, args)
+            cj.save(ignore_discard=True, ignore_expires=True)
             return
         except _ConfluenceError as e:
-            if e.code == 302 and attempt == 0:
-                # Session expired — clear cached creds and retry.
+            if e.code in (302, 401) and not authenticated:
                 global _cached_creds
                 _cached_creds = None
+                _authenticate(opener)
+                authenticated = True
                 continue
             sys.stderr.write(f"HTTP {e.code}: {e.message}\n")
             sys.exit(2)
-        except SystemExit:
-            raise
 
 
-# ── Command implementations ──────────────────────────────────────────
-# Each command takes an authenticated ``opener`` and an ``argparse.Namespace``
-# of parsed arguments, and prints human-readable output (or raw JSON when
-# ``--raw`` is set).
+# Confluence Storage Format. 225903078/164/170 are checklist excerpt
+# source pages.
+_PROJECT_TEMPLATE = """\
+<h1>Projekt: {title}</h1>
+<ac:structured-macro ac:name="toc">
+  <ac:parameter ac:name="minHeaders">2</ac:parameter>
+  <ac:parameter ac:name="maxHeaders">6</ac:parameter>
+  <ac:parameter ac:name="include">.*</ac:parameter>
+  <ac:parameter ac:name="style">disc</ac:parameter>
+</ac:structured-macro>
+
+<h2>Projektinfo</h2>
+<table class="wrapped confstyle">
+<thead><tr><th>felt</th><th>værdi</th></tr></thead>
+<tbody>
+<tr><td>Projektnavn</td><td>{title}</td></tr>
+<tr><td>Klient / kunde</td><td>{client}</td></tr>
+<tr><td>Projektansvarlig</td><td>{owner}</td></tr>
+<tr><td>Intern Projektejer</td><td>{owner}</td></tr>
+<tr><td>Budget (Alexandra Instituttets Andel)</td><td>{budget}</td></tr>
+<tr><td>Projekttype</td><td>Under udvikling</td></tr>
+<tr><td>Projektslut</td><td>Ikke fastsat</td></tr>
+<tr><td>Projektkode</td><td>IKKE Tildelt</td></tr>
+<tr><td>Status</td><td>Under initiering</td></tr>
+<tr><td>Skabelon</td><td>The Alexandra Way</td></tr>
+</tbody>
+</table>
+
+<h2>Projektbeskrivelse</h2>
+<p>Udfyld projektbeskrivelsen her.</p>
+
+<h2>Tjeklister</h2>
+<h3>Initiering</h3>
+<ac:structured-macro ac:name="excerpt">
+  <ac:parameter ac:name="restrictToPage">225903078</ac:parameter>
+</ac:structured-macro>
+<h3>Eksekvering</h3>
+<ac:structured-macro ac:name="excerpt">
+  <ac:parameter ac:name="restrictToPage">225903164</ac:parameter>
+</ac:structured-macro>
+<h3>Afslutning</h3>
+<ac:structured-macro ac:name="excerpt">
+  <ac:parameter ac:name="restrictToPage">225903170</ac:parameter>
+</ac:structured-macro>
+
+<h2>Administrative opgaver</h2>
+<ul><li>Opret projekt i system</li>
+<li>Fastlæg budget og resurser</li>
+<li>Identificér interessenter</li>
+<li>Planlæg første milestone</li></ul>
+
+<h2>Projektledelsesopgaver</h2>
+<ul><li>Lav projektplan</li>
+<li>Sæt op projektstyregruppe</li>
+<li>Fastlæg rapporteringsrutiner</li></ul>
+
+<h2>Softwareudviklingsopgaver</h2>
+<p>Udfyld softwareudviklingsopgaver her.</p>
+
+<h2>Milestone oversigt</h2>
+<table class="wrapped confstyle">
+<thead><tr><th>Milestone</th><th>Dato</th><th>Status</th></tr></thead>
+<tbody><tr><td>MVP</td><td>Ikke fastsat</td><td>Planlagt</td></tr></tbody>
+</table>"""
 
 
-def cmd_spaces(opener: Any, args: "Namespace") -> None:
-    """List all Confluence spaces with optional pagination.
+# Commands
 
-    Prints a summary line with the total count, followed by one line per
-    space showing key, name, type, and a truncated description.
-    """
+
+def cmd_spaces(opener: t.Any, args: argparse.Namespace) -> None:
     qs = urllib.parse.urlencode({
         "expand": "description.plain",
-        "limit": str(args.limit),
-        "start": str(args.start),
+        "limit": args.limit,
+        "start": args.start,
     })
     data = _request_json(opener, f"/rest/api/space?{qs}")
     if args.raw:
-        _emit_json(data)
-        return
+        return _emit_json(data)
     total = data.get("size", 0)
     start = data.get("start", 0)
+    results = data.get("results", [])
     print(
         f"Total spaces: {total}  "
-        f"(showing {start}-{start + len(data.get('results', []))})"
-    )
-    for s in data.get("results", []):
+        f"(showing {start}-{start + len(results)})")
+    for s in results:
         key = s.get("key", "?")
         name = s.get("name", "?")
         stype = s.get("type", "?")
-        desc = ""
-        if "description" in s:
-            desc = (
-                s["description"].get("plain", {}).get("value", "") or ""
-            )[:80]
+        desc = (
+            (s.get("description", {})
+             .get("plain", {})
+             .get("value", "") or "")[:80])
         prefix = "  " if key.startswith("~") else ""
         print(f"{prefix}{key}: {name} [{stype}]")
         if desc:
             print(f"   {desc}")
 
 
-def cmd_pages(opener: Any, args: "Namespace") -> None:
-    """List top-level pages in a Confluence space.
-
-    Displays page ID, title, version number, parent page (if any), and
-    the number of child pages.
-    """
+def cmd_pages(opener: t.Any, args: argparse.Namespace) -> None:
     qs = urllib.parse.urlencode({
         "spaceKey": args.space_key,
-        "limit": str(args.limit),
-        "expand": "body.storage,version,ancestors,children.page",
+        "limit": args.limit,
+        "expand": "version,ancestors,children.page",
         "depth": "1",
     })
     data = _request_json(opener, f"/rest/api/content?{qs}")
     if args.raw:
-        _emit_json(data)
-        return
-    total = data.get("size", 0)
-    print(f"Total pages in {args.space_key}: {total}")
+        return _emit_json(data)
+    print(
+        f"Total pages in {args.space_key}: "
+        f"{data.get('size', 0)}")
     for p in data.get("results", []):
-        title = p.get("title", "?")
-        pid = p.get("id", "?")
-        version = p.get("version", {}).get("number", "?")
         ancestors = p.get("ancestors", [])
-        ancestor_info = ""
+        ancestor = ""
         if ancestors:
-            ancestor_info = (
-                f" (child of: {ancestors[-1].get('title', '?')})"
-            )
+            ancestor = (
+                f" (child of: "
+                f"{ancestors[-1].get('title', '?')})")
+        children_list = (
+            p.get("children", {})
+            .get("page", {})
+            .get("results", []))
+        nchildren = len(children_list)
         children = (
-            p.get("children", {}).get("page", {}).get("results", [])
-        )
-        child_info = f" (+{len(children)} children)" if children else ""
-        print(f"  [{pid}] {title} v{version}{ancestor_info}{child_info}")
+            f" (+{nchildren} children)"
+            if nchildren else "")
+        v = p.get("version", {}).get("number", "?")
+        print(
+            f"  [{p.get('id', '?')}] "
+            f"{p.get('title', '?')} v{v}"
+            f"{ancestor}{children}")
 
 
-def cmd_search(opener: Any, args: "Namespace") -> None:
-    """Search Confluence pages by title or full CQL query.
-
-    Accepts a positional *query* argument (converted to a title search) or
-    a ``--cql`` flag for full Confluence Query Language expressions.
-    """
+def cmd_search(opener: t.Any, args: argparse.Namespace) -> None:
     if args.cql:
         cql = args.cql
     elif args.query:
-        cql = 'title~"' + args.query.replace('"', '\\"') + '"'
+        cql = ('title~"'
+               + args.query.replace('"', '\\"') + '"')
     else:
-        sys.stderr.write("Provide a query or --cql argument\n")
+        sys.stderr.write(
+            "Provide a query or --cql argument\n")
         sys.exit(2)
-    qs = urllib.parse.urlencode({"cql": cql, "limit": str(args.limit)})
-    data = _request_json(opener, f"/rest/api/search?{qs}")
+    qs = urllib.parse.urlencode(
+        {"cql": cql, "limit": args.limit})
+    data = _request_json(
+        f"/rest/api/search?{qs}")
     if args.raw:
-        _emit_json(data)
-        return
-    total = data.get("totalSize", 0)
-    print(f"Search results: {total} total")
+        return _emit_json(data)
+    print(f"Search results: "
+          f"{data.get('totalSize', 0)} total")
     for r in data.get("results", []):
-        content = r.get("content", {})
-        if isinstance(content, dict) and content.get("space"):
-            space_key = content["space"].get("key", "?")
-        elif r.get("space"):
-            space_key = r["space"].get("key", "?")
-        else:
-            url = r.get("url", "")
-            path = url.split("?")[0]
-            parts = path.strip("/").split("/")
-            space_key = parts[1] if len(parts) >= 2 else "?"
-        title = r.get("title", "?")
-        if isinstance(content, dict) and content.get("id"):
-            pid = content["id"]
-        else:
-            url = r.get("url", "")
-            if "pageId=" in url:
-                pid = url.split("pageId=")[1].split("&")[0]
-            else:
-                pid = "?"
+        content = r.get("content") or {}
+        space_key = (
+            (content.get("space") or {})
+            .get("key") or "?")
+        pid = content.get("id") or "?"
+        if pid == "?" and "pageId=" in r.get("url", ""):
+            pid = r["url"].split("pageId=")[1].split("&")[0]
         lastmod = (
-            r.get("lastModified", "?")[:10] if r.get("lastModified") else "?"
-        )
-        body_val = r.get("body", {}).get("view", {}).get("value", "")
-        body_clean = re.sub(r"@@@hl@@@|@@@endhl@@@", "", body_val)
-        body_clean = _strip_tags(body_clean)[:200]
-        print(f"  [{space_key}] {title} (id={pid}, modified={lastmod})")
+            (r.get("lastModified") or "?")[:10])
+        body_val = (
+            r.get("body", {})
+            .get("view", {})
+            .get("value", ""))
+        body_clean = _strip_tags(
+            re.sub(r"@@@hl@@@|@@@endhl@@@", "", body_val)
+        )[:200]
+        print(
+            f"  [{space_key}] "
+            f"{r.get('title', '?')} "
+            f"(id={pid}, modified={lastmod})")
         if body_clean:
             print(f"    {body_clean}")
 
 
-def cmd_page(opener: Any, args: "Namespace") -> None:
-    """Retrieve and display a single Confluence page by key or ID.
-
-    Shows metadata (title, key, space, ID, version, ancestors, children)
-    and a preview of the page body. Use ``--format text`` or ``--format html``
-    to view the full body.
-    """
+def cmd_page(opener: t.Any, args: argparse.Namespace) -> None:
+    expand = (
+        "body.storage,version,space,"
+        "ancestors,children.page")
     if args.key:
-        qs = urllib.parse.urlencode({
-            "key": args.key,
-            "expand": "body.storage,body.view,version,space,"
-            "ancestors,children.page",
-        })
-        data = _request_json(opener, f"/rest/api/content?{qs}")
+        qs = urllib.parse.urlencode(
+            {"key": args.key, "expand": expand})
+        data = _request_json(
+            f"/rest/api/content?{qs}")
     elif args.id:
-        qs = urllib.parse.urlencode({
-            "expand": "body.storage,body.view,version,space,"
-            "ancestors,children.page",
-        })
-        data = _request_json(opener, f"/rest/api/content/{args.id}?{qs}")
+        qs = urllib.parse.urlencode({"expand": expand})
+        data = _request_json(
+            f"/rest/api/content/{args.id}?{qs}")
     else:
         sys.stderr.write("Provide --key or --id\n")
         sys.exit(2)
-
     if args.raw:
-        _emit_json(data)
-        return
+        return _emit_json(data)
 
-    # Derive page key from the API response if not directly available.
-    page_key = data.get("key", "")
-    if not page_key:
-        webui = data.get("_links", {}).get("webui", "")
-        if webui:
-            parts = webui.strip("/").split("/")
-            if len(parts) >= 2:
-                page_key = parts[1]
+    print(f"Title:   {data.get('title')}")
+    print(f"Space:   {data.get('space', {}).get('key')}")
+    print(f"ID:      {data.get('id')}")
+    print(
+        f"Version: "
+        f"{data.get('version', {}).get('number')}")
+    for a in data.get("ancestors", []):
+        print(
+            f"  ancestor: "
+            f"{a.get('title')} "
+            f"(id={a.get('id')})")
+    for c in (
+            data.get("children", {})
+            .get("page", {})
+            .get("results", [])):
+        print(
+            f"  child:    "
+            f"{c.get('title')} "
+            f"(id={c.get('id')})")
 
-    print(f"Title:  {data.get('title')}")
-    print(f"Key:    {page_key}")
-    print(f"Space:  {data.get('space', {}).get('key')}")
-    print(f"ID:     {data.get('id')}")
-    print(f"Version: {data.get('version', {}).get('number')}")
-    ancestors = data.get("ancestors", [])
-    if ancestors:
-        print("Ancestors:")
-        for a in ancestors:
-            print(f"  - {a.get('title')} (id={a.get('id')})")
-    children = (
-        data.get("children", {}).get("page", {}).get("results", [])
-    )
-    if children:
-        print(f"Child pages ({len(children)}):")
-        for c in children:
-            print(f"  - {c.get('title')} (id={c.get('id')})")
-
-    # Display the page body according to the selected format.
-    val = data.get("body", {}).get("storage", {}).get("value", "")
-    if args.format == "text":
-        print("\n--- Body (plain text) ---")
-        print(_strip_tags(val))
-    elif args.format == "html":
-        print("\n--- Body (HTML) ---")
-        print(val)
+    val = (
+        data.get("body", {})
+        .get("storage", {})
+        .get("value", ""))
+    if args.format == "html":
+        print("\n--- Body (HTML) ---\n" + val)
+    elif args.format == "text":
+        print(
+            "\n--- Body (plain text) ---\n"
+            + _strip_tags(val))
     else:
         clean = _strip_tags(val)
         print(f"\nBody: {len(clean)} chars")
         print(clean[:1000])
         if len(clean) > 1000:
-            print(f"... ({len(clean) - 1000} more chars)")
+            print(
+                f"... ({len(clean) - 1000} more chars)")
 
 
-def cmd_create(opener: Any, args: "Namespace") -> None:
-    """Create a new Confluence page in the specified space.
-
-    The page can optionally be created as a child of an existing page
-    (via ``--ancestor-id``) or marked as a minor edit.
-    """
-    body_dict: dict[str, Any] = {
-        "type": "page",
-        "title": args.title,
-        "space": {"key": args.space_key},
-        "body": {
-            "storage": {
-                "value": args.body,
-                "representation": "storage",
-            }
-        },
-    }
-    if args.minor_edit:
-        body_dict["minorEdit"] = True
-    if args.ancestor_id:
-        body_dict["ancestor"] = {"id": args.ancestor_id}
-
+def cmd_create(opener: t.Any, args: argparse.Namespace) -> None:
+    payload = _new_page_payload(
+        args.title,
+        args.body,
+        args.space_key,
+        args.ancestor_id,
+    )
     data = _request_json(
-        opener, "/rest/api/content", method="POST", body=body_dict
+        opener,
+        "/rest/api/content",
+        method="POST",
+        body=payload,
     )
     if args.raw:
-        _emit_json(data)
-        return
+        return _emit_json(data)
     print(f"Created page: {data.get('title')}")
-    print(f"  ID:   {data.get('id')}")
-    print(f"  Key:  {data.get('key')}")
-    print(f"  URL:  {BASE}/pages/viewpage.action?pageId={data.get('id')}")
+    print(f"  ID:  {data.get('id')}")
+    print(
+        f"  URL: "
+        f"{BASE}/pages/viewpage.action"
+        f"?pageId={data.get('id')}")
 
 
-def cmd_create_project(opener: Any, args: "Namespace") -> None:
-    """Create a new project page using The Alexandra Way template.
-
-    Generates a pre-filled page with project metadata, checklist excerpts
-    for each project phase, and standard task lists. The page is created
-    as a child of "Projektoverblik" (page ID 208044217).
-    """
-    project_body = (
-        '<h1>Projekt: {title}</h1>\n'
-        '<ac:structured-macro ac:name="toc">\n'
-        '  <ac:parameter ac:name="minHeaders">2</ac:parameter>\n'
-        '  <ac:parameter ac:name="maxHeaders">6</ac:parameter>\n'
-        '  <ac:parameter ac:name="include">.*</ac:parameter>\n'
-        '  <ac:parameter ac:name="style">disc</ac:parameter>\n'
-        '  <ac:parameter ac:name="staticStyle">'
-        'confluence-wiki-toc</ac:parameter>\n'
-        '  <ac:parameter ac:name="staticClass">section-toc</ac:parameter>\n'
-        '</ac:structured-macro>\n\n'
-        '<h2>Projektinfo</h2>\n'
-        '<table class="wrapped confstyle">\n'
-        '<thead>\n'
-        '<tr>\n'
-        '<th>felt</th>\n'
-        '<th>værdi</th>\n'
-        "</tr>\n"
-        "</thead>\n"
-        "<tbody>\n"
-        '<tr>\n'
-        '<td>Projektnavn</td>\n'
-        f'<td>{args.title}</td>\n'
-        "</tr>\n"
-        '<tr>\n'
-        '<td>Klient / kunde</td>\n'
-        f'<td>{args.client}</td>\n'
-        "</tr>\n"
-        '<tr>\n'
-        '<td>Projektansvarlig</td>\n'
-        f'<td>{args.owner}</td>\n'
-        "</tr>\n"
-        '<tr>\n'
-        '<td>Intern Projektejer</td>\n'
-        f'<td>{args.owner}</td>\n'
-        "</tr>\n"
-        '<tr>\n'
-        '<td>Budget (Alexandra Instituttets Andel)</td>\n'
-        f'<td>{args.budget}</td>\n'
-        "</tr>\n"
-        '<tr>\n'
-        '<td>Projekttype</td>\n'
-        '<td>Under udvikling</td>\n'
-        "</tr>\n"
-        '<tr>\n'
-        '<td>Projektslut</td>\n'
-        '<td>Ikke fastsat</td>\n'
-        "</tr>\n"
-        '<tr>\n'
-        '<td>Projektkode</td>\n'
-        '<td>IKKE Tildelt</td>\n'
-        "</tr>\n"
-        '<tr>\n'
-        '<td>Status</td>\n'
-        '<td>Under initiering</td>\n'
-        "</tr>\n"
-        '<tr>\n'
-        '<td>Skabelon</td>\n'
-        '<td>The Alexandra Way</td>\n'
-        "</tr>\n"
-        "</tbody>\n"
-        "</table>\n\n"
-        '<h2>Projektbeskrivelse</h2>\n'
-        '<p>Udfyld projektbeskrivelsen her.</p>\n\n'
-        '<h2>Tjeklister</h2>\n'
-        '<h3>Initiering</h3>\n'
-        '<ac:structured-macro ac:name="excerpt">\n'
-        '  <ac:parameter ac:name="restrictToPage">225903078</ac:parameter>\n'
-        '</ac:structured-macro>\n\n'
-        '<h3>Eksekvering</h3>\n'
-        '<ac:structured-macro ac:name="excerpt">\n'
-        '  <ac:parameter ac:name="restrictToPage">'
-        '225903164</ac:parameter>\n'
-        '</ac:structured-macro>\n\n'
-        '<h3>Afslutning</h3>\n'
-        '<ac:structured-macro ac:name="excerpt">\n'
-        '  <ac:parameter ac:name="restrictToPage">'
-        '225903170</ac:parameter>\n'
-        '</ac:structured-macro>\n\n'
-        '<h2>Administrative opgaver</h2>\n'
-        '<ul>\n'
-        '<li>Opret projekt i system</li>\n'
-        '<li>Fastlæg budget og resurser</li>\n'
-        '<li>Identificér interessenter</li>\n'
-        '<li>Planlæg første milestone</li>\n'
-        "</ul>\n\n"
-        '<h2>Projektledelsesopgaver</h2>\n'
-        '<ul>\n'
-        '<li>Lav projektplan</li>\n'
-        '<li>Sæt op projektstyregruppe</li>\n'
-        '<li>Fastlæg rapporteringsrutiner</li>\n'
-        "</ul>\n\n"
-        '<h2>Softwareudviklingsopgaver</h2>\n'
-        '<p>Udfyld softwareudviklingsopgaver her.</p>\n\n'
-        '<h2>Milestone oversigt</h2>\n'
-        '<table class="wrapped confstyle">\n'
-        '<thead>\n'
-        '<tr>\n'
-        '<th>Milestone</th>\n'
-        '<th>Dato</th>\n'
-        '<th>Status</th>\n'
-        "</tr>\n"
-        "</thead>\n"
-        "<tbody>\n"
-        '<tr>\n'
-        '<td>MVP</td>\n'
-        '<td>Ikke fastsat</td>\n'
-        '<td>Planlagt</td>\n'
-        "</tr>\n"
-        "</tbody>\n"
-        "</table>"
-    ).format(
-        title=args.title,
-        client=args.client,
-        owner=args.owner,
-        budget=args.budget,
+def cmd_create_project(
+    opener: t.Any, args: argparse.Namespace,
+) -> None:
+    body = _PROJECT_TEMPLATE.format(
+        title=html.escape(args.title),
+        client=html.escape(args.client),
+        owner=html.escape(args.owner),
+        budget=html.escape(args.budget),
     )
-
-    body_dict: dict[str, Any] = {
-        "type": "page",
-        "title": args.title,
-        "space": {"key": args.space_key},
-        "body": {
-            "storage": {
-                "value": project_body,
-                "representation": "storage",
-            }
-        },
-        "ancestor": {"id": "208044217"},
-    }
+    payload = _new_page_payload(
+        args.title,
+        body,
+        args.space_key,
+        PROJ_ANCESTOR_ID,
+    )
     data = _request_json(
-        opener, "/rest/api/content", method="POST", body=body_dict
+        opener,
+        "/rest/api/content",
+        method="POST",
+        body=payload,
     )
     if args.raw:
-        _emit_json(data)
-        return
-    print(f"Created project page: {data.get('title')}")
-    print(f"  ID:   {data.get('id')}")
-    print(f"  Key:  {data.get('key')}")
-    print(f"  URL:  {BASE}/pages/viewpage.action?pageId={data.get('id')}")
-    print(f"  Template: The Alexandra Way (projektforklæde)")
+        return _emit_json(data)
+    print(f"Created project page: "
+          f"{data.get('title')}")
+    print(f"  ID:       {data.get('id')}")
+    print(
+        f"  URL:      "
+        f"{BASE}/pages/viewpage.action"
+        f"?pageId={data.get('id')}")
+    print(
+        "  Template: "
+        "The Alexandra Way (projektforklæde)")
 
 
-def cmd_update(opener: Any, args: "Namespace") -> None:
-    """Update an existing Confluence page's title and/or body.
-
-    Always bumps the version number. Use ``--title`` to change the title;
-    omit it to keep the current title unchanged.
-    """
-    qs = urllib.parse.urlencode({"expand": "version"})
-    page = _request_json(opener, f"/rest/api/content/{args.id}?{qs}")
-    version_number = page.get("version", {}).get("number", 1)
-
-    body_dict: dict[str, Any] = {
+def cmd_update(opener: t.Any, args: argparse.Namespace) -> None:
+    page = _request_json(
+        f"/rest/api/content/"
+        f"{args.id}?expand=version")
+    version_number = (
+        page.get("version", {})
+        .get("number", 1))
+    payload: dict[str, t.Any] = {
         "id": args.id,
         "type": "page",
-        "title": args.title or page.get("title", ""),
+        "title": (
+            args.title or page.get("title", "")),
         "version": {"number": version_number + 1},
         "body": {
             "storage": {
                 "value": args.body,
                 "representation": "storage",
-            }
+            },
         },
     }
     if args.minor_edit:
-        body_dict["minorEdit"] = True
-
+        payload["minorEdit"] = True
     data = _request_json(
-        opener, f"/rest/api/content/{args.id}", method="PUT", body=body_dict
+        f"/rest/api/content/{args.id}",
+        method="PUT",
+        body=payload,
     )
     if args.raw:
-        _emit_json(data)
-        return
+        return _emit_json(data)
     print(f"Updated page: {data.get('title')}")
-    print(f"  New version: {data.get('version', {}).get('number')}")
+    print(
+        f"  New version: "
+        f"{data.get('version', {})
+         .get('number')}")
 
 
-def cmd_delete(opener: Any, args: "Namespace") -> None:
-    """Delete a Confluence page and print its former metadata."""
-    qs = urllib.parse.urlencode({"expand": "title,space"})
-    page = _request_json(opener, f"/rest/api/content/{args.id}?{qs}")
+def cmd_delete(opener: t.Any, args: argparse.Namespace) -> None:
+    page = _request_json(
+        f"/rest/api/content/"
+        f"{args.id}?expand=space")
     title = page.get("title", "?")
-    space = page.get("space", {}).get("key", "?")
+    space = (
+        page.get("space", {})
+        .get("key", "?"))
+    _request(
+        opener,
+        f"/rest/api/content/{args.id}",
+        method="DELETE")
+    print(
+        f"Deleted page: "
+        f"{title} "
+        f"(id={args.id}, space={space})")
 
-    _request(opener, f"/rest/api/content/{args.id}", method="DELETE")
-    print(f"Deleted page: {title} (id={args.id}, space={space})")
 
-
-def cmd_whoami(opener: Any, args: "Namespace") -> None:
-    """Display the authenticated user's profile information."""
+def cmd_whoami(opener: t.Any, args: argparse.Namespace) -> None:
     data = _request_json(
         opener,
-        "/rest/api/user/current?expand=fullName,displayName,userkey",
-    )
+        "/rest/api/user/current"
+        "?expand=fullName,displayName,userkey")
     if args.raw:
-        _emit_json(data)
-        return
+        return _emit_json(data)
     print(f"Username:  {data.get('username')}")
     print(f"Display:   {data.get('displayName')}")
     print(f"User key:  {data.get('userKey')}")
-    print(f"Full name: {data.get('fullName', '-')}")
+    print(f"Full name: "
+          f"{data.get('fullName', '-')}")
 
 
-def cmd_auth(opener: Any, args: "Namespace") -> None:
-    """Force re-authentication by clearing the credential cache.
-
-    Deletes any existing cookie file and performs a fresh login, then
-    saves the new session cookies to disk.
-    """
+def cmd_auth(opener: t.Any, args: argparse.Namespace) -> None:
+    """Force re-auth: clear creds + cookies, then login."""
     global _cached_creds
     _cached_creds = None
-    print("Cached credentials cleared. Please re-enter credentials.")
-    cj = http.cookiejar.CookieJar()
-    _authenticate(cj)
+    if COOKIE_FILE.exists():
+        COOKIE_FILE.unlink()
+    _clear_jar(opener)
+    _authenticate(opener)
     print("Authenticated successfully. Cookies saved.")
 
 
-def cmd_api(opener: Any, args: "Namespace") -> None:
-    """Make a raw API call to any Confluence REST endpoint.
-
-    Supports GET, POST, PUT, and DELETE methods. For POST/PUT requests,
-    pass a JSON string via ``--body``.
-    """
-    if args.method == "GET":
-        data = _request_json(opener, args.path)
-    elif args.method == "POST":
-        if not args.body:
-            sys.stderr.write("POST requires --body\n")
-            sys.exit(2)
-        body = json.loads(args.body) if args.body else {}
-        data = _request_json(
-            opener, args.path, method="POST", body=body
-        )
-    else:
-        sys.stderr.write(f"Unsupported method: {args.method}\n")
+def cmd_api(opener: t.Any, args: argparse.Namespace) -> None:
+    body: dict | None = (
+        json.loads(args.body)
+        if args.body else None)
+    if args.method in ("POST", "PUT") and body is None:
+        sys.stderr.write(
+            f"{args.method} requires --body JSON\n")
         sys.exit(2)
-    if args.raw:
-        _emit_json(data)
-        return
+    data = _request_json(
+        opener,
+        args.path,
+        method=args.method,
+        body=body,
+    )
     _emit_json(data)
 
 
-# ── Dispatch table ───────────────────────────────────────────────────
-
-_COMMANDS: dict[str, Callable[[Any, "Namespace"], None]] = {
+_COMMANDS = {
     "auth": cmd_auth,
     "spaces": cmd_spaces,
     "pages": cmd_pages,
@@ -892,109 +711,6 @@ _COMMANDS: dict[str, Callable[[Any, "Namespace"], None]] = {
     "whoami": cmd_whoami,
     "api": cmd_api,
 }
-
-
-def main() -> None:
-    """Entry point: parse CLI arguments and dispatch to the appropriate command."""
-    parser = argparse.ArgumentParser(
-        description="CLI for Alexandra's Confluence instance."
-    )
-    sub = parser.add_subparsers(dest="cmd", required=True)
-
-    def _add(name: str, **kwargs: Any) -> argparse.ArgumentParser:
-        """Helper: create a subparser with a shared ``--raw`` flag."""
-        p = sub.add_parser(name, **kwargs)
-        p.add_argument(
-            "--raw",
-            action="store_true",
-            help=(
-                "Print raw JSON response instead of "
-                "the human-readable formatter"
-            ),
-        )
-        return p
-
-    _add("auth", help="Authenticate and save cookies")
-
-    p = _add("spaces", help="List all spaces")
-    p.add_argument("--limit", type=int, default=100)
-    p.add_argument("--start", type=int, default=0)
-
-    p = _add("pages", help="List pages in a space")
-    p.add_argument("--space-key", required=True)
-    p.add_argument("--limit", type=int, default=20)
-
-    p = _add("search", help="Search Confluence pages")
-    p.add_argument(
-        "query",
-        nargs="?",
-        help="Search query (converted to a title search)",
-    )
-    p.add_argument("--cql", help="Full CQL query (overrides *query*)")
-    p.add_argument("--limit", type=int, default=20)
-
-    p = _add("page", help="Get a single page by key or ID")
-    p.add_argument("--key", help="Page key")
-    p.add_argument("--id", help="Page ID")
-    p.add_argument(
-        "--format",
-        choices=["auto", "text", "html"],
-        default="auto",
-        help="Body output format (default: auto = plain-text preview)",
-    )
-
-    p = _add("create", help="Create a new page")
-    p.add_argument("--space-key", required=True)
-    p.add_argument("--title", required=True)
-    p.add_argument("--body", required=True)
-    p.add_argument(
-        "--ancestor-id",
-        help="Parent page ID (creates the page as a child)",
-    )
-    p.add_argument("--minor-edit", action="store_true")
-
-    p = _add(
-        "create-project",
-        help=(
-            "Create a new project page with The Alexandra Way template"
-        ),
-    )
-    p.add_argument("--space-key", default="PROJ")
-    p.add_argument("--title", required=True)
-    p.add_argument(
-        "--client", required=True, help="Client / customer name"
-    )
-    p.add_argument(
-        "--owner", required=True, help="Project owner / manager"
-    )
-    p.add_argument("--budget", default="Ikke fastsat")
-
-    p = _add("update", help="Update an existing page")
-    p.add_argument("--id", required=True)
-    p.add_argument("--body", required=True)
-    p.add_argument(
-        "--title",
-        help="New title (default: keep current title)",
-    )
-    p.add_argument("--minor-edit", action="store_true")
-
-    p = _add("delete", help="Delete a page")
-    p.add_argument("--id", required=True)
-
-    _add("whoami", help="Show current user")
-
-    p = _add("api", help="Raw API call (advanced)")
-    p.add_argument(
-        "--method",
-        choices=["GET", "POST", "PUT", "DELETE"],
-        default="GET",
-    )
-    p.add_argument("--path", required=True)
-    p.add_argument("--body", help="JSON body for POST/PUT")
-
-    args = parser.parse_args()
-    cmd_func = _COMMANDS[args.cmd]
-    _run_cmd(cmd_func, args)
 
 
 if __name__ == "__main__":
