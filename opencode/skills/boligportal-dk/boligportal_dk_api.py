@@ -280,26 +280,39 @@ def main() -> None:
     p.add_argument(
         "--type",
         choices=["apartment", "room", "house", "townhouse", "student"],
+        help="property type",
     )
-    p.add_argument("--min-area", dest="min_area")
-    p.add_argument("--max-area", dest="max_area")
-    p.add_argument("--min-rooms", dest="min_rooms")
-    p.add_argument("--max-rooms", dest="max_rooms")
-    p.add_argument("--min-price", dest="min_price")
-    p.add_argument("--max-price", dest="max_price")
+    p.add_argument("--min-area", dest="min_area", help="minimum area in m²")
+    p.add_argument("--max-area", dest="max_area", help="maximum area in m²")
+    p.add_argument("--min-rooms", dest="min_rooms", help="minimum rooms")
+    p.add_argument("--max-rooms", dest="max_rooms", help="maximum rooms")
+    p.add_argument("--min-price", dest="min_price", help="minimum price DKK")
+    p.add_argument("--max-price", dest="max_price", help="maximum price DKK")
     p.add_argument(
         "--new-build",
         dest="new_build",
         action="store_true",
+        help="new construction only",
     )
     p.add_argument(
         "--student-housing",
         dest="student_housing",
         action="store_true",
+        help="student housing only",
     )
-    p.add_argument("--page", type=int, default=0)
-    p.add_argument("--limit", type=int, default=18)
-    p.add_argument("--raw", action="store_true")
+    p.add_argument(
+        "--page",
+        type=int,
+        default=0,
+        help="page number (default 0)",
+    )
+    p.add_argument(
+        "--limit",
+        type=int,
+        default=18,
+        help="items per page (default 18)",
+    )
+    p.add_argument("--raw", action="store_true", help="print raw JSON")
     p.set_defaults(func=cmd_map)
 
     # -- promoted ---------------------------------------------------------
