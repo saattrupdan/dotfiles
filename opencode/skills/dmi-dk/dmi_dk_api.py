@@ -13,7 +13,6 @@ import logging
 import math
 import re
 import sys
-import typing as t
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -51,6 +50,8 @@ UV_DESCRIPTIONS: list[tuple[int, str]] = [
 ]
 
 logger = logging.getLogger(__name__)
+
+JsonValue = dict | list | str | int | float | bool | None
 
 
 def main() -> None:
@@ -292,7 +293,7 @@ def cmd_forecast(args: argparse.Namespace) -> None:
     region: str = region_map.get(key=args.region, default=args.region) or "Danmark"
     days: str = args.days or "DK/land"
     path: str = f"/json/{region}/{days}"
-    data: t.Any = _request_json(path=path)
+    data: JsonValue = _request_json(path=path)
     if data is None:
         logger.error(f"No data from {path}")
         sys.exit(2)
@@ -327,7 +328,7 @@ def cmd_forecast(args: argparse.Namespace) -> None:
 def cmd_waters(args: argparse.Namespace) -> None:
     """Search weather/water stations by name."""
     path: str = f"/waters/{args.term}"
-    data: t.Any = _request_json(path=path)
+    data: JsonValue = _request_json(path=path)
     if data is None:
         logger.error(f"No data from {path}")
         sys.exit(2)
@@ -348,7 +349,7 @@ def cmd_sea(args: argparse.Namespace) -> None:
     """Get sea area forecast."""
     area: str = args.area or "Danmark"
     path: str = f"/json/Farvandsudsigter/{area}"
-    data: t.Any = _request_json(path=path)
+    data: JsonValue = _request_json(path=path)
     if data is None:
         logger.error(f"No data from {path}")
         sys.exit(2)
@@ -361,7 +362,7 @@ def cmd_sea(args: argparse.Namespace) -> None:
 def cmd_waterlevels(args: argparse.Namespace) -> None:
     """List active water level stations with statistics."""
     path: str = "/vandstand/active"
-    data: t.Any = _request_json(path=path)
+    data: JsonValue = _request_json(path=path)
     if data is None:
         logger.error(f"No data from {path}")
         sys.exit(2)
@@ -454,7 +455,7 @@ def cmd_endpoints(args: argparse.Namespace) -> None:
 def cmd_texts(args: argparse.Namespace) -> None:
     """Get shore station text forecast by gid."""
     path: str = f"/texts/{args.gid}"
-    data: t.Any = _request_json(path=path)
+    data: JsonValue = _request_json(path=path)
     if data is None:
         logger.error(f"No data from {path}")
         sys.exit(2)
@@ -468,7 +469,7 @@ def cmd_city_search(args: argparse.Namespace) -> None:
     """Search for a city by name."""
     city: str = args.city
     url: str = _city_solr_url(city=city, rows=10)
-    data: t.Any = _request_with_referer(url=url)
+    data: JsonValue = _request_with_referer(url=url)
     if data is None:
         logger.error(f"No data from city search for '{city}'")
         sys.exit(2)
@@ -515,7 +516,7 @@ def cmd_city_search(args: argparse.Namespace) -> None:
 def cmd_city_forecast(args: argparse.Namespace) -> None:
     """Get NinJo weather forecast for a city by ID."""
     url: str = _ninjo_url(city_id=args.city_id)
-    data: t.Any = _request_with_referer(url=url)
+    data: JsonValue = _request_with_referer(url=url)
     if data is None:
         logger.error(f"No forecast data for city ID {args.city_id}")
         sys.exit(2)
@@ -581,7 +582,7 @@ def cmd_forecast_city(args: argparse.Namespace) -> None:
             logger.info("(Could not detect location, defaulting to K\u00f8benhavn)")
 
     url: str = _city_solr_url(city=city, rows=1)
-    search_data: t.Any = _request_with_referer(url=url)
+    search_data: JsonValue = _request_with_referer(url=url)
     if search_data is None:
         logger.error(f"No data from city search for '{city}'")
         sys.exit(2)
@@ -599,7 +600,7 @@ def cmd_forecast_city(args: argparse.Namespace) -> None:
     else:
         city_name: str = raw_name
 
-    forecast_data: t.Any = _request_with_referer(url=_ninjo_url(city_id=city_id))
+    forecast_data: JsonValue = _request_with_referer(url=_ninjo_url(city_id=city_id))
     if forecast_data is None:
         logger.error(f"No forecast data for city '{city_name}' (ID: {city_id})")
         sys.exit(2)
@@ -929,8 +930,8 @@ def _format_weekday(date_str: str) -> str:
             Date string in YYYYMMDD format.
 
     Returns:
-            Abbreviated weekday name, or empty
-            string if invalid.
+        Abbreviated weekday name, or empty
+        string if invalid.
     """
     if not date_str or len(date_str) < 8:
         return ""
@@ -1062,7 +1063,7 @@ def _wind_direction(
             Wind direction in degrees.
 
     Returns:
-            Full Danish direction name or '-'.
+        Full Danish direction name or '-'.
     """
     if degrees is None or degrees == "":
         return "-"
@@ -1170,7 +1171,7 @@ def _daily_wind_from_timeseries(
 # ---- Utility helpers ----
 
 
-def _emit_json(obj: t.Any) -> None:
+def _emit_json(obj: JsonValue) -> None:
     """Print a JSON-serialised object with indentation."""
     logger.info(
         json.dumps(
@@ -1189,7 +1190,7 @@ def _emit_text(text: str) -> None:
 # ---- Network functions ----
 
 
-def _request_with_referer(url: str) -> t.Any:
+def _request_with_referer(url: str) -> JsonValue | None:
     """Fetch JSON from a URL that requires a Referer header.
 
     Used for Solr and NinJo endpoints that reject
@@ -1355,7 +1356,7 @@ def _request_json(
     path: str,
     method: str = "GET",
     body: bytes | None = None,
-) -> t.Any:
+) -> JsonValue | None:
     """Send an HTTP request and return parsed JSON.
 
     Falls back to returning the raw text body if
