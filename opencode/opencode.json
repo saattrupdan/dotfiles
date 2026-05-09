@@ -44,10 +44,7 @@
       },
       "models": {
         "Qwen/Qwen3.6-35B-A3B-FP8": {
-          "name": "Qwen3.6-35B-A3B",
-          "options": {
-            "thinking_token_budget": 1024
-          }
+          "name": "Qwen3.6-35B-A3B"
         }
       }
     },

@@ -15,11 +15,13 @@ return {
         timeout = 60,
       },
       ui = {
-        position = 'right',
+        position = 'float',
         output = {
           tools = {
-            show_output = false,
+            show_output = true,
             show_reasoning_output = false,
+            use_folds = true,
+            folding_threshold = 5,
           },
         },
       },

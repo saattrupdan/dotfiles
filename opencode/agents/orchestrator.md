@@ -10,9 +10,9 @@ permission:
   list: allow
   bash: deny
   task: allow
-  skill: deny
+  skill: allow
   lsp: deny
-  question: allow
+  question: deny
   webfetch: deny
   websearch: deny
   external_directory: deny
@@ -26,6 +26,7 @@ not to look at too many files, as this will bloat your memory. You cannot edit f
 yourself.
 
 Prefer to use subagents to do the actual work. You call these with your `task` tool.
+Don't ask your subagents to return full file contents to you!
 
 You can ask the user questions with your `question` tool, unless the user explicitly
 asks you not to.
