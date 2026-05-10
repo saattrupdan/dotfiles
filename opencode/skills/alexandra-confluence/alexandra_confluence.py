@@ -753,7 +753,6 @@ def cmd_slides_add(opener: t.Any, args: argparse.Namespace) -> None:
         sys.exit(2)
 
     # Find the matching </table>
-    after_heading[:table_start] + "<table"
     # Count <table and </table> tags to find the matching close
     depth = 0
     for i in range(table_start, len(after_heading)):
@@ -794,8 +793,6 @@ def cmd_slides_add(opener: t.Any, args: argparse.Namespace) -> None:
     tbody = full_table[tbody_start:tbody_end]
     tbody_open_tag_len = full_table.find(">", tbody_start) + 1 - tbody_start
     tbody_close_tag_len = 8  # len('</tbody>')
-    tbody[tbody_open_tag_len:-tbody_close_tag_len]
-
     # Build the new row
     row = _build_slide_row(
         args.date, args.owner_key, args.title, args.language, args.slides
