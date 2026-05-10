@@ -1068,6 +1068,7 @@ class AiLabSlides:
             row["slides"],
         ]
         print(f"  {'  '.join(p for p in parts if p)}")
+        print(f"  Page: {BASE}/pages/viewpage.action?pageId={_SLIDE_DECKS_PAGE_ID}")
 
     @staticmethod
     def _insert_row_into_table(
