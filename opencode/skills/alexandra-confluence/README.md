@@ -49,6 +49,10 @@ Some frequently used spaces:
 | AILAB | AI Lab |
 | DXS | Digital Experience and Solutions Lab |
 | PTB | Insights Lab |
+| GDPR | Alexandra GDPR |
+| IT | IT |
+| CorporateComm | Alexandra corporate communication |
+| ACC | Accounting Space |
 
 Note: Security Lab does not have a dedicated Confluence space. Other spaces exist for ad-hoc projects and smaller teams. Use `spaces search "keyword"` to find additional spaces.
 

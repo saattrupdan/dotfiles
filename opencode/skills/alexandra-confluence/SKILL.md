@@ -97,6 +97,10 @@ Page bodies use **Confluence Storage Format** (XML with `<ac:…>` macros) — p
 | AILAB | AI Lab |
 | DXS | Digital Experience and Solutions Lab |
 | PTB | Insights Lab |
+| GDPR | Alexandra GDPR |
+| IT | IT |
+| CorporateComm | Alexandra corporate communication |
+| ACC | Accounting Space |
 
 Note: Security Lab does not have a dedicated Confluence space. Other spaces exist for ad-hoc projects and smaller teams. To find a specific space, use `spaces search "keyword"` or `spaces list` to browse all of them.
 
