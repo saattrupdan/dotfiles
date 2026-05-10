@@ -8,7 +8,7 @@ last-updated: 2026-05-10
 
 Internal Confluence at `https://confluence.alexandra.dk/`. **Requires VPN** — without it, all requests fail with DNS or connection errors.
 
-All interaction goes through `alexandra_confluence.py` (stdlib only). Credentials come from `CONFLUENCE_USER` / `CONFLUENCE_PASS` env vars or interactive `getpass` prompt; only session cookies are persisted (in `~/.alexandra-confluence/cookies.txt`). Expired sessions (302 to login) are detected and re-authenticated automatically.
+All interaction goes through `alexandra_confluence.py` (stdlib only). Credentials come from `CONFLUENCE_USER` / `CONFLUENCE_PASS` — either as env vars, in a `.env` file (simple `KEY=VALUE` format, loaded automatically), or via interactive prompts. When env vars are set, authentication is proactive (no anonymous first request). Only session cookies are persisted (in `~/.alexandra-confluence/cookies.txt`). Expired sessions (302 to login) are detected and re-authenticated automatically.
 
 ## Commands
 
@@ -17,7 +17,7 @@ Commands follow a standardized **CRUD** pattern across all resource groups: `lis
 ### Spaces
 
 ```bash
-python3 alexandra_confluence.py spaces list [--limit 100] [--start 0]
+python3 alexandra_confluence.py spaces list [--limit 1000] [--start 0]
 python3 alexandra_confluence.py spaces read --key KEY
 python3 alexandra_confluence.py spaces create --key K --name N [--description TEXT]
 python3 alexandra_confluence.py spaces update --key K [--name N] [--description TEXT]
@@ -94,10 +94,22 @@ Page bodies use **Confluence Storage Format** (XML with `<ac:…>` macros) — p
 | DXS | Digitaliseringsstyrelsen |
 | SUPPORT | Support knowledge base |
 
-To list all spaces (pagination-aware, default limit 1000):
+To list all spaces (default limit 1000 covers all 721 spaces):
 ```bash
 python3 alexandra_confluence.py spaces list
 ```
+
+For pagination, use `--start` (offset) and `--limit` (page size).
+
+## .env file
+
+Place a `.env` file in the working directory with:
+```
+CONFLUENCE_USER=your_username
+CONFLUENCE_PASS=your_password
+```
+
+Simple `KEY=VALUE` format. Blank lines and `#` comments are ignored. Surrounding quotes on values are stripped.
 
 ## "The Alexandra Way" — PROJ space
 
