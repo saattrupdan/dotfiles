@@ -257,6 +257,10 @@ def _get_credentials() -> tuple[str, str]:
     return _cached_creds
 
 
+def _has_env_credentials() -> bool:
+    return bool(os.environ.get("CONFLUENCE_USER") and os.environ.get("CONFLUENCE_PASS"))
+
+
 def _build_jar() -> http.cookiejar.MozillaCookieJar:
     COOKIE_DIR.mkdir(parents=True, exist_ok=True)
     cj = http.cookiejar.MozillaCookieJar(str(COOKIE_FILE))
@@ -402,7 +406,9 @@ def _run_cmd(
     """Reuse persisted cookies; on session expiry re-auth and retry once."""
     cj = _build_jar()
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
-    authenticated = False
+    if _has_env_credentials():
+        _authenticate(opener)
+        authenticated = True
     for _ in range(2):
         try:
             func(opener, args)
