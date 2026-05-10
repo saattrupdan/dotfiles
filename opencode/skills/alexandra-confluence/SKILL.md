@@ -58,7 +58,7 @@ python3 alexandra_confluence.py slides create --category CAT --title T [--date Y
 python3 alexandra_confluence.py slides update --category CAT --index N [--title T] [--date D] [--owner-key K] [--language L] [--slides F] [--note N]
 ```
 
-Categories: `about-us`, `themed`, `client`, `courses`, `presentions`, `nlp`, `energy`, `healthcare`, `iot`.
+Categories: `about-us`, `themed`, `client`, `courses`, `presentations`, `nlp`, `energy`, `healthcare`, `iot`.
 
 `--index` is 0-based (first data row after the header).
 
