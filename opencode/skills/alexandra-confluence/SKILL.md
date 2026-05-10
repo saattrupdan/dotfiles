@@ -19,9 +19,13 @@ Commands follow a standardized **CRUD** pattern across all resource groups: `lis
 ```bash
 python3 alexandra_confluence.py spaces list [--limit 1000] [--start 0]
 python3 alexandra_confluence.py spaces read --key KEY
+python3 alexandra_confluence.py spaces search QUERY [--limit 20]
+python3 alexandra_confluence.py spaces search --cql 'type=space AND title~"foo"' [--limit 20]
 python3 alexandra_confluence.py spaces create --key K --name N [--description TEXT]
 python3 alexandra_confluence.py spaces update --key K [--name N] [--description TEXT]
 ```
+
+`spaces search` uses the Confluence CQL search API. `QUERY` is shorthand for title search. Use `--cql` for full CQL queries (e.g., `description~"AI"`).
 
 ### Pages
 
