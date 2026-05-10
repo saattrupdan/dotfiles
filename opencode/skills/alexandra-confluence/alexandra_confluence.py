@@ -27,6 +27,33 @@ from pathlib import Path
 
 sys.stdout.reconfigure(encoding="utf-8")
 
+
+def _load_env(env_path: Path) -> None:
+    """Parse a simple .env file and set KEY=VALUE pairs into os.environ.
+
+    Skips blank lines and lines beginning with '#'.  Strips surrounding
+    single or double quotes from values.  Silently passes if the file
+    does not exist or cannot be read.
+    """
+    try:
+        text = env_path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if "=" not in stripped:
+            continue
+        key, _, raw_value = stripped.partition("=")
+        key = key.strip()
+        value = raw_value.strip()
+        # Strip surrounding quotes
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+            value = value[1:-1]
+        os.environ[key] = value
+
+
 BASE = "https://confluence.alexandra.dk"
 UA = "Mozilla/5.0 (alexandra-confluence-cli)"
 COOKIE_DIR = Path.home() / ".alexandra-confluence"
@@ -45,6 +72,7 @@ _cached_creds: tuple[str, str] | None = None
 
 
 def main() -> None:
+    _load_env(Path(".env"))
     parser = argparse.ArgumentParser(description="CLI for Alexandra's Confluence.")
     sub = parser.add_subparsers(dest="resource", required=True)
 
@@ -207,29 +235,6 @@ def main() -> None:
         sys.stderr.write(f"Unknown command: {resource}" + (f" {operation}" if operation else "") + "\n")
         sys.exit(2)
     _run_cmd(func, args)
-
-
-dispatch = {
-    ("spaces", "list"): cmd_spaces_list,
-    ("spaces", "read"): cmd_spaces_read,
-    ("spaces", "create"): cmd_spaces_create,
-    ("spaces", "update"): cmd_spaces_update,
-    ("pages", "list"): cmd_pages_list,
-    ("pages", "search"): cmd_pages_search,
-    ("pages", "read"): cmd_pages_read,
-    ("pages", "create"): cmd_pages_create,
-    ("pages", "update"): cmd_pages_update,
-    ("projects", "list"): cmd_projects_list,
-    ("projects", "read"): cmd_projects_read,
-    ("projects", "create"): cmd_projects_create,
-    ("projects", "update"): cmd_projects_update,
-    ("slides", "list"): cmd_slides_list,
-    ("slides", "read"): cmd_slides_read,
-    ("slides", "create"): cmd_slides_create,
-    ("slides", "update"): cmd_slides_update,
-    ("whoami", None): cmd_whoami,
-    ("auth", None): cmd_auth,
-}
 
 
 def _emit_json(obj: t.Any) -> None:
@@ -1368,6 +1373,29 @@ def cmd_auth(opener: t.Any, args: argparse.Namespace) -> None:
     _clear_jar(opener)
     _authenticate(opener)
     print("Authenticated successfully. Cookies saved.")
+
+
+dispatch = {
+    ("spaces", "list"): cmd_spaces_list,
+    ("spaces", "read"): cmd_spaces_read,
+    ("spaces", "create"): cmd_spaces_create,
+    ("spaces", "update"): cmd_spaces_update,
+    ("pages", "list"): cmd_pages_list,
+    ("pages", "search"): cmd_pages_search,
+    ("pages", "read"): cmd_pages_read,
+    ("pages", "create"): cmd_pages_create,
+    ("pages", "update"): cmd_pages_update,
+    ("projects", "list"): cmd_projects_list,
+    ("projects", "read"): cmd_projects_read,
+    ("projects", "create"): cmd_projects_create,
+    ("projects", "update"): cmd_projects_update,
+    ("slides", "list"): cmd_slides_list,
+    ("slides", "read"): cmd_slides_read,
+    ("slides", "create"): cmd_slides_create,
+    ("slides", "update"): cmd_slides_update,
+    ("whoami", None): cmd_whoami,
+    ("auth", None): cmd_auth,
+}
 
 
 if __name__ == "__main__":
