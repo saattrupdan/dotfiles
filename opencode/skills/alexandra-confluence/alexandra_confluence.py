@@ -84,7 +84,7 @@ def main() -> None:
     sp = p.add_subparsers(dest="operation", required=True)
 
     pl = sp.add_parser("list", help="List all spaces")
-    pl.add_argument("--limit", type=int, default=100)
+    pl.add_argument("--limit", type=int, default=1000)
     pl.add_argument("--start", type=int, default=0)
     _raw(pl)
 

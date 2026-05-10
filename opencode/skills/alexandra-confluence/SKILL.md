@@ -84,7 +84,7 @@ Page bodies use **Confluence Storage Format** (XML with `<ac:…>` macros) — p
 
 ## Key spaces
 
-~600 spaces, ~14,684 pages. Notable keys:
+~721 spaces, ~14,684 pages. Notable keys:
 
 | Key | Name |
 |---|---|
@@ -93,6 +93,11 @@ Page bodies use **Confluence Storage Format** (XML with `<ac:…>` macros) — p
 | AIDK | AI Denmark |
 | DXS | Digitaliseringsstyrelsen |
 | SUPPORT | Support knowledge base |
+
+To list all spaces (pagination-aware, default limit 1000):
+```bash
+python3 alexandra_confluence.py spaces list
+```
 
 ## "The Alexandra Way" — PROJ space
 
