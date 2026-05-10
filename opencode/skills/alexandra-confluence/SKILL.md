@@ -12,7 +12,7 @@ All interaction goes through `alexandra_confluence.py` (stdlib only). Credential
 
 ## Commands
 
-Commands follow a standardized **CRUD** pattern across all resource groups: `list`, `read`, `create`, `update`. Some resources also have `search` and `list-all` helpers. Every leaf command supports `--raw` to print unformatted JSON. Errors go to stderr with non-zero exit.
+Commands follow a standardized **CRUD** pattern across all resource groups: `list`, `read`, `create`, `update`. Some resources also have `search` as a convenience helper. Every leaf command supports `--raw` to print unformatted JSON. Errors go to stderr with non-zero exit.
 
 ### Spaces
 
@@ -56,9 +56,8 @@ Projects use the same `pages read`/`update` implementation under the hood, but `
 ### AI Lab Slides
 
 ```bash
-python3 alexandra_confluence.py ai-lab-slides list --category CAT
-python3 alexandra_confluence.py ai-lab-slides list-all
-python3 alexandra_confluence.py ai-lab-slides read --category CAT --index N
+python3 alexandra_confluence.py ai-lab-slides list
+python3 alexandra_confluence.py ai-lab-slides read --id CAT:INDEX
 python3 alexandra_confluence.py ai-lab-slides search "keyword"
 python3 alexandra_confluence.py ai-lab-slides search --cql 'title~"something"'
 python3 alexandra_confluence.py ai-lab-slides create --category CAT --title T [--date YYYY-MM-DD] [--owner-key KEY] [--language LANG] [--slides FILE] [--note TEXT]
@@ -67,17 +66,19 @@ python3 alexandra_confluence.py ai-lab-slides update --category CAT --index N [-
 
 Categories: `about-us`, `themed`, `client`, `courses`, `presentations`, `nlp`, `energy`, `healthcare`, `iot`.
 
-`--index` is 0-based (first data row after the header).
+**Unique slide IDs and reading slides:**
 
-**Navigating from search/list to reading a slide:**
+All slides live in one Confluence page (id `97042311`) organized into tables by category. Every slide has a unique ID in `category:index` format (e.g., `nlp:3`, `client:0`). The `list` and `search` commands return these IDs.
 
-Slides are stored in a single Confluence page (id `97042311`) organized into tables by category. The `read` command uses `--category` and `--index` — not a Confluence page ID. To read a specific slide:
+To read a specific slide:
 
-1. Run `list-all` or `search "keyword"` to find the slide.
-2. The output shows `[category:INDEX]` tags, e.g. `[nlp:3]`.
-3. Use those values with `read`: `ai-lab-slides read --category nlp --index 3`.
+1. Run `ai-lab-slides list` to see all slides with their IDs, or `ai-lab-slides search "keyword"` to find matching ones.
+2. Copy the ID from the output, e.g. `[nlp:3]`.
+3. Read it: `ai-lab-slides read --id nlp:3`.
 
-When using `--raw`, the output includes a `_category` field you can pipe into subsequent `read` calls.
+You can also use `--category` + `--index` instead of `--id`: `ai-lab-slides read --category nlp --index 3`.
+
+When using `--raw`, the output includes a `_id` field you can use in subsequent commands.
 
 ### Authentication
 
