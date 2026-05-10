@@ -88,7 +88,7 @@ Page bodies use **Confluence Storage Format** (XML with `<ac:…>` macros) — p
 
 ## Key spaces
 
-~721 spaces, ~14,684 pages. Notable keys:
+~721 spaces, ~14,684 pages. Here are some commonly used spaces:
 
 | Key | Name |
 |---|---|
@@ -97,6 +97,8 @@ Page bodies use **Confluence Storage Format** (XML with `<ac:…>` macros) — p
 | AIDK | AI Denmark |
 | DXS | Digitaliseringsstyrelsen |
 | SUPPORT | Support knowledge base |
+
+This list is not exhaustive. Other spaces exist for each Lab, departments, and ad-hoc project collaborations. To find a specific space, use `spaces search "keyword"` or `spaces list` to browse all of them.
 
 To list all spaces (default limit 1000 covers all 721 spaces):
 ```bash
