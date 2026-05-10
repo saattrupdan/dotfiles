@@ -1,5 +1,14 @@
+# VIm swap files
 **/*.swp
+
+# MacOS
 .DS_Store
 
+# Environment variables
+**/.env
+
+# Compiled Python
 **/__pycache__/
+
+# Cache files
 **/.ruff_cache/
