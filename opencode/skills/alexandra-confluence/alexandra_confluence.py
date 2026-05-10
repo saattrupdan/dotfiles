@@ -191,15 +191,12 @@ def main() -> None:
     p = sub.add_parser("ai-lab-slides", help="Manage AI Lab slide deck entries")
     alp = p.add_subparsers(dest="operation", required=True)
 
-    # slides list
-    alp_list = alp.add_parser("list", help="List slides in a category")
-    alp_list.add_argument("--category", required=True, help="Category: about-us, themed, client, courses, presentations, nlp, energy, healthcare, iot")
-    _raw(alp_list)
-
     # slides read
-    alp_read = alp.add_parser("read", help="Read a specific slide entry")
-    alp_read.add_argument("--category", required=True)
-    alp_read.add_argument("--index", type=int, required=True, help="0-based index of the slide row (skip header)")
+    alp_read = alp.add_parser("read", help="Read a specific slide entry by ID")
+    grp = alp_read.add_mutually_exclusive_group(required=True)
+    grp.add_argument("--id", help="Slide ID in cat:index format (e.g. nlp:3)")
+    grp.add_argument("--category", help="Category key")
+    alp_read.add_argument("--index", type=int, help="0-based index within category")
     _raw(alp_read)
 
     # slides create
@@ -224,6 +221,16 @@ def main() -> None:
     alp_update.add_argument("--slides", help="New attachment filename or link")
     alp_update.add_argument("--note", help="New note")
     _raw(alp_update)
+
+    # slides list (all categories)
+    alist = alp.add_parser("list", help="List all slides across all categories")
+    _raw(alist)
+
+    # slides search
+    all_s = alp.add_parser("search", help="Search slides across all categories")
+    all_s.add_argument("query", nargs="?", help="Title search shorthand")
+    all_s.add_argument("--cql", help="Full CQL query (overrides query)")
+    _raw(all_s)
 
     # ── whoami (top-level) ──
     whoami_p = sub.add_parser("whoami", help="Show current user")
@@ -927,6 +934,63 @@ def _extract_slide_rows(tbody_html: str) -> list[dict[str, str]]:
     return results
 
 
+def _fetch_category_rows(opener: t.Any, category: str) -> list[dict[str, str]]:
+    """Fetch the slide-decks page and return parsed rows for a given category."""
+    page = _request_json(opener, f"/rest/api/content/{_SLIDE_DECKS_PAGE_ID}?expand=body.storage")
+    return _parse_slide_table_for_category(page, category)
+
+
+def _parse_slide_table_for_category(page: dict, category: str) -> list[dict[str, str]]:
+    """Given a page dict, return parsed slide rows for a given category key."""
+    if category not in _SLIDE_CATEGORIES:
+        return []
+    heading_text, _ = _SLIDE_CATEGORIES[category]
+    return _parse_slide_table_from_body(page, heading_text)
+
+
+def _parse_slide_table_from_body(page: dict, heading_text: str) -> list[dict[str, str]]:
+    """Extract slide rows from a page dict for a given heading text."""
+    body = page["body"]["storage"]["value"]
+
+    heading_match = re.search(
+        r"<h1[^>]*>" + re.escape(heading_text) + r"</h1>", body
+    )
+    if not heading_match:
+        return []
+
+    after_heading = body[heading_match.end() :]
+    table_start = after_heading.find("<table")
+    if table_start < 0:
+        return []
+
+    depth = 0
+    table_end = -1
+    for i in range(table_start, len(after_heading)):
+        if after_heading[i : i + 6] == "<table":
+            depth += 1
+        elif after_heading[i : i + 8] == "</table>":
+            depth -= 1
+            if depth == 0:
+                table_end = i + 8
+                break
+
+    if table_end < 0:
+        return []
+
+    full_table = after_heading[table_start:table_end]
+
+    tbody_start = full_table.find("<tbody")
+    if tbody_start < 0:
+        return []
+
+    tbody_end = _find_depth_bound(full_table, "<tbody", "</tbody>", tbody_start)
+    if tbody_end < 0:
+        return []
+
+    tbody = full_table[tbody_start:tbody_end]
+    return _extract_slide_rows(tbody)
+
+
 def cmd_ai_lab_slides_list(opener: t.Any, args: argparse.Namespace) -> None:
     page_id = _SLIDE_DECKS_PAGE_ID
     category = args.category.lower()
@@ -995,63 +1059,39 @@ def cmd_ai_lab_slides_list(opener: t.Any, args: argparse.Namespace) -> None:
 
 
 def cmd_ai_lab_slides_read(opener: t.Any, args: argparse.Namespace) -> None:
-    page_id = _SLIDE_DECKS_PAGE_ID
-    category = args.category.lower()
+    """Read a specific slide entry by ID or category+index."""
+    if args.id:
+        # Parse cat:index format
+        if ":" not in args.id:
+            sys.stderr.write(f"Invalid ID '{args.id}'. Use format: category:index (e.g. nlp:3)\n")
+            sys.exit(2)
+        cat_key, idx_str = args.id.rsplit(":", 1)
+        try:
+            index = int(idx_str)
+        except ValueError:
+            sys.stderr.write(f"Invalid index in ID '{args.id}'. Expected integer after ':'.\n")
+            sys.exit(2)
+    elif args.category is not None and args.index is not None:
+        cat_key = args.category.lower()
+        index = args.index
+    else:
+        sys.stderr.write("Provide --id (cat:index) or both --category and --index\n")
+        sys.exit(2)
 
-    if category not in _SLIDE_CATEGORIES:
+    if cat_key not in _SLIDE_CATEGORIES:
         sys.stderr.write(
-            f"Unknown category '{category}'. "
+            f"Unknown category '{cat_key}'. "
             f"Valid: {', '.join(sorted(_SLIDE_CATEGORIES.keys()))}\n"
         )
         sys.exit(2)
 
-    heading_text, _ = _SLIDE_CATEGORIES[category]
+    heading_text, _ = _SLIDE_CATEGORIES[cat_key]
+    page = _request_json(opener, f"/rest/api/content/{_SLIDE_DECKS_PAGE_ID}?expand=body.storage")
+    rows = _parse_slide_table_for_category(page, cat_key)
 
-    page = _request_json(opener, f"/rest/api/content/{page_id}?expand=body.storage")
-    body = page["body"]["storage"]["value"]
-
-    heading_match = re.search(
-        r"<h1[^>]*>" + re.escape(heading_text) + r"</h1>", body
-    )
-    if not heading_match:
-        sys.stderr.write(f"Could not find heading '{heading_text}' in page\n")
-        sys.exit(2)
-
-    after_heading = body[heading_match.end() :]
-    table_start = after_heading.find("<table")
-    if table_start < 0:
-        sys.stderr.write(f"No table found after heading '{heading_text}'\n")
-        sys.exit(2)
-
-    depth = 0
-    for i in range(table_start, len(after_heading)):
-        if after_heading[i : i + 6] == "<table":
-            depth += 1
-        elif after_heading[i : i + 8] == "</table>":
-            depth -= 1
-            if depth == 0:
-                table_end = i + 8
-                break
-
-    full_table = after_heading[table_start:table_end]
-
-    tbody_start = full_table.find("<tbody")
-    if tbody_start < 0:
-        sys.stderr.write(f"No <tbody> found in table for '{heading_text}'\n")
-        sys.exit(2)
-
-    tbody_end = _find_depth_bound(full_table, "<tbody", "</tbody>", tbody_start)
-    if tbody_end < 0:
-        sys.stderr.write(f"No matching </tbody> found for '{heading_text}'\n")
-        sys.exit(2)
-
-    tbody = full_table[tbody_start:tbody_end]
-    rows = _extract_slide_rows(tbody)
-
-    index = args.index
     if index < 0 or index >= len(rows):
         sys.stderr.write(
-            f"Index {index} out of range (0-{len(rows) - 1}) for category '{category}'\n"
+            f"Index {index} out of range (0-{len(rows) - 1}) in category '{cat_key}'\n"
         )
         sys.exit(2)
 
@@ -1059,7 +1099,8 @@ def cmd_ai_lab_slides_read(opener: t.Any, args: argparse.Namespace) -> None:
         return _emit_json(rows[index])
 
     row = rows[index]
-    print(f'Slide [{index}] in "{heading_text}":')
+    slide_id = f"{cat_key}:{index}"
+    print(f'Slide {slide_id} in "{heading_text}":')
     parts = [row["date"], row["owner_key"], row["title"], row["language"], row["slides"]]
     print(f"  {'  '.join(p for p in parts if p)}")
 
@@ -1390,6 +1431,120 @@ def cmd_ai_lab_slides_update(opener: t.Any, args: argparse.Namespace) -> None:
     print(f"  Page version: {data.get('version', {}).get('number')}")
 
 
+def _parse_slide_table(page: dict, heading_text: str) -> list[dict[str, str]]:
+    """Fetch a page and return parsed slide rows for a given category heading."""
+    body = page["body"]["storage"]["value"]
+
+    heading_match = re.search(
+        r"<h1[^>]*>" + re.escape(heading_text) + r"</h1>", body
+    )
+    if not heading_match:
+        return []
+
+    after_heading = body[heading_match.end() :]
+    table_start = after_heading.find("<table")
+    if table_start < 0:
+        return []
+
+    depth = 0
+    table_end = -1
+    for i in range(table_start, len(after_heading)):
+        if after_heading[i : i + 6] == "<table":
+            depth += 1
+        elif after_heading[i : i + 8] == "</table>":
+            depth -= 1
+            if depth == 0:
+                table_end = i + 8
+                break
+
+    if table_end < 0:
+        return []
+
+    full_table = after_heading[table_start:table_end]
+
+    tbody_start = full_table.find("<tbody")
+    if tbody_start < 0:
+        return []
+
+    tbody_end = _find_depth_bound(full_table, "<tbody", "</tbody>", tbody_start)
+    if tbody_end < 0:
+        return []
+
+    tbody = full_table[tbody_start:tbody_end]
+    return _extract_slide_rows(tbody)
+
+
+def cmd_ai_lab_slides_list(opener: t.Any, args: argparse.Namespace) -> None:
+    """List all slides across all categories with unique IDs."""
+    page = _request_json(opener, f"/rest/api/content/{_SLIDE_DECKS_PAGE_ID}?expand=body.storage")
+
+    all_rows: list[dict[str, t.Any]] = []
+    for cat_key in _SLIDE_CATEGORIES:
+        rows = _parse_slide_table_for_category(page, cat_key)
+        for idx, row in enumerate(rows):
+            entry = dict(row)
+            entry["_id"] = f"{cat_key}:{idx}"
+            all_rows.append(entry)
+
+    if args.raw:
+        return _emit_json(all_rows)
+
+    total = len(all_rows)
+    print(f"All slides: {total}")
+    for r in all_rows:
+        cat = r["_category"]
+        heading_text, _ = _SLIDE_CATEGORIES[cat]
+        parts = [r["date"], r["owner_key"], r["title"], r["language"], r["slides"]]
+        print(f"  [{r['_id']}] [{heading_text}]  {'  '.join(p for p in parts if p)}")
+
+
+def cmd_ai_lab_slides_search(opener: t.Any, args: argparse.Namespace) -> None:
+    """Search slides across all categories, returning unique IDs."""
+    if args.cql:
+        cql = args.cql
+        qs = urllib.parse.urlencode({"cql": cql, "limit": 50})
+        search_results = _request_json(opener, f"/rest/api/search?{qs}")
+        matching_ids = {r.get("content", {}).get("id") for r in search_results.get("results", [])}
+        if not matching_ids or _SLIDE_DECKS_PAGE_ID not in matching_ids:
+            print("No results found from slide decks page.")
+            return
+    elif args.query:
+        search_term = args.query.lower()
+    else:
+        sys.stderr.write("Provide a query or --cql argument\n")
+        sys.exit(2)
+
+    page = _request_json(opener, f"/rest/api/content/{_SLIDE_DECKS_PAGE_ID}?expand=body.storage")
+    all_rows: list[dict[str, t.Any]] = []
+
+    for cat_key in _SLIDE_CATEGORIES:
+        rows = _parse_slide_table_for_category(page, cat_key)
+        for idx, row in enumerate(rows):
+            if args.cql:
+                entry = dict(row)
+                entry["_id"] = f"{cat_key}:{idx}"
+                all_rows.append(entry)
+            else:
+                searchable = f'{row["title"]} {row["owner_key"]} {row["date"]} {row["language"]} {row["slides"]}'.lower()
+                if search_term in searchable:
+                    entry = dict(row)
+                    entry["_id"] = f"{cat_key}:{idx}"
+                    all_rows.append(entry)
+
+    if args.raw:
+        return _emit_json(all_rows)
+
+    if not all_rows:
+        print("No slides found matching the query.")
+        return
+
+    print(f"Search results: {len(all_rows)} matching slides")
+    for r in all_rows:
+        heading_text, _ = _SLIDE_CATEGORIES[r["_category"]]
+        parts = [r["date"], r["owner_key"], r["title"], r["language"], r["slides"]]
+        print(f"  [{r['_id']}] [{heading_text}]  {'  '.join(p for p in parts if p)}")
+
+
 def cmd_whoami(opener: t.Any, args: argparse.Namespace) -> None:
     data = _request_json(
         opener, "/rest/api/user/current?expand=fullName,displayName,userkey"
@@ -1428,10 +1583,11 @@ dispatch = {
     ("projects", "read"): cmd_projects_read,
     ("projects", "create"): cmd_projects_create,
     ("projects", "update"): cmd_projects_update,
-    ("ai-lab-slides", "list"): cmd_ai_lab_slides_list,
     ("ai-lab-slides", "read"): cmd_ai_lab_slides_read,
     ("ai-lab-slides", "create"): cmd_ai_lab_slides_create,
     ("ai-lab-slides", "update"): cmd_ai_lab_slides_update,
+    ("ai-lab-slides", "list"): cmd_ai_lab_slides_list_all,
+    ("ai-lab-slides", "search"): cmd_ai_lab_slides_search,
     ("whoami", None): cmd_whoami,
     ("auth", None): cmd_auth,
 }
