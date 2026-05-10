@@ -33,7 +33,7 @@ Every resource supports `list`, `read`, `create`, `update`. Some also have `sear
 | **Spaces** | `spaces list [--limit N] [--start N]`, `spaces read --key K`, `spaces search "q" [--limit N]`, `spaces create --key K --name N [--description TEXT]`, `spaces update --key K [--name N] [--description TEXT]` |
 | **Pages** | `pages list --space-key K [--limit N]`, `pages search "q" [--limit N]`, `pages read --key K \| --id N [--body-format auto\|text\|html]`, `pages create --space-key K --title T --body B [--parent ID]`, `pages update --id N --body B [--title T] [--minor-edit]` |
 | **Projects** | `projects list --space-key K [--limit N]`, `projects read --key K \| --id N [--body-format auto\|text\|html]`, `projects create --title T --client C --owner O [--budget B] [--space-key K]`, `projects update --id N --body B [--title T] [--minor-edit]` |
-| **Slides** | `slides list --category CAT`, `slides read --category CAT --index N`, `slides create --category CAT --title T [--date D] [--owner-key K] [--language L] [--slides F] [--note N]`, `slides update --category CAT --index N [--title T] [--date D] [--owner-key K] [--language L] [--slides F] [--note N]` |
+| **AI Lab Slides** | `ai-lab-slides list --category CAT`, `ai-lab-slides read --category CAT --index N`, `ai-lab-slides create --category CAT --title T [--date D] [--owner-key K] [--language L] [--slides F] [--note N]`, `ai-lab-slides update --category CAT --index N [--title T] [--date D] [--owner-key K] [--language L] [--slides F] [--note N]` |
 | **Auth** | `whoami`, `auth` |
 
 Every command supports `--raw` for unformatted JSON output.
