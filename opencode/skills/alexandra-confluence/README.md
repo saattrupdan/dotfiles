@@ -4,7 +4,7 @@ Agent skill for Alexandra Institute's internal Confluence at `confluence.alexand
 
 ## Files
 
-- **SKILL.md** — Full reference: commands, CQL syntax, key spaces, "The Alexandra Way" project template.
+- **SKILL.md** — Full reference: grouped commands, CQL syntax, key spaces, "The Alexandra Way" project template.
 - **alexandra_confluence.py** — Python CLI helper. Standard library only. Reads `CONFLUENCE_USER` / `CONFLUENCE_PASS` env vars or prompts via `getpass`; session cookies cached in `~/.alexandra-confluence/cookies.txt`.
 
 ## Quick start
@@ -18,6 +18,18 @@ python3 alexandra_confluence.py search "Alexandra Way"
 python3 alexandra_confluence.py page --key PAGE_KEY
 python3 alexandra_confluence.py create-project --title "My Project" --client "Client" --owner "Owner"
 ```
+
+## Commands by category
+
+| Category | Commands |
+|---|---|
+| **Spaces** | `spaces` |
+| **Pages** | `pages`, `search`, `page`, `create`, `update`, `move`, `delete` |
+| **Projects** | `create-project` |
+| **Slides** | `add-slide` |
+| **Authentication** | `whoami`, `auth` |
+
+Each command supports `--raw` to print unformatted JSON.
 
 ## Troubleshooting
 
