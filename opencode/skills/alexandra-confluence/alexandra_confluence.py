@@ -991,73 +991,6 @@ def _parse_slide_table_from_body(page: dict, heading_text: str) -> list[dict[str
     return _extract_slide_rows(tbody)
 
 
-def cmd_ai_lab_slides_list(opener: t.Any, args: argparse.Namespace) -> None:
-    page_id = _SLIDE_DECKS_PAGE_ID
-    category = args.category.lower()
-
-    if category not in _SLIDE_CATEGORIES:
-        sys.stderr.write(
-            f"Unknown category '{category}'. "
-            f"Valid: {', '.join(sorted(_SLIDE_CATEGORIES.keys()))}\n"
-        )
-        sys.exit(2)
-
-    heading_text, _ = _SLIDE_CATEGORIES[category]
-
-    page = _request_json(opener, f"/rest/api/content/{page_id}?expand=body.storage")
-    body = page["body"]["storage"]["value"]
-
-    # Find the heading for this category
-    heading_match = re.search(
-        r"<h1[^>]*>" + re.escape(heading_text) + r"</h1>", body
-    )
-    if not heading_match:
-        sys.stderr.write(f"Could not find heading '{heading_text}' in page\n")
-        sys.exit(2)
-
-    # Find the next table after this heading
-    after_heading = body[heading_match.end() :]
-    table_start = after_heading.find("<table")
-    if table_start < 0:
-        sys.stderr.write(f"No table found after heading '{heading_text}'\n")
-        sys.exit(2)
-
-    # Find matching </table>
-    depth = 0
-    for i in range(table_start, len(after_heading)):
-        if after_heading[i : i + 6] == "<table":
-            depth += 1
-        elif after_heading[i : i + 8] == "</table>":
-            depth -= 1
-            if depth == 0:
-                table_end = i + 8
-                break
-
-    full_table = after_heading[table_start:table_end]
-
-    # Find <tbody>...</tbody>
-    tbody_start = full_table.find("<tbody")
-    if tbody_start < 0:
-        sys.stderr.write(f"No <tbody> found in table for '{heading_text}'\n")
-        sys.exit(2)
-
-    tbody_end = _find_depth_bound(full_table, "<tbody", "</tbody>", tbody_start)
-    if tbody_end < 0:
-        sys.stderr.write(f"No matching </tbody> found for '{heading_text}'\n")
-        sys.exit(2)
-
-    tbody = full_table[tbody_start:tbody_end]
-    rows = _extract_slide_rows(tbody)
-
-    if args.raw:
-        return _emit_json(rows)
-
-    print(f'Slides in "{heading_text}":')
-    for idx, row in enumerate(rows):
-        parts = [row["date"], row["owner_key"], row["title"], row["language"], row["slides"]]
-        print(f"  [{idx}]  {'  '.join(p for p in parts if p)}")
-
-
 def cmd_ai_lab_slides_read(opener: t.Any, args: argparse.Namespace) -> None:
     """Read a specific slide entry by ID or category+index."""
     if args.id:
@@ -1484,6 +1417,7 @@ def cmd_ai_lab_slides_list(opener: t.Any, args: argparse.Namespace) -> None:
         for idx, row in enumerate(rows):
             entry = dict(row)
             entry["_id"] = f"{cat_key}:{idx}"
+            entry["_category"] = cat_key
             all_rows.append(entry)
 
     if args.raw:
@@ -1523,12 +1457,14 @@ def cmd_ai_lab_slides_search(opener: t.Any, args: argparse.Namespace) -> None:
             if args.cql:
                 entry = dict(row)
                 entry["_id"] = f"{cat_key}:{idx}"
+                entry["_category"] = cat_key
                 all_rows.append(entry)
             else:
                 searchable = f'{row["title"]} {row["owner_key"]} {row["date"]} {row["language"]} {row["slides"]}'.lower()
                 if search_term in searchable:
                     entry = dict(row)
                     entry["_id"] = f"{cat_key}:{idx}"
+                    entry["_category"] = cat_key
                     all_rows.append(entry)
 
     if args.raw:
@@ -1586,7 +1522,7 @@ dispatch = {
     ("ai-lab-slides", "read"): cmd_ai_lab_slides_read,
     ("ai-lab-slides", "create"): cmd_ai_lab_slides_create,
     ("ai-lab-slides", "update"): cmd_ai_lab_slides_update,
-    ("ai-lab-slides", "list"): cmd_ai_lab_slides_list_all,
+    ("ai-lab-slides", "list"): cmd_ai_lab_slides_list,
     ("ai-lab-slides", "search"): cmd_ai_lab_slides_search,
     ("whoami", None): cmd_whoami,
     ("auth", None): cmd_auth,
