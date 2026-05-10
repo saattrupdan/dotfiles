@@ -604,12 +604,11 @@ def cmd_spaces_search(opener: t.Any, args: argparse.Namespace) -> None:
     total = data.get("totalSize", 0)
     print(f"Space search results: {total} total")
     for r in data.get("results", []):
-        content = r.get("content") or {}
-        if content.get("type") != "space":
-            continue
-        key = content.get("key", "?")
-        name = content.get("name", "?")
-        desc = (content.get("description", {}).get("plain", {}).get("value", "") or "")[:150]
+        # The search API returns spaces in r["space"] (not r["content"])
+        space = r.get("space") or {}
+        key = space.get("key", "?")
+        name = space.get("name", "?")
+        desc = (space.get("description", {}).get("plain", {}).get("value", "") or "")[:150]
         print(f"  [{key}] {name}")
         if desc:
             print(f"    {desc}")
