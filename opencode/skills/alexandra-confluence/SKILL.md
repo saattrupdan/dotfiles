@@ -98,12 +98,11 @@ Page bodies use **Confluence Storage Format** (XML with `<ac:…>` macros) — p
 | SUPPORT | Alexandra Support Knowledge Base |
 | AILAB | AI Lab |
 | DXS | Digital Experience and Solutions Lab |
-| HEALTH | Health IT lab |
-| GREENLAB | GreenLab |
-| DNL | Det ny Lab |
-| FL | Football Lab |
+| PTB | Insights Lab |
+| IIL | Inside Insights Lab |
+| BDI | Brugerdreven Innovation (user-driven innovation) |
 
-This list is not exhaustive — it covers the main project space, Labs, and key departmental spaces. Other spaces exist for ad-hoc projects and smaller teams. To find a specific space, use `spaces search "keyword"` or `spaces list` to browse all of them.
+This list is not exhaustive — it covers the main project space, labs, and key departmental spaces. Other spaces exist for ad-hoc projects and smaller teams. To find a specific space, use `spaces search "keyword"` or `spaces list` to browse all of them.
 
 To list all spaces (default limit 1000 covers all 721 spaces):
 ```bash

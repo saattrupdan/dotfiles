@@ -45,12 +45,16 @@ Some frequently used spaces:
 | Key | Name |
 |---|---|
 | **PROJ** | The Alexandra Way (methodology + all active projects) |
-| EHBK | Employee handbook |
+| EHBK | Personalehåndbog (employee handbook) |
 | AIDK | AI Denmark |
-| DXS | Digitaliseringsstyrelsen |
-| SUPPORT | Support knowledge base |
+| SUPPORT | Alexandra Support Knowledge Base |
+| AILAB | AI Lab |
+| DXS | Digital Experience and Solutions Lab |
+| PTB | Insights Lab |
+| IIL | Inside Insights Lab |
+| BDI | Brugerdreven Innovation (user-driven innovation) |
 
-This list is not exhaustive — many other spaces exist for Labs, departments, and project collaborations. Use `spaces search "keyword"` to find additional spaces.
+This list is not exhaustive — it covers the main project space, labs, and key departmental spaces. Other spaces exist for ad-hoc projects and smaller teams. Use `spaces search "keyword"` to find additional spaces.
 
 ## .env file
 
