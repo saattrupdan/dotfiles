@@ -26,17 +26,30 @@ python3 alexandra_confluence.py projects create --title "My Project" --client "C
 
 ## Commands by resource
 
-Every resource supports `list`, `read`, `create`, `update`. Some also have `search` as a convenience helper.
+Every resource supports `list`, `read`, `create`, `update`. Some also have `search` and `list-all` as convenience helpers.
 
 | Resource | Commands |
 |---|---|
 | **Spaces** | `spaces list [--limit N] [--start N]`, `spaces read --key K`, `spaces search "q" [--limit N]`, `spaces create --key K --name N [--description TEXT]`, `spaces update --key K [--name N] [--description TEXT]` |
 | **Pages** | `pages list --space-key K [--limit N]`, `pages search "q" [--limit N]`, `pages read --key K \| --id N [--body-format auto\|text\|html]`, `pages create --space-key K --title T --body B [--parent ID]`, `pages update --id N --body B [--title T] [--minor-edit]` |
 | **Projects** | `projects list --space-key K [--limit N]`, `projects read --key K \| --id N [--body-format auto\|text\|html]`, `projects create --title T --client C --owner O [--budget B] [--space-key K]`, `projects update --id N --body B [--title T] [--minor-edit]` |
-| **AI Lab Slides** | `ai-lab-slides list --category CAT`, `ai-lab-slides read --category CAT --index N`, `ai-lab-slides create --category CAT --title T [--date D] [--owner-key K] [--language L] [--slides F] [--note N]`, `ai-lab-slides update --category CAT --index N [--title T] [--date D] [--owner-key K] [--language L] [--slides F] [--note N]` |
+| **AI Lab Slides** | `ai-lab-slides list --category CAT`, `ai-lab-slides list-all`, `ai-lab-slides read --category CAT --index N`, `ai-lab-slides search "q"` / `--cql 'CQL'`, `ai-lab-slides create --category CAT --title T [--date D] [--owner-key K] [--language L] [--slides F] [--note N]`, `ai-lab-slides update --category CAT --index N [--title T] [--date D] [--owner-key K] [--language L] [--slides F] [--note N]` |
 | **Auth** | `whoami`, `auth` |
 
 Every command supports `--raw` for unformatted JSON output.
+
+### Finding and reading slides
+
+Slides live in a single Confluence page (id `97042311`) organized into tables by category. The `read` command uses `--category` and `--index` rather than a Confluence page ID.
+
+To find and read a specific slide:
+
+1. **Browse all slides:** `ai-lab-slides list-all` — shows every slide grouped by category, with `[category:INDEX]` tags.
+2. **Browse one category:** `ai-lab-slides list --category nlp` — shows slides in a single category.
+3. **Search across all categories:** `ai-lab-slides search "deep learning"` — text-searches title, owner, date, language, and slides fields.
+4. **Read a specific slide:** Use the category and index from the output, e.g. `ai-lab-slides read --category nlp --index 3`.
+
+Each slide row has columns: Date, Owner, Title, Language, Slides (attachment). Use `--raw` for JSON output that includes a `_category` field for scripting.
 
 ## Common spaces
 
