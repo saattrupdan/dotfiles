@@ -53,13 +53,13 @@ python3 alexandra_confluence.py projects update --id ID --body "<p>…</p>" [--t
 
 Projects use the same `pages read`/`update` implementation under the hood, but `projects create` fills the standard "Projektforklæde" template.
 
-### Slides
+### AI Lab Slides
 
 ```bash
-python3 alexandra_confluence.py slides list --category CAT
-python3 alexandra_confluence.py slides read --category CAT --index N
-python3 alexandra_confluence.py slides create --category CAT --title T [--date YYYY-MM-DD] [--owner-key KEY] [--language LANG] [--slides FILE] [--note TEXT]
-python3 alexandra_confluence.py slides update --category CAT --index N [--title T] [--date D] [--owner-key K] [--language L] [--slides F] [--note N]
+python3 alexandra_confluence.py ai-lab-slides list --category CAT
+python3 alexandra_confluence.py ai-lab-slides read --category CAT --index N
+python3 alexandra_confluence.py ai-lab-slides create --category CAT --title T [--date YYYY-MM-DD] [--owner-key KEY] [--language LANG] [--slides FILE] [--note TEXT]
+python3 alexandra_confluence.py ai-lab-slides update --category CAT --index N [--title T] [--date D] [--owner-key K] [--language L] [--slides F] [--note N]
 ```
 
 Categories: `about-us`, `themed`, `client`, `courses`, `presentations`, `nlp`, `energy`, `healthcare`, `iot`.
