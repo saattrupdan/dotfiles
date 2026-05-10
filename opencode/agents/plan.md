@@ -14,7 +14,7 @@ permission:
   lsp: deny
   question: deny
   webfetch: allow
-  websearch: deny
+  websearch: allow
   external_directory: deny
   doom_loop: allow
   todowrite: deny

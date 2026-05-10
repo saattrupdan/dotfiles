@@ -13,7 +13,7 @@ permission:
   skill: allow
   lsp: deny
   question: deny
-  webfetch: deny
+  webfetch: allow
   websearch: deny
   external_directory: deny
   doom_loop: allow
