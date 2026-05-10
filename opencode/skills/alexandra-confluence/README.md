@@ -38,6 +38,20 @@ Every resource supports `list`, `read`, `create`, `update`. Some also have `sear
 
 Every command supports `--raw` for unformatted JSON output.
 
+## Common spaces
+
+Some frequently used spaces:
+
+| Key | Name |
+|---|---|
+| **PROJ** | The Alexandra Way (methodology + all active projects) |
+| EHBK | Employee handbook |
+| AIDK | AI Denmark |
+| DXS | Digitaliseringsstyrelsen |
+| SUPPORT | Support knowledge base |
+
+This list is not exhaustive — many other spaces exist for Labs, departments, and project collaborations. Use `spaces search "keyword"` to find additional spaces.
+
 ## .env file
 
 Place a `.env` file in the working directory with:
