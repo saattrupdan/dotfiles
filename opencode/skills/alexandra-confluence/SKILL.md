@@ -12,24 +12,54 @@ All interaction goes through `alexandra_confluence.py` (stdlib only). Credential
 
 ## Commands
 
+### Spaces
+
 ```bash
 python3 alexandra_confluence.py spaces [--limit 100] [--start 0]
+```
+
+### Pages
+
+```bash
 python3 alexandra_confluence.py pages --space-key PROJ [--limit 20]
 python3 alexandra_confluence.py search "Alexandra Way" [--limit 10]
 python3 alexandra_confluence.py search --cql 'space=PROJ AND type=page'
 python3 alexandra_confluence.py page --key PAGE_KEY [--body-format auto|text|html]
 python3 alexandra_confluence.py page --id 208044217
 python3 alexandra_confluence.py create --space-key PROJ --title T --body "<p>…</p>" [--parent ID]
-python3 alexandra_confluence.py create-project --title T --client C --owner O [--budget B]
 python3 alexandra_confluence.py update --id ID --body "<p>…</p>" [--title T] [--minor-edit]
 python3 alexandra_confluence.py move --id ID --parent PARENT_ID
 python3 alexandra_confluence.py delete --id ID
+```
+
+### Projects
+
+```bash
+python3 alexandra_confluence.py create-project --title T --client C --owner O [--budget B]
+```
+
+### Slides
+
+```bash
 python3 alexandra_confluence.py add-slide --category CAT --title T [--date YYYY-MM-DD] [--owner-key KEY] [--language LANG] [--slides FILE] [--note TEXT]
+```
+
+Categories: `about-us`, `themed`, `client`, `courses`, `presentions`, `nlp`, `energy`, `healthcare`, `iot`.
+
+### Authentication
+
+```bash
 python3 alexandra_confluence.py whoami
 python3 alexandra_confluence.py auth   # force re-auth
 ```
 
-`--raw` on any subcommand prints unformatted JSON. Errors go to stderr with non-zero exit. Page bodies use **Confluence Storage Format** (XML with `<ac:…>` macros) — pass HTML-ish XML to `--body`.
+## Global options
+
+`--raw` on any subcommand prints unformatted JSON. Errors go to stderr with non-zero exit.
+
+## Page bodies
+
+Page bodies use **Confluence Storage Format** (XML with `<ac:…>` macros) — pass HTML-ish XML to `--body`. The `page` command supports `--body-format auto|text|html` to control body display.
 
 ## CQL search
 
