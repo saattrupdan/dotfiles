@@ -46,82 +46,112 @@ _cached_creds: tuple[str, str] | None = None
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="CLI for Alexandra's Confluence.")
-    sub = parser.add_subparsers(dest="cmd", required=True)
+    sub = parser.add_subparsers(dest="resource", required=True)
 
-    def _add(name: str, **kw: t.Any) -> argparse.ArgumentParser:
-        p = sub.add_parser(name, **kw)
-        p.add_argument("--raw", action="store_true", help="print raw JSON response")
-        return p
+    # spaces
+    p = sub.add_parser("spaces", help="Manage spaces")
+    sp = p.add_subparsers(dest="operation", required=True)
+    sp_p = sp.add_parser("list", help="List all spaces")
+    sp_p.add_argument("--limit", type=int, default=100)
+    sp_p.add_argument("--start", type=int, default=0)
+    sp_p.add_argument("--raw", action="store_true")
 
-    _add("auth", help="Force re-authentication")
+    # pages
+    p = sub.add_parser("pages", help="Manage pages")
+    pp = p.add_subparsers(dest="operation", required=True)
 
-    p = _add("spaces", help="List all spaces")
-    p.add_argument("--limit", type=int, default=100)
-    p.add_argument("--start", type=int, default=0)
+    # pages list
+    pl = pp.add_parser("list", help="List pages in a space")
+    pl.add_argument("--space-key", required=True)
+    pl.add_argument("--limit", type=int, default=20)
+    pl.add_argument("--raw", action="store_true")
 
-    p = _add("pages", help="List pages in a space")
-    p.add_argument("--space-key", required=True)
-    p.add_argument("--limit", type=int, default=20)
+    # pages search
+    ps = pp.add_parser("search", help="Search pages")
+    ps.add_argument("query", nargs="?", help="Title search shorthand")
+    ps.add_argument("--cql", help="Full CQL query (overrides query)")
+    ps.add_argument("--limit", type=int, default=20)
+    ps.add_argument("--raw", action="store_true")
 
-    p = _add("search", help="Search Confluence pages")
-    p.add_argument("query", nargs="?", help="Title search shorthand")
-    p.add_argument("--cql", help="Full CQL query (overrides query)")
-    p.add_argument("--limit", type=int, default=20)
+    # pages get
+    pg = pp.add_parser("get", help="Get a single page")
+    pg_group = pg.add_mutually_exclusive_group(required=True)
+    pg_group.add_argument("--key")
+    pg_group.add_argument("--id")
+    pg.add_argument("--body-format", choices=["auto", "text", "html"], default="auto", dest="body_format")
+    pg.add_argument("--raw", action="store_true")
 
-    p = _add("page", help="Get a single page by key or ID")
-    p.add_argument("--key")
-    p.add_argument("--id")
-    p.add_argument(
-        "--body-format",
-        choices=["auto", "text", "html"],
-        default="auto",
-        dest="body_format",
-        help="How to display page body",
-    )
+    # pages create
+    pc = pp.add_parser("create", help="Create a new page")
+    pc.add_argument("--space-key", required=True)
+    pc.add_argument("--title", required=True)
+    pc.add_argument("--body", required=True)
+    pc.add_argument("--parent", help="Parent page ID")
+    pc.add_argument("--raw", action="store_true")
 
-    p = _add("create", help="Create a new page")
-    p.add_argument("--space-key", required=True)
-    p.add_argument("--title", required=True)
-    p.add_argument("--body", required=True)
-    p.add_argument("--parent", help="Parent page ID (makes this a child page)")
+    # pages update
+    pu = pp.add_parser("update", help="Update an existing page")
+    pu.add_argument("--id", required=True)
+    pu.add_argument("--body", required=True)
+    pu.add_argument("--title", help="New title (optional)")
+    pu.add_argument("--minor-edit", action="store_true")
+    pu.add_argument("--raw", action="store_true")
 
-    p = _add("create-project", help="Create a project page (Alexandra Way template)")
-    p.add_argument("--space-key", default="PROJ")
-    p.add_argument("--title", required=True)
-    p.add_argument("--client", required=True)
-    p.add_argument("--owner", required=True)
-    p.add_argument("--budget", default="Ikke fastsat")
+    # projects
+    p = sub.add_parser("projects", help="Manage projects")
+    pj = p.add_subparsers(dest="operation", required=True)
+    pj_p = pj.add_parser("create", help="Create a project page")
+    pj_p.add_argument("--space-key", default="PROJ")
+    pj_p.add_argument("--title", required=True)
+    pj_p.add_argument("--client", required=True)
+    pj_p.add_argument("--owner", required=True)
+    pj_p.add_argument("--budget", default="Ikke fastsat")
+    pj_p.add_argument("--raw", action="store_true")
 
-    p = _add("update", help="Update an existing page")
-    p.add_argument("--id", required=True)
-    p.add_argument("--body", required=True)
-    p.add_argument("--title", help="New title (optional)")
-    p.add_argument("--minor-edit", action="store_true")
+    # slides
+    p = sub.add_parser("slides", help="Manage slides")
+    sl = p.add_subparsers(dest="operation", required=True)
+    sl_p = sl.add_parser("add", help="Add a slide deck entry")
+    sl_p.add_argument("--category", required=True, help="Category: about-us, themed, client, courses, presentions, nlp, energy, healthcare, iot")
+    sl_p.add_argument("--title", required=True, help="Title / Description")
+    sl_p.add_argument("--date", help="Date (YYYY-MM-DD)")
+    sl_p.add_argument("--owner-key", help="Confluence user key")
+    sl_p.add_argument("--language", help="Language code (DA, EN, FR, etc.)")
+    sl_p.add_argument("--slides", help="Attachment filename or link")
+    sl_p.add_argument("--note", help="Extra note")
+    sl_p.add_argument("--raw", action="store_true")
 
-    p = _add("move", help="Move a page under another page")
-    p.add_argument("--id", required=True, help="Page ID to move")
-    p.add_argument("--parent", required=True, help="New parent page ID")
+    # whoami (top-level, no operation)
+    whoami_p = sub.add_parser("whoami", help="Show current user")
+    whoami_p.add_argument("--raw", action="store_true")
 
-    p = _add("delete", help="Delete a page")
-    p.add_argument("--id", required=True)
-
-    p = _add("add-slide", help="Add a row to AI Lab Slide Decks table")
-    p.add_argument(
-        "--category",
-        required=True,
-        help="Category: about-us, themed, client, courses, presentions, nlp, energy, healthcare, iot",
-    )
-    p.add_argument("--title", required=True, help="Title / Description")
-    p.add_argument("--date", help="Date (YYYY-MM-DD)")
-    p.add_argument("--owner-key", help="Confluence user key (e.g. from whoami)")
-    p.add_argument("--language", help="Language code (DA, EN, FR, etc.)")
-    p.add_argument("--slides", help="Attachment filename or link")
-    p.add_argument("--note", help="Extra note (inserted as a plain row)")
-
-    _add("whoami", help="Show current user")
+    # auth (top-level, no operation)
+    auth_p = sub.add_parser("auth", help="Force re-authentication")
+    auth_p.add_argument("--raw", action="store_true")
 
     args = parser.parse_args()
-    _run_cmd(_COMMANDS[args.cmd], args)
+
+    resource = args.resource
+    operation = getattr(args, "operation", None)
+
+    dispatch = {
+        ("spaces", "list"): cmd_spaces_list,
+        ("pages", "list"): cmd_pages_list,
+        ("pages", "search"): cmd_pages_search,
+        ("pages", "get"): cmd_pages_get,
+        ("pages", "create"): cmd_pages_create,
+        ("pages", "update"): cmd_pages_update,
+        ("projects", "create"): cmd_projects_create,
+        ("slides", "add"): cmd_slides_add,
+        ("whoami", None): cmd_whoami,
+        ("auth", None): cmd_auth,
+    }
+
+    func = dispatch.get((resource, operation))
+    if func is None:
+        sys.stderr.write(f"Unknown command: {resource}" + (f" {operation}" if operation else "") + "\n")
+        sys.exit(2)
+    _run_cmd(func, args)
 
 
 def _emit_json(obj: t.Any) -> None:
@@ -397,7 +427,7 @@ _PROJECT_TEMPLATE = """\
 # Commands
 
 
-def cmd_spaces(opener: t.Any, args: argparse.Namespace) -> None:
+def cmd_spaces_list(opener: t.Any, args: argparse.Namespace) -> None:
     qs = urllib.parse.urlencode(
         {
             "expand": "description.plain",
@@ -423,7 +453,7 @@ def cmd_spaces(opener: t.Any, args: argparse.Namespace) -> None:
             print(f"   {desc}")
 
 
-def cmd_pages(opener: t.Any, args: argparse.Namespace) -> None:
+def cmd_pages_list(opener: t.Any, args: argparse.Namespace) -> None:
     qs = urllib.parse.urlencode(
         {
             "spaceKey": args.space_key,
@@ -448,7 +478,7 @@ def cmd_pages(opener: t.Any, args: argparse.Namespace) -> None:
         print(f"  [{p.get('id', '?')}] {p.get('title', '?')} v{v}{ancestor}{children}")
 
 
-def cmd_search(opener: t.Any, args: argparse.Namespace) -> None:
+def cmd_pages_search(opener: t.Any, args: argparse.Namespace) -> None:
     if args.cql:
         cql = args.cql
     elif args.query:
@@ -475,7 +505,7 @@ def cmd_search(opener: t.Any, args: argparse.Namespace) -> None:
             print(f"    {body_clean}")
 
 
-def cmd_page(opener: t.Any, args: argparse.Namespace) -> None:
+def cmd_pages_get(opener: t.Any, args: argparse.Namespace) -> None:
     expand = "body.storage,version,space,ancestors,children.page"
     if args.key:
         qs = urllib.parse.urlencode({"key": args.key, "expand": expand})
@@ -511,7 +541,7 @@ def cmd_page(opener: t.Any, args: argparse.Namespace) -> None:
             print(f"... ({len(clean) - 1000} more chars)")
 
 
-def cmd_create(opener: t.Any, args: argparse.Namespace) -> None:
+def cmd_pages_create(opener: t.Any, args: argparse.Namespace) -> None:
     # Determine ancestor: if --parent given use it, otherwise check
     # if the space has a homepage we should nest under.
     ancestor_id = getattr(args, "parent", None)
@@ -543,10 +573,7 @@ def cmd_create(opener: t.Any, args: argparse.Namespace) -> None:
     print(f"  URL: {BASE}/pages/viewpage.action?pageId={data.get('id')}")
 
 
-def cmd_create_project(
-    opener: t.Any,
-    args: argparse.Namespace,
-) -> None:
+def cmd_projects_create(opener: t.Any, args: argparse.Namespace) -> None:
     body = _PROJECT_TEMPLATE.format(
         title=html.escape(args.title),
         client=html.escape(args.client),
@@ -579,7 +606,7 @@ def cmd_create_project(
     print("  Template: The Alexandra Way (projektforklæde)")
 
 
-def cmd_update(opener: t.Any, args: argparse.Namespace) -> None:
+def cmd_pages_update(opener: t.Any, args: argparse.Namespace) -> None:
     page = _request_json(opener, f"/rest/api/content/{args.id}?expand=version")
     version_number = page.get("version", {}).get("number", 1)
     payload: dict[str, t.Any] = {
@@ -606,55 +633,6 @@ def cmd_update(opener: t.Any, args: argparse.Namespace) -> None:
         return _emit_json(data)
     print(f"Updated page: {data.get('title')}")
     print(f"  New version: {data.get('version', {}).get('number')}")
-
-
-def cmd_move(opener: t.Any, args: argparse.Namespace) -> None:
-    """Move a page under a new parent by updating its ancestors."""
-    # Fetch current page to get its full ancestor chain
-    page = _request_json(opener, f"/rest/api/content/{args.id}?expand=ancestors")
-
-    title = page.get("title", "?")
-    space = page.get("space", {}).get("key", "?")
-
-    # Build new ancestor list: all ancestors of the NEW parent,
-    # minus the last one (the parent itself becomes the direct parent).
-    new_parent = _request_json(
-        opener, f"/rest/api/content/{args.parent}?expand=ancestors"
-    )
-    new_ancestors = new_parent.get("ancestors", [])
-
-    # Fetch current body to preserve it
-    full_page = _request_json(
-        opener, f"/rest/api/content/{args.id}?expand=body.storage"
-    )
-    body_value = full_page.get("body", {}).get("storage", {}).get("value", "")
-    version_number = page.get("version", {}).get("number", 1)
-
-    payload: dict[str, t.Any] = {
-        "id": args.id,
-        "type": "page",
-        "title": page.get("title", ""),
-        "version": {"number": version_number + 1},
-        "body": {
-            "storage": {
-                "value": body_value,
-                "representation": "storage",
-            },
-        },
-        "ancestors": [{"id": a["id"]} for a in new_ancestors],
-    }
-
-    data = _request_json(
-        opener,
-        f"/rest/api/content/{args.id}",
-        method="PUT",
-        body=payload,
-    )
-    if args.raw:
-        return _emit_json(data)
-    print(f"Moved page: {title}")
-    print(f"  From: {space} (id={args.id})")
-    print(f"  Under: {new_parent.get('title')} (id={args.parent})")
 
 
 # Category definitions for AI Lab Slide Decks
@@ -734,7 +712,7 @@ def _build_note_row(note: str) -> str:
     return '<tr><td colspan="5">' + html.escape(note) + "</td></tr>"
 
 
-def cmd_add_slide(opener: t.Any, args: argparse.Namespace) -> None:
+def cmd_slides_add(opener: t.Any, args: argparse.Namespace) -> None:
     """Add a row to the AI Lab Slide Decks table."""
     page_id = _SLIDE_DECKS_PAGE_ID
     category = args.category.lower()
@@ -875,21 +853,6 @@ def cmd_add_slide(opener: t.Any, args: argparse.Namespace) -> None:
                         + new_full_table
                         + body[heading_match.end() + table_end :]
                     )
-                nt_inner = nt[nt_open_len:-8]
-                last_nt_tr = nt_inner.rfind("</tr>")
-                if last_nt_tr >= 0:
-                    nt_new_inner = (
-                        nt_inner[:last_nt_tr] + note_row + nt_inner[last_nt_tr:]
-                    )
-                    nt_new = nt[:nt_open_len] + nt_new_inner + nt[nt_end:]
-                    new_full_table = (
-                        new_full_table[:nt_start] + nt_new + new_full_table[nt_end:]
-                    )
-                    new_body = (
-                        body[: heading_match.end() + table_start]
-                        + new_full_table
-                        + body[heading_match.end() + table_end :]
-                    )
 
     # Update the page with retry for version conflicts
     max_retries = 3
@@ -932,21 +895,13 @@ def cmd_add_slide(opener: t.Any, args: argparse.Namespace) -> None:
     print(f"  Title: {args.title}")
     if args.date:
         print(f"  Date: {args.date}")
-    if args.owner_key:
-        print(f"  Language: {args.language or '(none)'}")
+    if args.language:
+        print(f"  Language: {args.language}")
     if args.slides:
         print(f"  Slides: {args.slides}")
     if args.note:
         print(f"  Note: {args.note}")
     print(f"  Page version: {data.get('version', {}).get('number')}")
-
-
-def cmd_delete(opener: t.Any, args: argparse.Namespace) -> None:
-    page = _request_json(opener, f"/rest/api/content/{args.id}?expand=space")
-    title = page.get("title", "?")
-    space = page.get("space", {}).get("key", "?")
-    _request(opener, f"/rest/api/content/{args.id}", method="DELETE")
-    print(f"Deleted page: {title} (id={args.id}, space={space})")
 
 
 def cmd_whoami(opener: t.Any, args: argparse.Namespace) -> None:
@@ -970,22 +925,6 @@ def cmd_auth(opener: t.Any, args: argparse.Namespace) -> None:
     _clear_jar(opener)
     _authenticate(opener)
     print("Authenticated successfully. Cookies saved.")
-
-
-_COMMANDS = {
-    "auth": cmd_auth,
-    "spaces": cmd_spaces,
-    "pages": cmd_pages,
-    "search": cmd_search,
-    "page": cmd_page,
-    "create": cmd_create,
-    "create-project": cmd_create_project,
-    "update": cmd_update,
-    "move": cmd_move,
-    "add-slide": cmd_add_slide,
-    "delete": cmd_delete,
-    "whoami": cmd_whoami,
-}
 
 
 if __name__ == "__main__":
