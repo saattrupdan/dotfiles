@@ -104,6 +104,13 @@ def main() -> None:
     pu.add_argument("--description", help="New plain text description")
     _raw(pu)
 
+    # spaces search
+    ss = sp.add_parser("search", help="Search spaces")
+    ss.add_argument("query", nargs="?", help="Title search shorthand")
+    ss.add_argument("--cql", help="Full CQL query (overrides query)")
+    ss.add_argument("--limit", type=int, default=20)
+    _raw(ss)
+
     # ── pages ──
     p = sub.add_parser("pages", help="Manage pages")
     pp = p.add_subparsers(dest="operation", required=True)
@@ -580,6 +587,32 @@ def cmd_spaces_update(opener: t.Any, args: argparse.Namespace) -> None:
     name = data.get("name", args.name or current_name)
     key = data.get("key", args.key)
     print(f'Updated space "{name}" (key={key})')
+
+
+def cmd_spaces_search(opener: t.Any, args: argparse.Namespace) -> None:
+    if args.cql:
+        cql = args.cql
+    elif args.query:
+        cql = 'type=space AND title~"' + args.query.replace('"', '\\"') + '"'
+    else:
+        sys.stderr.write("Provide a query or --cql argument\n")
+        sys.exit(2)
+    qs = urllib.parse.urlencode({"cql": cql, "limit": args.limit})
+    data = _request_json(opener, f"/rest/api/search?{qs}")
+    if args.raw:
+        return _emit_json(data)
+    total = data.get("totalSize", 0)
+    print(f"Space search results: {total} total")
+    for r in data.get("results", []):
+        content = r.get("content") or {}
+        if content.get("type") != "space":
+            continue
+        key = content.get("key", "?")
+        name = content.get("name", "?")
+        desc = (content.get("description", {}).get("plain", {}).get("value", "") or "")[:150]
+        print(f"  [{key}] {name}")
+        if desc:
+            print(f"    {desc}")
 
 
 def cmd_pages_list(opener: t.Any, args: argparse.Namespace) -> None:
@@ -1386,6 +1419,7 @@ dispatch = {
     ("spaces", "read"): cmd_spaces_read,
     ("spaces", "create"): cmd_spaces_create,
     ("spaces", "update"): cmd_spaces_update,
+    ("spaces", "search"): cmd_spaces_search,
     ("pages", "list"): cmd_pages_list,
     ("pages", "search"): cmd_pages_search,
     ("pages", "read"): cmd_pages_read,
