@@ -1257,28 +1257,9 @@ def cmd_slides_update(opener: t.Any, args: argparse.Namespace) -> None:
 
     new_row = _build_slide_row(date, owner_key, title, language, slides)
 
-    # Find the <tr> at the target index within tbody
-    rows_raw = re.findall(r"<tr>(.*?)</tr>", tbody, re.DOTALL)
-    data_row_idx = 0
-    tr_positions: list[tuple[int, int]] = []
-    for idx, row_html in enumerate(rows_raw):
-        m = re.search(r"<tr>", row_html, re.DOTALL)
-        if m:
-            abs_pos = tbody.find(row_html, 0) if not tr_positions else 0
-            tr_positions.append((abs_pos, len(row_html)))
-        if "<th" in row_html:
-            continue
-        if data_row_idx == index:
-            # Find this row's position in tbody
-            # Use the raw match positions
-            pass
-        data_row_idx += 1
-
-    # Re-approach: find the nth data row's <tr> in tbody
-    data_count = 0
+    # Find the nth data row's <tr> in tbody
     tbody_open = tbody.find(">") + 1
     tbody_content = tbody[tbody_open:-8]  # strip <tbody...> and </tbody>
-    alltrs = list(re.finditer(r"(</?tr(?:[^>]*)?>)", tbody_content, re.IGNORECASE))
 
     # Find the opening <tr> of the target data row
     tr_opens = [(m.start(), m.end()) for m in re.finditer(r"<tr(?:[^>]*)?>", tbody_content, re.IGNORECASE)]
@@ -1309,6 +1290,36 @@ def cmd_slides_update(opener: t.Any, args: argparse.Namespace) -> None:
         + new_full_table
         + body[heading_match.end() + table_end :]
     )
+
+    # Handle note row
+    if args.note:
+        note_row = _build_note_row(args.note)
+        nt_start = new_full_table.find("<tbody")
+        if nt_start >= 0:
+            nt_end = _find_depth_bound(new_full_table, "<tbody", "</tbody>", nt_start)
+            if nt_end >= 0:
+                nt = new_full_table[nt_start:nt_end]
+                nt_open_len = new_full_table.find(">", nt_start) + 1 - nt_start
+                nt_inner = nt[nt_open_len:-8]
+                last_nt_tr = nt_inner.rfind("</tr>")
+                if last_nt_tr >= 0:
+                    nt_new_inner = nt_inner[:last_nt_tr] + note_row + nt_inner[last_nt_tr:]
+                    nt_new = nt[:nt_open_len] + nt_new_inner + nt[nt_end:]
+                    new_full_table = (
+                        new_full_table[:nt_start] + nt_new + new_full_table[nt_end:]
+                    )
+                else:
+                    # No rows yet — append after tbody open
+                    nt_new = nt[:nt_open_len] + note_row + nt[nt_end:]
+                    new_full_table = (
+                        new_full_table[:nt_start] + nt_new + new_full_table[nt_end:]
+                    )
+                # Recompute new_body with updated table
+                new_body = (
+                    body[: heading_match.end() + table_start]
+                    + new_full_table
+                    + body[heading_match.end() + table_end :]
+                )
 
     # Update with retry
     max_retries = 3
