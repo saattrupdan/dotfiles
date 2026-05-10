@@ -26,7 +26,7 @@ python3 alexandra_confluence.py projects create --title "My Project" --client "C
 
 ## Commands by resource
 
-Every resource supports `list`, `read`, `create`, `update`. Some also have `search` and `list-all` as convenience helpers.
+Every resource supports `list`, `read`, `create`, `update`. Some also have `search` as a convenience helper.
 
 | Resource | Commands |
 |---|---|
