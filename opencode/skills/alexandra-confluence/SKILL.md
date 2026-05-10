@@ -64,7 +64,23 @@ python3 alexandra_confluence.py ai-lab-slides create --category CAT --title T [-
 python3 alexandra_confluence.py ai-lab-slides update --category CAT --index N [--title T] [--date D] [--owner-key K] [--language L] [--slides F] [--note N]
 ```
 
-Categories: `about-us`, `themed`, `client`, `courses`, `presentations`, `nlp`, `energy`, `healthcare`, `iot`.
+**Available categories:**
+
+| Category key | Confluence heading |
+|---|---|
+| `about-us` | 1. About Us presentations |
+| `themed` | 2. Themed presentation (h1 parent — no slides directly) |
+| `themed-general` | 2.1. General presentation about AI / AI potential checks |
+| `nlp` | 2.2. NLP |
+| `energy` | 2.3. Energy, Utilities & Construction |
+| `healthcare` | 2.4. Healthcare |
+| `iot` | 2.5. IoT / Anomaly detections |
+| `client` | 3. Client Presentations |
+| `courses` | 4. Courses / workshops |
+| `presentations` | 5. Presentions ("oplæg") |
+| `legacy` | 6. Legacy presentation Links |
+
+Note: The `presentations` heading has a typo ("Presentions" instead of "Presentations") on the Confluence page.
 
 **Unique slide IDs and reading slides:**
 

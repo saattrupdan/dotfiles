@@ -42,6 +42,10 @@ Every command supports `--raw` for unformatted JSON output.
 
 Slides live in a single Confluence page (id `97042311`) organized into tables by category. Every slide has a unique ID in `category:index` format (e.g., `nlp:3`, `client:0`).
 
+**Available categories:** `about-us`, `themed`, `themed-general`, `nlp`, `energy`, `healthcare`, `iot`, `client`, `courses`, `presentations`, `legacy`.
+
+Note: The `presentations` category heading has a typo ("Presentions") on the Confluence page. The `themed` h1 heading is a parent section — actual slides are in the h2 subcategories (`themed-general`, `nlp`, `energy`, `healthcare`, `iot`).
+
 To find and read a specific slide:
 
 1. **List all slides:** `ai-lab-slides list` — shows every slide with its unique `[cat:index]` ID.
