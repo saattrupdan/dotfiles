@@ -12,7 +12,7 @@ All interaction goes through `alexandra_confluence.py` (stdlib only). Credential
 
 ## Commands
 
-Commands follow a standardized **CRUD** pattern across all resource groups: `list`, `read`, `create`, `update`. Every leaf command supports `--raw` to print unformatted JSON. Errors go to stderr with non-zero exit.
+Commands follow a standardized **CRUD** pattern across all resource groups: `list`, `read`, `create`, `update`. Some resources also have `search` and `list-all` helpers. Every leaf command supports `--raw` to print unformatted JSON. Errors go to stderr with non-zero exit.
 
 ### Spaces
 
@@ -57,7 +57,10 @@ Projects use the same `pages read`/`update` implementation under the hood, but `
 
 ```bash
 python3 alexandra_confluence.py ai-lab-slides list --category CAT
+python3 alexandra_confluence.py ai-lab-slides list-all
 python3 alexandra_confluence.py ai-lab-slides read --category CAT --index N
+python3 alexandra_confluence.py ai-lab-slides search "keyword"
+python3 alexandra_confluence.py ai-lab-slides search --cql 'title~"something"'
 python3 alexandra_confluence.py ai-lab-slides create --category CAT --title T [--date YYYY-MM-DD] [--owner-key KEY] [--language LANG] [--slides FILE] [--note TEXT]
 python3 alexandra_confluence.py ai-lab-slides update --category CAT --index N [--title T] [--date D] [--owner-key K] [--language L] [--slides F] [--note N]
 ```
@@ -65,6 +68,16 @@ python3 alexandra_confluence.py ai-lab-slides update --category CAT --index N [-
 Categories: `about-us`, `themed`, `client`, `courses`, `presentations`, `nlp`, `energy`, `healthcare`, `iot`.
 
 `--index` is 0-based (first data row after the header).
+
+**Navigating from search/list to reading a slide:**
+
+Slides are stored in a single Confluence page (id `97042311`) organized into tables by category. The `read` command uses `--category` and `--index` — not a Confluence page ID. To read a specific slide:
+
+1. Run `list-all` or `search "keyword"` to find the slide.
+2. The output shows `[category:INDEX]` tags, e.g. `[nlp:3]`.
+3. Use those values with `read`: `ai-lab-slides read --category nlp --index 3`.
+
+When using `--raw`, the output includes a `_category` field you can pipe into subsequent `read` calls.
 
 ### Authentication
 
