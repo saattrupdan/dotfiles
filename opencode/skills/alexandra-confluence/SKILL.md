@@ -12,36 +12,36 @@ All interaction goes through `alexandra_confluence.py` (stdlib only). Credential
 
 ## Commands
 
+Commands are organized by resource. Every leaf command supports `--raw` to print unformatted JSON. Errors go to stderr with non-zero exit.
+
 ### Spaces
 
 ```bash
-python3 alexandra_confluence.py spaces [--limit 100] [--start 0]
+python3 alexandra_confluence.py spaces list [--limit 100] [--start 0]
 ```
 
 ### Pages
 
 ```bash
-python3 alexandra_confluence.py pages --space-key PROJ [--limit 20]
-python3 alexandra_confluence.py search "Alexandra Way" [--limit 10]
-python3 alexandra_confluence.py search --cql 'space=PROJ AND type=page'
-python3 alexandra_confluence.py page --key PAGE_KEY [--body-format auto|text|html]
-python3 alexandra_confluence.py page --id 208044217
-python3 alexandra_confluence.py create --space-key PROJ --title T --body "<p>…</p>" [--parent ID]
-python3 alexandra_confluence.py update --id ID --body "<p>…</p>" [--title T] [--minor-edit]
-python3 alexandra_confluence.py move --id ID --parent PARENT_ID
-python3 alexandra_confluence.py delete --id ID
+python3 alexandra_confluence.py pages list --space-key PROJ [--limit 20]
+python3 alexandra_confluence.py pages search "Alexandra Way" [--limit 10]
+python3 alexandra_confluence.py pages search --cql 'space=PROJ AND type=page' [--limit 20]
+python3 alexandra_confluence.py pages get --key PAGE_KEY [--body-format auto|text|html]
+python3 alexandra_confluence.py pages get --id 208044217 [--body-format auto|text|html]
+python3 alexandra_confluence.py pages create --space-key PROJ --title T --body "<p>…</p>" [--parent ID]
+python3 alexandra_confluence.py pages update --id ID --body "<p>…</p>" [--title T] [--minor-edit]
 ```
 
 ### Projects
 
 ```bash
-python3 alexandra_confluence.py create-project --title T --client C --owner O [--budget B]
+python3 alexandra_confluence.py projects create --title T --client C --owner O [--budget B] [--space-key PROJ]
 ```
 
 ### Slides
 
 ```bash
-python3 alexandra_confluence.py add-slide --category CAT --title T [--date YYYY-MM-DD] [--owner-key KEY] [--language LANG] [--slides FILE] [--note TEXT]
+python3 alexandra_confluence.py slides add --category CAT --title T [--date YYYY-MM-DD] [--owner-key KEY] [--language LANG] [--slides FILE] [--note TEXT]
 ```
 
 Categories: `about-us`, `themed`, `client`, `courses`, `presentions`, `nlp`, `energy`, `healthcare`, `iot`.
@@ -53,17 +53,13 @@ python3 alexandra_confluence.py whoami
 python3 alexandra_confluence.py auth   # force re-auth
 ```
 
-## Global options
-
-`--raw` on any subcommand prints unformatted JSON. Errors go to stderr with non-zero exit.
-
 ## Page bodies
 
-Page bodies use **Confluence Storage Format** (XML with `<ac:…>` macros) — pass HTML-ish XML to `--body`. The `page` command supports `--body-format auto|text|html` to control body display.
+Page bodies use **Confluence Storage Format** (XML with `<ac:…>` macros) — pass HTML-ish XML to `--body` on `create`/`update`. The `pages get` command supports `--body-format auto|text|html` to control body display.
 
 ## CQL search
 
-Plain `search QUERY` is shorthand for `title~"QUERY"`. Full CQL via `--cql`:
+Plain `pages search QUERY` is shorthand for `title~"QUERY"`. Full CQL via `--cql`:
 
 - `space=PROJ AND type=page` — pages in a space
 - `text~"Alexandra Way"` — body text contains phrase
@@ -86,7 +82,11 @@ Plain `search QUERY` is shorthand for `title~"QUERY"`. Full CQL via `--cql`:
 
 PROJ is the heart of Confluence. It houses **The Alexandra Way** methodology (hybrid project management, agile development, user-driven innovation), core docs (`Om The Alexandra Way`, `Projektordbog`), and all active project pages.
 
-All project pages are children of **`Projektoverblik (The Alexandra Way)`** (page id `208044217`). Use `create-project` to create a new one — it auto-fills the standard "Projektforklæde" template with sections for Projektinfo (status, owner, budget, kode), Beskrivelse, Tjeklister, Administrative/Migrations-/Udviklingsopgaver, and Milestones. Defaults: `--space-key PROJ`, ancestor `208044217`, status "Under initiering".
+All project pages are children of **`Projektoverblik (The Alexandra Way)`** (page id `208044217`). Use `projects create` to create a new one — it auto-fills the standard "Projektforklæde" template with sections for Projektinfo (status, owner, budget, kode), Beskrivelse, Tjeklister, Administrative/Migrations-/Udviklingsopgaver, and Milestones. Defaults: `--space-key PROJ`, ancestor `208044217`, status "Under initiering".
+
+## No destructive operations
+
+The CLI intentionally omits `delete` and `move` commands. To delete a page, open its URL in a browser and delete it manually. To move a page, edit its location via the Confluence UI.
 
 ## Etiquette
 
