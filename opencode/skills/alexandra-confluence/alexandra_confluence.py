@@ -158,7 +158,7 @@ def main() -> None:
 
     # slides list
     sl_list = sl.add_parser("list", help="List slides in a category")
-    sl_list.add_argument("--category", required=True, help="Category: about-us, themed, client, courses, presentions, nlp, energy, healthcare, iot")
+    sl_list.add_argument("--category", required=True, help="Category: about-us, themed, client, courses, presentations, nlp, energy, healthcare, iot")
     _raw(sl_list)
 
     # slides read
@@ -169,7 +169,7 @@ def main() -> None:
 
     # slides create
     sl_create = sl.add_parser("create", help="Create a new slide entry")
-    sl_create.add_argument("--category", required=True, help="Category: about-us, themed, client, courses, presentions, nlp, energy, healthcare, iot")
+    sl_create.add_argument("--category", required=True, help="Category: about-us, themed, client, courses, presentations, nlp, energy, healthcare, iot")
     sl_create.add_argument("--title", required=True, help="Title / Description")
     sl_create.add_argument("--date", help="Date (YYYY-MM-DD)")
     sl_create.add_argument("--owner-key", help="Confluence user key")
@@ -388,28 +388,6 @@ def _request_json(
             json.dumps(result, ensure_ascii=False),
         )
     return result
-
-
-def _new_page_payload(
-    title: str,
-    body_xml: str,
-    space_key: str,
-    ancestor_id: str | None = None,
-) -> dict[str, t.Any]:
-    payload: dict[str, t.Any] = {
-        "type": "page",
-        "title": title,
-        "space": {"key": space_key},
-        "body": {
-            "storage": {
-                "value": body_xml,
-                "representation": "storage",
-            },
-        },
-    }
-    if ancestor_id:
-        payload["ancestor"] = {"id": ancestor_id}
-    return payload
 
 
 def _run_cmd(
@@ -794,7 +772,7 @@ _SLIDE_CATEGORIES = {
     "themed": ("Themed presentation", "date"),
     "client": ("Client Presentations", "date"),
     "courses": ("Courses / workshops", "date"),
-    "presentions": ('Presentions ("oplæg")', "date"),
+    "presentations": ('Presentations ("oplæg")', "date"),
     "nlp": ("NLP", "date"),
     "energy": ("Energy, Utilities & Construction", "date"),
     "healthcare": ("Healthcare", "date"),
