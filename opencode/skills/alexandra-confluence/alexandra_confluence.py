@@ -48,15 +48,35 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="CLI for Alexandra's Confluence.")
     sub = parser.add_subparsers(dest="resource", required=True)
 
-    # spaces
+    def _raw(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--raw", action="store_true")
+
+    # ── spaces ──
     p = sub.add_parser("spaces", help="Manage spaces")
     sp = p.add_subparsers(dest="operation", required=True)
-    sp_p = sp.add_parser("list", help="List all spaces")
-    sp_p.add_argument("--limit", type=int, default=100)
-    sp_p.add_argument("--start", type=int, default=0)
-    sp_p.add_argument("--raw", action="store_true")
 
-    # pages
+    pl = sp.add_parser("list", help="List all spaces")
+    pl.add_argument("--limit", type=int, default=100)
+    pl.add_argument("--start", type=int, default=0)
+    _raw(pl)
+
+    pr = sp.add_parser("read", help="Read a space by key")
+    pr.add_argument("--key", required=True)
+    _raw(pr)
+
+    pc = sp.add_parser("create", help="Create a new space")
+    pc.add_argument("--key", required=True)
+    pc.add_argument("--name", required=True)
+    pc.add_argument("--description", help="Plain text description")
+    _raw(pc)
+
+    pu = sp.add_parser("update", help="Update a space")
+    pu.add_argument("--key", required=True)
+    pu.add_argument("--name", help="New name")
+    pu.add_argument("--description", help="New plain text description")
+    _raw(pu)
+
+    # ── pages ──
     p = sub.add_parser("pages", help="Manage pages")
     pp = p.add_subparsers(dest="operation", required=True)
 
@@ -64,22 +84,22 @@ def main() -> None:
     pl = pp.add_parser("list", help="List pages in a space")
     pl.add_argument("--space-key", required=True)
     pl.add_argument("--limit", type=int, default=20)
-    pl.add_argument("--raw", action="store_true")
+    _raw(pl)
 
     # pages search
     ps = pp.add_parser("search", help="Search pages")
     ps.add_argument("query", nargs="?", help="Title search shorthand")
     ps.add_argument("--cql", help="Full CQL query (overrides query)")
     ps.add_argument("--limit", type=int, default=20)
-    ps.add_argument("--raw", action="store_true")
+    _raw(ps)
 
-    # pages get
-    pg = pp.add_parser("get", help="Get a single page")
-    pg_group = pg.add_mutually_exclusive_group(required=True)
+    # pages read
+    pr = pp.add_parser("read", help="Read a single page by key or ID")
+    pg_group = pr.add_mutually_exclusive_group(required=True)
     pg_group.add_argument("--key")
     pg_group.add_argument("--id")
-    pg.add_argument("--body-format", choices=["auto", "text", "html"], default="auto", dest="body_format")
-    pg.add_argument("--raw", action="store_true")
+    pr.add_argument("--body-format", choices=["auto", "text", "html"], default="auto", dest="body_format")
+    _raw(pr)
 
     # pages create
     pc = pp.add_parser("create", help="Create a new page")
@@ -87,7 +107,7 @@ def main() -> None:
     pc.add_argument("--title", required=True)
     pc.add_argument("--body", required=True)
     pc.add_argument("--parent", help="Parent page ID")
-    pc.add_argument("--raw", action="store_true")
+    _raw(pc)
 
     # pages update
     pu = pp.add_parser("update", help="Update an existing page")
@@ -95,63 +115,121 @@ def main() -> None:
     pu.add_argument("--body", required=True)
     pu.add_argument("--title", help="New title (optional)")
     pu.add_argument("--minor-edit", action="store_true")
-    pu.add_argument("--raw", action="store_true")
+    _raw(pu)
 
-    # projects
+    # ── projects ──
     p = sub.add_parser("projects", help="Manage projects")
     pj = p.add_subparsers(dest="operation", required=True)
-    pj_p = pj.add_parser("create", help="Create a project page")
-    pj_p.add_argument("--space-key", default="PROJ")
-    pj_p.add_argument("--title", required=True)
-    pj_p.add_argument("--client", required=True)
-    pj_p.add_argument("--owner", required=True)
-    pj_p.add_argument("--budget", default="Ikke fastsat")
-    pj_p.add_argument("--raw", action="store_true")
 
-    # slides
-    p = sub.add_parser("slides", help="Manage slides")
+    # projects list
+    pj_list = pj.add_parser("list", help="List project pages")
+    pj_list.add_argument("--space-key", default="PROJ")
+    pj_list.add_argument("--limit", type=int, default=20)
+    _raw(pj_list)
+
+    # projects read
+    pj_read = pj.add_parser("read", help="Read a project page")
+    pj_read_group = pj_read.add_mutually_exclusive_group(required=True)
+    pj_read_group.add_argument("--key")
+    pj_read_group.add_argument("--id")
+    pj_read.add_argument("--body-format", choices=["auto", "text", "html"], default="auto", dest="body_format")
+    _raw(pj_read)
+
+    # projects create
+    pj_create = pj.add_parser("create", help="Create a project page with Alexandra Way template")
+    pj_create.add_argument("--space-key", default="PROJ")
+    pj_create.add_argument("--title", required=True)
+    pj_create.add_argument("--client", required=True)
+    pj_create.add_argument("--owner", required=True)
+    pj_create.add_argument("--budget", default="Ikke fastsat")
+    _raw(pj_create)
+
+    # projects update
+    pj_update = pj.add_parser("update", help="Update a project page")
+    pj_update.add_argument("--id", required=True)
+    pj_update.add_argument("--body", required=True)
+    pj_update.add_argument("--title", help="New title (optional)")
+    pj_update.add_argument("--minor-edit", action="store_true")
+    _raw(pj_update)
+
+    # ── slides ──
+    p = sub.add_parser("slides", help="Manage slide deck entries")
     sl = p.add_subparsers(dest="operation", required=True)
-    sl_p = sl.add_parser("add", help="Add a slide deck entry")
-    sl_p.add_argument("--category", required=True, help="Category: about-us, themed, client, courses, presentions, nlp, energy, healthcare, iot")
-    sl_p.add_argument("--title", required=True, help="Title / Description")
-    sl_p.add_argument("--date", help="Date (YYYY-MM-DD)")
-    sl_p.add_argument("--owner-key", help="Confluence user key")
-    sl_p.add_argument("--language", help="Language code (DA, EN, FR, etc.)")
-    sl_p.add_argument("--slides", help="Attachment filename or link")
-    sl_p.add_argument("--note", help="Extra note")
-    sl_p.add_argument("--raw", action="store_true")
 
-    # whoami (top-level, no operation)
+    # slides list
+    sl_list = sl.add_parser("list", help="List slides in a category")
+    sl_list.add_argument("--category", required=True, help="Category: about-us, themed, client, courses, presentions, nlp, energy, healthcare, iot")
+    _raw(sl_list)
+
+    # slides read
+    sl_read = sl.add_parser("read", help="Read a specific slide entry")
+    sl_read.add_argument("--category", required=True)
+    sl_read.add_argument("--index", type=int, required=True, help="0-based index of the slide row (skip header)")
+    _raw(sl_read)
+
+    # slides create
+    sl_create = sl.add_parser("create", help="Create a new slide entry")
+    sl_create.add_argument("--category", required=True, help="Category: about-us, themed, client, courses, presentions, nlp, energy, healthcare, iot")
+    sl_create.add_argument("--title", required=True, help="Title / Description")
+    sl_create.add_argument("--date", help="Date (YYYY-MM-DD)")
+    sl_create.add_argument("--owner-key", help="Confluence user key")
+    sl_create.add_argument("--language", help="Language code (DA, EN, FR, etc.)")
+    sl_create.add_argument("--slides", help="Attachment filename or link")
+    sl_create.add_argument("--note", help="Extra note")
+    _raw(sl_create)
+
+    # slides update
+    sl_update = sl.add_parser("update", help="Update a slide entry")
+    sl_update.add_argument("--category", required=True)
+    sl_update.add_argument("--index", type=int, required=True, help="0-based index of the slide row to update")
+    sl_update.add_argument("--title", help="New title / Description")
+    sl_update.add_argument("--date", help="New date (YYYY-MM-DD)")
+    sl_update.add_argument("--owner-key", help="New Confluence user key")
+    sl_update.add_argument("--language", help="New language code")
+    sl_update.add_argument("--slides", help="New attachment filename or link")
+    sl_update.add_argument("--note", help="New note")
+    _raw(sl_update)
+
+    # ── whoami (top-level) ──
     whoami_p = sub.add_parser("whoami", help="Show current user")
-    whoami_p.add_argument("--raw", action="store_true")
+    _raw(whoami_p)
 
-    # auth (top-level, no operation)
+    # ── auth (top-level) ──
     auth_p = sub.add_parser("auth", help="Force re-authentication")
-    auth_p.add_argument("--raw", action="store_true")
+    _raw(auth_p)
 
     args = parser.parse_args()
 
     resource = args.resource
     operation = getattr(args, "operation", None)
-
-    dispatch = {
-        ("spaces", "list"): cmd_spaces_list,
-        ("pages", "list"): cmd_pages_list,
-        ("pages", "search"): cmd_pages_search,
-        ("pages", "get"): cmd_pages_get,
-        ("pages", "create"): cmd_pages_create,
-        ("pages", "update"): cmd_pages_update,
-        ("projects", "create"): cmd_projects_create,
-        ("slides", "add"): cmd_slides_add,
-        ("whoami", None): cmd_whoami,
-        ("auth", None): cmd_auth,
-    }
-
     func = dispatch.get((resource, operation))
     if func is None:
         sys.stderr.write(f"Unknown command: {resource}" + (f" {operation}" if operation else "") + "\n")
         sys.exit(2)
     _run_cmd(func, args)
+
+
+dispatch = {
+    ("spaces", "list"): cmd_spaces_list,
+    ("spaces", "read"): cmd_spaces_read,
+    ("spaces", "create"): cmd_spaces_create,
+    ("spaces", "update"): cmd_spaces_update,
+    ("pages", "list"): cmd_pages_list,
+    ("pages", "search"): cmd_pages_search,
+    ("pages", "read"): cmd_pages_read,
+    ("pages", "create"): cmd_pages_create,
+    ("pages", "update"): cmd_pages_update,
+    ("projects", "list"): cmd_projects_list,
+    ("projects", "read"): cmd_projects_read,
+    ("projects", "create"): cmd_projects_create,
+    ("projects", "update"): cmd_projects_update,
+    ("slides", "list"): cmd_slides_list,
+    ("slides", "read"): cmd_slides_read,
+    ("slides", "create"): cmd_slides_create,
+    ("slides", "update"): cmd_slides_update,
+    ("whoami", None): cmd_whoami,
+    ("auth", None): cmd_auth,
+}
 
 
 def _emit_json(obj: t.Any) -> None:
@@ -453,6 +531,68 @@ def cmd_spaces_list(opener: t.Any, args: argparse.Namespace) -> None:
             print(f"   {desc}")
 
 
+def cmd_spaces_read(opener: t.Any, args: argparse.Namespace) -> None:
+    data = _request_json(opener, f"/rest/api/space/{args.key}?expand=description.plan")
+    if args.raw:
+        return _emit_json(data)
+    key = data.get("key", "?")
+    name = data.get("name", "?")
+    stype = data.get("type", "?")
+    desc = (data.get("description", {}).get("plain", {}).get("value", "") or "")[:200]
+    print(f"Space key:   {key}")
+    print(f"Name:        {name}")
+    print(f"Type:        {stype}")
+    if desc:
+        print(f"Description: {desc}")
+
+
+def cmd_spaces_create(opener: t.Any, args: argparse.Namespace) -> None:
+    body = {
+        "key": args.key,
+        "name": args.name,
+        "description": {"plain": args.description or ""},
+    }
+    data = _request_json(
+        opener,
+        "/rest/api/space",
+        method="POST",
+        body=body,
+    )
+    if args.raw:
+        return _emit_json(data)
+    name = data.get("name", args.name)
+    key = data.get("key", args.key)
+    print(f'Created space "{name}" (key={key})')
+
+
+def cmd_spaces_update(opener: t.Any, args: argparse.Namespace) -> None:
+    current = _request_json(opener, f"/rest/api/space/{args.key}?expand=description.plain")
+    current_name = current.get("name", "")
+    current_desc = (current.get("description", {}).get("plain", {}).get("value", "") or "")
+
+    update_body: dict[str, t.Any] = {}
+    if args.name is not None:
+        update_body["name"] = args.name
+    else:
+        update_body["name"] = current_name
+    if args.description is not None:
+        update_body["description"] = {"plain": args.description}
+    else:
+        update_body["description"] = {"plain": current_desc}
+
+    data = _request_json(
+        opener,
+        f"/rest/api/space/{args.key}",
+        method="PUT",
+        body=update_body,
+    )
+    if args.raw:
+        return _emit_json(data)
+    name = data.get("name", args.name or current_name)
+    key = data.get("key", args.key)
+    print(f'Updated space "{name}" (key={key})')
+
+
 def cmd_pages_list(opener: t.Any, args: argparse.Namespace) -> None:
     qs = urllib.parse.urlencode(
         {
@@ -505,7 +645,7 @@ def cmd_pages_search(opener: t.Any, args: argparse.Namespace) -> None:
             print(f"    {body_clean}")
 
 
-def cmd_pages_get(opener: t.Any, args: argparse.Namespace) -> None:
+def cmd_pages_read(opener: t.Any, args: argparse.Namespace) -> None:
     expand = "body.storage,version,space,ancestors,children.page"
     if args.key:
         qs = urllib.parse.urlencode({"key": args.key, "expand": expand})
@@ -542,8 +682,6 @@ def cmd_pages_get(opener: t.Any, args: argparse.Namespace) -> None:
 
 
 def cmd_pages_create(opener: t.Any, args: argparse.Namespace) -> None:
-    # Determine ancestor: if --parent given use it, otherwise check
-    # if the space has a homepage we should nest under.
     ancestor_id = getattr(args, "parent", None)
 
     payload: dict[str, t.Any] = {
@@ -571,6 +709,43 @@ def cmd_pages_create(opener: t.Any, args: argparse.Namespace) -> None:
     print(f"Created page: {data.get('title')}")
     print(f"  ID:  {data.get('id')}")
     print(f"  URL: {BASE}/pages/viewpage.action?pageId={data.get('id')}")
+
+
+def cmd_pages_update(opener: t.Any, args: argparse.Namespace) -> None:
+    page = _request_json(opener, f"/rest/api/content/{args.id}?expand=version")
+    version_number = page.get("version", {}).get("number", 1)
+    payload: dict[str, t.Any] = {
+        "id": args.id,
+        "type": "page",
+        "title": (args.title or page.get("title", "")),
+        "version": {"number": version_number + 1},
+        "body": {
+            "storage": {
+                "value": args.body,
+                "representation": "storage",
+            },
+        },
+    }
+    if args.minor_edit:
+        payload["minorEdit"] = True
+    data = _request_json(
+        opener,
+        f"/rest/api/content/{args.id}",
+        method="PUT",
+        body=payload,
+    )
+    if args.raw:
+        return _emit_json(data)
+    print(f"Updated page: {data.get('title')}")
+    print(f"  New version: {data.get('version', {}).get('number')}")
+
+
+def cmd_projects_list(opener: t.Any, args: argparse.Namespace) -> None:
+    cmd_pages_list(opener, args)
+
+
+def cmd_projects_read(opener: t.Any, args: argparse.Namespace) -> None:
+    cmd_pages_read(opener, args)
 
 
 def cmd_projects_create(opener: t.Any, args: argparse.Namespace) -> None:
@@ -606,33 +781,8 @@ def cmd_projects_create(opener: t.Any, args: argparse.Namespace) -> None:
     print("  Template: The Alexandra Way (projektforklæde)")
 
 
-def cmd_pages_update(opener: t.Any, args: argparse.Namespace) -> None:
-    page = _request_json(opener, f"/rest/api/content/{args.id}?expand=version")
-    version_number = page.get("version", {}).get("number", 1)
-    payload: dict[str, t.Any] = {
-        "id": args.id,
-        "type": "page",
-        "title": (args.title or page.get("title", "")),
-        "version": {"number": version_number + 1},
-        "body": {
-            "storage": {
-                "value": args.body,
-                "representation": "storage",
-            },
-        },
-    }
-    if args.minor_edit:
-        payload["minorEdit"] = True
-    data = _request_json(
-        opener,
-        f"/rest/api/content/{args.id}",
-        method="PUT",
-        body=payload,
-    )
-    if args.raw:
-        return _emit_json(data)
-    print(f"Updated page: {data.get('title')}")
-    print(f"  New version: {data.get('version', {}).get('number')}")
+def cmd_projects_update(opener: t.Any, args: argparse.Namespace) -> None:
+    cmd_pages_update(opener, args)
 
 
 # Category definitions for AI Lab Slide Decks
@@ -712,8 +862,51 @@ def _build_note_row(note: str) -> str:
     return '<tr><td colspan="5">' + html.escape(note) + "</td></tr>"
 
 
-def cmd_slides_add(opener: t.Any, args: argparse.Namespace) -> None:
-    """Add a row to the AI Lab Slide Decks table."""
+def _find_depth_bound(text: str, open_str: str, close_str: str, start: int) -> int:
+    """Count nesting depth from *start* until the matching close tag is found.
+    Returns the index just past the closing tag, or -1 if not found."""
+    depth = 0
+    i = start
+    while i < len(text):
+        if text[i : i + len(open_str)] == open_str:
+            depth += 1
+        elif text[i : i + len(close_str)] == close_str:
+            depth -= 1
+            if depth == 0:
+                return i + len(close_str)
+        i += 1
+    return -1
+
+
+def _extract_slide_rows(tbody_html: str) -> list[dict[str, str]]:
+    """Extract parsed row dicts from a <tbody> string.
+    Skips the first row if it contains <th> cells (header)."""
+    rows_raw = re.findall(r"<tr>(.*?)</tr>", tbody_html, re.DOTALL)
+    results: list[dict[str, str]] = []
+    for idx, row_html in enumerate(rows_raw):
+        # Skip header row
+        if "<th" in row_html:
+            continue
+        cells = re.findall(r"<td[^>]*>(.*?)</td>", row_html, re.DOTALL)
+        # Pad to 5 columns
+        while len(cells) < 5:
+            cells.append("")
+        date_raw = _strip_tags(cells[0]).strip()
+        owner_raw = _strip_tags(cells[1]).strip()
+        title_raw = _strip_tags(cells[2]).strip()
+        lang_raw = _strip_tags(cells[3]).strip()
+        slides_raw = _strip_tags(cells[4]).strip()
+        results.append({
+            "date": date_raw,
+            "owner_key": owner_raw,
+            "title": title_raw,
+            "language": lang_raw,
+            "slides": slides_raw,
+        })
+    return results
+
+
+def cmd_slides_list(opener: t.Any, args: argparse.Namespace) -> None:
     page_id = _SLIDE_DECKS_PAGE_ID
     category = args.category.lower()
 
@@ -724,23 +917,15 @@ def cmd_slides_add(opener: t.Any, args: argparse.Namespace) -> None:
         )
         sys.exit(2)
 
-    heading_text, date_cell_type = _SLIDE_CATEGORIES[category]
+    heading_text, _ = _SLIDE_CATEGORIES[category]
 
-    # Fetch current page body
     page = _request_json(opener, f"/rest/api/content/{page_id}?expand=body.storage")
-
-    version_number = page.get("version", {}).get("number", 1)
-
     body = page["body"]["storage"]["value"]
 
-    # Find the table-filter macro for this category.
-    # Strategy: find the heading <h1>, then find the next <table> after it.
-    # We insert the new row before the last <tr> of that table's <tbody>,
-    # which is typically a spacer/empty row.
-
     # Find the heading for this category
-    heading_pattern = re.escape(heading_text)
-    heading_match = re.search(r"<h1[^>]*>" + heading_pattern + r"</h1>", body)
+    heading_match = re.search(
+        r"<h1[^>]*>" + re.escape(heading_text) + r"</h1>", body
+    )
     if not heading_match:
         sys.stderr.write(f"Could not find heading '{heading_text}' in page\n")
         sys.exit(2)
@@ -752,8 +937,7 @@ def cmd_slides_add(opener: t.Any, args: argparse.Namespace) -> None:
         sys.stderr.write(f"No table found after heading '{heading_text}'\n")
         sys.exit(2)
 
-    # Find the matching </table>
-    # Count <table and </table> tags to find the matching close
+    # Find matching </table>
     depth = 0
     for i in range(table_start, len(after_heading)):
         if after_heading[i : i + 6] == "<table":
@@ -766,26 +950,147 @@ def cmd_slides_add(opener: t.Any, args: argparse.Namespace) -> None:
 
     full_table = after_heading[table_start:table_end]
 
-    # Find the first <tbody>...</tbody> in the table
+    # Find <tbody>...</tbody>
     tbody_start = full_table.find("<tbody")
     if tbody_start < 0:
         sys.stderr.write(f"No <tbody> found in table for '{heading_text}'\n")
         sys.exit(2)
 
-    # Find matching </tbody> — count nesting depth
+    tbody_end = _find_depth_bound(full_table, "<tbody", "</tbody>", tbody_start)
+    if tbody_end < 0:
+        sys.stderr.write(f"No matching </tbody> found for '{heading_text}'\n")
+        sys.exit(2)
+
+    tbody = full_table[tbody_start:tbody_end]
+    rows = _extract_slide_rows(tbody)
+
+    if args.raw:
+        return _emit_json(rows)
+
+    print(f'Slides in "{heading_text}":')
+    for idx, row in enumerate(rows):
+        parts = [row["date"], row["owner_key"], row["title"], row["language"], row["slides"]]
+        print(f"  [{idx}]  {'  '.join(p for p in parts if p)}")
+
+
+def cmd_slides_read(opener: t.Any, args: argparse.Namespace) -> None:
+    page_id = _SLIDE_DECKS_PAGE_ID
+    category = args.category.lower()
+
+    if category not in _SLIDE_CATEGORIES:
+        sys.stderr.write(
+            f"Unknown category '{category}'. "
+            f"Valid: {', '.join(sorted(_SLIDE_CATEGORIES.keys()))}\n"
+        )
+        sys.exit(2)
+
+    heading_text, _ = _SLIDE_CATEGORIES[category]
+
+    page = _request_json(opener, f"/rest/api/content/{page_id}?expand=body.storage")
+    body = page["body"]["storage"]["value"]
+
+    heading_match = re.search(
+        r"<h1[^>]*>" + re.escape(heading_text) + r"</h1>", body
+    )
+    if not heading_match:
+        sys.stderr.write(f"Could not find heading '{heading_text}' in page\n")
+        sys.exit(2)
+
+    after_heading = body[heading_match.end() :]
+    table_start = after_heading.find("<table")
+    if table_start < 0:
+        sys.stderr.write(f"No table found after heading '{heading_text}'\n")
+        sys.exit(2)
+
     depth = 0
-    tbody_end = -1
-    i = tbody_start
-    while i < len(full_table):
-        if full_table[i : i + 6] == "<tbody":
+    for i in range(table_start, len(after_heading)):
+        if after_heading[i : i + 6] == "<table":
             depth += 1
-        elif full_table[i : i + 8] == "</tbody>":
+        elif after_heading[i : i + 8] == "</table>":
             depth -= 1
             if depth == 0:
-                tbody_end = i
+                table_end = i + 8
                 break
-        i += 1
 
+    full_table = after_heading[table_start:table_end]
+
+    tbody_start = full_table.find("<tbody")
+    if tbody_start < 0:
+        sys.stderr.write(f"No <tbody> found in table for '{heading_text}'\n")
+        sys.exit(2)
+
+    tbody_end = _find_depth_bound(full_table, "<tbody", "</tbody>", tbody_start)
+    if tbody_end < 0:
+        sys.stderr.write(f"No matching </tbody> found for '{heading_text}'\n")
+        sys.exit(2)
+
+    tbody = full_table[tbody_start:tbody_end]
+    rows = _extract_slide_rows(tbody)
+
+    index = args.index
+    if index < 0 or index >= len(rows):
+        sys.stderr.write(
+            f"Index {index} out of range (0-{len(rows) - 1}) for category '{category}'\n"
+        )
+        sys.exit(2)
+
+    if args.raw:
+        return _emit_json(rows[index])
+
+    row = rows[index]
+    print(f'Slide [{index}] in "{heading_text}":')
+    parts = [row["date"], row["owner_key"], row["title"], row["language"], row["slides"]]
+    print(f"  {'  '.join(p for p in parts if p)}")
+
+
+def cmd_slides_create(opener: t.Any, args: argparse.Namespace) -> None:
+    page_id = _SLIDE_DECKS_PAGE_ID
+    category = args.category.lower()
+
+    if category not in _SLIDE_CATEGORIES:
+        sys.stderr.write(
+            f"Unknown category '{category}'. "
+            f"Valid: {', '.join(sorted(_SLIDE_CATEGORIES.keys()))}\n"
+        )
+        sys.exit(2)
+
+    heading_text, date_cell_type = _SLIDE_CATEGORIES[category]
+
+    page = _request_json(opener, f"/rest/api/content/{page_id}?expand=body.storage")
+    version_number = page.get("version", {}).get("number", 1)
+    body = page["body"]["storage"]["value"]
+
+    heading_match = re.search(
+        r"<h1[^>]*>" + re.escape(heading_text) + r"</h1>", body
+    )
+    if not heading_match:
+        sys.stderr.write(f"Could not find heading '{heading_text}' in page\n")
+        sys.exit(2)
+
+    after_heading = body[heading_match.end() :]
+    table_start = after_heading.find("<table")
+    if table_start < 0:
+        sys.stderr.write(f"No table found after heading '{heading_text}'\n")
+        sys.exit(2)
+
+    depth = 0
+    for i in range(table_start, len(after_heading)):
+        if after_heading[i : i + 6] == "<table":
+            depth += 1
+        elif after_heading[i : i + 8] == "</table>":
+            depth -= 1
+            if depth == 0:
+                table_end = i + 8
+                break
+
+    full_table = after_heading[table_start:table_end]
+
+    tbody_start = full_table.find("<tbody")
+    if tbody_start < 0:
+        sys.stderr.write(f"No <tbody> found in table for '{heading_text}'\n")
+        sys.exit(2)
+
+    tbody_end = _find_depth_bound(full_table, "<tbody", "</tbody>", tbody_start)
     if tbody_end < 0:
         sys.stderr.write(f"No matching </tbody> found for '{heading_text}'\n")
         sys.exit(2)
@@ -793,68 +1098,48 @@ def cmd_slides_add(opener: t.Any, args: argparse.Namespace) -> None:
     tbody = full_table[tbody_start:tbody_end]
     tbody_open_tag_len = full_table.find(">", tbody_start) + 1 - tbody_start
     tbody_close_tag_len = 8  # len('</tbody>')
+
     # Build the new row
     row = _build_slide_row(
         args.date, args.owner_key, args.title, args.language, args.slides
     )
 
-    # Find the last </table> within full_table
+    # Find </table> within full_table
     table_close_abs = full_table.find("</table>")
     if table_close_abs < 0:
         sys.stderr.write(f"No </table> found for '{heading_text}'\n")
         sys.exit(2)
 
     # Insert the new row right before </table>
-    # This places it after all existing rows (including the incomplete last one).
     new_full_table = full_table[:table_close_abs] + row + full_table[table_close_abs:]
-    # Replace the old table in the body
-    new_body = (
-        body[: heading_match.end() + table_start]
-        + new_full_table
-        + body[heading_match.end() + table_end :]
-    )
 
     # Handle extra note rows
     if args.note:
         note_row = _build_note_row(args.note)
-        # Find tbody in new_full_table
         nt_start = new_full_table.find("<tbody")
         if nt_start >= 0:
-            depth2 = 0
-            nt_end = -1
-            j = nt_start
-            while j < len(new_full_table):
-                if new_full_table[j : j + 6] == "<tbody":
-                    depth2 += 1
-                elif new_full_table[j : j + 8] == "</tbody>":
-                    depth2 -= 1
-                    if depth2 == 0:
-                        nt_end = j
-                        break
-                j += 1
+            nt_end = _find_depth_bound(new_full_table, "<tbody", "</tbody>", nt_start)
             if nt_end >= 0:
                 nt = new_full_table[nt_start:nt_end]
                 nt_open_len = new_full_table.find(">", nt_start) + 1 - nt_start
                 nt_inner = nt[nt_open_len:-8]
                 last_nt_tr = nt_inner.rfind("</tr>")
                 if last_nt_tr >= 0:
-                    nt_new_inner = (
-                        nt_inner[:last_nt_tr] + note_row + nt_inner[last_nt_tr:]
-                    )
+                    nt_new_inner = nt_inner[:last_nt_tr] + note_row + nt_inner[last_nt_tr:]
                     nt_new = nt[:nt_open_len] + nt_new_inner + nt[nt_end:]
                     new_full_table = (
                         new_full_table[:nt_start] + nt_new + new_full_table[nt_end:]
                     )
-                    new_body = (
-                        body[: heading_match.end() + table_start]
-                        + new_full_table
-                        + body[heading_match.end() + table_end :]
-                    )
+
+    new_body = (
+        body[: heading_match.end() + table_start]
+        + new_full_table
+        + body[heading_match.end() + table_end :]
+    )
 
     # Update the page with retry for version conflicts
     max_retries = 3
     for attempt in range(max_retries):
-        # Re-fetch current version to avoid conflicts
         current_page = _request_json(
             opener, f"/rest/api/content/{page_id}?expand=body.storage,version"
         )
@@ -883,7 +1168,6 @@ def cmd_slides_add(opener: t.Any, args: argparse.Namespace) -> None:
             break
         except _ConfluenceError as e:
             if e.code == 409 and attempt < max_retries - 1:
-                # Version conflict — retry with fresh version
                 continue
             raise
     if args.raw:
@@ -896,6 +1180,179 @@ def cmd_slides_add(opener: t.Any, args: argparse.Namespace) -> None:
         print(f"  Language: {args.language}")
     if args.slides:
         print(f"  Slides: {args.slides}")
+    if args.note:
+        print(f"  Note: {args.note}")
+    print(f"  Page version: {data.get('version', {}).get('number')}")
+
+
+def cmd_slides_update(opener: t.Any, args: argparse.Namespace) -> None:
+    page_id = _SLIDE_DECKS_PAGE_ID
+    category = args.category.lower()
+
+    if category not in _SLIDE_CATEGORIES:
+        sys.stderr.write(
+            f"Unknown category '{category}'. "
+            f"Valid: {', '.join(sorted(_SLIDE_CATEGORIES.keys()))}\n"
+        )
+        sys.exit(2)
+
+    heading_text, _ = _SLIDE_CATEGORIES[category]
+
+    page = _request_json(opener, f"/rest/api/content/{page_id}?expand=body.storage")
+    body = page["body"]["storage"]["value"]
+
+    heading_match = re.search(
+        r"<h1[^>]*>" + re.escape(heading_text) + r"</h1>", body
+    )
+    if not heading_match:
+        sys.stderr.write(f"Could not find heading '{heading_text}' in page\n")
+        sys.exit(2)
+
+    after_heading = body[heading_match.end() :]
+    table_start = after_heading.find("<table")
+    if table_start < 0:
+        sys.stderr.write(f"No table found after heading '{heading_text}'\n")
+        sys.exit(2)
+
+    depth = 0
+    for i in range(table_start, len(after_heading)):
+        if after_heading[i : i + 6] == "<table":
+            depth += 1
+        elif after_heading[i : i + 8] == "</table>":
+            depth -= 1
+            if depth == 0:
+                table_end = i + 8
+                break
+
+    full_table = after_heading[table_start:table_end]
+
+    tbody_start = full_table.find("<tbody")
+    if tbody_start < 0:
+        sys.stderr.write(f"No <tbody> found in table for '{heading_text}'\n")
+        sys.exit(2)
+
+    tbody_end = _find_depth_bound(full_table, "<tbody", "</tbody>", tbody_start)
+    if tbody_end < 0:
+        sys.stderr.write(f"No matching </tbody> found for '{heading_text}'\n")
+        sys.exit(2)
+
+    tbody = full_table[tbody_start:tbody_end]
+    rows = _extract_slide_rows(tbody)
+
+    index = args.index
+    if index < 0 or index >= len(rows):
+        sys.stderr.write(
+            f"Index {index} out of range (0-{len(rows) - 1}) for category '{category}'\n"
+        )
+        sys.exit(2)
+
+    existing = rows[index]
+
+    # Override with provided values
+    date = args.date if args.date is not None else existing["date"]
+    owner_key = args.owner_key if args.owner_key is not None else existing["owner_key"]
+    title = args.title if args.title is not None else existing["title"]
+    language = args.language if args.language is not None else existing["language"]
+    slides = args.slides if args.slides is not None else existing["slides"]
+
+    new_row = _build_slide_row(date, owner_key, title, language, slides)
+
+    # Find the <tr> at the target index within tbody
+    rows_raw = re.findall(r"<tr>(.*?)</tr>", tbody, re.DOTALL)
+    data_row_idx = 0
+    tr_positions: list[tuple[int, int]] = []
+    for idx, row_html in enumerate(rows_raw):
+        m = re.search(r"<tr>", row_html, re.DOTALL)
+        if m:
+            abs_pos = tbody.find(row_html, 0) if not tr_positions else 0
+            tr_positions.append((abs_pos, len(row_html)))
+        if "<th" in row_html:
+            continue
+        if data_row_idx == index:
+            # Find this row's position in tbody
+            # Use the raw match positions
+            pass
+        data_row_idx += 1
+
+    # Re-approach: find the nth data row's <tr> in tbody
+    data_count = 0
+    tbody_open = tbody.find(">") + 1
+    tbody_content = tbody[tbody_open:-8]  # strip <tbody...> and </tbody>
+    alltrs = list(re.finditer(r"(</?tr(?:[^>]*)?>)", tbody_content, re.IGNORECASE))
+
+    # Find the opening <tr> of the target data row
+    tr_opens = [(m.start(), m.end()) for m in re.finditer(r"<tr(?:[^>]*)?>", tbody_content, re.IGNORECASE)]
+    tr_closes = [(m.start(), m.end()) for m in re.finditer(r"</tr>", tbody_content, re.IGNORECASE)]
+
+    # Match opens to closes
+    tr_ranges: list[tuple[int, int]] = []
+    open_stack: list[int] = []
+    for pos, end in tr_opens:
+        open_stack.append(pos)
+    for pos, end in tr_closes:
+        if open_stack:
+            start = open_stack.pop(0)
+            tr_ranges.append((start, pos + end))
+
+    if index >= len(tr_ranges):
+        sys.stderr.write(
+            f"Index {index} out of range ({len(tr_ranges)} rows) for category '{category}'\n"
+        )
+        sys.exit(2)
+
+    start, end = tr_ranges[index]
+    new_tbody_content = tbody_content[:start] + new_row + tbody_content[end:]
+    new_tbody = tbody[:tbody_open] + new_tbody_content + tbody[tbody_open + len(tbody_content):]
+    new_full_table = full_table[:tbody_start] + new_tbody + full_table[tbody_end:]
+    new_body = (
+        body[: heading_match.end() + table_start]
+        + new_full_table
+        + body[heading_match.end() + table_end :]
+    )
+
+    # Update with retry
+    max_retries = 3
+    for attempt in range(max_retries):
+        current_page = _request_json(
+            opener, f"/rest/api/content/{page_id}?expand=body.storage,version"
+        )
+        version_number = current_page.get("version", {}).get("number", 1)
+
+        payload: dict[str, t.Any] = {
+            "id": page_id,
+            "type": "page",
+            "title": current_page.get("title", ""),
+            "version": {"number": version_number + 1},
+            "body": {
+                "storage": {
+                    "value": new_body,
+                    "representation": "storage",
+                },
+            },
+        }
+
+        try:
+            data = _request_json(
+                opener,
+                f"/rest/api/content/{page_id}",
+                method="PUT",
+                body=payload,
+            )
+            break
+        except _ConfluenceError as e:
+            if e.code == 409 and attempt < max_retries - 1:
+                continue
+            raise
+    if args.raw:
+        return _emit_json(data)
+    print(f"Updated slide [{index}] in: {heading_text}")
+    print(f"  Title: {title}")
+    if date:
+        print(f"  Date: {date}")
+    if language:
+        print(f"  Language: {language}")
+    if slides:
+        print(f"  Slides: {slides}")
     if args.note:
         print(f"  Note: {args.note}")
     print(f"  Page version: {data.get('version', {}).get('number')}")
