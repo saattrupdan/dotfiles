@@ -187,43 +187,43 @@ def main() -> None:
     pj_update.add_argument("--minor-edit", action="store_true")
     _raw(pj_update)
 
-    # ── slides ──
-    p = sub.add_parser("slides", help="Manage slide deck entries")
-    sl = p.add_subparsers(dest="operation", required=True)
+    # ── ai-lab-slides ──
+    p = sub.add_parser("ai-lab-slides", help="Manage AI Lab slide deck entries")
+    alp = p.add_subparsers(dest="operation", required=True)
 
     # slides list
-    sl_list = sl.add_parser("list", help="List slides in a category")
-    sl_list.add_argument("--category", required=True, help="Category: about-us, themed, client, courses, presentations, nlp, energy, healthcare, iot")
-    _raw(sl_list)
+    alp_list = alp.add_parser("list", help="List slides in a category")
+    alp_list.add_argument("--category", required=True, help="Category: about-us, themed, client, courses, presentations, nlp, energy, healthcare, iot")
+    _raw(alp_list)
 
     # slides read
-    sl_read = sl.add_parser("read", help="Read a specific slide entry")
-    sl_read.add_argument("--category", required=True)
-    sl_read.add_argument("--index", type=int, required=True, help="0-based index of the slide row (skip header)")
-    _raw(sl_read)
+    alp_read = alp.add_parser("read", help="Read a specific slide entry")
+    alp_read.add_argument("--category", required=True)
+    alp_read.add_argument("--index", type=int, required=True, help="0-based index of the slide row (skip header)")
+    _raw(alp_read)
 
     # slides create
-    sl_create = sl.add_parser("create", help="Create a new slide entry")
-    sl_create.add_argument("--category", required=True, help="Category: about-us, themed, client, courses, presentations, nlp, energy, healthcare, iot")
-    sl_create.add_argument("--title", required=True, help="Title / Description")
-    sl_create.add_argument("--date", help="Date (YYYY-MM-DD)")
-    sl_create.add_argument("--owner-key", help="Confluence user key")
-    sl_create.add_argument("--language", help="Language code (DA, EN, FR, etc.)")
-    sl_create.add_argument("--slides", help="Attachment filename or link")
-    sl_create.add_argument("--note", help="Extra note")
-    _raw(sl_create)
+    alp_create = alp.add_parser("create", help="Create a new slide entry")
+    alp_create.add_argument("--category", required=True, help="Category: about-us, themed, client, courses, presentations, nlp, energy, healthcare, iot")
+    alp_create.add_argument("--title", required=True, help="Title / Description")
+    alp_create.add_argument("--date", help="Date (YYYY-MM-DD)")
+    alp_create.add_argument("--owner-key", help="Confluence user key")
+    alp_create.add_argument("--language", help="Language code (DA, EN, FR, etc.)")
+    alp_create.add_argument("--slides", help="Attachment filename or link")
+    alp_create.add_argument("--note", help="Extra note")
+    _raw(alp_create)
 
     # slides update
-    sl_update = sl.add_parser("update", help="Update a slide entry")
-    sl_update.add_argument("--category", required=True)
-    sl_update.add_argument("--index", type=int, required=True, help="0-based index of the slide row to update")
-    sl_update.add_argument("--title", help="New title / Description")
-    sl_update.add_argument("--date", help="New date (YYYY-MM-DD)")
-    sl_update.add_argument("--owner-key", help="New Confluence user key")
-    sl_update.add_argument("--language", help="New language code")
-    sl_update.add_argument("--slides", help="New attachment filename or link")
-    sl_update.add_argument("--note", help="New note")
-    _raw(sl_update)
+    alp_update = alp.add_parser("update", help="Update a slide entry")
+    alp_update.add_argument("--category", required=True)
+    alp_update.add_argument("--index", type=int, required=True, help="0-based index of the slide row to update")
+    alp_update.add_argument("--title", help="New title / Description")
+    alp_update.add_argument("--date", help="New date (YYYY-MM-DD)")
+    alp_update.add_argument("--owner-key", help="New Confluence user key")
+    alp_update.add_argument("--language", help="New language code")
+    alp_update.add_argument("--slides", help="New attachment filename or link")
+    alp_update.add_argument("--note", help="New note")
+    _raw(alp_update)
 
     # ── whoami (top-level) ──
     whoami_p = sub.add_parser("whoami", help="Show current user")
@@ -927,7 +927,7 @@ def _extract_slide_rows(tbody_html: str) -> list[dict[str, str]]:
     return results
 
 
-def cmd_slides_list(opener: t.Any, args: argparse.Namespace) -> None:
+def cmd_ai_lab_slides_list(opener: t.Any, args: argparse.Namespace) -> None:
     page_id = _SLIDE_DECKS_PAGE_ID
     category = args.category.lower()
 
@@ -994,7 +994,7 @@ def cmd_slides_list(opener: t.Any, args: argparse.Namespace) -> None:
         print(f"  [{idx}]  {'  '.join(p for p in parts if p)}")
 
 
-def cmd_slides_read(opener: t.Any, args: argparse.Namespace) -> None:
+def cmd_ai_lab_slides_read(opener: t.Any, args: argparse.Namespace) -> None:
     page_id = _SLIDE_DECKS_PAGE_ID
     category = args.category.lower()
 
@@ -1064,7 +1064,7 @@ def cmd_slides_read(opener: t.Any, args: argparse.Namespace) -> None:
     print(f"  {'  '.join(p for p in parts if p)}")
 
 
-def cmd_slides_create(opener: t.Any, args: argparse.Namespace) -> None:
+def cmd_ai_lab_slides_create(opener: t.Any, args: argparse.Namespace) -> None:
     page_id = _SLIDE_DECKS_PAGE_ID
     category = args.category.lower()
 
@@ -1206,7 +1206,7 @@ def cmd_slides_create(opener: t.Any, args: argparse.Namespace) -> None:
     print(f"  Page version: {data.get('version', {}).get('number')}")
 
 
-def cmd_slides_update(opener: t.Any, args: argparse.Namespace) -> None:
+def cmd_ai_lab_slides_update(opener: t.Any, args: argparse.Namespace) -> None:
     page_id = _SLIDE_DECKS_PAGE_ID
     category = args.category.lower()
 
@@ -1428,10 +1428,10 @@ dispatch = {
     ("projects", "read"): cmd_projects_read,
     ("projects", "create"): cmd_projects_create,
     ("projects", "update"): cmd_projects_update,
-    ("slides", "list"): cmd_slides_list,
-    ("slides", "read"): cmd_slides_read,
-    ("slides", "create"): cmd_slides_create,
-    ("slides", "update"): cmd_slides_update,
+    ("ai-lab-slides", "list"): cmd_ai_lab_slides_list,
+    ("ai-lab-slides", "read"): cmd_ai_lab_slides_read,
+    ("ai-lab-slides", "create"): cmd_ai_lab_slides_create,
+    ("ai-lab-slides", "update"): cmd_ai_lab_slides_update,
     ("whoami", None): cmd_whoami,
     ("auth", None): cmd_auth,
 }
