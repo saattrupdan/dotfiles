@@ -1,58 +1,103 @@
 ---
 name: dmi-dk
-description: DMI (Danmarks Meteorologiske Institut) weather data and forecasts. Use for querying Denmark/Greenland weather, radar/satellite images, sea conditions, warnings, and tide tables.
+description: DMI (Danmarks Meteorologiske Institut) weather data and forecasts. Use for querying Denmark/Greenland weather, radar-satellite images, sea conditions, warnings, and tide tables.
 last-updated: 2026-05-09
 ---
 
 # dmi-dk
 
-DMI (Danmarks Meteorologiske Institut) weather data and forecasts. Use for querying Denmark/Greenland weather, radar/satellite images, sea conditions, warnings, and tide tables.
+DMI (Danmarks Meteorologiske Institut) weather data and forecasts.
 
-## Quick Start
-
-The easiest way to use DMI data is via the bundled CLI script:
+## CLI SCRIPT
 
 ```bash
 python3 dmi_dk_api.py <command> [options]
 ```
 
-### Weather Forecast for a City
+---
 
-The `forecast-city` command searches for a city by name and fetches its forecast in one step. **Daily output is the default** — use `--hours` or `--days` for hourly data.
+## ANSWERING WEATHER QUESTIONS — READ THIS FIRST
 
-```bash
-# Daily forecast (default)
-python3 dmi_dk_api.py forecast-city København
+When the user asks about the weather, **always use `forecast-city`**. This command handles everything: city lookup, forecast fetching, and pretty-printed output. **Do NOT use `forecast` (national forecast) or `city-forecast` (requires a city ID) for weather questions.**
 
-# Tomorrow only
-python3 dmi_dk_api.py forecast-city København --tomorrow
+The `city` argument is **optional**. If the user does not name a city, run the command with **no city argument**. The script will auto-detect the user's city from their IP address (ip-api.com / ipinfo.io), trusting only Nordic countries (DK, NO, SE, FI). If detection fails, it falls back to København.
 
-# Today only
-python3 dmi-dk_api.py forecast-city København --today
-
-# Hourly for the next 24 hours
-python3 dmi_dk_api.py forecast-city København --hours 24
-
-# Hourly for the next 3 days
-python3 dmi_dk_api.py forecast-city København --days 3
-
-# Raw JSON
-python3 dmi_dk_api.py forecast-city København --raw
-```
-
-**Auto-detect location.** If you omit the city name, the script tries to detect your city from your IP address (via ip-api.com or ipinfo.io). It only trusts results from Nordic countries (DK, NO, SE, FI).
+### The default command (user didn't specify a city)
 
 ```bash
-# Try to detect your city from IP
+# Auto-detect city from IP → daily forecast
 python3 dmi_dk_api.py forecast-city
 
-# Override auto-detected city
-python3 dmi_dk_api.py forecast-city Aarhus
+# This is the command you should use 90% of the time
 ```
 
-### City Search
+### User specified a city
 
-Search for a city and get its ID (useful for scripting or debugging):
+```bash
+# Daily forecast for the named city
+python3 dmi_dk_api.py forecast-city Aarhus
+python3 dmi_dk_api.py forecast-city Odense
+```
+
+### Tomorrow or today
+
+```bash
+# Tomorrow's forecast (auto-detected city)
+python3 dmi_dk_api.py forecast-city --tomorrow
+
+# Today's forecast (auto-detected city)
+python3 dmi_dk_api.py forecast-city --today
+
+# Tomorrow for a specific city
+python3 dmi_dk_api.py forecast-city Aarhus --tomorrow
+```
+
+### Hourly forecast
+
+The default output is **daily aggregates**. Use `--hours N` or `--days N` for hourly data:
+
+```bash
+# Next 24 hours
+python3 dmi_dk_api.py forecast-city --hours 24
+
+# Next 3 days (hourly)
+python3 dmi_dk_api.py forecast-city --days 3
+```
+
+### City name input
+
+Accepts ASCII approximations — `aa` → `å`, `oe` → `ø`, `ae` → `æ` are normalised automatically. So `kobenhavn`, `aarhu`, `aalbu` all work.
+
+### Sample output
+
+```
+Vejrprognose for København (DK)
+Opdateret: 2026-05-09 17:37:36
+Solopgang: 51:0  Solnedgang: 21:02
+
+Uge     Dato   Min   Max   Nedbør       Vind   UV
+----------------------------------------------------
+lør    09-05    11    15      0.0 2.6 m/s Syd  4.4
+søn    10-05     9    15     2.32 2.2 m/s SØ  4.5
+man    11-05     9    12     2.53 1.8 m/s Øst  4.0
+```
+
+Or with `--tomorrow`:
+
+```
+Vejrprognose for København (DK)
+Opdateret: 2026-05-09 17:37:36
+Solopgang: 51:0  Solnedgang: 21:02
+
+I morgen (søn 10-05):
+  Temperatur: 9–15 °C  Nedbør: 2.32 mm  Vind: 2.2 m/s SØ  UV: 4.5 (Moderat — beskyttelse anbefales)
+```
+
+---
+
+## OTHER COMMANDS (rarely needed for weather questions)
+
+### City Search
 
 ```bash
 # List matching cities
@@ -61,137 +106,89 @@ python3 dmi_dk_api.py city-search København
 # Get just the city ID
 python3 dmi_dk_api.py city-search København --id-only
 # → 2618425
-
-# Raw JSON
-python3 dmi_dk_api.py city-search København --raw
 ```
 
 ### City Forecast by ID
 
-If you already have a city ID, fetch the forecast directly:
-
 ```bash
 python3 dmi_dk_api.py city-forecast 2618425
-python3 dmi_dk_api.py city-forecast 2618425 --daily
 python3 dmi_dk_api.py city-forecast 2618425 --today
 python3 dmi_dk_api.py city-forecast 2618425 --tomorrow
-python3 dmi_dk_api.py city-forecast 2618425 --hours 24
-python3 dmi_dk_api.py city-forecast 2618425 --raw
 ```
 
 ### National Forecast
 
 ```bash
-# 3-day national forecast (default)
 python3 dmi_dk_api.py forecast
-
-# 7-day national forecast
 python3 dmi_dk_api.py forecast --days DK/land7
-
-# Greenland forecast
-python3 dmi_dk_api.py forecast --region Grønland
-
-# Raw JSON
-python3 dmi_dk_api.py forecast --raw
 ```
 
 ### Sea Area Forecast
 
 ```bash
 python3 dmi_dk_api.py sea
-python3 dmi_dk_api.py sea --area Danmark
-python3 dmi_dk_api.py sea --raw
 ```
 
 ### Weather Stations
 
 ```bash
-# Search weather/water stations
 python3 dmi_dk_api.py waters København
-
-# Shore station text forecast (needs station gid)
 python3 dmi_dk_api.py texts <gid>
-python3 dmi_dk_api.py texts <gid> --raw
 ```
 
 ### Water Levels
 
 ```bash
-# Active water level stations
 python3 dmi_dk_api.py waterlevels
-python3 dmi_dk_api.py waterlevels --raw
 ```
 
 ### Weather Images
 
 ```bash
-# List available image types
 python3 dmi_dk_api.py images
-
-# Print direct URL for a specific type
 python3 dmi_dk_api.py images --type radar
-python3 dmi_dk_api.py images --type satellite
-python3 dmi_dk_api.py images --type pressure
-python3 dmi_dk_api.py images --type precipitation
-python3 dmi_dk_api.py images --type wind
-python3 dmi_dk_api.py images --type temperature
-python3 dmi_dk_api.py images --type waves
-python3 dmi_dk_api.py images --type ice
+# Also: satellite, pressure, precipitation, wind, temperature, waves, ice
 ```
 
-### Discover Endpoints
+---
 
-```bash
-# List all API paths from the home page
-python3 dmi_dk_api.py endpoints
+## ARGUMENTS REFERENCE
 
-# List all API paths from the React bundle (more endpoints)
-python3 dmi_dk_api.py endpoints --bundle
-```
-
-## Arguments
-
-### `forecast-city <city>`
-
-Search for a city by name and get its weather forecast.
+### `forecast-city [city]`
 
 | Argument | Description |
 |----------|-------------|
-| `city` | City name (optional — auto-detects from IP if omitted). Accepts ASCII approximations like `kobenhavn`, `aarhu`, `aalbu` — these are normalised to æ/ø/å automatically. |
-| `--hours` | Show hourly forecast for N hours (overrides daily default). |
-| `--days` | Show hourly forecast for N days (each day = 24 hours). |
-| `--daily` | Show daily aggregates (this is the default). |
-| `--today` | Show only today's forecast. |
-| `--tomorrow` | Show only tomorrow's forecast. |
-| `--raw` | Print raw JSON output. |
+| `city` | City name (**optional** — auto-detects from IP if omitted) |
+| `--hours` | Hourly forecast for N hours |
+| `--days` | Hourly forecast for N days (each day = 24 hours) |
+| `--daily` | Daily aggregates (**default**) |
+| `--today` | Today only |
+| `--tomorrow` | Tomorrow only |
+| `--raw` | Raw JSON |
 
 ### `city-forecast <city_id>`
 
-Get a weather forecast for a city by its numeric ID.
-
 | Argument | Description |
 |----------|-------------|
-| `city_id` | City ID (from `city-search --id-only`). |
-| `--hours` | Show hourly forecast for N hours. |
-| `--days` | Show hourly forecast for N days. |
-| `--daily` | Show daily aggregates. |
-| `--today` | Show only today's forecast. |
-| `--tomorrow` | Show only tomorrow's forecast. |
-| `--raw` | Print raw JSON output. |
+| `city_id` | City ID from `city-search --id-only` |
+| `--hours` / `--days` | Hourly forecast |
+| `--daily` | Daily aggregates |
+| `--today` / `--tomorrow` | Single day |
+| `--raw` | Raw JSON |
 
 ### `city-search <city>`
 
-Search for a city by name and list matching results.
-
 | Argument | Description |
 |----------|-------------|
-| `city` | City name to search for. |
-| `--id-only` | Print only the first matching city ID. |
-| `--raw` | Print raw JSON output. |
+| `city` | City name to search for |
+| `--id-only` | Print only the first matching city ID |
+| `--raw` | Raw JSON |
 
-## Notes
+---
 
-- The script uses only the Python standard library — no external dependencies.
+## NOTES
+
+- Pure Python standard library — no pip install needed.
 - City names are normalised automatically: `aa` → `å`, `oe` → `ø`, `ae` → `æ`.
-- All numeric values in the formatted output are rounded to at most 2 decimal places.
-- The `--today`/`--tomorrow` flags filter the daily table to show only the matching day, using a compact single-line format.
+- Formatted output rounds all decimals to at most 2 places.
+- `--today`/`--tomorrow` show a compact single-line format.
