@@ -909,7 +909,7 @@ def _find_depth_bound(text: str, open_str: str, close_str: str, start: int) -> i
 def _extract_slide_rows(tbody_html: str) -> list[dict[str, str]]:
     """Extract parsed row dicts from a <tbody> string.
     Skips the first row if it contains <th> cells (header)."""
-    rows_raw = re.findall(r"<tr>(.*?)</tr>", tbody_html, re.DOTALL)
+    rows_raw = re.findall(r"<tr(?:[^>]*)?>(.*?)</tr>", tbody_html, re.DOTALL)
     results: list[dict[str, str]] = []
     for idx, row_html in enumerate(rows_raw):
         # Skip header row
