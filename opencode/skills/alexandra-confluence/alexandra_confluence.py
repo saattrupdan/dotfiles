@@ -817,16 +817,20 @@ def cmd_projects_update(opener: t.Any, args: argparse.Namespace) -> None:
 _SLIDE_DECKS_PAGE_ID = "97042311"
 
 _SLIDE_CATEGORIES = {
-    # Maps CLI category names to (heading text, date cell type) tuples
-    "about-us": ("About Us presentations", "date"),
-    "themed": ("Themed presentation", "date"),
-    "client": ("Client Presentations", "date"),
-    "courses": ("Courses / workshops", "date"),
-    "presentations": ('Presentations ("oplæg")', "date"),
-    "nlp": ("NLP", "date"),
-    "energy": ("Energy, Utilities & Construction", "date"),
-    "healthcare": ("Healthcare", "date"),
-    "iot": ("IoT / Anomaly detections", "date"),
+    # Maps CLI category names to (heading text, date cell type) tuples.
+    # Heading texts must match the actual Confluence page exactly.
+    # Subcategories (2.x) are h2 headings nested under "2. Themed presentation".
+    "about-us": ("1. About Us presentations", "date"),
+    "themed": ("2. Themed presentation", "date"),
+    "themed-general": ("2.1. General presentation about AI / AI potential checks", "date"),
+    "nlp": ("2.2. NLP", "date"),
+    "energy": ("2.3. Energy, Utilities & Construction", "date"),
+    "healthcare": ("2.4. Healthcare", "date"),
+    "iot": ("2.5. IoT / Anomaly detections", "date"),
+    "client": ("3. Client Presentations", "date"),
+    "courses": ("4. Courses / workshops", "date"),
+    "presentations": ("5. Presentions (\"oplæg\")", "date"),  # Typo on Confluence: "Presentions"
+    "legacy": ("6. Legacy presentation Links", "date"),
 }
 
 
