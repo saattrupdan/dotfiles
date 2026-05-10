@@ -9,6 +9,7 @@ Standard library only. See ./SKILL.md for usage.
 """
 from __future__ import annotations
 
+import argparse
 import collections.abc as c
 import getpass
 import html
@@ -70,13 +71,14 @@ def main() -> None:
     p = _add("page", help="Get a single page by key or ID")
     p.add_argument("--key")
     p.add_argument("--id")
-    p.add_argument("--format", choices=["auto", "text", "html"], default="auto")
+    p.add_argument("--body-format", choices=["auto", "text", "html"], default="auto",
+                   dest="body_format", help="How to display page body")
 
     p = _add("create", help="Create a new page")
     p.add_argument("--space-key", required=True)
     p.add_argument("--title", required=True)
     p.add_argument("--body", required=True)
-    p.add_argument("--ancestor-id", help="Parent page ID")
+    p.add_argument("--parent", help="Parent page ID (makes this a child page)")
 
     p = _add("create-project",
               help="Create a project page (Alexandra Way template)")
@@ -92,17 +94,24 @@ def main() -> None:
     p.add_argument("--title", help="New title (optional)")
     p.add_argument("--minor-edit", action="store_true")
 
+    p = _add("move", help="Move a page under another page")
+    p.add_argument("--id", required=True, help="Page ID to move")
+    p.add_argument("--parent", required=True, help="New parent page ID")
+
     p = _add("delete", help="Delete a page")
     p.add_argument("--id", required=True)
 
-    _add("whoami", help="Show current user")
+    p = _add("add-slide", help="Add a row to AI Lab Slide Decks table")
+    p.add_argument("--category", required=True,
+                   help="Category: about-us, themed, client, courses, presentions, nlp, energy, healthcare, iot")
+    p.add_argument("--title", required=True, help="Title / Description")
+    p.add_argument("--date", help="Date (YYYY-MM-DD)")
+    p.add_argument("--owner-key", help="Confluence user key (e.g. from whoami)")
+    p.add_argument("--language", help="Language code (DA, EN, FR, etc.)")
+    p.add_argument("--slides", help="Attachment filename or link")
+    p.add_argument("--note", help="Extra note (inserted as a plain row)")
 
-    p = _add("api", help="Raw API call")
-    p.add_argument("--method",
-                   choices=["GET", "POST", "PUT", "DELETE"],
-                   default="GET")
-    p.add_argument("--path", required=True)
-    p.add_argument("--body", help="JSON body for POST/PUT")
+    _add("whoami", help="Show current user")
 
     args = parser.parse_args()
     _run_cmd(_COMMANDS[args.cmd], args)
@@ -239,7 +248,7 @@ def _request(
             return r.status, text
     except urllib.error.HTTPError as e:
         body_text = (e.read().decode("utf-8", errors="replace")
-                     if e.fp else "")
+                      if e.fp else "")
         raise _ConfluenceError(
             e.code,
             body_text[:500].replace("\n", " "),
@@ -456,7 +465,7 @@ def cmd_search(opener: t.Any, args: argparse.Namespace) -> None:
     qs = urllib.parse.urlencode(
         {"cql": cql, "limit": args.limit})
     data = _request_json(
-        f"/rest/api/search?{qs}")
+        opener, f"/rest/api/search?{qs}")
     if args.raw:
         return _emit_json(data)
     print(f"Search results: "
@@ -494,11 +503,11 @@ def cmd_page(opener: t.Any, args: argparse.Namespace) -> None:
         qs = urllib.parse.urlencode(
             {"key": args.key, "expand": expand})
         data = _request_json(
-            f"/rest/api/content?{qs}")
+            opener, f"/rest/api/content?{qs}")
     elif args.id:
         qs = urllib.parse.urlencode({"expand": expand})
         data = _request_json(
-            f"/rest/api/content/{args.id}?{qs}")
+            opener, f"/rest/api/content/{args.id}?{qs}")
     else:
         sys.stderr.write("Provide --key or --id\n")
         sys.exit(2)
@@ -529,9 +538,9 @@ def cmd_page(opener: t.Any, args: argparse.Namespace) -> None:
         data.get("body", {})
         .get("storage", {})
         .get("value", ""))
-    if args.format == "html":
+    if args.body_format == "html":
         print("\n--- Body (HTML) ---\n" + val)
-    elif args.format == "text":
+    elif args.body_format == "text":
         print(
             "\n--- Body (plain text) ---\n"
             + _strip_tags(val))
@@ -545,12 +554,24 @@ def cmd_page(opener: t.Any, args: argparse.Namespace) -> None:
 
 
 def cmd_create(opener: t.Any, args: argparse.Namespace) -> None:
-    payload = _new_page_payload(
-        args.title,
-        args.body,
-        args.space_key,
-        args.ancestor_id,
-    )
+    # Determine ancestor: if --parent given use it, otherwise check
+    # if the space has a homepage we should nest under.
+    ancestor_id = getattr(args, "parent", None)
+
+    payload: dict[str, t.Any] = {
+        "type": "page",
+        "title": args.title,
+        "space": {"key": args.space_key},
+        "body": {
+            "storage": {
+                "value": args.body,
+                "representation": "storage",
+            },
+        },
+    }
+    if ancestor_id:
+        payload["ancestor"] = {"id": ancestor_id}
+
     data = _request_json(
         opener,
         "/rest/api/content",
@@ -576,12 +597,18 @@ def cmd_create_project(
         owner=html.escape(args.owner),
         budget=html.escape(args.budget),
     )
-    payload = _new_page_payload(
-        args.title,
-        body,
-        args.space_key,
-        PROJ_ANCESTOR_ID,
-    )
+    payload: dict[str, t.Any] = {
+        "type": "page",
+        "title": args.title,
+        "space": {"key": args.space_key},
+        "body": {
+            "storage": {
+                "value": body,
+                "representation": "storage",
+            },
+        },
+        "ancestor": {"id": PROJ_ANCESTOR_ID},
+    }
     data = _request_json(
         opener,
         "/rest/api/content",
@@ -604,6 +631,7 @@ def cmd_create_project(
 
 def cmd_update(opener: t.Any, args: argparse.Namespace) -> None:
     page = _request_json(
+        opener,
         f"/rest/api/content/"
         f"{args.id}?expand=version")
     version_number = (
@@ -625,6 +653,7 @@ def cmd_update(opener: t.Any, args: argparse.Namespace) -> None:
     if args.minor_edit:
         payload["minorEdit"] = True
     data = _request_json(
+        opener,
         f"/rest/api/content/{args.id}",
         method="PUT",
         body=payload,
@@ -638,8 +667,375 @@ def cmd_update(opener: t.Any, args: argparse.Namespace) -> None:
          .get('number')}")
 
 
+def cmd_move(opener: t.Any, args: argparse.Namespace) -> None:
+    """Move a page under a new parent by updating its ancestors."""
+    # Fetch current page to get its full ancestor chain
+    page = _request_json(
+        opener,
+        f"/rest/api/content/"
+        f"{args.id}?expand=ancestors")
+
+    title = page.get("title", "?")
+    space = (
+        page.get("space", {})
+        .get("key", "?"))
+
+    # Build new ancestor list: all ancestors of the NEW parent,
+    # minus the last one (the parent itself becomes the direct parent).
+    new_parent = _request_json(
+        opener,
+        f"/rest/api/content/{args.parent}?expand=ancestors")
+    new_ancestors = new_parent.get("ancestors", [])
+
+    # Fetch current body to preserve it
+    full_page = _request_json(
+        opener,
+        f"/rest/api/content/{args.id}"
+        "?expand=body.storage")
+    body_value = (
+        full_page.get("body", {})
+        .get("storage", {})
+        .get("value", ""))
+    version_number = (
+        page.get("version", {})
+        .get("number", 1))
+
+    payload: dict[str, t.Any] = {
+        "id": args.id,
+        "type": "page",
+        "title": page.get("title", ""),
+        "version": {"number": version_number + 1},
+        "body": {
+            "storage": {
+                "value": body_value,
+                "representation": "storage",
+            },
+        },
+        "ancestors": [
+            {"id": a["id"]} for a in new_ancestors
+        ],
+    }
+
+    data = _request_json(
+        opener,
+        f"/rest/api/content/{args.id}",
+        method="PUT",
+        body=payload,
+    )
+    if args.raw:
+        return _emit_json(data)
+    print(f"Moved page: {title}")
+    print(f"  From: {space} (id={args.id})")
+    print(f"  Under: {new_parent.get('title')} (id={args.parent})")
+
+
+# Category definitions for AI Lab Slide Decks
+_SLIDE_DECKS_PAGE_ID = "97042311"
+
+_SLIDE_CATEGORIES = {
+    # Maps CLI category names to (heading text, date cell type) tuples
+    "about-us": ("About Us presentations", "date"),
+    "themed": ("Themed presentation", "date"),
+    "client": ("Client Presentations", "date"),
+    "courses": ("Courses / workshops", "date"),
+    "presentions": ("Presentions (\"oplæg\")", "date"),
+    "nlp": ("NLP", "date"),
+    "energy": ("Energy, Utilities & Construction", "date"),
+    "healthcare": ("Healthcare", "date"),
+    "iot": ("IoT / Anomaly detections", "date"),
+}
+
+
+def _build_slide_row(
+    date: str | None,
+    owner_key: str | None,
+    title: str,
+    language: str | None,
+    slides: str | None,
+) -> str:
+    """Build a single <tr> row for the slide table."""
+    # Date cell
+    if date:
+        date_cell = (
+            '<td data-mce-resize="false">'
+            '<div class="content-wrapper">'
+            '<p><time datetime="' + date + '" />&nbsp;</p>'
+            '</div></td>')
+    else:
+        date_cell = (
+            '<td data-mce-resize="false"><br /></td>')
+
+    # Owner cell
+    if owner_key:
+        owner_cell = (
+            '<td><div class="content-wrapper">'
+            '<p><ac:link><ri:user ri:userkey="' + owner_key + '" /></ac:link>&nbsp;</p>'
+            '</div></td>')
+    else:
+        owner_cell = '<td></td>'
+
+    # Title cell
+    title_cell = '<td>' + html.escape(title) + '</td>'
+
+    # Language cell
+    if language:
+        lang_cell = '<td>' + html.escape(language) + '</td>'
+    else:
+        lang_cell = '<td></td>'
+
+    # Slides cell
+    if slides:
+        slides_cell = (
+            '<td><div class="content-wrapper">'
+            '<p><ac:link><ri:attachment ri:filename="' + html.escape(slides) + '" /></ac:link></p>'
+            '</div></td>')
+    else:
+        slides_cell = '<td></td>'
+
+    return (
+        '<tr>' + date_cell + owner_cell + title_cell + lang_cell + slides_cell + '</tr>'
+    )
+
+
+def _build_note_row(note: str) -> str:
+    """Build a plain text row (no table columns, just a note)."""
+    return (
+        '<tr><td colspan="5">' + html.escape(note) + '</td></tr>'
+    )
+
+
+def cmd_add_slide(opener: t.Any, args: argparse.Namespace) -> None:
+    """Add a row to the AI Lab Slide Decks table."""
+    page_id = _SLIDE_DECKS_PAGE_ID
+    category = args.category.lower()
+
+    if category not in _SLIDE_CATEGORIES:
+        sys.stderr.write(
+            f"Unknown category '{category}'. "
+            f"Valid: {', '.join(sorted(_SLIDE_CATEGORIES.keys()))}\n")
+        sys.exit(2)
+
+    heading_text, date_cell_type = _SLIDE_CATEGORIES[category]
+
+    # Fetch current page body
+    page = _request_json(
+        opener,
+        f"/rest/api/content/{page_id}?expand=body.storage")
+
+    version_number = (
+        page.get("version", {})
+        .get("number", 1))
+
+    body = page["body"]["storage"]["value"]
+
+    # Find the table-filter macro for this category.
+    # Strategy: find the heading <h1>, then find the next <table> after it.
+    # We insert the new row before the last <tr> of that table's <tbody>,
+    # which is typically a spacer/empty row.
+
+    # Find the heading for this category
+    heading_pattern = re.escape(heading_text)
+    heading_match = re.search(
+        r'<h1[^>]*>' + heading_pattern + r'</h1>', body)
+    if not heading_match:
+        sys.stderr.write(
+            f"Could not find heading '{heading_text}' in page\n")
+        sys.exit(2)
+
+    # Find the next table after this heading
+    after_heading = body[heading_match.end():]
+    table_start = after_heading.find('<table')
+    if table_start < 0:
+        sys.stderr.write(
+            f"No table found after heading '{heading_text}'\n")
+        sys.exit(2)
+
+    # Find the matching </table>
+    table_open = after_heading[:table_start] + "<table"
+    # Count <table and </table> tags to find the matching close
+    depth = 0
+    pos = table_start
+    for i in range(table_start, len(after_heading)):
+        if after_heading[i:i+6] == '<table':
+            depth += 1
+        elif after_heading[i:i+8] == '</table>':
+            depth -= 1
+            if depth == 0:
+                table_end = i + 8
+                break
+
+    full_table = after_heading[table_start:table_end]
+
+    # Find the first <tbody>...</tbody> in the table
+    tbody_start = full_table.find('<tbody')
+    if tbody_start < 0:
+        sys.stderr.write(
+            f"No <tbody> found in table for '{heading_text}'\n")
+        sys.exit(2)
+
+    # Find matching </tbody> — count nesting depth
+    depth = 0
+    tbody_end = -1
+    i = tbody_start
+    while i < len(full_table):
+        if full_table[i:i+6] == '<tbody':
+            depth += 1
+        elif full_table[i:i+8] == '</tbody>':
+            depth -= 1
+            if depth == 0:
+                tbody_end = i
+                break
+        i += 1
+
+    if tbody_end < 0:
+        sys.stderr.write(
+            f"No matching </tbody> found for '{heading_text}'\n")
+        sys.exit(2)
+
+    tbody = full_table[tbody_start:tbody_end]
+    tbody_open_tag_len = full_table.find('>', tbody_start) + 1 - tbody_start
+    tbody_close_tag_len = 8  # len('</tbody>')
+    tbody_inner = tbody[tbody_open_tag_len:-tbody_close_tag_len]
+
+    # Build the new row
+    row = _build_slide_row(
+        args.date, args.owner_key, args.title,
+        args.language, args.slides)
+
+    # Find the last </table> within full_table
+    table_close_abs = full_table.find('</table>')
+    if table_close_abs < 0:
+        sys.stderr.write(
+            f"No </table> found for '{heading_text}'\n")
+        sys.exit(2)
+
+    # Insert the new row right before </table>
+    # This places it after all existing rows (including the incomplete last one).
+    new_full_table = (
+        full_table[:table_close_abs]
+        + row
+        + full_table[table_close_abs:])
+    # Replace the old table in the body
+    new_body = (
+        body[:heading_match.end() + table_start]
+        + new_full_table
+        + body[heading_match.end() + table_end:])
+
+    # Handle extra note rows
+    if args.note:
+        note_row = _build_note_row(args.note)
+        # Find tbody in new_full_table
+        nt_start = new_full_table.find('<tbody')
+        if nt_start >= 0:
+            depth2 = 0
+            nt_end = -1
+            j = nt_start
+            while j < len(new_full_table):
+                if new_full_table[j:j+6] == '<tbody':
+                    depth2 += 1
+                elif new_full_table[j:j+8] == '</tbody>':
+                    depth2 -= 1
+                    if depth2 == 0:
+                        nt_end = j
+                        break
+                j += 1
+            if nt_end >= 0:
+                nt = new_full_table[nt_start:nt_end]
+                nt_open_len = new_full_table.find('>', nt_start) + 1 - nt_start
+                nt_inner = nt[nt_open_len:-8]
+                last_nt_tr = nt_inner.rfind('</tr>')
+                if last_nt_tr >= 0:
+                    nt_new_inner = (
+                        nt_inner[:last_nt_tr]
+                        + note_row
+                        + nt_inner[last_nt_tr:])
+                    nt_new = (
+                        nt[:nt_open_len]
+                        + nt_new_inner
+                        + nt[nt_end:])
+                    new_full_table = (
+                        new_full_table[:nt_start]
+                        + nt_new
+                        + new_full_table[nt_end:])
+                    new_body = (
+                        body[:heading_match.end() + table_start]
+                        + new_full_table
+                        + body[heading_match.end() + table_end:])
+                nt_inner = nt[nt_open_len:-8]
+                last_nt_tr = nt_inner.rfind('</tr>')
+                if last_nt_tr >= 0:
+                    nt_new_inner = (
+                        nt_inner[:last_nt_tr]
+                        + note_row
+                        + nt_inner[last_nt_tr:])
+                    nt_new = (
+                        nt[:nt_open_len]
+                        + nt_new_inner
+                        + nt[nt_end:])
+                    new_full_table = (
+                        new_full_table[:nt_start]
+                        + nt_new
+                        + new_full_table[nt_end:])
+                    new_body = (
+                        body[:heading_match.end() + table_start]
+                        + new_full_table
+                        + body[heading_match.end() + table_end:])
+
+    # Update the page with retry for version conflicts
+    max_retries = 3
+    for attempt in range(max_retries):
+        # Re-fetch current version to avoid conflicts
+        current_page = _request_json(
+            opener,
+            f"/rest/api/content/{page_id}?expand=body.storage,version")
+        version_number = (
+            current_page.get("version", {})
+            .get("number", 1))
+
+        payload: dict[str, t.Any] = {
+            "id": page_id,
+            "type": "page",
+            "title": current_page.get("title", ""),
+            "version": {"number": version_number + 1},
+            "body": {
+                "storage": {
+                    "value": new_body,
+                    "representation": "storage",
+                },
+            },
+        }
+
+        try:
+            data = _request_json(
+                opener,
+                f"/rest/api/content/{page_id}",
+                method="PUT",
+                body=payload,
+            )
+            break
+        except _ConfluenceError as e:
+            if e.code == 409 and attempt < max_retries - 1:
+                # Version conflict — retry with fresh version
+                continue
+            raise
+    if args.raw:
+        return _emit_json(data)
+    print(f"Added slide to: {heading_text}")
+    print(f"  Title: {args.title}")
+    if args.date:
+        print(f"  Date: {args.date}")
+    if args.owner_key:
+        print(f"  Language: {args.language or '(none)'}")
+    if args.slides:
+        print(f"  Slides: {args.slides}")
+    if args.note:
+        print(f"  Note: {args.note}")
+    print(f"  Page version: {data.get('version', {}).get('number')}")
+
+
 def cmd_delete(opener: t.Any, args: argparse.Namespace) -> None:
     page = _request_json(
+        opener,
         f"/rest/api/content/"
         f"{args.id}?expand=space")
     title = page.get("title", "?")
@@ -681,23 +1077,6 @@ def cmd_auth(opener: t.Any, args: argparse.Namespace) -> None:
     print("Authenticated successfully. Cookies saved.")
 
 
-def cmd_api(opener: t.Any, args: argparse.Namespace) -> None:
-    body: dict | None = (
-        json.loads(args.body)
-        if args.body else None)
-    if args.method in ("POST", "PUT") and body is None:
-        sys.stderr.write(
-            f"{args.method} requires --body JSON\n")
-        sys.exit(2)
-    data = _request_json(
-        opener,
-        args.path,
-        method=args.method,
-        body=body,
-    )
-    _emit_json(data)
-
-
 _COMMANDS = {
     "auth": cmd_auth,
     "spaces": cmd_spaces,
@@ -707,9 +1086,10 @@ _COMMANDS = {
     "create": cmd_create,
     "create-project": cmd_create_project,
     "update": cmd_update,
+    "move": cmd_move,
+    "add-slide": cmd_add_slide,
     "delete": cmd_delete,
     "whoami": cmd_whoami,
-    "api": cmd_api,
 }
 
 
