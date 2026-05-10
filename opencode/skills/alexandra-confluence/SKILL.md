@@ -1,7 +1,7 @@
 ---
 name: alexandra-confluence
 description: CLI access to Alexandra's internal Confluence (confluence.alexandra.dk). Requires VPN + credentials. Covers space/page browsing, CQL search, and page CRUD. Use when the user wants to search, read, or write Confluence content.
-last-updated: 2026-05-08
+last-updated: 2026-05-10
 ---
 
 # alexandra-confluence
@@ -17,15 +17,16 @@ python3 alexandra_confluence.py spaces [--limit 100] [--start 0]
 python3 alexandra_confluence.py pages --space-key PROJ [--limit 20]
 python3 alexandra_confluence.py search "Alexandra Way" [--limit 10]
 python3 alexandra_confluence.py search --cql 'space=PROJ AND type=page'
-python3 alexandra_confluence.py page --key PAGE_KEY [--format auto|text|html]
+python3 alexandra_confluence.py page --key PAGE_KEY [--body-format auto|text|html]
 python3 alexandra_confluence.py page --id 208044217
-python3 alexandra_confluence.py create --space-key PROJ --title T --body "<p>…</p>" [--ancestor-id ID]
+python3 alexandra_confluence.py create --space-key PROJ --title T --body "<p>…</p>" [--parent ID]
 python3 alexandra_confluence.py create-project --title T --client C --owner O [--budget B]
-python3 alexandra_confluence.py update --id ID --body "<p>…</p>" [--title T]
+python3 alexandra_confluence.py update --id ID --body "<p>…</p>" [--title T] [--minor-edit]
+python3 alexandra_confluence.py move --id ID --parent PARENT_ID
 python3 alexandra_confluence.py delete --id ID
+python3 alexandra_confluence.py add-slide --category CAT --title T [--date YYYY-MM-DD] [--owner-key KEY] [--language LANG] [--slides FILE] [--note TEXT]
 python3 alexandra_confluence.py whoami
 python3 alexandra_confluence.py auth   # force re-auth
-python3 alexandra_confluence.py api --method GET --path /rest/api/...   # raw escape hatch
 ```
 
 `--raw` on any subcommand prints unformatted JSON. Errors go to stderr with non-zero exit. Page bodies use **Confluence Storage Format** (XML with `<ac:…>` macros) — pass HTML-ish XML to `--body`.
