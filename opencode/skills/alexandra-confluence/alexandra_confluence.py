@@ -19,6 +19,7 @@ import json
 import os
 import re
 import sys
+import time
 import typing as t
 import urllib.error
 import urllib.parse
@@ -37,6 +38,8 @@ COOKIE_DIR: Path = Path.home() / ".alexandra-confluence"
 COOKIE_FILE: Path = COOKIE_DIR / "cookies.txt"
 PROJ_ANCESTOR_ID: str = "208044217"  # "Projektoverblik (The Alexandra Way)"
 _SLIDE_DECKS_PAGE_ID: str = "97042311"
+MAX_RETRIES: int = 3
+INITIAL_BACKOFF: float = 1.0
 
 _SLIDE_CATEGORIES: dict[str, tuple[str, str]] = {
     "about-us": ("1. About Us presentations", "date"),
@@ -559,33 +562,54 @@ class Spaces:
     @staticmethod
     def list(opener: t.Any, args: argparse.Namespace) -> None:
         """List all spaces."""
-        qs = urllib.parse.urlencode({
-            "expand": "description.plain",
-            "limit": args.limit,
-            "start": args.start,
-        })
-        data = _request_json(opener, f"/rest/api/space?{qs}")
-        if args.raw:
-            return _emit_json(data)
+        start = args.start
+        total_seen = 0
+        total_size = 0
 
-        total = data.get("size", 0)
-        start = data.get("start", 0)
-        results = data.get("results", [])
-        print(f"Total spaces: {total}  (showing {start}-{start + len(results)})")
+        while True:
+            qs = urllib.parse.urlencode({
+                "expand": "description.plain",
+                "limit": args.limit,
+                "start": start,
+            })
+            data = _request_json(opener, f"/rest/api/space?{qs}")
 
-        for s in results:
-            key = s.get("key", "?")
-            name = s.get("name", "?")
-            stype = s.get("type", "?")
-            desc = (
-                s.get("description", {})
-                .get("plain", {})
-                .get("value", "") or ""
-            )[:80]
-            prefix = "  " if key.startswith("~") else ""
-            print(f"{prefix}{key}: {name} [{stype}]")
-            if desc:
-                print(f"   {desc}")
+            if total_size == 0:
+                total_size = data.get("size", 0)
+
+            results = data.get("results", [])
+            total_seen += len(results)
+
+            if args.raw:
+                for s in results:
+                    _emit_json(s)
+                continue
+
+            # Print header on first iteration only
+            if start == args.start:
+                print(f"Total spaces: {total_size}  (showing {start}-{start + total_seen})")
+
+            for s in results:
+                key = s.get("key", "?")
+                name = s.get("name", "?")
+                stype = s.get("type", "?")
+                desc = (
+                    s.get("description", {})
+                    .get("plain", {})
+                    .get("value", "") or ""
+                )[:80]
+                prefix = "  " if key.startswith("~") else ""
+                print(f"{prefix}{key}: {name} [{stype}]")
+                if desc:
+                    print(f"   {desc}")
+
+            # Check if more pages available
+            if total_seen >= total_size:
+                break
+            start += args.limit
+
+        # Final summary
+        print(f"Total spaces: {total_size}  (shown: {total_seen})")
 
     @staticmethod
     def read(opener: t.Any, args: argparse.Namespace) -> None:
