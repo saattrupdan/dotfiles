@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import collections.abc as c
+import difflib
 import getpass
 import html
 import http.cookiejar
@@ -37,11 +38,12 @@ UA: str = "Mozilla/5.0 (alexandra-confluence-cli)"
 COOKIE_DIR: Path = Path.home() / ".alexandra-confluence"
 COOKIE_FILE: Path = COOKIE_DIR / "cookies.txt"
 PROJ_ANCESTOR_ID: str = "208044217"  # "Projektoverblik (The Alexandra Way)"
-_SLIDE_DECKS_PAGE_ID: str = "97042311"
+_SLIDE_DECKS_PAGE_ID: str = "97042311"  # AI Lab slide decks page
+_page_id_cache: dict[str, str] = {}
 MAX_RETRIES: int = 3
 INITIAL_BACKOFF: float = 1.0
 
-_SLIDE_CATEGORIES: dict[str, tuple[str, str]] = {
+_KNOWN_CATEGORIES: dict[str, tuple[str, str]] = {
     "about-us": ("1. About Us presentations", "date"),
     "themed": ("2. Themed presentation", "date"),
     "themed-general": ("2.1. General presentation about AI / AI potential checks", "date"),
@@ -120,7 +122,54 @@ _PROJECT_TEMPLATE: str = """\
 </table>"""
 
 
+# ── Page ID resolution ───────────────────────────────────────────────
+
+def _resolve_page_id(
+    opener: t.Any,
+    title: str,
+    space_key: str | None = None,
+) -> str:
+    """Resolve a page ID by searching for it by title.
+
+    Uses cached result if available, otherwise queries CQL search
+    and caches the result.
+
+    Args:
+        opener: HTTP opener with authenticated session.
+        title: Page title substring to search for.
+        space_key: Optional space key to narrow the search.
+
+    Returns:
+        The page ID as a string.
+
+    Raises:
+        _ConfluenceError: If no page matching the title is found.
+    """
+    cache_key = f"{space_key}:{title}" if space_key else title
+    if cache_key in _page_id_cache:
+        return _page_id_cache[cache_key]
+
+    if space_key:
+        cql = f'title~"{title}" AND space={space_key}'
+    else:
+        cql = f'title~"{title}"'
+
+    qs = urllib.parse.urlencode({"cql": cql, "limit": 1})
+    data = _request_json(opener, f"/rest/api/search?{qs}")
+
+    results = data.get("results", [])
+    if not results:
+        raise _ConfluenceError(
+            404, f"No page found matching title '{title}'",
+        )
+
+    page_id = results[0]["content"]["id"]
+    _page_id_cache[cache_key] = page_id
+    return page_id
+
+
 # ── Exception ────────────────────────────────────────────────────────
+
 
 class _ConfluenceError(Exception):
     """Raised when a Confluence API call returns an error status code."""
@@ -196,31 +245,75 @@ def _clear_jar(opener: urllib.request.OpenerDirector) -> None:
 
 
 def _authenticate(opener: urllib.request.OpenerDirector) -> None:
-    """Form-login. Sets fresh session cookies on the opener's jar."""
-    try:
-        opener.open(
-            urllib.request.Request(
-                f"{BASE}/index.action",
-                headers={"User-Agent": UA},
-            ),
-            timeout=30,
-        ).close()
-    except urllib.error.HTTPError as e:
-        sys.stderr.write(f"Failed to establish session: HTTP {e.code}\n")
-        sys.exit(2)
+    """Form-login. Sets fresh session cookies on the opener's jar.
 
-    try:
-        with opener.open(
-            urllib.request.Request(
-                f"{BASE}/login.action",
-                headers={"User-Agent": UA},
-            ),
-            timeout=30,
-        ) as r:
-            page = r.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as e:
-        sys.stderr.write(f"HTTP {e.code} on GET /login.action\n")
-        sys.exit(2)
+    Retries transient failures (network errors, HTTP 429/500/502/503)
+    up to MAX_RETRIES times with exponential backoff.
+    """
+    retryable_codes: set[int] = {429, 500, 502, 503}
+
+    # Step 1: GET /index.action to establish session
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            opener.open(
+                urllib.request.Request(
+                    f"{BASE}/index.action",
+                    headers={"User-Agent": UA},
+                ),
+                timeout=30,
+            ).close()
+            break
+        except urllib.error.HTTPError as e:
+            if attempt < MAX_RETRIES and e.code in retryable_codes:
+                sys.stderr.write(
+                    f"Auth session GET {e.code} (retry {attempt + 1}/{MAX_RETRIES})\n",
+                )
+                time.sleep(INITIAL_BACKOFF * (2**attempt))
+                continue
+            sys.stderr.write(
+                f"Failed to establish session: HTTP {e.code}\n",
+            )
+            sys.exit(2)
+        except urllib.error.URLError as e:
+            if attempt < MAX_RETRIES:
+                sys.stderr.write(
+                    f"Auth session network error (retry {attempt + 1}/{MAX_RETRIES})\n",
+                )
+                time.sleep(INITIAL_BACKOFF * (2**attempt))
+                continue
+            sys.stderr.write(f"Failed to establish session: {e.reason}\n")
+            sys.exit(2)
+
+    # Step 2: GET /login.action to fetch form token
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            with opener.open(
+                urllib.request.Request(
+                    f"{BASE}/login.action",
+                    headers={"User-Agent": UA},
+                ),
+                timeout=30,
+            ) as r:
+                page = r.read().decode("utf-8", errors="replace")
+            break
+        except urllib.error.HTTPError as e:
+            if attempt < MAX_RETRIES and e.code in retryable_codes:
+                sys.stderr.write(
+                    f"Auth login GET {e.code} (retry {attempt + 1}/{MAX_RETRIES})\n",
+                )
+                time.sleep(INITIAL_BACKOFF * (2**attempt))
+                continue
+            sys.stderr.write(f"HTTP {e.code} on GET /login.action\n")
+            sys.exit(2)
+        except urllib.error.URLError as e:
+            if attempt < MAX_RETRIES:
+                sys.stderr.write(
+                    f"Auth login network error (retry {attempt + 1}/{MAX_RETRIES})\n",
+                )
+                time.sleep(INITIAL_BACKOFF * (2**attempt))
+                continue
+            sys.stderr.write(f"GET /login.action failed: {e.reason}\n")
+            sys.exit(2)
 
     m = re.search(r'name="atlassian-token" content="([^"]+)"', page)
     if not m:
@@ -228,12 +321,14 @@ def _authenticate(opener: urllib.request.OpenerDirector) -> None:
         sys.exit(2)
 
     user, passwd = _get_credentials()
-    data = urllib.parse.urlencode({
-        "os_username": user,
-        "os_password": passwd,
-        "os_authType": "basic",
-        "atlassian-token": m.group(1),
-    }).encode("utf-8")
+    data = urllib.parse.urlencode(
+        {
+            "os_username": user,
+            "os_password": passwd,
+            "os_authType": "basic",
+            "atlassian-token": m.group(1),
+        }
+    ).encode("utf-8")
 
     req = urllib.request.Request(
         f"{BASE}/dologin.action",
@@ -243,17 +338,38 @@ def _authenticate(opener: urllib.request.OpenerDirector) -> None:
             "Content-Type": "application/x-www-form-urlencoded",
         },
     )
-    try:
-        with opener.open(req, timeout=30) as r:
-            if r.status != 200:
-                sys.stderr.write(f"Login returned HTTP {r.status}\n")
-                sys.exit(2)
-    except urllib.error.HTTPError as e:
-        sys.stderr.write(f"Login failed: HTTP {e.code}\n")
-        sys.exit(2)
+
+    # Step 3: POST /dologin.action
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            with opener.open(req, timeout=30) as r:
+                if r.status != 200:
+                    sys.stderr.write(f"Login returned HTTP {r.status}\n")
+                    sys.exit(2)
+            break
+        except urllib.error.HTTPError as e:
+            if attempt < MAX_RETRIES and e.code in retryable_codes:
+                sys.stderr.write(
+                    f"Auth login POST {e.code} (retry {attempt + 1}/{MAX_RETRIES})\n",
+                )
+                time.sleep(INITIAL_BACKOFF * (2**attempt))
+                continue
+            sys.stderr.write(f"Login failed: HTTP {e.code}\n")
+            sys.exit(2)
+        except urllib.error.URLError as e:
+            if attempt < MAX_RETRIES:
+                sys.stderr.write(
+                    f"Auth login POST network error "
+                    f"(retry {attempt + 1}/{MAX_RETRIES})\n",
+                )
+                time.sleep(INITIAL_BACKOFF * (2**attempt))
+                continue
+            sys.stderr.write(f"POST /dologin.action failed: {e.reason}\n")
+            sys.exit(2)
 
 
 # ── HTTP helpers ─────────────────────────────────────────────────────
+
 
 def _request(
     opener: urllib.request.OpenerDirector,
@@ -274,27 +390,44 @@ def _request(
         raise _ConfluenceError(0, f"{method} requires a body dict")
 
     req = urllib.request.Request(url, data=data, method=method, headers=h)
-    try:
-        with opener.open(req, timeout=30) as r:
-            if "login.action" in r.url and "login.action" not in url:
-                raise _ConfluenceError(
-                    401, "session expired (redirected to login)",
+    retryable_codes: set[int] = {429, 500, 502, 503}
+
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            with opener.open(req, timeout=30) as r:
+                if "login.action" in r.url and "login.action" not in url:
+                    raise _ConfluenceError(
+                        401,
+                        "session expired (redirected to login)",
+                    )
+                text = r.read().decode("utf-8", errors="replace")
+                ctype = r.headers.get("Content-Type", "")
+                if ctype.startswith("application/json"):
+                    try:
+                        return r.status, json.loads(text)
+                    except json.JSONDecodeError:
+                        return r.status, text
+                return r.status, text
+        except urllib.error.HTTPError as e:
+            if attempt < MAX_RETRIES and e.code in retryable_codes:
+                sys.stderr.write(
+                    f"HTTP {e.code} (retry {attempt + 1}/{MAX_RETRIES})\n",
                 )
-            text = r.read().decode("utf-8", errors="replace")
-            ctype = r.headers.get("Content-Type", "")
-            if ctype.startswith("application/json"):
-                try:
-                    return r.status, json.loads(text)
-                except json.JSONDecodeError:
-                    return r.status, text
-            return r.status, text
-    except urllib.error.HTTPError as e:
-        body_text = e.read().decode("utf-8", errors="replace") if e.fp else ""
-        raise _ConfluenceError(
-            e.code, body_text[:500].replace("\n", " "),
-        )
-    except urllib.error.URLError as e:
-        raise _ConfluenceError(0, str(e.reason))
+                time.sleep(INITIAL_BACKOFF * (2**attempt))
+                continue
+            body_text = e.read().decode("utf-8", errors="replace") if e.fp else ""
+            raise _ConfluenceError(
+                e.code,
+                body_text[:500].replace("\n", " "),
+            )
+        except urllib.error.URLError as e:
+            if attempt < MAX_RETRIES:
+                sys.stderr.write(
+                    f"Network error (retry {attempt + 1}/{MAX_RETRIES})\n",
+                )
+                time.sleep(INITIAL_BACKOFF * (2**attempt))
+                continue
+            raise _ConfluenceError(0, str(e.reason))
 
 
 def _request_json(
@@ -343,6 +476,7 @@ def _run_cmd(
 
 # ── Utility helpers ──────────────────────────────────────────────────
 
+
 def _emit_json(obj: t.Any) -> None:
     print(json.dumps(obj, ensure_ascii=False, indent=2))
 
@@ -364,9 +498,9 @@ def _find_depth_bound(
     depth = 0
     i = start
     while i < len(text):
-        if text[i:i + len(open_str)] == open_str:
+        if text[i : i + len(open_str)] == open_str:
             depth += 1
-        elif text[i:i + len(close_str)] == close_str:
+        elif text[i : i + len(close_str)] == close_str:
             depth -= 1
             if depth == 0:
                 return i + len(close_str)
@@ -387,13 +521,15 @@ def _extract_slide_rows(tbody_html: str) -> list[dict[str, str]]:
         cells = re.findall(r"<td[^>]*>(.*?)</td>", row_html, re.DOTALL)
         while len(cells) < 5:
             cells.append("")
-        results.append({
-            "date": _strip_tags(cells[0]).strip(),
-            "owner_key": _strip_tags(cells[1]).strip(),
-            "title": _strip_tags(cells[2]).strip(),
-            "language": _strip_tags(cells[3]).strip(),
-            "slides": _strip_tags(cells[4]).strip(),
-        })
+        results.append(
+            {
+                "date": _strip_tags(cells[0]).strip(),
+                "owner_key": _strip_tags(cells[1]).strip(),
+                "title": _strip_tags(cells[2]).strip(),
+                "language": _strip_tags(cells[3]).strip(),
+                "slides": _strip_tags(cells[4]).strip(),
+            }
+        )
     return results
 
 
@@ -442,7 +578,9 @@ def _build_slide_row(
     else:
         slides_cell = "<td></td>"
 
-    return "<tr>" + date_cell + owner_cell + title_cell + lang_cell + slides_cell + "</tr>"
+    return (
+        "<tr>" + date_cell + owner_cell + title_cell + lang_cell + slides_cell + "</tr>"
+    )
 
 
 def _build_note_row(note: str) -> str:
@@ -474,9 +612,9 @@ def _find_table_in_section(
     depth = 0
     table_end = -1
     for i in range(table_start, len(body)):
-        if body[i:i + 6] == "<table":
+        if body[i : i + 6] == "<table":
             depth += 1
-        elif body[i:i + 8] == "</table>":
+        elif body[i : i + 8] == "</table>":
             depth -= 1
             if depth == 0:
                 table_end = i + 8
@@ -529,10 +667,10 @@ def _find_nearest_heading(
     if best_idx < 0:
         return None
 
-    heading_fragment = body[heading_positions[best_idx]:]
+    heading_fragment = body[heading_positions[best_idx] :]
     close_tag_match = re.search(r"</h[12]>", heading_fragment)
     if close_tag_match:
-        heading_fragment = heading_fragment[:close_tag_match.end()]
+        heading_fragment = heading_fragment[: close_tag_match.end()]
 
     return _clean_heading(heading_fragment)
 
@@ -567,11 +705,13 @@ class Spaces:
         total_size = 0
 
         while True:
-            qs = urllib.parse.urlencode({
-                "expand": "description.plain",
-                "limit": args.limit,
-                "start": start,
-            })
+            qs = urllib.parse.urlencode(
+                {
+                    "expand": "description.plain",
+                    "limit": args.limit,
+                    "start": start,
+                }
+            )
             data = _request_json(opener, f"/rest/api/space?{qs}")
 
             if total_size == 0:
@@ -587,16 +727,16 @@ class Spaces:
 
             # Print header on first iteration only
             if start == args.start:
-                print(f"Total spaces: {total_size}  (showing {start}-{start + total_seen})")
+                print(
+                    f"Total spaces: {total_size}  (showing {start}-{start + total_seen})"
+                )
 
             for s in results:
                 key = s.get("key", "?")
                 name = s.get("name", "?")
                 stype = s.get("type", "?")
                 desc = (
-                    s.get("description", {})
-                    .get("plain", {})
-                    .get("value", "") or ""
+                    s.get("description", {}).get("plain", {}).get("value", "") or ""
                 )[:80]
                 prefix = "  " if key.startswith("~") else ""
                 print(f"{prefix}{key}: {name} [{stype}]")
@@ -615,7 +755,8 @@ class Spaces:
     def read(opener: t.Any, args: argparse.Namespace) -> None:
         """Read a space by key."""
         data = _request_json(
-            opener, f"/rest/api/space/{args.key}?expand=description.plan",
+            opener,
+            f"/rest/api/space/{args.key}?expand=description.plan",
         )
         if args.raw:
             return _emit_json(data)
@@ -623,11 +764,9 @@ class Spaces:
         key = data.get("key", "?")
         name = data.get("name", "?")
         stype = data.get("type", "?")
-        desc = (
-            data.get("description", {})
-            .get("plain", {})
-            .get("value", "") or ""
-        )[:200]
+        desc = (data.get("description", {}).get("plain", {}).get("value", "") or "")[
+            :200
+        ]
         print(f"Space key:   {key}")
         print(f"Name:        {name}")
         print(f"Type:        {stype}")
@@ -659,13 +798,12 @@ class Spaces:
     def update(opener: t.Any, args: argparse.Namespace) -> None:
         """Update a space."""
         current = _request_json(
-            opener, f"/rest/api/space/{args.key}?expand=description.plain",
+            opener,
+            f"/rest/api/space/{args.key}?expand=description.plain",
         )
         current_name = current.get("name", "")
         current_desc = (
-            current.get("description", {})
-            .get("plain", {})
-            .get("value", "") or ""
+            current.get("description", {}).get("plain", {}).get("value", "") or ""
         )
 
         update_body: dict[str, t.Any] = {}
@@ -716,9 +854,7 @@ class Spaces:
             key = space.get("key", "?")
             name = space.get("name", "?")
             desc = (
-                space.get("description", {})
-                .get("plain", {})
-                .get("value", "") or ""
+                space.get("description", {}).get("plain", {}).get("value", "") or ""
             )[:150]
             print(f"  [{key}] {name}")
             if desc:
@@ -731,12 +867,14 @@ class Pages:
     @staticmethod
     def list(opener: t.Any, args: argparse.Namespace) -> None:
         """List pages in a space."""
-        qs = urllib.parse.urlencode({
-            "spaceKey": args.space_key,
-            "limit": args.limit,
-            "expand": "version,ancestors,children.page",
-            "depth": "1",
-        })
+        qs = urllib.parse.urlencode(
+            {
+                "spaceKey": args.space_key,
+                "limit": args.limit,
+                "expand": "version,ancestors,children.page",
+                "depth": "1",
+            }
+        )
         data = _request_json(opener, f"/rest/api/content?{qs}")
         if args.raw:
             return _emit_json(data)
@@ -747,20 +885,13 @@ class Pages:
             ancestors = p.get("ancestors", [])
             ancestor = ""
             if ancestors:
-                ancestor = (
-                    f" (child of: {ancestors[-1].get('title', '?')})"
-                )
-            children_list = (
-                p.get("children", {})
-                .get("page", {})
-                .get("results", [])
-            )
+                ancestor = f" (child of: {ancestors[-1].get('title', '?')})"
+            children_list = p.get("children", {}).get("page", {}).get("results", [])
             nchildren = len(children_list)
             children = f" (+{nchildren} children)" if nchildren else ""
             v = p.get("version", {}).get("number", "?")
             print(
-                f"  [{p.get('id', '?')}] "
-                f"{p.get('title', '?')} v{v}{ancestor}{children}"
+                f"  [{p.get('id', '?')}] {p.get('title', '?')} v{v}{ancestor}{children}"
             )
 
     @staticmethod
@@ -788,18 +919,12 @@ class Pages:
             if pid == "?" and "pageId=" in r.get("url", ""):
                 pid = r["url"].split("pageId=")[1].split("&")[0]
             lastmod = (r.get("lastModified") or "?")[:10]
-            body_val = (
-                r.get("body", {})
-                .get("view", {})
-                .get("value", "")
-            )
-            body_clean = _strip_tags(
-                re.sub(r"@@@hl@@@|@@@endhl@@@", "", body_val)
-            )[:200]
+            body_val = r.get("body", {}).get("view", {}).get("value", "")
+            body_clean = _strip_tags(re.sub(r"@@@hl@@@|@@@endhl@@@", "", body_val))[
+                :200
+            ]
             print(
-                f"  [{space_key}] "
-                f"{r.get('title', '?')} "
-                f"(id={pid}, modified={lastmod})"
+                f"  [{space_key}] {r.get('title', '?')} (id={pid}, modified={lastmod})"
             )
             if body_clean:
                 print(f"    {body_clean}")
@@ -814,7 +939,8 @@ class Pages:
         elif args.id:
             qs = urllib.parse.urlencode({"expand": expand})
             data = _request_json(
-                opener, f"/rest/api/content/{args.id}?{qs}",
+                opener,
+                f"/rest/api/content/{args.id}?{qs}",
             )
         else:
             sys.stderr.write("Provide --key or --id\n")
@@ -874,16 +1000,14 @@ class Pages:
 
         print(f"Created page: {data.get('title')}")
         print(f"  ID:  {data.get('id')}")
-        print(
-            f"  URL: "
-            f"{BASE}/pages/viewpage.action?pageId={data.get('id')}"
-        )
+        print(f"  URL: {BASE}/pages/viewpage.action?pageId={data.get('id')}")
 
     @staticmethod
     def update(opener: t.Any, args: argparse.Namespace) -> None:
         """Update an existing page."""
         page = _request_json(
-            opener, f"/rest/api/content/{args.id}?expand=version",
+            opener,
+            f"/rest/api/content/{args.id}?expand=version",
         )
         version_number = page.get("version", {}).get("number", 1)
 
@@ -912,10 +1036,7 @@ class Pages:
             return _emit_json(data)
 
         print(f"Updated page: {data.get('title')}")
-        print(
-            f"  New version: "
-            f"{data.get('version', {}).get('number')}"
-        )
+        print(f"  New version: {data.get('version', {}).get('number')}")
 
 
 class Projects(Pages):
@@ -950,7 +1071,7 @@ class Projects(Pages):
                     "representation": "storage",
                 },
             },
-            "ancestor": {"id": PROJ_ANCESTOR_ID},
+            "ancestor": {"id": _resolve_page_id(opener, "Projektoverblik", space_key="PROJ")},
         }
 
         data = _request_json(
@@ -964,10 +1085,7 @@ class Projects(Pages):
 
         print(f"Created project page: {data.get('title')}")
         print(f"  ID:       {data.get('id')}")
-        print(
-            f"  URL:      "
-            f"{BASE}/pages/viewpage.action?pageId={data.get('id')}"
-        )
+        print(f"  URL:      {BASE}/pages/viewpage.action?pageId={data.get('id')}")
         print("  Template: The Alexandra Way (projektforkl\u00e6de)")
 
     @staticmethod
@@ -1001,7 +1119,9 @@ class AiLabSlides:
         heading_match = None
 
         for m in re.finditer(
-            r"<h[12][^>]*>(.*?)</h[12]>", body, re.DOTALL,
+            r"<h[12][^>]*>(.*?)</h[12]>",
+            body,
+            re.DOTALL,
         ):
             if _clean_heading(m.group(1)) == heading_text:
                 heading_match = m
@@ -1035,8 +1155,7 @@ class AiLabSlides:
                 index = int(idx_str)
             except ValueError:
                 sys.stderr.write(
-                    f"Invalid index in ID '{args.id}'. "
-                    f"Expected integer after ':'.\n",
+                    f"Invalid index in ID '{args.id}'. Expected integer after ':'.\n",
                 )
                 sys.exit(2)
         elif args.category is not None and args.index is not None:
@@ -1044,8 +1163,7 @@ class AiLabSlides:
             index = args.index
         else:
             sys.stderr.write(
-                "Provide --id (cat:index) or both "
-                "--category and --index\n",
+                "Provide --id (cat:index) or both --category and --index\n",
             )
             sys.exit(2)
 
@@ -1058,8 +1176,7 @@ class AiLabSlides:
 
         page = _request_json(
             opener,
-            f"/rest/api/content/{_SLIDE_DECKS_PAGE_ID}?"
-            f"expand=body.view",
+            f"/rest/api/content/{_SLIDE_DECKS_PAGE_ID}?expand=body.view",
         )
         body = page["body"]["view"]["value"]
         heading_text, _ = _SLIDE_CATEGORIES[cat_key]
@@ -1095,7 +1212,9 @@ class AiLabSlides:
         slides = row.get("slides")
         if slides:
             encoded = urllib.parse.quote(slides)
-            print(f"  Download: {BASE}/download/attachments/{_SLIDE_DECKS_PAGE_ID}/{encoded}")
+            print(
+                f"  Download: {BASE}/download/attachments/{_SLIDE_DECKS_PAGE_ID}/{encoded}"
+            )
 
     @staticmethod
     def _insert_row_into_table(
@@ -1110,7 +1229,9 @@ class AiLabSlides:
         """
         heading_match = None
         for m in re.finditer(
-            r"<h[12][^>]*>(.*?)</h[12]>", body, re.DOTALL,
+            r"<h[12][^>]*>(.*?)</h[12]>",
+            body,
+            re.DOTALL,
         ):
             if _clean_heading(m.group(1)) == heading_text:
                 heading_match = m
@@ -1131,46 +1252,43 @@ class AiLabSlides:
             return None
 
         tbody_end = _find_depth_bound(
-            full_table, "<tbody", "</tbody>", tbody_start,
+            full_table,
+            "<tbody",
+            "</tbody>",
+            tbody_start,
         )
         if tbody_end < 0:
             return None
 
-        new_full_table = full_table[:table_end - tbody_end] + (
-            full_table[tbody_start:tbody_end]
-        ) + new_row + full_table[table_end - tbody_end:]
+        new_full_table = (
+            full_table[: table_end - tbody_end]
+            + (full_table[tbody_start:tbody_end])
+            + new_row
+            + full_table[table_end - tbody_end :]
+        )
 
         if note:
             note_row = _build_note_row(note)
             nt = new_full_table[tbody_start:tbody_end]
+            nt_end = nt.find("</tbody>")
+            if nt_end < 0:
+                return None
             nt_open_len = new_full_table.find(">", tbody_start) + 1 - tbody_start
             nt_inner = nt[nt_open_len:-8]
             last_nt_tr = nt_inner.rfind("</tr>")
             if last_nt_tr >= 0:
-                nt_new_inner = (
-                    nt_inner[:last_nt_tr]
-                    + note_row
-                    + nt_inner[last_nt_tr:]
-                )
+                nt_new_inner = nt_inner[:last_nt_tr] + note_row + nt_inner[last_nt_tr:]
                 nt_new = nt[:nt_open_len] + nt_new_inner + nt[nt_end:]
                 new_full_table = (
-                    new_full_table[:tbody_start]
-                    + nt_new
-                    + new_full_table[tbody_end:]
+                    new_full_table[:tbody_start] + nt_new + new_full_table[tbody_end:]
                 )
             else:
                 nt_new = nt[:nt_open_len] + note_row + nt[nt_end:]
                 new_full_table = (
-                    new_full_table[:tbody_start]
-                    + nt_new
-                    + new_full_table[tbody_end:]
+                    new_full_table[:tbody_start] + nt_new + new_full_table[tbody_end:]
                 )
 
-        new_body = (
-            body[:table_start]
-            + new_full_table
-            + body[table_end:]
-        )
+        new_body = body[:table_start] + new_full_table + body[table_end:]
         return new_body, table_start, table_end
 
     @staticmethod
@@ -1189,8 +1307,7 @@ class AiLabSlides:
 
         page = _request_json(
             opener,
-            f"/rest/api/content/{_SLIDE_DECKS_PAGE_ID}?"
-            f"expand=body.view,version",
+            f"/rest/api/content/{_SLIDE_DECKS_PAGE_ID}?expand=body.view,version",
         )
         version_number = page.get("version", {}).get("number", 1)
         body = page["body"]["view"]["value"]
@@ -1220,12 +1337,9 @@ class AiLabSlides:
         for attempt in range(3):
             current_page = _request_json(
                 opener,
-                f"/rest/api/content/{_SLIDE_DECKS_PAGE_ID}?"
-                f"expand=body.view,version",
+                f"/rest/api/content/{_SLIDE_DECKS_PAGE_ID}?expand=body.view,version",
             )
-            version_number = (
-                current_page.get("version", {}).get("number", 1)
-            )
+            version_number = current_page.get("version", {}).get("number", 1)
 
             payload: dict[str, t.Any] = {
                 "id": _SLIDE_DECKS_PAGE_ID,
@@ -1266,10 +1380,7 @@ class AiLabSlides:
             print(f"  Slides: {args.slides}")
         if args.note:
             print(f"  Note: {args.note}")
-        print(
-            f"  Page version: "
-            f"{data.get('version', {}).get('number')}"
-        )
+        print(f"  Page version: {data.get('version', {}).get('number')}")
 
     @staticmethod
     def update(opener: t.Any, args: argparse.Namespace) -> None:
@@ -1287,8 +1398,7 @@ class AiLabSlides:
 
         page = _request_json(
             opener,
-            f"/rest/api/content/{_SLIDE_DECKS_PAGE_ID}?"
-            f"expand=body.view",
+            f"/rest/api/content/{_SLIDE_DECKS_PAGE_ID}?expand=body.view",
         )
         body = page["body"]["view"]["value"]
 
@@ -1310,16 +1420,10 @@ class AiLabSlides:
         existing = rows[index]
         date = args.date if args.date is not None else existing["date"]
         owner_key = (
-            args.owner_key
-            if args.owner_key is not None
-            else existing["owner_key"]
+            args.owner_key if args.owner_key is not None else existing["owner_key"]
         )
         title = args.title if args.title is not None else existing["title"]
-        language = (
-            args.language
-            if args.language is not None
-            else existing["language"]
-        )
+        language = args.language if args.language is not None else existing["language"]
         slides = args.slides if args.slides is not None else existing["slides"]
 
         new_row = _build_slide_row(
@@ -1333,7 +1437,9 @@ class AiLabSlides:
         # Locate the nth <tr> in the tbody and replace it
         heading_match = None
         for m in re.finditer(
-            r"<h[12][^>]*>(.*?)</h[12]>", body, re.DOTALL,
+            r"<h[12][^>]*>(.*?)</h[12]>",
+            body,
+            re.DOTALL,
         ):
             if _clean_heading(m.group(1)) == heading_text:
                 heading_match = m
@@ -1363,7 +1469,10 @@ class AiLabSlides:
             sys.exit(2)
 
         tbody_end = _find_depth_bound(
-            full_table, "<tbody", "</tbody>", tbody_start,
+            full_table,
+            "<tbody",
+            "</tbody>",
+            tbody_start,
         )
         if tbody_end < 0:
             sys.stderr.write(
@@ -1378,7 +1487,9 @@ class AiLabSlides:
         tr_opens = [
             (m.start(), m.end())
             for m in re.finditer(
-                r"<tr(?:[^>]*)?>", tbody_content, re.IGNORECASE,
+                r"<tr(?:[^>]*)?>",
+                tbody_content,
+                re.IGNORECASE,
             )
         ]
         tr_closes = [
@@ -1403,61 +1514,39 @@ class AiLabSlides:
             sys.exit(2)
 
         start, end = tr_ranges[index]
-        new_tbody_content = (
-            tbody_content[:start] + new_row + tbody_content[end:]
-        )
+        new_tbody_content = tbody_content[:start] + new_row + tbody_content[end:]
         new_tbody = (
             tbody[:tbody_open]
             + new_tbody_content
-            + tbody[tbody_open + len(tbody_content):]
+            + tbody[tbody_open + len(tbody_content) :]
         )
-        new_full_table = (
-            full_table[:tbody_start]
-            + new_tbody
-            + full_table[tbody_end:]
-        )
-        new_body = (
-            body[:table_start]
-            + new_full_table
-            + body[table_end:]
-        )
+        new_full_table = full_table[:tbody_start] + new_tbody + full_table[tbody_end:]
+        new_body = body[:table_start] + new_full_table + body[table_end:]
 
         # Handle note row
         if args.note:
             note_row = _build_note_row(args.note)
             nt = new_full_table[tbody_start:tbody_end]
-            nt_open_len = (
-                new_full_table.find(">", tbody_start) + 1 - tbody_start
-            )
+            nt_end = nt.find("</tbody>")
+            if nt_end < 0:
+                return
+            nt_open_len = new_full_table.find(">", tbody_start) + 1 - tbody_start
             nt_inner = nt[nt_open_len:-8]
             last_nt_tr = nt_inner.rfind("</tr>")
             if last_nt_tr >= 0:
-                nt_new_inner = (
-                    nt_inner[:last_nt_tr]
-                    + note_row
-                    + nt_inner[last_nt_tr:]
-                )
+                nt_new_inner = nt_inner[:last_nt_tr] + note_row + nt_inner[last_nt_tr:]
                 nt_new = nt[:nt_open_len] + nt_new_inner + nt[nt_end:]
                 new_full_table = (
-                    new_full_table[:tbody_start]
-                    + nt_new
-                    + new_full_table[tbody_end:]
+                    new_full_table[:tbody_start] + nt_new + new_full_table[tbody_end:]
                 )
-                new_body = (
-                    body[:table_start]
-                    + new_full_table
-                    + body[table_end:]
-                )
+                new_body = body[:table_start] + new_full_table + body[table_end:]
 
         for attempt in range(3):
             current_page = _request_json(
                 opener,
-                f"/rest/api/content/{_SLIDE_DECKS_PAGE_ID}?"
-                f"expand=body.view,version",
+                f"/rest/api/content/{_SLIDE_DECKS_PAGE_ID}?expand=body.view,version",
             )
-            version_number = (
-                current_page.get("version", {}).get("number", 1)
-            )
+            version_number = current_page.get("version", {}).get("number", 1)
 
             payload: dict[str, t.Any] = {
                 "id": _SLIDE_DECKS_PAGE_ID,
@@ -1498,10 +1587,7 @@ class AiLabSlides:
             print(f"  Slides: {slides}")
         if args.note:
             print(f"  Note: {args.note}")
-        print(
-            f"  Page version: "
-            f"{data.get('version', {}).get('number')}"
-        )
+        print(f"  Page version: {data.get('version', {}).get('number')}")
 
     @staticmethod
     def list(opener: t.Any, args: argparse.Namespace) -> None:
@@ -1511,16 +1597,12 @@ class AiLabSlides:
         """
         page = _request_json(
             opener,
-            f"/rest/api/content/{_SLIDE_DECKS_PAGE_ID}?"
-            f"expand=body.view",
+            f"/rest/api/content/{_SLIDE_DECKS_PAGE_ID}?expand=body.view",
         )
         body = page["body"]["view"]["value"]
 
         heading_map = _build_heading_to_cat_map(body)
-        heading_positions = [
-            m.start()
-            for m in re.finditer(r"<h[12]", body)
-        ]
+        heading_positions = [m.start() for m in re.finditer(r"<h[12]", body)]
 
         table_positions: list[tuple[int, int]] = []
         for m in re.finditer(r"<table", body):
@@ -1528,9 +1610,9 @@ class AiLabSlides:
             depth = 0
             end = -1
             for i in range(start, len(body)):
-                if body[i:i + 6] == "<table":
+                if body[i : i + 6] == "<table":
                     depth += 1
-                elif body[i:i + 8] == "</table>":
+                elif body[i : i + 8] == "</table>":
                     depth -= 1
                     if depth == 0:
                         end = i + 8
@@ -1547,7 +1629,9 @@ class AiLabSlides:
                 continue
 
             heading_text = _find_nearest_heading(
-                heading_positions, t_start, body,
+                heading_positions,
+                t_start,
+                body,
             )
             if heading_text is None:
                 continue
@@ -1588,8 +1672,7 @@ class AiLabSlides:
                 r["slides"],
             ]
             print(
-                f"  [{r['_id']}] [{heading_text}]  "
-                f"{'  '.join(p for p in parts if p)}"
+                f"  [{r['_id']}] [{heading_text}]  {'  '.join(p for p in parts if p)}"
             )
 
     @staticmethod
@@ -1599,7 +1682,8 @@ class AiLabSlides:
             cql = args.cql
             qs = urllib.parse.urlencode({"cql": cql, "limit": 50})
             search_results = _request_json(
-                opener, f"/rest/api/search?{qs}",
+                opener,
+                f"/rest/api/search?{qs}",
             )
             matching_ids = {
                 r.get("content", {}).get("id")
@@ -1616,16 +1700,12 @@ class AiLabSlides:
 
         page = _request_json(
             opener,
-            f"/rest/api/content/{_SLIDE_DECKS_PAGE_ID}?"
-            f"expand=body.view",
+            f"/rest/api/content/{_SLIDE_DECKS_PAGE_ID}?expand=body.view",
         )
         body = page["body"]["view"]["value"]
 
         heading_map = _build_heading_to_cat_map(body)
-        heading_positions = [
-            m.start()
-            for m in re.finditer(r"<h[12]", body)
-        ]
+        heading_positions = [m.start() for m in re.finditer(r"<h[12]", body)]
 
         table_positions: list[tuple[int, int]] = []
         for m in re.finditer(r"<table", body):
@@ -1633,9 +1713,9 @@ class AiLabSlides:
             depth = 0
             end = -1
             for i in range(start, len(body)):
-                if body[i:i + 6] == "<table":
+                if body[i : i + 6] == "<table":
                     depth += 1
-                elif body[i:i + 8] == "</table>":
+                elif body[i : i + 8] == "</table>":
                     depth -= 1
                     if depth == 0:
                         end = i + 8
@@ -1652,7 +1732,9 @@ class AiLabSlides:
                 continue
 
             heading_text = _find_nearest_heading(
-                heading_positions, t_start, body,
+                heading_positions,
+                t_start,
+                body,
             )
             if heading_text is None:
                 continue
@@ -1681,11 +1763,11 @@ class AiLabSlides:
                     all_rows.append(entry)
                 else:
                     searchable = (
-                        f'{row["title"]} '
-                        f'{row["owner_key"]} '
-                        f'{row["date"]} '
-                        f'{row["language"]} '
-                        f'{row["slides"]}'
+                        f"{row['title']} "
+                        f"{row['owner_key']} "
+                        f"{row['date']} "
+                        f"{row['language']} "
+                        f"{row['slides']}"
                     ).lower()
                     if search_term in searchable:
                         all_rows.append(entry)
@@ -1697,10 +1779,7 @@ class AiLabSlides:
             print("No slides found matching the query.")
             return
 
-        print(
-            f"Search results: "
-            f"{len(all_rows)} matching slides"
-        )
+        print(f"Search results: {len(all_rows)} matching slides")
         for r in all_rows:
             heading_text = r.get("_heading", "?")
             parts = [
@@ -1711,12 +1790,12 @@ class AiLabSlides:
                 r["slides"],
             ]
             print(
-                f"  [{r['_id']}] [{heading_text}]  "
-                f"{'  '.join(p for p in parts if p)}"
+                f"  [{r['_id']}] [{heading_text}]  {'  '.join(p for p in parts if p)}"
             )
 
 
 # ── Top-level helpers ────────────────────────────────────────────────
+
 
 def cmd_whoami(opener: t.Any, args: argparse.Namespace) -> None:
     """Show current user."""
@@ -1772,6 +1851,7 @@ dispatch: dict[tuple[str, str | None], c.Callable[..., None]] = {
 
 # ── Argument parser ──────────────────────────────────────────────────
 
+
 def _build_parser() -> argparse.ArgumentParser:
     """Build and return the CLI argument parser."""
     parser = argparse.ArgumentParser(
@@ -1805,14 +1885,16 @@ def _build_parser() -> argparse.ArgumentParser:
     pu.add_argument("--key", required=True)
     pu.add_argument("--name", help="New name")
     pu.add_argument(
-        "--description", help="New plain text description",
+        "--description",
+        help="New plain text description",
     )
     _raw(pu)
 
     ss = sp.add_parser("search", help="Search spaces")
     ss.add_argument("query", nargs="?", help="Title search shorthand")
     ss.add_argument(
-        "--cql", help="Full CQL query (overrides query)",
+        "--cql",
+        help="Full CQL query (overrides query)",
     )
     ss.add_argument("--limit", type=int, default=20)
     _raw(ss)
@@ -1899,82 +1981,104 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # ── ai-lab-slides ──
     p = sub.add_parser(
-        "ai-lab-slides", help="Manage AI Lab slide deck entries",
+        "ai-lab-slides",
+        help="Manage AI Lab slide deck entries",
     )
     alp = p.add_subparsers(dest="operation", required=True)
 
     alp_read = alp.add_parser(
-        "read", help="Read a specific slide entry by ID",
+        "read",
+        help="Read a specific slide entry by ID",
     )
     grp = alp_read.add_mutually_exclusive_group(required=True)
     grp.add_argument(
-        "--id", help="Slide ID in cat:index format (e.g. nlp:3)",
+        "--id",
+        help="Slide ID in cat:index format (e.g. nlp:3)",
     )
     grp.add_argument("--category", help="Category key")
     alp_read.add_argument(
-        "--index", type=int, help="0-based index within category",
+        "--index",
+        type=int,
+        help="0-based index within category",
     )
     _raw(alp_read)
 
     alp_create = alp.add_parser(
-        "create", help="Create a new slide entry",
+        "create",
+        help="Create a new slide entry",
     )
     alp_create.add_argument(
-        "--category", required=True,
+        "--category",
+        required=True,
         help=(
             "Category: about-us, themed, client, courses, "
             "presentations, nlp, energy, healthcare, iot"
         ),
     )
     alp_create.add_argument(
-        "--title", required=True, help="Title / Description",
+        "--title",
+        required=True,
+        help="Title / Description",
     )
     alp_create.add_argument("--date", help="Date (YYYY-MM-DD)")
     alp_create.add_argument(
-        "--owner-key", help="Confluence user key",
+        "--owner-key",
+        help="Confluence user key",
     )
     alp_create.add_argument(
-        "--language", help="Language code (DA, EN, FR, etc.)",
+        "--language",
+        help="Language code (DA, EN, FR, etc.)",
     )
     alp_create.add_argument(
-        "--slides", help="Attachment filename or link",
+        "--slides",
+        help="Attachment filename or link",
     )
     alp_create.add_argument("--note", help="Extra note")
     _raw(alp_create)
 
     alp_update = alp.add_parser(
-        "update", help="Update a slide entry",
+        "update",
+        help="Update a slide entry",
     )
     alp_update.add_argument("--category", required=True)
     alp_update.add_argument(
-        "--index", type=int, required=True,
+        "--index",
+        type=int,
+        required=True,
         help="0-based index of the slide row to update",
     )
     alp_update.add_argument("--title", help="New title / Description")
     alp_update.add_argument("--date", help="New date (YYYY-MM-DD)")
     alp_update.add_argument(
-        "--owner-key", help="New Confluence user key",
+        "--owner-key",
+        help="New Confluence user key",
     )
     alp_update.add_argument("--language", help="New language code")
     alp_update.add_argument(
-        "--slides", help="New attachment filename or link",
+        "--slides",
+        help="New attachment filename or link",
     )
     alp_update.add_argument("--note", help="New note")
     _raw(alp_update)
 
     alist = alp.add_parser(
-        "list", help="List all slides across all categories",
+        "list",
+        help="List all slides across all categories",
     )
     _raw(alist)
 
     all_s = alp.add_parser(
-        "search", help="Search slides across all categories",
+        "search",
+        help="Search slides across all categories",
     )
     all_s.add_argument(
-        "query", nargs="?", help="Title search shorthand",
+        "query",
+        nargs="?",
+        help="Title search shorthand",
     )
     all_s.add_argument(
-        "--cql", help="Full CQL query (overrides query)",
+        "--cql",
+        help="Full CQL query (overrides query)",
     )
     _raw(all_s)
 
@@ -1990,6 +2094,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 # ── Entry point ──────────────────────────────────────────────────────
+
 
 def main() -> None:
     _load_env(Path(".env"))
