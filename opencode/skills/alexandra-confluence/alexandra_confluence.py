@@ -680,15 +680,67 @@ def _build_heading_to_cat_map(
 ) -> dict[str, str]:
     """Map cleaned heading text -> category key.
 
-    Returns a dict mapping heading display text to the CLI category key.
+    Uses dynamic parsing from body with _KNOWN_CATEGORIES as fallback.
     """
+    cat_key_to_heading = _parse_categories_from_body(body)
     heading_map: dict[str, str] = {}
-    for cat_key, (heading_text, _) in _SLIDE_CATEGORIES.items():
-        for m in re.finditer(r"<h[12][^>]*>(.*?)</h[12]>", body, re.DOTALL):
-            if _clean_heading(m.group(1)) == heading_text:
-                heading_map[heading_text] = cat_key
-                break
+    for cat_key, (heading_text, _) in cat_key_to_heading.items():
+        heading_map[heading_text] = cat_key
     return heading_map
+
+
+def _parse_categories_from_body(body: str) -> dict[str, tuple[str, str]]:
+    """Parse category headings dynamically from the page body.
+
+    Scans for <h1>/<h2> headings and maps them to category keys.
+    Uses _KNOWN_CATEGORIES as fallback for known headings.
+    Falls back to fuzzy matching for unknown headings.
+
+    Returns:
+        Dict mapping category key -> (heading_text, sort_field).
+    """
+    cat_map: dict[str, tuple[str, str]] = {}
+
+    for m in re.finditer(r"<h[12][^>]*>(.*?)</h[12]>", body, re.DOTALL):
+        heading_text = _clean_heading(m.group(1))
+        # Try exact match against known categories first
+        for cat_key, (known_heading, sort_field) in _KNOWN_CATEGORIES.items():
+            if heading_text == known_heading:
+                cat_map[cat_key] = (heading_text, sort_field)
+                break
+        else:
+            # Try fuzzy match as fallback
+            for cat_key, (known_heading, sort_field) in _KNOWN_CATEGORIES.items():
+                ratio = difflib.SequenceMatcher(
+                    None, heading_text, known_heading
+                ).ratio()
+                if ratio >= 0.8:
+                    cat_map[cat_key] = (heading_text, sort_field)
+                    break
+
+    return cat_map
+
+
+def _fuzzy_heading_match(
+    body: str,
+    heading_text: str,
+    threshold: float = 0.8,
+) -> str | None:
+    """Find a heading in body that matches *heading_text* (exact or fuzzy).
+
+    Returns the cleaned heading text from the body if found, else None.
+    """
+    for m in re.finditer(r"<h[12][^>]*>(.*?)</h[12]>", body, re.DOTALL):
+        candidate = _clean_heading(m.group(1))
+        if candidate == heading_text:
+            return candidate
+        # Fuzzy fallback
+        for known_heading, _ in _KNOWN_CATEGORIES.values():
+            if difflib.SequenceMatcher(
+                None, candidate, known_heading
+            ).ratio() >= threshold:
+                return candidate
+    return None
 
 
 # ── Resource classes ─────────────────────────────────────────────────
@@ -1112,10 +1164,10 @@ class AiLabSlides:
 
         Returns None if the heading is not found.
         """
-        if cat_key not in _SLIDE_CATEGORIES:
+        if cat_key not in _KNOWN_CATEGORIES:
             return None
 
-        heading_text, _ = _SLIDE_CATEGORIES[cat_key]
+        heading_text, _ = _KNOWN_CATEGORIES[cat_key]
         heading_match = None
 
         for m in re.finditer(
@@ -1126,6 +1178,19 @@ class AiLabSlides:
             if _clean_heading(m.group(1)) == heading_text:
                 heading_match = m
                 break
+
+        # Fuzzy fallback if exact match failed
+        if not heading_match:
+            matched_heading = _fuzzy_heading_match(body, heading_text)
+            if matched_heading:
+                for m in re.finditer(
+                    r"<h[12][^>]*>(.*?)</h[12]>",
+                    body,
+                    re.DOTALL,
+                ):
+                    if _clean_heading(m.group(1)) == matched_heading:
+                        heading_match = m
+                        break
 
         if not heading_match:
             return None
@@ -1167,10 +1232,10 @@ class AiLabSlides:
             )
             sys.exit(2)
 
-        if cat_key not in _SLIDE_CATEGORIES:
+        if cat_key not in _KNOWN_CATEGORIES:
             sys.stderr.write(
                 f"Unknown category '{cat_key}'. "
-                f"Valid: {', '.join(sorted(_SLIDE_CATEGORIES.keys()))}\n",
+                f"Valid: {', '.join(sorted(_KNOWN_CATEGORIES.keys()))}\n",
             )
             sys.exit(2)
 
@@ -1179,7 +1244,7 @@ class AiLabSlides:
             f"/rest/api/content/{_SLIDE_DECKS_PAGE_ID}?expand=body.view",
         )
         body = page["body"]["view"]["value"]
-        heading_text, _ = _SLIDE_CATEGORIES[cat_key]
+        heading_text, _ = _KNOWN_CATEGORIES[cat_key]
 
         rows = AiLabSlides._extract_category_rows(body, cat_key)
         if rows is None:
@@ -1236,6 +1301,19 @@ class AiLabSlides:
             if _clean_heading(m.group(1)) == heading_text:
                 heading_match = m
                 break
+
+        # Fuzzy fallback if exact match failed
+        if not heading_match:
+            matched_heading = _fuzzy_heading_match(body, heading_text)
+            if matched_heading:
+                for m in re.finditer(
+                    r"<h[12][^>]*>(.*?)</h[12]>",
+                    body,
+                    re.DOTALL,
+                ):
+                    if _clean_heading(m.group(1)) == matched_heading:
+                        heading_match = m
+                        break
 
         if not heading_match:
             return None
@@ -1296,14 +1374,14 @@ class AiLabSlides:
         """Create a new slide entry."""
         category = args.category.lower()
 
-        if category not in _SLIDE_CATEGORIES:
+        if category not in _KNOWN_CATEGORIES:
             sys.stderr.write(
                 f"Unknown category '{category}'. "
-                f"Valid: {', '.join(sorted(_SLIDE_CATEGORIES.keys()))}\n",
+                f"Valid: {', '.join(sorted(_KNOWN_CATEGORIES.keys()))}\n",
             )
             sys.exit(2)
 
-        heading_text, _ = _SLIDE_CATEGORIES[category]
+        heading_text, _ = _KNOWN_CATEGORIES[category]
 
         page = _request_json(
             opener,
@@ -1387,14 +1465,14 @@ class AiLabSlides:
         """Update an existing slide entry."""
         category = args.category.lower()
 
-        if category not in _SLIDE_CATEGORIES:
+        if category not in _KNOWN_CATEGORIES:
             sys.stderr.write(
                 f"Unknown category '{category}'. "
-                f"Valid: {', '.join(sorted(_SLIDE_CATEGORIES.keys()))}\n",
+                f"Valid: {', '.join(sorted(_KNOWN_CATEGORIES.keys()))}\n",
             )
             sys.exit(2)
 
-        heading_text, _ = _SLIDE_CATEGORIES[category]
+        heading_text, _ = _KNOWN_CATEGORIES[category]
 
         page = _request_json(
             opener,
@@ -1444,6 +1522,19 @@ class AiLabSlides:
             if _clean_heading(m.group(1)) == heading_text:
                 heading_match = m
                 break
+
+        # Fuzzy fallback if exact match failed
+        if not heading_match:
+            matched_heading = _fuzzy_heading_match(body, heading_text)
+            if matched_heading:
+                for m in re.finditer(
+                    r"<h[12][^>]*>(.*?)</h[12]>",
+                    body,
+                    re.DOTALL,
+                ):
+                    if _clean_heading(m.group(1)) == matched_heading:
+                        heading_match = m
+                        break
 
         if not heading_match:
             sys.stderr.write(
@@ -1638,8 +1729,19 @@ class AiLabSlides:
 
             cat_key = heading_map.get(heading_text)
             if cat_key is None:
-                for ck, (ht, _) in _SLIDE_CATEGORIES.items():
+                # Try exact match
+                for ck, (ht, _) in _KNOWN_CATEGORIES.items():
                     if ht == heading_text:
+                        cat_key = ck
+                        heading_map[heading_text] = cat_key
+                        break
+            if cat_key is None:
+                # Try fuzzy match
+                for ck, (ht, _) in _KNOWN_CATEGORIES.items():
+                    ratio = difflib.SequenceMatcher(
+                        None, heading_text, ht
+                    ).ratio()
+                    if ratio >= 0.8:
                         cat_key = ck
                         heading_map[heading_text] = cat_key
                         break
@@ -1741,8 +1843,19 @@ class AiLabSlides:
 
             cat_key = heading_map.get(heading_text)
             if cat_key is None:
-                for ck, (ht, _) in _SLIDE_CATEGORIES.items():
+                # Try exact match
+                for ck, (ht, _) in _KNOWN_CATEGORIES.items():
                     if ht == heading_text:
+                        cat_key = ck
+                        heading_map[heading_text] = cat_key
+                        break
+            if cat_key is None:
+                # Try fuzzy match
+                for ck, (ht, _) in _KNOWN_CATEGORIES.items():
+                    ratio = difflib.SequenceMatcher(
+                        None, heading_text, ht
+                    ).ratio()
+                    if ratio >= 0.8:
                         cat_key = ck
                         heading_map[heading_text] = cat_key
                         break
