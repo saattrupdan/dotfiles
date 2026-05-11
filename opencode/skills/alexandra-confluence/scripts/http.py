@@ -13,7 +13,7 @@ import typing as t
 import urllib.error
 import urllib.request
 
-from .auth import BASE, INITIAL_BACKOFF, MAX_RETRIES, _ConfluenceError, UA
+from ._constants import BASE, INITIAL_BACKOFF, MAX_RETRIES, UA, _ConfluenceError
 
 
 def _request(
