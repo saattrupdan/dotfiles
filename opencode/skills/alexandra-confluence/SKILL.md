@@ -1,14 +1,14 @@
 ---
 name: alexandra-confluence
 description: CLI access to Alexandra's internal Confluence (confluence.alexandra.dk). Requires VPN + credentials. Covers space/page browsing, CQL search, and page CRUD. Use when the user wants to search, read, or write Confluence content.
-last-updated: 2026-05-10
+last-updated: 2026-05-11
 ---
 
 # alexandra-confluence
 
 Internal Confluence at `https://confluence.alexandra.dk/`. **Requires VPN** — without it, all requests fail with DNS or connection errors.
 
-All interaction goes through `alexandra_confluence.py` (stdlib only). Credentials come from `CONFLUENCE_USER` / `CONFLUENCE_PASS` — either as env vars, in a `.env` file (simple `KEY=VALUE` format, loaded automatically), or via interactive prompts. When env vars are set, authentication is proactive (no anonymous first request). Only session cookies are persisted (in `~/.alexandra-confluence/cookies.txt`). Expired sessions (302 to login) are detected and re-authenticated automatically.
+All interaction goes through the `alex-confluence` command. Credentials come from `CONFLUENCE_USER` / `CONFLUENCE_PASS` — either as env vars, in a `.env` file (simple `KEY=VALUE` format, loaded automatically), or via interactive prompts. When env vars are set, authentication is proactive (no anonymous first request). Only session cookies are persisted (in `~/.alexandra-confluence/cookies.txt`). Expired sessions (302 to login) are detected and re-authenticated automatically.
 
 ## Commands
 
@@ -17,12 +17,12 @@ Commands follow a standardized **CRUD** pattern across all resource groups: `lis
 ### Spaces
 
 ```bash
-python3 alexandra_confluence.py spaces list [--limit 1000] [--start 0]
-python3 alexandra_confluence.py spaces read --key KEY
-python3 alexandra_confluence.py spaces search QUERY [--limit 20]
-python3 alexandra_confluence.py spaces search --cql 'type=space AND title~"foo"' [--limit 20]
-python3 alexandra_confluence.py spaces create --key K --name N [--description TEXT]
-python3 alexandra_confluence.py spaces update --key K [--name N] [--description TEXT]
+alex-confluence spaces list [--limit 1000] [--start 0]
+alex-confluence spaces read --key KEY
+alex-confluence spaces search QUERY [--limit 20]
+alex-confluence spaces search --cql 'type=space AND title~"foo"' [--limit 20]
+alex-confluence spaces create --key K --name N [--description TEXT]
+alex-confluence spaces update --key K [--name N] [--description TEXT]
 ```
 
 `spaces search` uses the Confluence CQL search API. `QUERY` is shorthand for title search. Use `--cql` for full CQL queries (e.g., `description~"AI"`).
@@ -30,13 +30,13 @@ python3 alexandra_confluence.py spaces update --key K [--name N] [--description 
 ### Pages
 
 ```bash
-python3 alexandra_confluence.py pages list --space-key PROJ [--limit 20]
-python3 alexandra_confluence.py pages search "Alexandra Way" [--limit 10]
-python3 alexandra_confluence.py pages search --cql 'space=PROJ AND type=page' [--limit 20]
-python3 alexandra_confluence.py pages read --key PAGE_KEY [--body-format auto|text|html]
-python3 alexandra_confluence.py pages read --id PAGE_ID [--body-format auto|text|html]
-python3 alexandra_confluence.py pages create --space-key PROJ --title T --body "<p>…</p>" [--parent ID]
-python3 alexandra_confluence.py pages update --id ID --body "<p>…</p>" [--title T] [--minor-edit]
+alex-confluence pages list --space-key PROJ [--limit 20]
+alex-confluence pages search "Alexandra Way" [--limit 10]
+alex-confluence pages search --cql 'space=PROJ AND type=page' [--limit 20]
+alex-confluence pages read --key PAGE_KEY [--body-format auto|text|html]
+alex-confluence pages read --id PAGE_ID [--body-format auto|text|html]
+alex-confluence pages create --space-key PROJ --title T --body "<p>…</p>" [--parent ID]
+alex-confluence pages update --id ID --body "<p>…</p>" [--title T] [--minor-edit]
 ```
 
 `pages search` is a convenience helper for searching across spaces. Use `--cql` for full CQL queries.
@@ -44,11 +44,11 @@ python3 alexandra_confluence.py pages update --id ID --body "<p>…</p>" [--titl
 ### Projects
 
 ```bash
-python3 alexandra_confluence.py projects list --space-key PROJ [--limit 20]
-python3 alexandra_confluence.py projects read --key PAGE_KEY [--body-format auto|text|html]
-python3 alexandra_confluence.py projects read --id PAGE_ID [--body-format auto|text|html]
-python3 alexandra_confluence.py projects create --title T --client C --owner O [--budget B] [--space-key PROJ]
-python3 alexandra_confluence.py projects update --id ID --body "<p>…</p>" [--title T] [--minor-edit]
+alex-confluence projects list --space-key PROJ [--limit 20]
+alex-confluence projects read --key PAGE_KEY [--body-format auto|text|html]
+alex-confluence projects read --id PAGE_ID [--body-format auto|text|html]
+alex-confluence projects create --title T --client C --owner O [--budget B] [--space-key PROJ]
+alex-confluence projects update --id ID --body "<p>…</p>" [--title T] [--minor-edit]
 ```
 
 Projects use the same `pages read`/`update` implementation under the hood, but `projects create` fills the standard "Projektforklæde" template.
@@ -56,12 +56,12 @@ Projects use the same `pages read`/`update` implementation under the hood, but `
 ### AI Lab Slides
 
 ```bash
-python3 alexandra_confluence.py ai-lab-slides list
-python3 alexandra_confluence.py ai-lab-slides read --id CAT:INDEX
-python3 alexandra_confluence.py ai-lab-slides search "keyword"
-python3 alexandra_confluence.py ai-lab-slides search --cql 'title~"something"'
-python3 alexandra_confluence.py ai-lab-slides create --category CAT --title T [--date YYYY-MM-DD] [--owner-key KEY] [--language LANG] [--slides FILE] [--note TEXT]
-python3 alexandra_confluence.py ai-lab-slides update --category CAT --index N [--title T] [--date D] [--owner-key K] [--language L] [--slides F] [--note N]
+alex-confluence ai-lab-slides list
+alex-confluence ai-lab-slides read --id CAT:INDEX
+alex-confluence ai-lab-slides search "keyword"
+alex-confluence ai-lab-slides search --cql 'title~"something"'
+alex-confluence ai-lab-slides create --category CAT --title T [--date YYYY-MM-DD] [--owner-key KEY] [--language LANG] [--slides FILE] [--note TEXT]
+alex-confluence ai-lab-slides update --category CAT --index N [--title T] [--date D] [--owner-key K] [--language L] [--slides F] [--note N]
 ```
 
 **Available categories:**
@@ -88,19 +88,19 @@ All slides live in one Confluence page (id `97042311`) organized into tables by 
 
 To read a specific slide:
 
-1. Run `ai-lab-slides list` to see all slides with their IDs, or `ai-lab-slides search "keyword"` to find matching ones.
+1. Run `alex-confluence ai-lab-slides list` to see all slides with their IDs, or `alex-confluence ai-lab-slides search "keyword"` to find matching ones.
 2. Copy the ID from the output, e.g. `[nlp:3]`.
-3. Read it: `ai-lab-slides read --id nlp:3`.
+3. Read it: `alex-confluence ai-lab-slides read --id nlp:3`.
 
-You can also use `--category` + `--index` instead of `--id`: `ai-lab-slides read --category nlp --index 3`.
+You can also use `--category` + `--index` instead of `--id`: `alex-confluence ai-lab-slides read --category nlp --index 3`.
 
 When using `--raw`, the output includes a `_id` field you can use in subsequent commands.
 
 ### Authentication
 
 ```bash
-python3 alexandra_confluence.py whoami
-python3 alexandra_confluence.py auth   # force re-auth
+alex-confluence whoami
+alex-confluence auth   # force re-auth
 ```
 
 ## Page bodies
@@ -132,11 +132,11 @@ Page bodies use **Confluence Storage Format** (XML with `<ac:…>` macros) — p
 | CorporateComm | Alexandra corporate communication |
 | ACC | Accounting Space |
 
-Note: Security Lab does not have a dedicated Confluence space. Other spaces exist for ad-hoc projects and smaller teams. To find a specific space, use `spaces search "keyword"` or `spaces list` to browse all of them.
+Note: Security Lab does not have a dedicated Confluence space. Other spaces exist for ad-hoc projects and smaller teams. To find a specific space, use `alex-confluence spaces search "keyword"` or `alex-confluence spaces list` to browse all of them.
 
 To list all spaces (default limit 1000 covers all 721 spaces):
 ```bash
-python3 alexandra_confluence.py spaces list
+alex-confluence spaces list
 ```
 
 For pagination, use `--start` (offset) and `--limit` (page size).
@@ -155,7 +155,7 @@ Simple `KEY=VALUE` format. Blank lines and `#` comments are ignored. Surrounding
 
 PROJ is the heart of Confluence. It houses **The Alexandra Way** methodology (hybrid project management, agile development, user-driven innovation), core docs (`Om The Alexandra Way`, `Projektordbog`), and all active project pages.
 
-All project pages are children of **`Projektoverblik (The Alexandra Way)`** (page id `208044217`). Use `projects create` to create a new one — it auto-fills the standard "Projektforklæde" template with sections for Projektinfo (status, owner, budget, kode), Beskrivelse, Tjeklister, Administrative/Migrations-/Udviklingsopgaver, and Milestones. Defaults: `--space-key PROJ`, ancestor `208044217`, status "Under initiering".
+All project pages are children of **`Projektoverblik (The Alexandra Way)`** (page id `208044217`). Use `alex-confluence projects create` to create a new one — it auto-fills the standard "Projektforklæde" template with sections for Projektinfo (status, owner, budget, kode), Beskrivelse, Tjeklister, Administrative/Migrations-/Udviklingsopgaver, and Milestones. Defaults: `--space-key PROJ`, ancestor `208044217`, status "Under initiering".
 
 ## No destructive operations
 

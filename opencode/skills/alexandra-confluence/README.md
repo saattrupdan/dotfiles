@@ -2,10 +2,33 @@
 
 Agent skill for Alexandra Institute's internal Confluence at `confluence.alexandra.dk` (Confluence Server 7.19.17). **Requires Alexandra VPN.**
 
+## Installation
+
+Install the CLI in editable mode from this directory:
+
+```bash
+pip install -e .
+```
+
+Or install normally:
+
+```bash
+pip install .
+```
+
+This provides the `alex-confluence` command globally.
+
 ## Files
 
 - **SKILL.md** — Full reference: CRUD commands by resource, CQL syntax, key spaces, "The Alexandra Way" project template.
-- **alexandra_confluence.py** — Python CLI helper. Standard library only. Reads `CONFLUENCE_USER` / `CONFLUENCE_PASS` from env vars, a `.env` file, or prompts via `getpass`; session cookies cached in `~/.alexandra-confluence/cookies.txt`. Proactive auth when env vars are set.
+- **scripts/main.py** — Entry point. Loads `.env`, parses args, dispatches.
+- **scripts/http.py** — HTTP helpers with retry logic.
+- **scripts/auth.py** — Authentication, cookie management, credential loading.
+- **scripts/cli_parser.py** — CLI argument parser builder.
+- **scripts/cli_dispatch.py** — Command dispatch table.
+- **scripts/utils/parsing.py** — HTML/table parsing helpers.
+- **scripts/utils/pages.py** — Page ID resolution, heading/category mapping.
+- **scripts/resources/** — Resource handlers (spaces, pages, projects, slides).
 
 ## Quick start
 
@@ -17,11 +40,11 @@ export CONFLUENCE_PASS='your-password'   # single-quote if it has & @ / # etc.
 ```
 
 ```bash
-python3 alexandra_confluence.py spaces list
-python3 alexandra_confluence.py spaces search "AI"
-python3 alexandra_confluence.py pages search "Alexandra Way"
-python3 alexandra_confluence.py pages read --key PAGE_KEY
-python3 alexandra_confluence.py projects create --title "My Project" --client "Client" --owner "Owner"
+alex-confluence spaces list
+alex-confluence spaces search "AI"
+alex-confluence pages search "Alexandra Way"
+alex-confluence pages read --key PAGE_KEY
+alex-confluence projects create --title "My Project" --client "Client" --owner "Owner"
 ```
 
 ## Commands by resource
@@ -48,9 +71,9 @@ Note: The `presentations` category heading has a typo ("Presentions") on the Con
 
 To find and read a specific slide:
 
-1. **List all slides:** `ai-lab-slides list` — shows every slide with its unique `[cat:index]` ID.
-2. **Search:** `ai-lab-slides search "deep learning"` — finds matching slides across all categories.
-3. **Read a specific slide:** `ai-lab-slides read --id nlp:3` — uses the unique ID from the list/search output. You can also use `--category nlp --index 3` as an alternative.
+1. **List all slides:** `alex-confluence ai-lab-slides list` — shows every slide with its unique `[cat:index]` ID.
+2. **Search:** `alex-confluence ai-lab-slides search "deep learning"` — finds matching slides across all categories.
+3. **Read a specific slide:** `alex-confluence ai-lab-slides read --id nlp:3` — uses the unique ID from the list/search output. You can also use `--category nlp --index 3` as an alternative.
 
 Use `--raw` for JSON output that includes a `_id` field for scripting.
 
@@ -70,7 +93,7 @@ Some frequently used spaces:
 | CorporateComm | Alexandra corporate communication |
 | ACC | Accounting Space |
 
-Note: Security Lab does not have a dedicated Confluence space. Other spaces exist for ad-hoc projects and smaller teams. Use `spaces search "keyword"` to find additional spaces.
+Note: Security Lab does not have a dedicated Confluence space. Other spaces exist for ad-hoc projects and smaller teams. Use `alex-confluence spaces search "keyword"` to find additional spaces.
 
 ## .env file
 
@@ -90,4 +113,4 @@ Simple `KEY=VALUE` format. Blank lines and `#` comments are ignored. Surrounding
 
 - **Connection / DNS errors** — VPN not connected.
 - **Login failed** — wrong credentials; delete `~/.alexandra-confluence/cookies.txt` and retry.
-- **HTTP 302** — session expired; the script re-authenticates automatically, or run `auth` to force it.
+- **HTTP 302** — session expired; the CLI re-authenticates automatically, or run `alex-confluence auth` to force it.
