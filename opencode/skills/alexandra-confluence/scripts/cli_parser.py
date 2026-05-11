@@ -27,8 +27,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("spaces", help="Manage spaces")
     sp = p.add_subparsers(dest="operation", required=True)
 
+    ps = sp.add_parser("size", help="Total number of spaces")
+    _raw(ps)
+
     pl = sp.add_parser("list", help="List all spaces")
-    pl.add_argument("--limit", type=int, default=1000)
+    pl.add_argument("--limit", type=int, default=100)
     pl.add_argument("--start", type=int, default=0)
     _raw(pl)
 
@@ -57,6 +60,9 @@ def _build_parser() -> argparse.ArgumentParser:
     # ── pages ──
     p = sub.add_parser("pages", help="Manage pages")
     pp = p.add_subparsers(dest="operation", required=True)
+
+    ps = pp.add_parser("size", help="Total number of pages")
+    _raw(ps)
 
     pl = pp.add_parser("list", help="List pages in a space")
     pl.add_argument("--space-key", required=True)
@@ -98,6 +104,9 @@ def _build_parser() -> argparse.ArgumentParser:
     # ── projects ──
     p = sub.add_parser("projects", help="Manage projects")
     pj = p.add_subparsers(dest="operation", required=True)
+
+    pj_size = pj.add_parser("size", help="Total number of project pages")
+    _raw(pj_size)
 
     pj_list = pj.add_parser("list", help="List project pages")
     pj_list.add_argument("--space-key", default="PROJ")
@@ -214,6 +223,12 @@ def _build_parser() -> argparse.ArgumentParser:
     all_s.add_argument("query", nargs="?", help="Title search shorthand")
     all_s.add_argument("--cql", help="Full CQL query (overrides query)")
     _raw(all_s)
+
+    als = alp.add_parser(
+        "size",
+        help="Total number of slide entries",
+    )
+    _raw(als)
 
     # ── whoami ──
     whoami_p = sub.add_parser("whoami", help="Show current user")

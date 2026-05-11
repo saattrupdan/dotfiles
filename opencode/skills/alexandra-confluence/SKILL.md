@@ -8,16 +8,19 @@ last-updated: 2026-05-11
 
 Internal Confluence at `https://confluence.alexandra.dk/`. **Requires VPN** — without it, all requests fail with DNS or connection errors.
 
+**Agent note:** Always try the `alex-confluence` command first. If it is not found (`command not found`), install it automatically by running `pipx install -e <skill_directory>` (editable install from the skill's own directory). For instance, `pipx install -e ~/.opencode/skills/alexandra-confluence` if OpenCode is used. After installation, retry the original command.
+
 All interaction goes through the `alex-confluence` command. Credentials come from `CONFLUENCE_USER` / `CONFLUENCE_PASS` — either as env vars, in a `.env` file (simple `KEY=VALUE` format, loaded automatically), or via interactive prompts. When env vars are set, authentication is proactive (no anonymous first request). Only session cookies are persisted (in `~/.alexandra-confluence/cookies.txt`). Expired sessions (302 to login) are detected and re-authenticated automatically.
 
 ## Commands
 
-Commands follow a standardized **CRUD** pattern across all resource groups: `list`, `read`, `create`, `update`. Some resources also have `search` as a convenience helper. Every leaf command supports `--raw` to print unformatted JSON. Errors go to stderr with non-zero exit.
+Commands follow a standardized **CRUD+S** pattern across all resource groups: `size` returns a single number, `list` enumerates items, `read` fetches one item, `create` adds a new item, `update` modifies an existing one. Some resources also have `search` as a convenience helper. Every leaf command supports `--raw` to print unformatted JSON. Errors go to stderr with non-zero exit.
 
 ### Spaces
 
 ```bash
-alex-confluence spaces list [--limit 1000] [--start 0]
+alex-confluence spaces size
+alex-confluence spaces list [--limit 100] [--start 0]
 alex-confluence spaces read --key KEY
 alex-confluence spaces search QUERY [--limit 20]
 alex-confluence spaces search --cql 'type=space AND title~"foo"' [--limit 20]
@@ -25,11 +28,18 @@ alex-confluence spaces create --key K --name N [--description TEXT]
 alex-confluence spaces update --key K [--name N] [--description TEXT]
 ```
 
+`spaces size` prints the total number of spaces as a single integer.
+
 `spaces search` uses the Confluence CQL search API. `QUERY` is shorthand for title search. Use `--cql` for full CQL queries (e.g., `description~"AI"`).
+
+All `--limit` flags cap the **desired** number of results per call, but the Confluence API enforces a hard maximum of 100 per page. The CLI handles pagination automatically: when the desired limit exceeds 100, it makes multiple API calls (with `limit=100`) until all results are fetched. You can manually paginate with `--start` + `--limit` for fine-grained control.
+
+The `spaces list` default of `--limit 100` returns the first 100 spaces. To list all ~721 spaces, use `--limit 1000` (the CLI will paginate internally with multiple `limit=100` API calls).
 
 ### Pages
 
 ```bash
+alex-confluence pages size
 alex-confluence pages list --space-key PROJ [--limit 20]
 alex-confluence pages search "Alexandra Way" [--limit 10]
 alex-confluence pages search --cql 'space=PROJ AND type=page' [--limit 20]
@@ -39,11 +49,14 @@ alex-confluence pages create --space-key PROJ --title T --body "<p>…</p>" [--p
 alex-confluence pages update --id ID --body "<p>…</p>" [--title T] [--minor-edit]
 ```
 
+`pages size` prints the total number of pages across all spaces as a single integer.
+
 `pages search` is a convenience helper for searching across spaces. Use `--cql` for full CQL queries.
 
 ### Projects
 
 ```bash
+alex-confluence projects size
 alex-confluence projects list --space-key PROJ [--limit 20]
 alex-confluence projects read --key PAGE_KEY [--body-format auto|text|html]
 alex-confluence projects read --id PAGE_ID [--body-format auto|text|html]
@@ -51,11 +64,14 @@ alex-confluence projects create --title T --client C --owner O [--budget B] [--s
 alex-confluence projects update --id ID --body "<p>…</p>" [--title T] [--minor-edit]
 ```
 
+`projects size` prints the total number of project pages (children of "Projektoverblik") as a single integer.
+
 Projects use the same `pages read`/`update` implementation under the hood, but `projects create` fills the standard "Projektforklæde" template.
 
 ### AI Lab Slides
 
 ```bash
+alex-confluence ai-lab-slides size
 alex-confluence ai-lab-slides list
 alex-confluence ai-lab-slides read --id CAT:INDEX
 alex-confluence ai-lab-slides search "keyword"
@@ -63,6 +79,8 @@ alex-confluence ai-lab-slides search --cql 'title~"something"'
 alex-confluence ai-lab-slides create --category CAT --title T [--date YYYY-MM-DD] [--owner-key KEY] [--language LANG] [--slides FILE] [--note TEXT]
 alex-confluence ai-lab-slides update --category CAT --index N [--title T] [--date D] [--owner-key K] [--language L] [--slides F] [--note N]
 ```
+
+`ai-lab-slides size` prints the total number of slide entries as a single integer.
 
 **Available categories:**
 
@@ -134,12 +152,12 @@ Page bodies use **Confluence Storage Format** (XML with `<ac:…>` macros) — p
 
 Note: Security Lab does not have a dedicated Confluence space. Other spaces exist for ad-hoc projects and smaller teams. To find a specific space, use `alex-confluence spaces search "keyword"` or `alex-confluence spaces list` to browse all of them.
 
-To list all spaces (default limit 1000 covers all 721 spaces):
+To list all spaces (~721), use `--limit 1000` — the CLI paginates internally (the Confluence API caps each page at 100):
 ```bash
-alex-confluence spaces list
+alex-confluence spaces list --limit 1000
 ```
 
-For pagination, use `--start` (offset) and `--limit` (page size).
+For manual pagination, combine `--start` (offset) with `--limit` (page size).
 
 ## .env file
 

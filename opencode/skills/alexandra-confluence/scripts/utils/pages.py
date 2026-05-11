@@ -93,6 +93,8 @@ def parse_categories_from_body(body: str) -> dict[str, tuple[str, str]]:
     Returns:
         Dict mapping category key -> (heading_text, sort_field).
     """
+    from .parsing import clean_heading
+
     cat_map: dict[str, tuple[str, str]] = {}
 
     for m in re.finditer(r"<h[12][^>]*>(.*?)</h[12]>", body, re.DOTALL):
@@ -130,3 +132,33 @@ def build_heading_to_cat_map(
     for cat_key, (heading_text, _) in cat_key_to_heading.items():
         heading_map[heading_text] = cat_key
     return heading_map
+
+
+def find_nearest_heading(
+    heading_positions: list[int],
+    table_position: int,
+    body: str,
+) -> str | None:
+    """Find the nearest heading text preceding a table position.
+
+    Scans heading positions backwards from the table position and
+    returns the text of the closest preceding <h1>/<h2> tag.
+
+    Args:
+        heading_positions: Sorted list of byte offsets of '<h1>'/'<h2>' tags.
+        table_position: Byte offset of the table start.
+        body: Full page body HTML.
+
+    Returns:
+        Cleaned heading text, or None if no heading precedes the table.
+    """
+    from .parsing import clean_heading
+
+    pos = table_position
+    for hp in reversed(heading_positions):
+        if hp >= pos:
+            continue
+        m = re.match(r"<h[12][^>]*>(.*?)</h[12]>", body[hp:], re.DOTALL)
+        if m:
+            return clean_heading(m.group(1))
+    return None

@@ -13,13 +13,71 @@ import urllib.parse
 
 from ..auth import _KNOWN_CATEGORIES, _SLIDE_DECKS_PAGE_ID, BASE
 from ..http import _request_json
-from ..utils.parsing import emit_json, strip_tags
+from ..utils.parsing import emit_json, extract_tbody_rows, strip_tags
 from ..utils.pages import build_heading_to_cat_map, find_nearest_heading
 from .slides_core import extract_category_rows
 
 
 class AiLabSlides:
     """Manage AI Lab slide deck entries on a Confluence page."""
+
+    @staticmethod
+    def size(opener: t.Any, args: t.Any) -> None:
+        """Total number of slide entries."""
+        page = _request_json(
+            opener,
+            f"/rest/api/content/{_SLIDE_DECKS_PAGE_ID}?"
+            f"expand=body.view",
+        )
+        body = page["body"]["view"]["value"]
+
+        heading_map = build_heading_to_cat_map(body)
+        heading_positions = [
+            m.start() for m in re.finditer(r"<h[12]", body)
+        ]
+
+        table_positions: list[tuple[int, int]] = []
+        for m in re.finditer(r"<table", body):
+            start = m.start()
+            depth = 0
+            end = -1
+            for i in range(start, len(body)):
+                if body[i : i + 6] == "<table":
+                    depth += 1
+                elif body[i : i + 8] == "</table>":
+                    depth -= 1
+                    if depth == 0:
+                        end = i + 8
+                        break
+            if end > 0:
+                table_positions.append((start, end))
+
+        total = 0
+        for t_start, t_end in table_positions:
+            tbody_rows = extract_tbody_rows(
+                t_start, t_end, body
+            )
+            if tbody_rows is None:
+                continue
+            heading_text = find_nearest_heading(
+                heading_positions, t_start, body
+            )
+            if heading_text is None:
+                continue
+            cat_key = heading_map.get(heading_text)
+            if cat_key is None:
+                from ..utils.pages import resolve_category_key
+
+                cat_key = resolve_category_key(heading_text)
+                if cat_key:
+                    heading_map[heading_text] = cat_key
+            if cat_key is None:
+                continue
+            total += len(tbody_rows)
+
+        if args.raw:
+            return emit_json({"total_slides": total})
+        print(total)
 
     @staticmethod
     def read(opener: t.Any, args: t.Any) -> None:

@@ -16,24 +16,40 @@ class Spaces:
     """Manage Confluence spaces."""
 
     @staticmethod
+    def size(opener: t.Any, args: t.Any) -> None:
+        """Total number of spaces."""
+        api_limit = 100
+        start = 0
+        total = 0
+        while True:
+            qs = urllib.parse.urlencode(
+                {"limit": api_limit, "start": start},
+            )
+            data = _request_json(opener, f"/rest/api/space?{qs}")
+            total += data.get("size", 0)
+            if len(data.get("results", [])) < api_limit:
+                break
+            start += api_limit
+        if args.raw:
+            return emit_json({"total_spaces": total})
+        print(total)
+
+    @staticmethod
     def list(opener: t.Any, args: t.Any) -> None:
         """List all spaces with auto-pagination."""
         start = args.start
         total_seen = 0
-        total_size = 0
+        api_limit = min(args.limit, 100)
 
         while True:
             qs = urllib.parse.urlencode(
                 {
                     "expand": "description.plain",
-                    "limit": args.limit,
+                    "limit": api_limit,
                     "start": start,
                 }
             )
             data = _request_json(opener, f"/rest/api/space?{qs}")
-
-            if total_size == 0:
-                total_size = data.get("size", 0)
 
             results = data.get("results", [])
             total_seen += len(results)
@@ -41,11 +57,14 @@ class Spaces:
             if args.raw:
                 for s in results:
                     emit_json(s)
+                if len(results) < api_limit:
+                    break
+                start += api_limit
                 continue
 
             if start == args.start:
                 print(
-                    f"Total spaces: {total_size}  "
+                    f"Total spaces: ?  "
                     f"(showing {start}-{start + total_seen})"
                 )
 
@@ -64,11 +83,11 @@ class Spaces:
                 if desc:
                     print(f"   {desc}")
 
-            if total_seen >= total_size:
+            if len(results) < api_limit:
                 break
-            start += args.limit
+            start += api_limit
 
-        print(f"Total spaces: {total_size}  (shown: {total_seen})")
+        print(f"Total spaces: {total_seen}  (shown: {total_seen})")
 
     @staticmethod
     def read(opener: t.Any, args: t.Any) -> None:
@@ -166,24 +185,45 @@ class Spaces:
             sys.stderr.write("Provide a query or --cql argument\n")
             sys.exit(2)
 
-        qs = urllib.parse.urlencode({"cql": cql, "limit": args.limit})
-        data = _request_json(opener, f"/rest/api/search?{qs}")
-        if args.raw:
-            return emit_json(data)
+        api_limit = min(args.limit, 100)
+        start = 0
+        total = 0
+        shown = 0
 
-        total = data.get("totalSize", 0)
-        print(f"Space search results: {total} total")
+        while True:
+            qs = urllib.parse.urlencode({"cql": cql, "limit": api_limit, "start": start})
+            data = _request_json(opener, f"/rest/api/search?{qs}")
 
-        for r in data.get("results", []):
-            space = r.get("space") or {}
-            key = space.get("key", "?")
-            name = space.get("name", "?")
-            desc = (
-                space.get("description", {})
-                .get("plain", {})
-                .get("value", "")
-                or ""
-            )[:150]
-            print(f"  [{key}] {name}")
-            if desc:
-                print(f"    {desc}")
+            if total == 0:
+                total = data.get("totalSize", 0)
+
+            if args.raw:
+                for r in data.get("results", []):
+                    emit_json(r)
+                if shown >= total:
+                    break
+                shown += len(data.get("results", []))
+                start += api_limit
+                continue
+
+            if start == 0:
+                print(f"Space search results: {total} total")
+
+            for r in data.get("results", []):
+                space = r.get("space") or {}
+                key = space.get("key", "?")
+                name = space.get("name", "?")
+                desc = (
+                    space.get("description", {})
+                    .get("plain", {})
+                    .get("value", "")
+                    or ""
+                )[:150]
+                print(f"  [{key}] {name}")
+                if desc:
+                    print(f"    {desc}")
+
+            shown += len(data.get("results", []))
+            if shown >= total:
+                break
+            start += api_limit

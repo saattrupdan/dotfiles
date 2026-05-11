@@ -19,19 +19,20 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from ._constants import (
+    BASE,
+    INITIAL_BACKOFF,
+    MAX_RETRIES,
+    UA,
+    _ConfluenceError,
+)
 from .http import _request_json
 
 
-# ── Constants ────────────────────────────────────────────────────────
-
-BASE: str = "https://confluence.alexandra.dk"
-UA: str = "Mozilla/5.0 (alexandra-confluence-cli)"
 COOKIE_DIR: Path = Path.home() / ".alexandra-confluence"
 COOKIE_FILE: Path = COOKIE_DIR / "cookies.txt"
 _SLIDE_DECKS_PAGE_ID: str = "97042311"
 PROJ_ANCESTOR_ID: str = "208044217"  # "Projektoverblik (The Alexandra Way)"
-_MAX_RETRIES: int = 3
-_INITIAL_BACKOFF: float = 1.0
 
 _KNOWN_CATEGORIES: dict[str, tuple[str, str]] = {
     "about-us": ("1. About Us presentations", "date"),
@@ -52,15 +53,6 @@ _KNOWN_CATEGORIES: dict[str, tuple[str, str]] = {
 
 
 # ── Exception ────────────────────────────────────────────────────────
-
-
-class _ConfluenceError(Exception):
-    """Raised when a Confluence API call returns an error status code."""
-
-    def __init__(self, code: int, message: str) -> None:
-        self.code = code
-        self.message = message
-        super().__init__(f"HTTP {code}: {message}")
 
 
 # ── Credential loading ──────────────────────────────────────────────
@@ -170,7 +162,7 @@ def _authenticate(opener: urllib.request.OpenerDirector) -> None:
     retryable_codes: set[int] = {429, 500, 502, 503}
 
     # Step 1: GET /index.action to establish session
-    for attempt in range(_MAX_RETRIES + 1):
+    for attempt in range(MAX_RETRIES + 1):
         try:
             opener.open(
                 urllib.request.Request(
@@ -181,30 +173,30 @@ def _authenticate(opener: urllib.request.OpenerDirector) -> None:
             ).close()
             break
         except urllib.error.HTTPError as e:
-            if attempt < _MAX_RETRIES and e.code in retryable_codes:
+            if attempt < MAX_RETRIES and e.code in retryable_codes:
                 sys.stderr.write(
                     f"Auth session GET {e.code} "
-                    f"(retry {attempt + 1}/{_MAX_RETRIES})\n",
+                    f"(retry {attempt + 1}/{MAX_RETRIES})\n",
                 )
-                time.sleep(_INITIAL_BACKOFF * (2**attempt))
+                time.sleep(INITIAL_BACKOFF * (2**attempt))
                 continue
             sys.stderr.write(
                 f"Failed to establish session: HTTP {e.code}\n",
             )
             sys.exit(2)
         except urllib.error.URLError as e:
-            if attempt < _MAX_RETRIES:
+            if attempt < MAX_RETRIES:
                 sys.stderr.write(
                     f"Auth session network error "
-                    f"(retry {attempt + 1}/{_MAX_RETRIES})\n",
+                    f"(retry {attempt + 1}/{MAX_RETRIES})\n",
                 )
-                time.sleep(_INITIAL_BACKOFF * (2**attempt))
+                time.sleep(INITIAL_BACKOFF * (2**attempt))
                 continue
             sys.stderr.write(f"Failed to establish session: {e.reason}\n")
             sys.exit(2)
 
     # Step 2: GET /login.action to fetch form token
-    for attempt in range(_MAX_RETRIES + 1):
+    for attempt in range(MAX_RETRIES + 1):
         try:
             with opener.open(
                 urllib.request.Request(
@@ -216,22 +208,22 @@ def _authenticate(opener: urllib.request.OpenerDirector) -> None:
                 page = r.read().decode("utf-8", errors="replace")
             break
         except urllib.error.HTTPError as e:
-            if attempt < _MAX_RETRIES and e.code in retryable_codes:
+            if attempt < MAX_RETRIES and e.code in retryable_codes:
                 sys.stderr.write(
                     f"Auth login GET {e.code} "
-                    f"(retry {attempt + 1}/{_MAX_RETRIES})\n",
+                    f"(retry {attempt + 1}/{MAX_RETRIES})\n",
                 )
-                time.sleep(_INITIAL_BACKOFF * (2**attempt))
+                time.sleep(INITIAL_BACKOFF * (2**attempt))
                 continue
             sys.stderr.write(f"HTTP {e.code} on GET /login.action\n")
             sys.exit(2)
         except urllib.error.URLError as e:
-            if attempt < _MAX_RETRIES:
+            if attempt < MAX_RETRIES:
                 sys.stderr.write(
                     f"Auth login network error "
-                    f"(retry {attempt + 1}/{_MAX_RETRIES})\n",
+                    f"(retry {attempt + 1}/{MAX_RETRIES})\n",
                 )
-                time.sleep(_INITIAL_BACKOFF * (2**attempt))
+                time.sleep(INITIAL_BACKOFF * (2**attempt))
                 continue
             sys.stderr.write(f"GET /login.action failed: {e.reason}\n")
             sys.exit(2)
@@ -261,7 +253,7 @@ def _authenticate(opener: urllib.request.OpenerDirector) -> None:
     )
 
     # Step 3: POST /dologin.action
-    for attempt in range(_MAX_RETRIES + 1):
+    for attempt in range(MAX_RETRIES + 1):
         try:
             with opener.open(req, timeout=30) as r:
                 if r.status != 200:
@@ -269,22 +261,22 @@ def _authenticate(opener: urllib.request.OpenerDirector) -> None:
                     sys.exit(2)
             break
         except urllib.error.HTTPError as e:
-            if attempt < _MAX_RETRIES and e.code in retryable_codes:
+            if attempt < MAX_RETRIES and e.code in retryable_codes:
                 sys.stderr.write(
                     f"Auth login POST {e.code} "
-                    f"(retry {attempt + 1}/{_MAX_RETRIES})\n",
+                    f"(retry {attempt + 1}/{MAX_RETRIES})\n",
                 )
-                time.sleep(_INITIAL_BACKOFF * (2**attempt))
+                time.sleep(INITIAL_BACKOFF * (2**attempt))
                 continue
             sys.stderr.write(f"Login failed: HTTP {e.code}\n")
             sys.exit(2)
         except urllib.error.URLError as e:
-            if attempt < _MAX_RETRIES:
+            if attempt < MAX_RETRIES:
                 sys.stderr.write(
                     f"Auth login POST network error "
-                    f"(retry {attempt + 1}/{_MAX_RETRIES})\n",
+                    f"(retry {attempt + 1}/{MAX_RETRIES})\n",
                 )
-                time.sleep(_INITIAL_BACKOFF * (2**attempt))
+                time.sleep(INITIAL_BACKOFF * (2**attempt))
                 continue
             sys.stderr.write(f"POST /dologin.action failed: {e.reason}\n")
             sys.exit(2)

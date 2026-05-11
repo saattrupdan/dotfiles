@@ -20,20 +20,24 @@ def build_dispatch() -> dict[tuple[str, str | None], c.Callable[..., None]]:
         Dict mapping (resource, operation) to handler functions.
     """
     return {
+        ("spaces", "size"): Spaces.size,
         ("spaces", "list"): Spaces.list,
         ("spaces", "read"): Spaces.read,
         ("spaces", "create"): Spaces.create,
         ("spaces", "update"): Spaces.update,
         ("spaces", "search"): Spaces.search,
+        ("pages", "size"): Pages.size,
         ("pages", "list"): Pages.list,
         ("pages", "search"): Pages.search,
         ("pages", "read"): Pages.read,
         ("pages", "create"): Pages.create,
         ("pages", "update"): Pages.update,
+        ("projects", "size"): Projects.size,
         ("projects", "list"): Projects.list,
         ("projects", "read"): Projects.read,
         ("projects", "create"): Projects.create,
         ("projects", "update"): Projects.update,
+        ("ai-lab-slides", "size"): AiLabSlides.size,
         ("ai-lab-slides", "read"): AiLabSlides.read,
         ("ai-lab-slides", "create"): AiLabSlidesWrite.create,
         ("ai-lab-slides", "update"): AiLabSlidesWrite.update,
@@ -46,8 +50,8 @@ def build_dispatch() -> dict[tuple[str, str | None], c.Callable[..., None]]:
 
 def cmd_whoami(opener: t.Any, args: t.Any) -> None:
     """Show current user."""
-    from ..http import _request_json
-    from ..utils.parsing import emit_json
+    from .http import _request_json
+    from .utils.parsing import emit_json
 
     data = _request_json(
         opener,
@@ -63,7 +67,7 @@ def cmd_whoami(opener: t.Any, args: t.Any) -> None:
 
 def cmd_auth(opener: t.Any, args: t.Any) -> None:
     """Force re-auth: clear creds + cookies, then login."""
-    from ..auth import (
+    from .auth import (
         COOKIE_FILE,
         _authenticate,
         _cached_creds,
