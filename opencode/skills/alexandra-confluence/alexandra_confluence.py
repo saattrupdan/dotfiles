@@ -40,8 +40,10 @@ COOKIE_FILE: Path = COOKIE_DIR / "cookies.txt"
 PROJ_ANCESTOR_ID: str = "208044217"  # "Projektoverblik (The Alexandra Way)"
 _SLIDE_DECKS_PAGE_ID: str = "97042311"  # AI Lab slide decks page
 _page_id_cache: dict[str, str] = {}
+_resolved_cat_cache: dict[str, str | None] = {}
 MAX_RETRIES: int = 3
 INITIAL_BACKOFF: float = 1.0
+HEADING_FUZZY_THRESHOLD: float = 0.8
 
 _KNOWN_CATEGORIES: dict[str, tuple[str, str]] = {
     "about-us": ("1. About Us presentations", "date"),
@@ -714,32 +716,64 @@ def _parse_categories_from_body(body: str) -> dict[str, tuple[str, str]]:
                 ratio = difflib.SequenceMatcher(
                     None, heading_text, known_heading
                 ).ratio()
-                if ratio >= 0.8:
+                if ratio >= HEADING_FUZZY_THRESHOLD:
                     cat_map[cat_key] = (heading_text, sort_field)
                     break
 
     return cat_map
 
 
-def _fuzzy_heading_match(
+def _find_heading_match(
     body: str,
-    heading_text: str,
-    threshold: float = 0.8,
-) -> str | None:
-    """Find a heading in body that matches *heading_text* (exact or fuzzy).
+    target_heading: str,
+    threshold: float = HEADING_FUZZY_THRESHOLD,
+) -> tuple[str | None, re.Match[str] | None]:
+    """Find a heading in body that matches *target_heading* (exact or fuzzy).
 
-    Returns the cleaned heading text from the body if found, else None.
+    Returns a tuple of (matched_heading_text, regex_match_object) or (None, None).
+    Using the match object avoids searching for the heading a second time.
     """
     for m in re.finditer(r"<h[12][^>]*>(.*?)</h[12]>", body, re.DOTALL):
         candidate = _clean_heading(m.group(1))
-        if candidate == heading_text:
-            return candidate
+        if candidate == target_heading:
+            return candidate, m
         # Fuzzy fallback
         for known_heading, _ in _KNOWN_CATEGORIES.values():
             if difflib.SequenceMatcher(
                 None, candidate, known_heading
             ).ratio() >= threshold:
-                return candidate
+                return candidate, m
+    return None, None
+
+
+def _resolve_category_key(heading_text: str) -> str | None:
+    """Resolve a CLI category key from a heading display text.
+
+    Tries exact match against _KNOWN_CATEGORIES first, then fuzzy match.
+    Caches results in a module-level dict to avoid repeated lookups.
+
+    Args:
+        heading_text: Cleaned heading text from the page.
+
+    Returns:
+        The CLI category key (e.g. 'nlp'), or None if no match.
+    """
+    if heading_text in _resolved_cat_cache:
+        return _resolved_cat_cache[heading_text]
+
+    # Exact match
+    for ck, (ht, _) in _KNOWN_CATEGORIES.items():
+        if ht == heading_text:
+            _resolved_cat_cache[heading_text] = ck
+            return ck
+
+    # Fuzzy fallback
+    for ck, (ht, _) in _KNOWN_CATEGORIES.items():
+        if difflib.SequenceMatcher(None, heading_text, ht).ratio() >= HEADING_FUZZY_THRESHOLD:
+            _resolved_cat_cache[heading_text] = ck
+            return ck
+
+    _resolved_cat_cache[heading_text] = None
     return None
 
 
@@ -1168,30 +1202,7 @@ class AiLabSlides:
             return None
 
         heading_text, _ = _KNOWN_CATEGORIES[cat_key]
-        heading_match = None
-
-        for m in re.finditer(
-            r"<h[12][^>]*>(.*?)</h[12]>",
-            body,
-            re.DOTALL,
-        ):
-            if _clean_heading(m.group(1)) == heading_text:
-                heading_match = m
-                break
-
-        # Fuzzy fallback if exact match failed
-        if not heading_match:
-            matched_heading = _fuzzy_heading_match(body, heading_text)
-            if matched_heading:
-                for m in re.finditer(
-                    r"<h[12][^>]*>(.*?)</h[12]>",
-                    body,
-                    re.DOTALL,
-                ):
-                    if _clean_heading(m.group(1)) == matched_heading:
-                        heading_match = m
-                        break
-
+        matched_text, heading_match = _find_heading_match(body, heading_text)
         if not heading_match:
             return None
 
@@ -1292,29 +1303,7 @@ class AiLabSlides:
 
         Returns ``(new_body, table_start, table_end)`` or ``None``.
         """
-        heading_match = None
-        for m in re.finditer(
-            r"<h[12][^>]*>(.*?)</h[12]>",
-            body,
-            re.DOTALL,
-        ):
-            if _clean_heading(m.group(1)) == heading_text:
-                heading_match = m
-                break
-
-        # Fuzzy fallback if exact match failed
-        if not heading_match:
-            matched_heading = _fuzzy_heading_match(body, heading_text)
-            if matched_heading:
-                for m in re.finditer(
-                    r"<h[12][^>]*>(.*?)</h[12]>",
-                    body,
-                    re.DOTALL,
-                ):
-                    if _clean_heading(m.group(1)) == matched_heading:
-                        heading_match = m
-                        break
-
+        matched_text, heading_match = _find_heading_match(body, heading_text)
         if not heading_match:
             return None
 
@@ -1513,29 +1502,7 @@ class AiLabSlides:
         )
 
         # Locate the nth <tr> in the tbody and replace it
-        heading_match = None
-        for m in re.finditer(
-            r"<h[12][^>]*>(.*?)</h[12]>",
-            body,
-            re.DOTALL,
-        ):
-            if _clean_heading(m.group(1)) == heading_text:
-                heading_match = m
-                break
-
-        # Fuzzy fallback if exact match failed
-        if not heading_match:
-            matched_heading = _fuzzy_heading_match(body, heading_text)
-            if matched_heading:
-                for m in re.finditer(
-                    r"<h[12][^>]*>(.*?)</h[12]>",
-                    body,
-                    re.DOTALL,
-                ):
-                    if _clean_heading(m.group(1)) == matched_heading:
-                        heading_match = m
-                        break
-
+        matched_text, heading_match = _find_heading_match(body, heading_text)
         if not heading_match:
             sys.stderr.write(
                 f"Could not find heading '{heading_text}' in page\n",
@@ -1729,22 +1696,9 @@ class AiLabSlides:
 
             cat_key = heading_map.get(heading_text)
             if cat_key is None:
-                # Try exact match
-                for ck, (ht, _) in _KNOWN_CATEGORIES.items():
-                    if ht == heading_text:
-                        cat_key = ck
-                        heading_map[heading_text] = cat_key
-                        break
-            if cat_key is None:
-                # Try fuzzy match
-                for ck, (ht, _) in _KNOWN_CATEGORIES.items():
-                    ratio = difflib.SequenceMatcher(
-                        None, heading_text, ht
-                    ).ratio()
-                    if ratio >= 0.8:
-                        cat_key = ck
-                        heading_map[heading_text] = cat_key
-                        break
+                cat_key = _resolve_category_key(heading_text)
+                if cat_key:
+                    heading_map[heading_text] = cat_key
             if cat_key is None:
                 continue
 
@@ -1843,22 +1797,9 @@ class AiLabSlides:
 
             cat_key = heading_map.get(heading_text)
             if cat_key is None:
-                # Try exact match
-                for ck, (ht, _) in _KNOWN_CATEGORIES.items():
-                    if ht == heading_text:
-                        cat_key = ck
-                        heading_map[heading_text] = cat_key
-                        break
-            if cat_key is None:
-                # Try fuzzy match
-                for ck, (ht, _) in _KNOWN_CATEGORIES.items():
-                    ratio = difflib.SequenceMatcher(
-                        None, heading_text, ht
-                    ).ratio()
-                    if ratio >= 0.8:
-                        cat_key = ck
-                        heading_map[heading_text] = cat_key
-                        break
+                cat_key = _resolve_category_key(heading_text)
+                if cat_key:
+                    heading_map[heading_text] = cat_key
             if cat_key is None:
                 continue
 
