@@ -1071,7 +1071,7 @@ class AiLabSlides:
         slides = row.get("slides")
         if slides:
             encoded = urllib.parse.quote(slides)
-            print(f"  Download: {BASE}/download/attachments/{_SLIDE_DECKS_PAGE_ID}/{encoded}?version=1")
+            print(f"  Download: {BASE}/download/attachments/{_SLIDE_DECKS_PAGE_ID}/{encoded}")
 
     @staticmethod
     def _insert_row_into_table(
