@@ -1068,7 +1068,10 @@ class AiLabSlides:
             row["slides"],
         ]
         print(f"  {'  '.join(p for p in parts if p)}")
-        print(f"  Page: {BASE}/pages/viewpage.action?pageId={_SLIDE_DECKS_PAGE_ID}")
+        slides = row.get("slides")
+        if slides:
+            encoded = urllib.parse.quote(slides)
+            print(f"  Download: {BASE}/download/attachments/{_SLIDE_DECKS_PAGE_ID}/{encoded}?version=1")
 
     @staticmethod
     def _insert_row_into_table(
