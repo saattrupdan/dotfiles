@@ -1,6 +1,6 @@
 ---
 name: build
-description: Use when you need to make changes to the codebase.
+description: Use when you need to edit files in the codebase.
 mode: subagent
 permission:
   read: allow

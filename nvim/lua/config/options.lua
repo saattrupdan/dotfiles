@@ -10,7 +10,7 @@ vim.opt.errorbells=false
 vim.opt.visualbell=true
 
 -- Automatically change the current working directory to the present file
-vim.opt.autochdir=true
+-- vim.opt.autochdir=true
 
 -- Enable absolute line numbering
 vim.opt.number=true

@@ -20,7 +20,7 @@ return {
           tools = {
             show_output = true,
             show_reasoning_output = false,
-            use_folds = true,
+            use_folds = false,
             folding_threshold = 5,
           },
         },

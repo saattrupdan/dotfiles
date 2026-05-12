@@ -1,6 +1,7 @@
 ---
 name: plan
-description: Use when you need to plan a multistep code base change.
+description: Use when you need to plan anything. Don't plan yourself, use this subagent
+instead.
 mode: subagent
 permission:
   read: allow
@@ -31,6 +32,8 @@ precise sentences, no fluff, no questions. Do the following:
 3. Create a plan to handle the user's request. This should adhere to the following:
    - The plan should be minimal, be straight to the point and only contain the absolute
      essentials needed to implement the code.
+   - The plan should NOT contain full file contents, it should just contain high-level
+     instructions on what to do,
    - The end of the plan should contain a todo list of independent steps to implement
      the code. These should be prefixes with "[ ]", as in "[ ] <todo-item>"
    - Each todo item should result in a code base change.

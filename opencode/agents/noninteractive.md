@@ -1,6 +1,6 @@
 ---
-name: orchestrator
-description: Orchestrate subagents to handle user requests.
+name: noninteractive
+description: Orchestrate subagents to handle user requests in a non-interactive way.
 mode: primary
 permission:
   read: allow
@@ -12,7 +12,7 @@ permission:
   task: allow
   skill: allow
   lsp: deny
-  question: allow
+  question: deny
   webfetch: deny
   websearch: deny
   external_directory: deny
@@ -29,8 +29,6 @@ Prefer to use subagents to do the actual work. You call these with your `task` t
 Don't ask your subagents to return full file contents to you, and never send full file
 contents to your subagents!
 
-You can ask the user questions with your `question` tool, unless the user explicitly
-asks you not to.
 
 If you have several build tasks that need doing (for instance, from the output of a
 @plan subagent), you should prioritise running the @build subagents in parallel. The

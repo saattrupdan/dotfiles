@@ -9,14 +9,11 @@
     "internal-inference-server",
     "inference-server"
   ],
-  "server": {
-    "port": 6789
-  },
   "model": "sparkie/Qwen/Qwen3.6-35B-A3B-FP8",
   "default_agent": "orchestrator",
   "agent": {
     "explore": {
-      "disable": true
+      "disable": false
     },
     "general": {
       "disable": true
@@ -34,6 +31,9 @@
       "models": {
         "qwen3.6-35B-A3B" : {
           "name": "Qwen3.6-35B-A3B"
+        },
+        "gemma-4-e4b-it": {
+          "name": "Gemma-4-E4B"
         }
       }
     },
