@@ -1,0 +1,1667 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Deck — Solid</title>
+<!--
+  ============================================================
+  TEMPLATE: SOLID
+
+  An editorial-tech theme inspired by solid.design.
+
+    - Deep black base with subtle aurora gradient
+    - Frosted-glass cards (backdrop-filter blur)
+    - Inter Tight for headlines, JetBrains Mono for chrome
+    - Numbered markers (`01`) in hairline bordered boxes — signature
+    - Hairline gradient borders, subtle inner highlights
+    - Noise overlay for premium tech feel
+    - No chromatic accent
+
+  Same 21 components and behavior as deck.html.
+  ============================================================
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  :root {
+    --bg: #0a0a0a;
+    --bg-deeper: #050505;
+    --glass: rgba(255,255,255,0.03);
+    --glass-strong: rgba(255,255,255,0.05);
+    --glass-bright: rgba(255,255,255,0.08);
+    --hairline: rgba(255,255,255,0.08);
+    --hairline-strong: rgba(255,255,255,0.14);
+    --hairline-bright: rgba(255,255,255,0.22);
+    --text: #f0f0f0;
+    --text-muted: #8a8a8a;
+    --text-subtle: #555555;
+    --invert-bg: #f5f5f3;
+    --invert-text: #0a0a0a;
+    --invert-muted: #5a5a5a;
+    --radius-sm: 6px;
+    --radius: 10px;
+    --radius-lg: 14px;
+    --radius-pill: 999px;
+    --mono: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace;
+    --blur: blur(24px) saturate(1.4);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    font-family: 'Inter Tight', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: 'ss01', 'cv11';
+  }
+
+  /* Aurora gradient — gives the frosted glass something to reveal */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 70% 50% at 18% 8%, rgba(255,255,255,0.06), transparent 55%),
+      radial-gradient(ellipse 60% 50% at 82% 92%, rgba(255,255,255,0.04), transparent 55%),
+      radial-gradient(ellipse 100% 60% at 50% 50%, transparent 30%, rgba(0,0,0,0.5) 100%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* Subtle noise overlay for premium tech feel */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.18 0'/></filter><rect width='200' height='200' filter='url(%23n)'/></svg>");
+    background-size: 200px 200px;
+    opacity: 0.35;
+    mix-blend-mode: overlay;
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  .deck {
+    width: 100vw;
+    height: 100vh;
+    position: relative;
+    z-index: 2;
+  }
+
+  .slide {
+    position: absolute;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 6vh 8vw;
+  }
+
+  .slide.active { display: flex; }
+
+  .slide-inner {
+    width: 100%;
+    max-width: 1100px;
+  }
+
+  /* --- Glass primitive shared across cards --- */
+  .glass {
+    background: var(--glass);
+    backdrop-filter: var(--blur);
+    -webkit-backdrop-filter: var(--blur);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.06),
+      0 1px 0 rgba(0,0,0,0.3);
+  }
+
+  /* --- Typography --- */
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    font-weight: 400;
+    color: var(--text-muted);
+    margin-bottom: 1.75rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: var(--glass);
+    backdrop-filter: var(--blur);
+    -webkit-backdrop-filter: var(--blur);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    padding: 0.3rem 0.6rem;
+    letter-spacing: 0.02em;
+  }
+
+  .eyebrow::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    background: var(--text);
+    border-radius: 50%;
+    display: inline-block;
+    box-shadow: 0 0 8px rgba(255,255,255,0.4);
+  }
+
+  h1 {
+    font-size: clamp(2.5rem, 5.6vw, 5rem);
+    font-weight: 500;
+    line-height: 1.02;
+    letter-spacing: -0.04em;
+    color: var(--text);
+    margin-bottom: 1.5rem;
+  }
+
+  h1 span.dim, h2 span.dim, h3 span.dim {
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+
+  h2 {
+    font-size: clamp(1.7rem, 3.3vw, 2.6rem);
+    font-weight: 500;
+    line-height: 1.1;
+    letter-spacing: -0.03em;
+    color: var(--text);
+    margin-bottom: 1.25rem;
+  }
+
+  .subtitle {
+    font-family: var(--mono);
+    font-size: clamp(0.82rem, 1.05vw, 0.92rem);
+    color: var(--text-muted);
+    font-weight: 400;
+    line-height: 1.65;
+    max-width: 720px;
+  }
+
+  .meta {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    font-weight: 400;
+    margin-top: 3rem;
+    letter-spacing: 0.02em;
+  }
+
+  /* --- Quote slide --- */
+  .quote-slide h1 {
+    font-size: clamp(2.8rem, 6.2vw, 5.8rem);
+    line-height: 1.0;
+    letter-spacing: -0.045em;
+  }
+
+  /* --- Two col --- */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4rem;
+    align-items: center;
+  }
+
+  .two-col h3 {
+    font-size: 1rem;
+    font-weight: 500;
+    color: var(--text);
+    margin-bottom: 0.5rem;
+  }
+
+  .two-col p {
+    font-family: var(--mono);
+    font-size: 0.84rem;
+    color: var(--text-muted);
+    line-height: 1.65;
+  }
+
+  .col-stack > * + * { margin-top: 0; }
+
+  .step {
+    font-family: var(--mono);
+    font-size: clamp(0.8rem, 1.05vw, 0.92rem);
+    color: var(--text);
+    font-weight: 400;
+    padding: 0.8rem 0.95rem;
+    background: var(--glass);
+    backdrop-filter: var(--blur);
+    -webkit-backdrop-filter: var(--blur);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+    margin-bottom: 0.45rem;
+  }
+
+  .step.dim { color: var(--text-subtle); border-color: rgba(255,255,255,0.04); background: transparent; box-shadow: none; }
+  .step.kill { color: var(--text); border-color: var(--hairline-strong); }
+  .step.kill::before { content: '×'; margin-right: 0.55rem; color: var(--text-muted); }
+  .step.live { color: var(--text); border-color: var(--hairline-strong); }
+  .step.live::before { content: '✓'; margin-right: 0.55rem; color: var(--text-muted); }
+
+  /* --- Three col --- */
+  .three-col {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+    counter-reset: threecol;
+  }
+
+  .three-col > div {
+    background: var(--glass);
+    backdrop-filter: var(--blur);
+    -webkit-backdrop-filter: var(--blur);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    padding: 1.75rem 1.5rem 1.75rem;
+    position: relative;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.06),
+      0 1px 30px rgba(0,0,0,0.2);
+  }
+
+  .three-col > div::before {
+    content: counter(threecol, decimal-leading-zero);
+    counter-increment: threecol;
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    color: var(--text-subtle);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-sm);
+    padding: 0.2rem 0.45rem;
+  }
+
+  .three-col h3 {
+    font-size: 1.05rem;
+    font-weight: 500;
+    color: var(--text);
+    margin-bottom: 0.5rem;
+    margin-top: 1.75rem;
+    letter-spacing: -0.015em;
+  }
+
+  .three-col p {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    line-height: 1.65;
+  }
+
+  /* --- Capability list (Q&A) --- */
+  .cap-list {
+    background: var(--glass);
+    backdrop-filter: var(--blur);
+    -webkit-backdrop-filter: var(--blur);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    padding: 0.5rem 1.5rem;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+  }
+
+  .cap-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3rem;
+    padding: 1.3rem 0;
+    border-top: 1px solid var(--hairline);
+    align-items: baseline;
+  }
+
+  .cap-row:first-child { border-top: none; }
+  .cap-q { font-size: 1.05rem; font-weight: 500; color: var(--text); letter-spacing: -0.015em; }
+  .cap-a { font-family: var(--mono); font-size: 0.82rem; color: var(--text-muted); line-height: 1.65; }
+
+  /* --- Callout --- */
+  .callout {
+    background: var(--glass-strong);
+    backdrop-filter: var(--blur);
+    -webkit-backdrop-filter: var(--blur);
+    border: 1px solid var(--hairline-strong);
+    border-radius: var(--radius);
+    padding: 2.5rem 2.75rem;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.1),
+      0 30px 60px rgba(0,0,0,0.4);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .callout::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse 80% 60% at 30% -10%, rgba(255,255,255,0.06), transparent 60%);
+    pointer-events: none;
+  }
+
+  .callout h3 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    margin-bottom: 1rem;
+    font-weight: 400;
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-sm);
+    padding: 0.25rem 0.55rem;
+    display: inline-block;
+    background: var(--glass);
+  }
+
+  .callout p {
+    font-family: var(--mono);
+    font-size: 0.95rem;
+    line-height: 1.65;
+    color: var(--text-muted);
+    position: relative;
+  }
+
+  .callout p strong { color: var(--text); font-weight: 500; }
+
+  /* --- Dot flow --- */
+  .dot-flow {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    margin: 2.5rem 0;
+    position: relative;
+  }
+
+  .dot-flow::before {
+    content: '';
+    position: absolute;
+    top: 14px;
+    left: 8%;
+    right: 8%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--hairline-bright) 20%, var(--hairline-bright) 80%, transparent);
+  }
+
+  .dot-step { text-align: center; }
+
+  .dot-step .dot {
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius-sm);
+    background: var(--bg);
+    border: 1px solid var(--hairline-bright);
+    margin: 0 auto 0.95rem;
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    font-weight: 400;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.06),
+      0 0 0 4px var(--bg);
+  }
+
+  .dot-step h4 { font-size: 0.92rem; font-weight: 500; color: var(--text); margin-bottom: 0.3rem; letter-spacing: -0.01em; }
+  .dot-step p { font-family: var(--mono); font-size: 0.7rem; color: var(--text-muted); line-height: 1.5; padding: 0 0.5rem; }
+
+  /* --- Stack grid --- */
+  .stack-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.75rem;
+    margin-top: 2rem;
+  }
+
+  .stack-card {
+    background: var(--glass);
+    backdrop-filter: var(--blur);
+    -webkit-backdrop-filter: var(--blur);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    padding: 1.25rem 1.25rem 1.4rem;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+  }
+
+  .stack-card-label {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    margin-bottom: 0.95rem;
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-sm);
+    padding: 0.2rem 0.45rem;
+    display: inline-block;
+    font-weight: 400;
+    background: rgba(0,0,0,0.2);
+  }
+
+  .stack-tool {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    font-weight: 400;
+    color: var(--text);
+    padding: 0.3rem 0;
+  }
+
+  .stack-tool .mark {
+    width: 14px;
+    height: 14px;
+    background: transparent;
+    border: 1px solid var(--hairline-bright);
+    border-radius: 3px;
+    flex-shrink: 0;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+  }
+
+  /* --- Spec flow --- */
+  .spec-flow {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin-top: 2rem;
+  }
+
+  .spec-block {
+    background: var(--invert-bg);
+    color: var(--invert-text);
+    border-radius: var(--radius);
+    padding: 1.2rem 1.6rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.5),
+      0 30px 60px rgba(0,0,0,0.3);
+  }
+
+  .spec-block h4 { font-size: 1.05rem; font-weight: 500; letter-spacing: -0.015em; }
+  .spec-block p { font-family: var(--mono); font-size: 0.78rem; color: var(--invert-muted); font-weight: 400; }
+
+  .ctx-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+
+  .ctx-label {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--text-subtle);
+    margin-right: 0.4rem;
+  }
+
+  .ctx-pill {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    background: var(--glass);
+    backdrop-filter: var(--blur);
+    -webkit-backdrop-filter: var(--blur);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-sm);
+    padding: 0.3rem 0.65rem;
+  }
+
+  .ai-divider { display: flex; align-items: center; gap: 1rem; }
+  .ai-divider .line { flex: 1; height: 1px; background: linear-gradient(90deg, transparent, var(--hairline-bright), transparent); }
+
+  .ai-pill {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    font-weight: 400;
+    color: var(--text-muted);
+    background: var(--glass);
+    backdrop-filter: var(--blur);
+    -webkit-backdrop-filter: var(--blur);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-sm);
+    padding: 0.25rem 0.6rem;
+  }
+
+  .outputs-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.75rem; }
+
+  .output-card {
+    background: var(--glass);
+    backdrop-filter: var(--blur);
+    -webkit-backdrop-filter: var(--blur);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    padding: 1.1rem 1.2rem;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+  }
+
+  .output-card h5 { font-size: 0.95rem; font-weight: 500; color: var(--text); margin-bottom: 0.3rem; letter-spacing: -0.015em; }
+  .output-card p { font-family: var(--mono); font-size: 0.7rem; color: var(--text-muted); line-height: 1.55; }
+
+  /* --- Product slide --- */
+  .product-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 4rem;
+    align-items: center;
+  }
+
+  .product-meta { max-width: 460px; }
+  .product-num {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    margin-bottom: 1.5rem;
+    background: var(--glass);
+    backdrop-filter: var(--blur);
+    -webkit-backdrop-filter: var(--blur);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-sm);
+    padding: 0.25rem 0.55rem;
+    display: inline-block;
+  }
+  .product-tag { font-size: 0.92rem; font-weight: 500; color: var(--text-muted); margin-bottom: 0.85rem; letter-spacing: -0.01em; }
+
+  .product-headline {
+    font-size: clamp(1.5rem, 2.6vw, 2.2rem);
+    font-weight: 500;
+    color: var(--text);
+    line-height: 1.15;
+    letter-spacing: -0.03em;
+    margin-bottom: 1rem;
+  }
+
+  .product-desc {
+    font-family: var(--mono);
+    font-size: clamp(0.85rem, 1.05vw, 0.95rem);
+    color: var(--text-muted);
+    line-height: 1.65;
+    margin-bottom: 1.5rem;
+  }
+
+  .product-stat {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    background: var(--glass);
+    backdrop-filter: var(--blur);
+    -webkit-backdrop-filter: var(--blur);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-sm);
+    padding: 0.3rem 0.6rem;
+    display: inline-block;
+  }
+
+  .product-name {
+    font-size: clamp(4rem, 9vw, 8rem);
+    font-weight: 500;
+    color: var(--text);
+    letter-spacing: -0.05em;
+    line-height: 0.95;
+    text-align: right;
+    background: linear-gradient(180deg, var(--text) 0%, rgba(240,240,240,0.5) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .product-name sup {
+    font-size: 0.25em;
+    font-weight: 400;
+    color: var(--text-muted);
+    -webkit-text-fill-color: var(--text-muted);
+    vertical-align: super;
+    margin-left: 0.1em;
+  }
+
+  /* --- Collage slide --- */
+  .slide.collage-slide {
+    background: var(--bg);
+    padding: 4vh 4vw;
+  }
+
+  .collage {
+    border-radius: var(--radius);
+    overflow: hidden;
+    border: 1px solid var(--hairline);
+    box-shadow: 0 40px 100px rgba(0,0,0,0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 0;
+  }
+
+  .collage img,
+  .collage video {
+    max-height: 92vh;
+    max-width: 90vw;
+    height: auto;
+    width: auto;
+    display: block;
+  }
+
+  .collage .placeholder {
+    font-family: var(--mono);
+    color: var(--text-subtle);
+    font-size: 0.75rem;
+    letter-spacing: 0.04em;
+    padding: 4rem;
+    text-align: center;
+    background: var(--glass);
+    backdrop-filter: var(--blur);
+    -webkit-backdrop-filter: var(--blur);
+    aspect-ratio: 3 / 4;
+    height: 92vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* --- JEDUF --- */
+  .jeduf {
+    display: grid;
+    grid-template-columns: 1fr 1.15fr 1fr;
+    gap: 0.75rem;
+    margin-top: 1.5rem;
+  }
+
+  .jeduf-col {
+    background: var(--glass);
+    backdrop-filter: var(--blur);
+    -webkit-backdrop-filter: var(--blur);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    padding: 1.4rem 1.2rem 1.6rem;
+    display: flex;
+    flex-direction: column;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+  }
+
+  .jeduf-col.hero {
+    background: var(--invert-bg);
+    color: var(--invert-text);
+    border-color: var(--invert-bg);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.5),
+      0 30px 60px rgba(0,0,0,0.4);
+  }
+
+  .jeduf-label {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    margin-bottom: 0.55rem;
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-sm);
+    padding: 0.18rem 0.45rem;
+    display: inline-block;
+    align-self: flex-start;
+    background: rgba(0,0,0,0.2);
+  }
+
+  .jeduf-col.hero .jeduf-label {
+    color: var(--invert-muted);
+    border-color: rgba(0,0,0,0.15);
+    background: transparent;
+  }
+
+  .jeduf-title { font-size: 1.05rem; font-weight: 500; color: var(--text); margin-bottom: 0.4rem; letter-spacing: -0.015em; }
+  .jeduf-col.hero .jeduf-title { color: var(--invert-text); }
+
+  .jeduf-philosophy {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    margin-bottom: 1rem;
+    line-height: 1.55;
+    min-height: 30pt;
+  }
+
+  .jeduf-col.hero .jeduf-philosophy { color: var(--invert-muted); }
+
+  .jeduf-step {
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-sm);
+    padding: 0.5rem 0.75rem;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    font-weight: 400;
+    text-align: left;
+    color: var(--text);
+    background: rgba(0,0,0,0.2);
+    margin-bottom: 0.4rem;
+  }
+
+  .jeduf-col.hero .jeduf-step {
+    background: rgba(0,0,0,0.04);
+    border-color: rgba(0,0,0,0.1);
+    color: var(--invert-text);
+  }
+
+  /* --- Timeline --- */
+  .timeline {
+    display: flex;
+    flex-direction: column;
+    margin-top: 2rem;
+  }
+
+  .timeline-row {
+    display: grid;
+    grid-template-columns: 120px 24px 1fr;
+    gap: 0 1.5rem;
+    align-items: start;
+  }
+
+  .timeline-year {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    font-weight: 400;
+    text-align: right;
+    padding-top: 1.15rem;
+    color: var(--text-muted);
+    letter-spacing: 0.02em;
+  }
+
+  .timeline-track {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+    height: 100%;
+  }
+
+  .timeline-dot {
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    background: var(--bg);
+    border: 1px solid var(--hairline-bright);
+    margin-top: 1.3rem;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 1;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.1),
+      0 0 12px rgba(255,255,255,0.08);
+  }
+
+  .timeline-line {
+    width: 1px;
+    flex: 1;
+    background: linear-gradient(180deg, var(--hairline-bright), var(--hairline));
+  }
+
+  .timeline-row:last-child .timeline-line { display: none; }
+
+  .timeline-content {
+    padding: 1rem 0 2rem;
+  }
+
+  .timeline-content h4 {
+    font-size: 1rem;
+    font-weight: 500;
+    color: var(--text);
+    margin-bottom: 0.3rem;
+    letter-spacing: -0.015em;
+  }
+
+  .timeline-content p {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    line-height: 1.6;
+  }
+
+  /* --- Stat grid --- */
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.85rem;
+    margin-top: 2rem;
+  }
+
+  .stat-card {
+    background: var(--glass);
+    backdrop-filter: var(--blur);
+    -webkit-backdrop-filter: var(--blur);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    padding: 1.75rem 1.6rem;
+    position: relative;
+    overflow: hidden;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+  }
+
+  .stat-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse 100% 60% at 30% 0%, rgba(255,255,255,0.04), transparent 60%);
+    pointer-events: none;
+  }
+
+  .stat-card.stat-dark {
+    background: var(--invert-bg);
+    border-color: var(--invert-bg);
+    color: var(--invert-text);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.5),
+      0 30px 60px rgba(0,0,0,0.4);
+  }
+
+  .stat-card.stat-dark::before { display: none; }
+
+  .stat-number {
+    font-size: clamp(2.6rem, 5vw, 3.8rem);
+    font-weight: 500;
+    color: var(--text);
+    letter-spacing: -0.045em;
+    line-height: 1;
+    margin-bottom: 0.7rem;
+    position: relative;
+  }
+
+  .stat-card.stat-dark .stat-number { color: var(--invert-text); }
+
+  .stat-label {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    margin-bottom: 0.8rem;
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-sm);
+    padding: 0.2rem 0.45rem;
+    display: inline-block;
+    background: rgba(0,0,0,0.2);
+    position: relative;
+  }
+
+  .stat-card.stat-dark .stat-label {
+    color: var(--invert-muted);
+    border-color: rgba(0,0,0,0.15);
+    background: transparent;
+  }
+
+  .stat-desc {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    line-height: 1.55;
+    position: relative;
+  }
+
+  .stat-card.stat-dark .stat-desc { color: var(--invert-muted); }
+
+  /* --- Quote pair --- */
+  .quote-pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.85rem;
+    margin-top: 2rem;
+  }
+
+  .quote-card {
+    background: var(--glass);
+    backdrop-filter: var(--blur);
+    -webkit-backdrop-filter: var(--blur);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    padding: 1.85rem 1.6rem;
+    display: flex;
+    flex-direction: column;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+  }
+
+  .quote-card.quote-dark {
+    background: var(--invert-bg);
+    border-color: var(--invert-bg);
+    color: var(--invert-text);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.5),
+      0 30px 60px rgba(0,0,0,0.4);
+  }
+
+  .quote-text {
+    font-size: clamp(0.98rem, 1.3vw, 1.18rem);
+    font-weight: 400;
+    line-height: 1.45;
+    flex: 1;
+    color: var(--text);
+    margin-bottom: 1.25rem;
+    letter-spacing: -0.015em;
+  }
+
+  .quote-card.quote-dark .quote-text { color: var(--invert-text); }
+
+  .quote-attr {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    font-weight: 400;
+    color: var(--text-muted);
+    padding-top: 1rem;
+    border-top: 1px solid var(--hairline);
+  }
+
+  .quote-card.quote-dark .quote-attr {
+    color: var(--invert-muted);
+    border-top-color: rgba(0,0,0,0.1);
+  }
+
+  /* --- Logo grid --- */
+  .logo-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.75rem;
+    margin-top: 2rem;
+  }
+
+  .logo-cell {
+    background: var(--glass);
+    backdrop-filter: var(--blur);
+    -webkit-backdrop-filter: var(--blur);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    padding: 1.5rem 1rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    min-height: 120px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+  }
+
+  .logo-cell img {
+    max-height: 36px;
+    max-width: 80%;
+    margin-bottom: 0.85rem;
+    object-fit: contain;
+    filter: grayscale(1) brightness(1.4);
+    opacity: 0.65;
+  }
+
+  .logo-mark {
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius-sm);
+    background: rgba(0,0,0,0.3);
+    border: 1px solid var(--hairline-bright);
+    margin-bottom: 0.85rem;
+    flex-shrink: 0;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+  }
+
+  .logo-name {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    font-weight: 400;
+    color: var(--text);
+  }
+
+  .logo-role {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    color: var(--text-subtle);
+    margin-top: 0.25rem;
+  }
+
+  /* --- Code slide --- */
+  .code-frame {
+    background: rgba(0,0,0,0.4);
+    backdrop-filter: var(--blur);
+    -webkit-backdrop-filter: var(--blur);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    padding: 1.6rem 1.85rem;
+    margin-top: 2rem;
+    overflow-x: auto;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.05),
+      0 30px 60px rgba(0,0,0,0.4);
+  }
+
+  .code-frame-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 1.1rem;
+    padding-bottom: 0.85rem;
+    border-bottom: 1px solid var(--hairline);
+  }
+
+  .code-frame-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--hairline-bright);
+  }
+
+  .code-frame-title {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--text-subtle);
+    margin-left: 0.5rem;
+    letter-spacing: 0.02em;
+  }
+
+  .code-frame pre {
+    font-family: var(--mono);
+    font-size: 0.84rem;
+    line-height: 1.7;
+    color: var(--text);
+    margin: 0;
+    background: none;
+  }
+
+  .code-frame .code-comment { color: var(--text-subtle); }
+  .code-frame .code-keyword { color: var(--text-muted); font-weight: 500; }
+  .code-frame .code-string { color: var(--text); }
+  .code-frame .code-dim { color: var(--text-subtle); }
+
+  /* --- "Dark" slide (in this theme: inverted = light) --- */
+  .slide.dark {
+    background: var(--invert-bg);
+    color: var(--invert-text);
+  }
+  .slide.dark::before, .slide.dark::after { display: none; }
+  .slide.dark h1 { color: var(--invert-text); background: none; -webkit-text-fill-color: var(--invert-text); }
+  .slide.dark h1 span.dim { color: var(--invert-muted); font-weight: 500; }
+  .slide.dark .subtitle { color: var(--invert-muted); }
+  .slide.dark .meta { color: var(--invert-muted); }
+  .slide.dark .eyebrow {
+    color: var(--invert-muted);
+    border-color: rgba(0,0,0,0.12);
+    background: rgba(0,0,0,0.02);
+  }
+  .slide.dark .eyebrow::before { background: var(--invert-text); box-shadow: none; }
+
+  /* --- Nav (frosted glass) --- */
+  .nav {
+    position: fixed;
+    bottom: 1.5rem;
+    right: 1.5rem;
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    background: var(--glass-bright);
+    backdrop-filter: var(--blur);
+    -webkit-backdrop-filter: var(--blur);
+    border: 1px solid var(--hairline-strong);
+    border-radius: var(--radius-pill);
+    padding: 0.4rem 0.4rem 0.4rem 1rem;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.08),
+      0 12px 32px rgba(0,0,0,0.4);
+  }
+
+  .nav-buttons { display: flex; gap: 0.3rem; }
+
+  .nav-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--hairline);
+    background: rgba(0,0,0,0.2);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.85rem;
+    padding: 0;
+    font-family: var(--mono);
+  }
+
+  .nav-btn:hover {
+    border-color: var(--hairline-bright);
+    color: var(--text);
+    background: var(--glass-bright);
+  }
+
+  .progress {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--text));
+    transition: width 0.3s ease;
+    z-index: 100;
+  }
+
+  /* --- PDF download button --- */
+  .pdf-btn {
+    position: fixed;
+    bottom: 1.5rem;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 200;
+    background: var(--invert-bg);
+    color: var(--invert-text);
+    border: none;
+    padding: 0.6rem 1.4rem;
+    border-radius: var(--radius-pill);
+    font-family: var(--mono);
+    font-size: 0.74rem;
+    font-weight: 400;
+    cursor: pointer;
+    letter-spacing: 0.02em;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.5),
+      0 12px 32px rgba(0,0,0,0.4);
+  }
+
+  .pdf-btn:hover { background: #ffffff; }
+
+  /* --- Print: each slide becomes one 16:9 PDF page --- */
+  @page { size: 13.333in 7.5in; margin: 0; }
+
+  @media print {
+    html, body {
+      width: 13.333in;
+      height: auto !important;
+      overflow: visible !important;
+      background: var(--bg);
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    body::before, body::after { display: none !important; }
+    .deck { width: 13.333in; height: auto; position: static; }
+    .slide {
+      display: flex !important;
+      position: relative !important;
+      inset: auto !important;
+      width: 13.333in !important;
+      height: 7.5in !important;
+      page-break-after: always !important;
+      break-after: page !important;
+      -webkit-print-color-adjust: exact !important;
+      background: var(--bg) !important;
+    }
+    .slide:last-child { page-break-after: auto !important; }
+    .slide.dark { background: var(--invert-bg) !important; }
+    .nav, .progress, .pdf-btn { display: none !important; }
+    /* Print can't render backdrop-filter; fall back to opaque tint */
+    .glass, .eyebrow, .step, .three-col > div, .cap-list, .callout, .stack-card,
+    .ctx-pill, .ai-pill, .output-card, .product-num, .product-stat,
+    .jeduf-col, .stat-card, .quote-card, .logo-cell, .code-frame, .nav {
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+      background: rgba(255,255,255,0.04) !important;
+    }
+    .jeduf-col.hero, .stat-card.stat-dark, .quote-card.quote-dark, .spec-block {
+      background: var(--invert-bg) !important;
+    }
+  }
+</style>
+</head>
+<body>
+
+<div class="progress" id="progress"></div>
+
+<div class="deck">
+
+  <!-- ========== 1. COVER ========== -->
+  <section class="slide active">
+    <div class="slide-inner">
+      <div class="eyebrow">Conference · Date</div>
+      <h1>Your headline.<br><span class="dim">Continuation that fades.</span></h1>
+      <div class="meta">Speaker name · 20 minutes</div>
+    </div>
+  </section>
+
+  <!-- ========== 2. QUOTE SLIDE ========== -->
+  <section class="slide quote-slide">
+    <div class="slide-inner">
+      <h1>A bold statement <span class="dim">that opens the talk.</span></h1>
+    </div>
+  </section>
+
+  <!-- ========== 3. EYEBROW + HEADLINE + SUBTITLE ========== -->
+  <section class="slide">
+    <div class="slide-inner">
+      <div class="eyebrow">Section label</div>
+      <h1>Section headline. <span class="dim">One line that lands.</span></h1>
+      <p class="subtitle">A subtitle that adds nuance without saying everything. Keep it short. One or two sentences max.</p>
+    </div>
+  </section>
+
+  <!-- ========== 4. TWO-COLUMN (PROBLEM / FIX) ========== -->
+  <section class="slide">
+    <div class="slide-inner">
+      <div class="two-col">
+        <div>
+          <div class="eyebrow">01 / The problem</div>
+          <h2>What's broken.</h2>
+          <p>Describe the situation today. Be specific. Avoid abstractions. The reader should recognize their own pain.</p>
+        </div>
+        <div>
+          <div class="eyebrow">02 / The fix</div>
+          <h2>What we built.</h2>
+          <p>Describe the solution. Same length and tone as the problem. Side-by-side comparison drives the point.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 4b. TWO-COLUMN STEP STACK ========== -->
+  <section class="slide">
+    <div class="slide-inner">
+      <div class="two-col">
+        <div>
+          <div class="eyebrow">Section label</div>
+          <h2>Title for the steps on the right.</h2>
+          <p class="subtitle">Brief explanation of what these steps represent.</p>
+        </div>
+        <div class="col-stack">
+          <div class="step">First step</div>
+          <div class="step">Second step</div>
+          <div class="step">Third step</div>
+          <div class="step dim">Fourth step (dimmed = blocker)</div>
+          <div class="step dim">Fifth step (dimmed)</div>
+          <div class="step kill">Final outcome (negative)</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 5. THREE-COLUMN (WHY / HOW / WHAT) ========== -->
+  <section class="slide">
+    <div class="slide-inner">
+      <div class="eyebrow">Section label</div>
+      <h2>Headline for the breakdown.</h2>
+      <div class="three-col" style="margin-top: 2rem;">
+        <div>
+          <h3>Why</h3>
+          <p>The motivation. Why this matters. Why now.</p>
+        </div>
+        <div>
+          <h3>How</h3>
+          <p>The mechanism. The four pillars. The structure.</p>
+        </div>
+        <div>
+          <h3>What</h3>
+          <p>The outcome. What you walk away with.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 6. CAPABILITY LIST (Q&A) ========== -->
+  <section class="slide">
+    <div class="slide-inner">
+      <div class="eyebrow">What it solves</div>
+      <h2>The questions you have. <span class="dim">Answered.</span></h2>
+      <div class="cap-list" style="margin-top: 2rem;">
+        <div class="cap-row">
+          <div class="cap-q">Question one?</div>
+          <div class="cap-a">A clear, specific answer that addresses the question directly.</div>
+        </div>
+        <div class="cap-row">
+          <div class="cap-q">Question two?</div>
+          <div class="cap-a">Another concrete answer. Avoid hedging.</div>
+        </div>
+        <div class="cap-row">
+          <div class="cap-q">Question three?</div>
+          <div class="cap-a">Keep answers parallel in length and tone.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 7. CALLOUT ========== -->
+  <section class="slide">
+    <div class="slide-inner">
+      <div class="callout">
+        <h3>Why now</h3>
+        <p>The moment lands here. <strong>The key insight in bold.</strong> Then the supporting context. One callout per deck max — too many and the emphasis stops working.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 8. DOT FLOW ========== -->
+  <section class="slide">
+    <div class="slide-inner">
+      <div class="eyebrow">The flow</div>
+      <h2>How it works. <span class="dim">Step by step.</span></h2>
+      <div class="dot-flow">
+        <div class="dot-step"><div class="dot">01</div><h4>Step 1</h4><p>Short caption</p></div>
+        <div class="dot-step"><div class="dot">02</div><h4>Step 2</h4><p>Short caption</p></div>
+        <div class="dot-step"><div class="dot">03</div><h4>Step 3</h4><p>Short caption</p></div>
+        <div class="dot-step"><div class="dot">04</div><h4>Step 4</h4><p>Short caption</p></div>
+        <div class="dot-step"><div class="dot">05</div><h4>Step 5</h4><p>Short caption</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 9. STACK GRID ========== -->
+  <section class="slide">
+    <div class="slide-inner">
+      <div class="eyebrow">The stack</div>
+      <h2>Built on tools <span class="dim">you already know.</span></h2>
+      <div class="stack-grid">
+        <div class="stack-card">
+          <div class="stack-card-label">01 / Category one</div>
+          <div class="stack-tool"><span class="mark"></span>Tool A</div>
+          <div class="stack-tool"><span class="mark"></span>Tool B</div>
+          <div class="stack-tool"><span class="mark"></span>Tool C</div>
+        </div>
+        <div class="stack-card">
+          <div class="stack-card-label">02 / Category two</div>
+          <div class="stack-tool"><span class="mark"></span>Tool D</div>
+          <div class="stack-tool"><span class="mark"></span>Tool E</div>
+        </div>
+        <div class="stack-card">
+          <div class="stack-card-label">03 / Category three</div>
+          <div class="stack-tool"><span class="mark"></span>Tool F</div>
+          <div class="stack-tool"><span class="mark"></span>Tool G</div>
+        </div>
+        <div class="stack-card">
+          <div class="stack-card-label">04 / Category four</div>
+          <div class="stack-tool"><span class="mark"></span>Tool H</div>
+          <div class="stack-tool"><span class="mark"></span>Tool I</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 10. SPEC BLOCK + CONTEXT + OUTPUTS ========== -->
+  <section class="slide">
+    <div class="slide-inner">
+      <div class="eyebrow">The mechanism</div>
+      <h2>One input. <span class="dim">Three outputs.</span></h2>
+      <div class="spec-flow">
+        <div class="spec-block">
+          <h4>The Input</h4>
+          <p>What goes in</p>
+        </div>
+        <div class="ctx-row">
+          <span class="ctx-label">draws from</span>
+          <span class="ctx-pill">Source 1</span>
+          <span class="ctx-pill">Source 2</span>
+          <span class="ctx-pill">Source 3</span>
+        </div>
+        <div class="ai-divider">
+          <div class="line"></div>
+          <span class="ai-pill">Process</span>
+          <div class="line"></div>
+        </div>
+        <div class="outputs-row">
+          <div class="output-card"><h5>Output A</h5><p>What it produces.</p></div>
+          <div class="output-card"><h5>Output B</h5><p>What it produces.</p></div>
+          <div class="output-card"><h5>Output C</h5><p>What it produces.</p></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 11. PRODUCT SLIDE ========== -->
+  <section class="slide">
+    <div class="slide-inner">
+      <div class="product-row">
+        <div class="product-meta">
+          <div class="product-num">01</div>
+          <div class="product-tag">A short, punchy quote or hook.</div>
+          <h3 class="product-headline">One-line description of what this thing does.</h3>
+          <p class="product-desc">Two or three sentences that explain it. Keep it concrete. Avoid abstract language. Tell the story behind it.</p>
+          <div class="product-stat">A few hours · One weekend · Or whatever's true</div>
+        </div>
+        <div class="product-name">Name<sup>™</sup></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 12. COLLAGE SLIDE ========== -->
+  <section class="slide collage-slide">
+    <div class="collage">
+      <img src="media/KMS529.jpg" alt="" style="width:100%;height:100%;object-fit:cover;">
+    </div>
+  </section>
+
+  <!-- ========== 13. JEDUF THREE-COLUMN COMPARISON ========== -->
+  <section class="slide">
+    <div class="slide-inner">
+      <div class="eyebrow">The middle path</div>
+      <h2>Between two extremes. <span class="dim">The thing that actually works.</span></h2>
+      <div class="jeduf">
+        <div class="jeduf-col">
+          <div class="jeduf-label">Too much</div>
+          <div class="jeduf-title">Extreme A</div>
+          <div class="jeduf-philosophy">A philosophy quote that captures the extreme.</div>
+          <div class="jeduf-step">Step 1</div>
+          <div class="jeduf-step">Step 2</div>
+          <div class="jeduf-step">Step 3</div>
+          <div class="jeduf-step">Step 4</div>
+        </div>
+        <div class="jeduf-col hero">
+          <div class="jeduf-label">Just right</div>
+          <div class="jeduf-title">The middle path</div>
+          <div class="jeduf-philosophy">The philosophy of the balanced approach.</div>
+          <div class="jeduf-step">Step 1</div>
+          <div class="jeduf-step">Step 2</div>
+          <div class="jeduf-step">Step 3</div>
+          <div class="jeduf-step">Step 4</div>
+        </div>
+        <div class="jeduf-col">
+          <div class="jeduf-label">Too little</div>
+          <div class="jeduf-title">Extreme B</div>
+          <div class="jeduf-philosophy">A philosophy quote that captures the other extreme.</div>
+          <div class="jeduf-step">Step 1</div>
+          <div class="jeduf-step">Step 2</div>
+          <div class="jeduf-step">Step 3</div>
+          <div class="jeduf-step">Step 4</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 14. TIMELINE ========== -->
+  <section class="slide">
+    <div class="slide-inner">
+      <div class="eyebrow">The journey</div>
+      <h2>How we got here. <span class="dim">Year by year.</span></h2>
+      <div class="timeline">
+        <div class="timeline-row">
+          <div class="timeline-year">Year 1</div>
+          <div class="timeline-track"><div class="timeline-dot"></div><div class="timeline-line"></div></div>
+          <div class="timeline-content"><h4>The starting point</h4><p>Where things began. The initial conditions and constraints.</p></div>
+        </div>
+        <div class="timeline-row">
+          <div class="timeline-year">Year 2</div>
+          <div class="timeline-track"><div class="timeline-dot"></div><div class="timeline-line"></div></div>
+          <div class="timeline-content"><h4>Early progress</h4><p>First experiments. Initial wins. Lessons learned.</p></div>
+        </div>
+        <div class="timeline-row">
+          <div class="timeline-year">Year 3</div>
+          <div class="timeline-track"><div class="timeline-dot"></div><div class="timeline-line"></div></div>
+          <div class="timeline-content"><h4>The inflection</h4><p>The moment things accelerated. What changed and why.</p></div>
+        </div>
+        <div class="timeline-row">
+          <div class="timeline-year">Now</div>
+          <div class="timeline-track"><div class="timeline-dot"></div><div class="timeline-line"></div></div>
+          <div class="timeline-content"><h4>Where we are</h4><p>Current state. What's been achieved. What's next.</p></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 15. STAT GRID ========== -->
+  <section class="slide">
+    <div class="slide-inner">
+      <div class="eyebrow">The numbers</div>
+      <h2>Impact you can measure. <span class="dim">Not just feel.</span></h2>
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="stat-label">Metric one</div>
+          <div class="stat-number">N×</div>
+          <div class="stat-desc">What this number means in context. Be specific.</div>
+        </div>
+        <div class="stat-card stat-dark">
+          <div class="stat-label">Metric two</div>
+          <div class="stat-number">00</div>
+          <div class="stat-desc">The hero number. Light card draws attention here.</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Metric three</div>
+          <div class="stat-number">00%</div>
+          <div class="stat-desc">Another concrete measurement with context.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 16. QUOTE PAIR ========== -->
+  <section class="slide">
+    <div class="slide-inner">
+      <div class="eyebrow">Two perspectives</div>
+      <h2>The debate. <span class="dim">Both sides, one slide.</span></h2>
+      <div class="quote-pair">
+        <div class="quote-card">
+          <div class="quote-text">"The first perspective. A position or belief that one side holds."</div>
+          <div class="quote-attr">Perspective A</div>
+        </div>
+        <div class="quote-card quote-dark">
+          <div class="quote-text">"The counterpoint. A contrasting view that creates tension with the first."</div>
+          <div class="quote-attr">Perspective B</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 17. LOGO GRID ========== -->
+  <section class="slide">
+    <div class="slide-inner">
+      <div class="eyebrow">Who uses this</div>
+      <h2>Trusted by teams <span class="dim">who ship.</span></h2>
+      <div class="logo-grid">
+        <div class="logo-cell"><div class="logo-mark"></div><div class="logo-name">Partner A</div><div class="logo-role">Role or team</div></div>
+        <div class="logo-cell"><div class="logo-mark"></div><div class="logo-name">Partner B</div><div class="logo-role">Role or team</div></div>
+        <div class="logo-cell"><div class="logo-mark"></div><div class="logo-name">Partner C</div><div class="logo-role">Role or team</div></div>
+        <div class="logo-cell"><div class="logo-mark"></div><div class="logo-name">Partner D</div><div class="logo-role">Role or team</div></div>
+        <div class="logo-cell"><div class="logo-mark"></div><div class="logo-name">Partner E</div><div class="logo-role">Role or team</div></div>
+        <div class="logo-cell"><div class="logo-mark"></div><div class="logo-name">Partner F</div><div class="logo-role">Role or team</div></div>
+        <div class="logo-cell"><div class="logo-mark"></div><div class="logo-name">Partner G</div><div class="logo-role">Role or team</div></div>
+        <div class="logo-cell"><div class="logo-mark"></div><div class="logo-name">Partner H</div><div class="logo-role">Role or team</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 18. CODE SLIDE ========== -->
+  <section class="slide">
+    <div class="slide-inner">
+      <div class="eyebrow">Under the hood</div>
+      <h2>How it works. <span class="dim">The code behind it.</span></h2>
+      <div class="code-frame">
+        <div class="code-frame-header">
+          <div class="code-frame-dot"></div>
+          <div class="code-frame-dot"></div>
+          <div class="code-frame-dot"></div>
+          <div class="code-frame-title">deck-solid.html</div>
+        </div>
+<pre><span class="code-comment">&lt;!-- A slide is just a section --&gt;</span>
+<span class="code-keyword">&lt;section</span> <span class="code-dim">class=</span><span class="code-string">"slide dark"</span><span class="code-keyword">&gt;</span>
+  <span class="code-keyword">&lt;div</span> <span class="code-dim">class=</span><span class="code-string">"slide-inner"</span><span class="code-keyword">&gt;</span>
+    <span class="code-keyword">&lt;div</span> <span class="code-dim">class=</span><span class="code-string">"eyebrow"</span><span class="code-keyword">&gt;</span>The shift<span class="code-keyword">&lt;/div&gt;</span>
+    <span class="code-keyword">&lt;h1&gt;</span>The bottleneck moved.
+      <span class="code-keyword">&lt;span</span> <span class="code-dim">class=</span><span class="code-string">"dim"</span><span class="code-keyword">&gt;</span>Ideas are the new blocker.<span class="code-keyword">&lt;/span&gt;</span>
+    <span class="code-keyword">&lt;/h1&gt;</span>
+  <span class="code-keyword">&lt;/div&gt;</span>
+<span class="code-keyword">&lt;/section&gt;</span></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 19. INVERTED SLIDE ========== -->
+  <section class="slide dark">
+    <div class="slide-inner">
+      <div class="eyebrow">Section label</div>
+      <h1>The pivot moment. <span class="dim">Inverted to land harder.</span></h1>
+      <p class="subtitle">Use inverted slides sparingly. They mark turning points. Two or three per deck max.</p>
+    </div>
+  </section>
+
+  <!-- ========== 20. CLOSING SLIDE ========== -->
+  <section class="slide quote-slide">
+    <div class="slide-inner">
+      <h1>The closing line.<br><span class="dim">Slow down for it.</span></h1>
+    </div>
+  </section>
+
+  <!-- ========== 21. THANKS ========== -->
+  <section class="slide">
+    <div class="slide-inner">
+      <h1 style="font-size: clamp(2.5rem, 5vw, 4rem);">Thanks.</h1>
+      <p class="subtitle">Questions?</p>
+      <div class="meta">Speaker name · Affiliation</div>
+    </div>
+  </section>
+
+</div>
+
+<button class="pdf-btn" onclick="downloadPDF()">Download PDF</button>
+
+<div class="nav">
+  <span id="counter">1 / 21</span>
+  <div class="nav-buttons">
+    <button class="nav-btn" onclick="prev()">‹</button>
+    <button class="nav-btn" onclick="next()">›</button>
+  </div>
+</div>
+
+<script>
+  const slides = document.querySelectorAll('.slide');
+  const counter = document.getElementById('counter');
+  const progress = document.getElementById('progress');
+  let current = 0;
+
+  function show(i) {
+    slides.forEach(s => s.classList.remove('active'));
+    slides[i].classList.add('active');
+    counter.textContent = `${String(i + 1).padStart(2, '0')} / ${String(slides.length).padStart(2, '0')}`;
+    progress.style.width = `${((i + 1) / slides.length) * 100}%`;
+    current = i;
+  }
+
+  function next() { if (current < slides.length - 1) show(current + 1); }
+  function prev() { if (current > 0) show(current - 1); }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') { e.preventDefault(); next(); }
+    if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); prev(); }
+    if (e.key === 'Home') { show(0); }
+    if (e.key === 'End') { show(slides.length - 1); }
+    if (e.key === 'p' || e.key === 'P') { e.preventDefault(); downloadPDF(); }
+  });
+
+  function downloadPDF() {
+    const originalTitle = document.title;
+    document.title = 'deck-solid';
+    window.print();
+    setTimeout(() => { document.title = originalTitle; }, 1000);
+  }
+
+  let touchStartX = 0;
+  let touchStartY = 0;
+  const SWIPE_THRESHOLD = 50;
+
+  document.addEventListener('touchstart', (e) => {
+    touchStartX = e.changedTouches[0].screenX;
+    touchStartY = e.changedTouches[0].screenY;
+  }, { passive: true });
+
+  document.addEventListener('touchend', (e) => {
+    const dx = e.changedTouches[0].screenX - touchStartX;
+    const dy = e.changedTouches[0].screenY - touchStartY;
+    if (Math.abs(dx) < SWIPE_THRESHOLD || Math.abs(dy) > Math.abs(dx)) return;
+    if (dx < 0) next();
+    else prev();
+  }, { passive: true });
+
+  const isEmbed = new URLSearchParams(window.location.search).has('embed');
+
+  show(0);
+</script>
+
+</body>
+</html>
