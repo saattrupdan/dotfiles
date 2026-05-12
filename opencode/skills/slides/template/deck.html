@@ -3,63 +3,52 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Deck</title>
+<title>Deck — Craft</title>
 <!--
   ============================================================
-  HOW TO USE THIS TEMPLATE
+  TEMPLATE: CRAFT
 
-  - Each slide is a <section class="slide">
-  - Add as many slides as you need by copying any section below
-  - Navigate with arrow keys, space, swipe, or the on-screen buttons
-  - Press P or click the button to download as PDF
-  - Drop images and videos into media/ and reference with relative paths
+  A warm editorial theme inspired by premium SaaS sites
+  (Cursor, Linear, Notion). Parchment tones meet modern software.
 
-  COMPONENT INDEX
-    1.  Cover slide
-    2.  Quote slide (bold statement)
-    3.  Eyebrow + Headline + Subtitle (default text slide)
-    4.  Two-column (any side-by-side comparison)
-    4b. Two-column step stack (sequential steps with status)
-    5.  Three-column (structural breakdown)
-    6.  Capability list (Q&A rows)
-    7.  Dark callout (one per deck max)
-    8.  Dot flow (process / pipeline)
-    9.  Stack grid (categories / tools / partners)
-    10. Spec block + context + outputs (input → process → output)
-    11. Product slide (showcase style)
-    12. Collage slide (full-bleed media)
-    13. JEDUF three-column comparison (two extremes + middle path)
-    14. Timeline (vertical, year-based)
-    15. Stat grid (big numbers with context)
-    16. Quote pair (two perspectives side by side)
-    17. Logo grid (partners / clients / team)
-    18. Code slide (syntax-highlighted code block)
-    19. Dark slide (emphasis / pivot moment)
-    20. Closing slide
-    21. Thanks slide
+    - Warm cream/parchment base (#f5f0e8)
+    - Burnt orange accent for CTAs (#c05a3a)
+    - Light font weights with large sizes — elegance through scale
+    - Soft rounded cards (12px radius) with subtle borders
+    - Classical art + software overlay (signature component)
+    - Sans-serif editorial feel (Inter at 300–500)
 
-  STORYTELLING STRUCTURE (six beats)
-    Open → Act 1 (The World Before) → Act 2 (The Turn) →
-    Act 3 (The Evidence) → Act 4 (The Honest Part) → Close
+  NEW COMPONENTS (craft-specific):
+    22. Testimonial grid (3×2 quote cards with avatar)
+    23. Logo bar (horizontal partner logos)
+    24. Art overlay (painting background + UI mockup)
+    25. Feature card row (3-col with CTA links)
+    26. Update row (changelog-style badges with dates)
 
-    Works for any format: talks, pitches, strategy decks,
-    product launches, team updates, investor presentations.
-
-  THE HEADLINE PATTERN
-    Bold-then-dim. Anchor + extension.
-    <h1>Headline. <span class="dim">Continuation.</span></h1>
-
-  TONE
-    No em-dashes in body copy. Use periods or shorter sentences.
-    Bold the keyword. Dim the rest.
-    Specific numbers beat vague claims.
-
-  See docs/USING.md, docs/STORYTELLING.md, and docs/DESIGN.md for more.
-  AI agents: see AGENTS.md for full component reference and instructions.
+  Same 21 base components + 5 new. Same navigation behavior.
   ============================================================
 -->
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
+
+  :root {
+    --bg: #f5f0e8;
+    --bg-card: #ffffff;
+    --bg-card-warm: #faf6ef;
+    --bg-dark: #1a1a1a;
+    --text: #1a1a1a;
+    --text-light: #f5f0e8;
+    --text-secondary: #6b6560;
+    --text-muted: #9a9490;
+    --text-faint: #b5b0aa;
+    --accent: #c05a3a;
+    --accent-hover: #a84d30;
+    --border: #e5e0d8;
+    --border-strong: #d5d0c8;
+    --radius: 12px;
+    --radius-sm: 8px;
+    --radius-lg: 16px;
+  }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -68,8 +57,8 @@
     height: 100%;
     overflow: hidden;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    background: #f5f5f3;
-    color: #1a1a1a;
+    background: var(--bg);
+    color: var(--text);
     -webkit-font-smoothing: antialiased;
   }
 
@@ -86,6 +75,8 @@
     align-items: center;
     justify-content: center;
     padding: 6vh 8vw;
+    background: var(--bg);
+    color: var(--text);
   }
 
   .slide.active { display: flex; }
@@ -95,1055 +86,1044 @@
     max-width: 1100px;
   }
 
+  /* --- Dark slides --- */
+  .slide.dark {
+    background: var(--bg-dark);
+    color: var(--text-light);
+  }
+
+  .slide.dark .eyebrow { color: var(--text-muted); }
+  .slide.dark .dim { color: #666; }
+  .slide.dark .subtitle { color: #999; }
+  .slide.dark .meta { color: #666; }
+
   /* --- Typography --- */
   .eyebrow {
     font-size: 0.75rem;
     font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
-    color: #a0a09a;
-    margin-bottom: 1.5rem;
-  }
-
-  h1 {
-    font-size: clamp(2.5rem, 6vw, 5rem);
-    font-weight: 500;
-    line-height: 1.1;
-    letter-spacing: -0.035em;
-    margin-bottom: 1.5rem;
-  }
-
-  h1 span.dim, h2 span.dim, h3 span.dim {
-    color: #b5b5b0;
-    font-weight: 300;
-  }
-
-  h2 {
-    font-size: clamp(1.75rem, 3.5vw, 2.6rem);
-    font-weight: 500;
-    line-height: 1.2;
-    letter-spacing: -0.025em;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
     margin-bottom: 1.25rem;
   }
 
-  .subtitle {
-    font-size: clamp(1rem, 1.4vw, 1.25rem);
-    color: #a0a09a;
+  h1 {
+    font-size: clamp(2.5rem, 5.5vw, 4.5rem);
     font-weight: 400;
-    line-height: 1.5;
-    max-width: 720px;
+    line-height: 1.1;
+    letter-spacing: -0.03em;
+    margin-bottom: 1.2rem;
   }
 
-  .meta {
-    font-size: 0.85rem;
-    color: #a0a09a;
+  h2 {
+    font-size: clamp(1.5rem, 3vw, 2.2rem);
     font-weight: 400;
-    margin-top: 3rem;
-    letter-spacing: 0.02em;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    margin-bottom: 1.2rem;
   }
 
-  /* --- Quote slide --- */
-  .quote-slide h1 {
-    font-size: clamp(3rem, 7vw, 6.5rem);
-    line-height: 1.05;
-    letter-spacing: -0.045em;
-  }
-
-  /* --- Two col --- */
-  .two-col {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 4rem;
-    align-items: center;
-  }
-
-  .two-col h3 {
+  h3 {
     font-size: 1rem;
     font-weight: 500;
     margin-bottom: 0.5rem;
   }
 
-  .two-col p {
-    font-size: 0.95rem;
-    color: #a0a09a;
+  .dim {
+    color: var(--text-muted);
+    font-weight: 300;
+  }
+
+  .subtitle {
+    font-size: clamp(0.9rem, 1.2vw, 1.05rem);
+    color: var(--text-secondary);
+    max-width: 620px;
     line-height: 1.6;
+    font-weight: 300;
+    margin-top: 0.8rem;
   }
 
-  .col-stack > * + * { margin-top: 0.6rem; }
-
-  .step {
-    font-size: clamp(0.95rem, 1.3vw, 1.15rem);
-    color: #1a1a1a;
+  .meta {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: 2rem;
     font-weight: 400;
-    padding: 0.4rem 0;
-    border-top: 1px solid #d5d5d0;
-    letter-spacing: -0.005em;
   }
 
-  .step:first-child { border-top: none; padding-top: 0; }
-  .step.dim { color: #b5b5b0; }
-  .step.kill { color: #1a1a1a; font-weight: 500; }
-  .step.kill::before { content: '×'; margin-right: 0.5rem; }
-  .step.live { color: #1a1a1a; font-weight: 500; }
-  .step.live::before { content: '✓'; margin-right: 0.5rem; }
+  .cta-link {
+    color: var(--accent);
+    text-decoration: none;
+    font-size: 0.85rem;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    transition: color 0.15s;
+  }
 
-  /* --- Three col --- */
+  .cta-link:hover { color: var(--accent-hover); }
+
+  /* --- Quote slide --- */
+  .quote-slide { text-align: left; }
+  .quote-slide h1 {
+    font-size: clamp(2.5rem, 6vw, 5rem);
+    max-width: 90%;
+    line-height: 1.15;
+  }
+
+  /* --- Two-column --- */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3rem;
+    margin-top: 2rem;
+  }
+
+  .two-col p {
+    font-size: 0.9rem;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    margin-top: 0.5rem;
+    font-weight: 300;
+  }
+
+  /* --- Step stack --- */
+  .col-stack { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 1rem; }
+  .step {
+    font-size: 0.85rem;
+    padding: 0.6rem 0.85rem;
+    border-left: 2px solid var(--border-strong);
+    color: var(--text);
+    font-weight: 400;
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    background: var(--bg-card);
+  }
+  .step.dim { color: var(--text-muted); background: transparent; border-left-color: var(--border); }
+  .step.kill { color: #b44; border-left-color: #b44; }
+  .step.live { color: #3a7; border-left-color: #3a7; }
+
+  /* --- Three-column --- */
   .three-col {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 2.5rem;
-  }
-
-  .three-col h3 {
-    font-size: 0.95rem;
-    font-weight: 500;
-    margin-bottom: 0.4rem;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 2rem;
   }
 
   .three-col p {
     font-size: 0.85rem;
-    color: #a0a09a;
-    line-height: 1.6;
+    line-height: 1.55;
+    color: var(--text-secondary);
+    margin-top: 0.3rem;
+    font-weight: 300;
   }
 
-  /* --- Capability list (Q&A) --- */
-  .cap-list { display: flex; flex-direction: column; }
-
+  /* --- Capability list --- */
+  .cap-list { margin-top: 2rem; }
   .cap-row {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 3rem;
+    grid-template-columns: 1fr 2fr;
+    gap: 2rem;
     padding: 1.1rem 0;
-    border-top: 1px solid #e0e0db;
+    border-top: 1px solid var(--border);
     align-items: baseline;
   }
 
-  .cap-row:last-child { border-bottom: 1px solid #e0e0db; }
-  .cap-q { font-size: 1rem; font-weight: 500; }
-  .cap-a { font-size: 0.9rem; color: #a0a09a; line-height: 1.55; }
-
-  /* --- Callout --- */
-  .callout {
-    background: #1a1a1a;
-    color: #f5f5f3;
-    border-radius: 10px;
-    padding: 2rem 2.5rem;
-  }
-
-  .callout h3 {
-    font-size: 0.7rem;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: #888;
-    margin-bottom: 0.6rem;
+  .cap-q {
     font-weight: 500;
+    font-size: 0.85rem;
   }
 
-  .callout p {
-    font-size: 1rem;
+  .cap-a {
+    font-size: 0.9rem;
     line-height: 1.55;
-    color: #ccc;
+    color: var(--text-secondary);
+    font-weight: 300;
   }
 
-  .callout p strong { color: #f5f5f3; font-weight: 500; }
+  /* --- Dark callout --- */
+  .callout {
+    background: var(--bg-dark);
+    color: var(--text-light);
+    padding: 2rem 2.5rem;
+    border-radius: var(--radius);
+    margin-top: 2.5rem;
+  }
+
+  .callout h3 { color: var(--text-muted); margin-bottom: 0.75rem; }
+  .callout p { font-size: 0.95rem; line-height: 1.6; color: #ccc; font-weight: 300; }
+  .callout strong { color: #fff; font-weight: 500; }
 
   /* --- Dot flow --- */
   .dot-flow {
-    display: grid;
-    grid-template-columns: repeat(5, 1fr);
-    margin: 2.5rem 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 0;
+    margin-top: 2.5rem;
     position: relative;
   }
 
   .dot-flow::before {
     content: '';
     position: absolute;
-    top: 4px;
-    left: 8%;
-    right: 8%;
+    top: 10px;
+    left: 10px;
+    right: 10px;
     height: 1px;
-    background: #d5d5d0;
+    background: var(--border-strong);
   }
 
-  .dot-step { text-align: center; }
-
-  .dot-step .dot {
-    width: 9px;
-    height: 9px;
+  .dot-step { flex: 1; text-align: center; position: relative; z-index: 1; }
+  .dot {
+    width: 20px;
+    height: 20px;
+    background: var(--text);
     border-radius: 50%;
-    background: #1a1a1a;
-    margin: 0 auto 0.85rem;
-    position: relative;
-    z-index: 1;
+    margin: 0 auto 0.75rem;
   }
 
-  .dot-step h4 { font-size: 0.85rem; font-weight: 500; margin-bottom: 0.25rem; }
-  .dot-step p { font-size: 0.72rem; color: #a0a09a; line-height: 1.4; padding: 0 0.5rem; }
+  .slide.dark .dot { background: var(--text-light); }
+
+  .dot-step h4 { font-size: 0.8rem; font-weight: 500; margin-bottom: 0.25rem; }
+  .dot-step p { font-size: 0.75rem; color: var(--text-muted); line-height: 1.4; padding: 0 0.5rem; font-weight: 300; }
 
   /* --- Stack grid --- */
   .stack-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: 1fr 1fr;
     gap: 1rem;
     margin-top: 2rem;
   }
 
   .stack-card {
-    border: 1px solid #e0e0db;
-    border-radius: 10px;
-    padding: 1.1rem 1.1rem 1.25rem;
-    background: #fafaf8;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.5rem;
   }
 
   .stack-card-label {
-    font-size: 0.6rem;
+    font-size: 0.65rem;
     font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    color: #a0a09a;
-    margin-bottom: 0.85rem;
+    color: var(--text-muted);
+    margin-bottom: 0.75rem;
   }
 
   .stack-tool {
+    font-size: 0.85rem;
+    padding: 0.35rem 0;
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    font-size: 0.95rem;
-    font-weight: 500;
-    padding: 0.25rem 0;
+    font-weight: 400;
   }
 
-  .stack-tool .mark {
-    width: 14px;
-    height: 14px;
-    background: #1a1a1a;
-    border-radius: 2px;
-    flex-shrink: 0;
+  .mark {
+    width: 6px;
+    height: 6px;
+    background: var(--text);
+    border-radius: 50%;
+    display: inline-block;
   }
 
   /* --- Spec flow --- */
-  .spec-flow {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    margin-top: 2rem;
-  }
+  .spec-flow { margin-top: 2rem; }
 
   .spec-block {
-    background: #1a1a1a;
-    color: #f5f5f3;
-    border-radius: 10px;
-    padding: 1.1rem 1.5rem;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-
-  .spec-block h4 { font-size: 1rem; font-weight: 500; }
-  .spec-block p { font-size: 0.8rem; color: #888; font-weight: 300; }
-
-  .ctx-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
-
-  .ctx-label {
-    font-size: 0.7rem;
-    color: #c5c5c0;
-    margin-right: 0.4rem;
-    font-style: italic;
-  }
-
-  .ctx-pill {
-    font-size: 0.72rem;
-    color: #a0a09a;
-    background: #eeeee9;
-    border-radius: 100px;
-    padding: 0.3rem 0.85rem;
-  }
-
-  .ai-divider { display: flex; align-items: center; gap: 1rem; }
-  .ai-divider .line { flex: 1; height: 1px; background: #d5d5d0; }
-
-  .ai-pill {
-    font-size: 0.65rem;
-    font-weight: 500;
-    color: #a0a09a;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-  }
-
-  .outputs-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
-
-  .output-card {
-    border: 1px solid #e0e0db;
-    border-radius: 10px;
-    padding: 1rem 1.1rem;
-    background: #fff;
-  }
-
-  .output-card h5 { font-size: 0.9rem; font-weight: 500; margin-bottom: 0.2rem; }
-  .output-card p { font-size: 0.72rem; color: #a0a09a; line-height: 1.45; }
-
-  /* --- Product slide (showcase style) --- */
-  .product-row {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 4rem;
-    align-items: center;
-  }
-
-  .product-meta { max-width: 460px; }
-  .product-num { font-size: 0.75rem; color: #a0a09a; margin-bottom: 1.25rem; letter-spacing: 0.04em; }
-  .product-tag { font-size: 0.85rem; font-weight: 500; margin-bottom: 0.75rem; }
-
-  .product-headline {
-    font-size: clamp(1.4rem, 2.4vw, 2rem);
-    font-weight: 500;
-    line-height: 1.25;
-    letter-spacing: -0.02em;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.5rem;
     margin-bottom: 1rem;
   }
 
-  .product-desc {
-    font-size: clamp(0.95rem, 1.2vw, 1.05rem);
-    color: #6a6a66;
-    line-height: 1.55;
-    margin-bottom: 1.5rem;
-  }
-
-  .product-stat { font-size: 0.8rem; color: #a0a09a; }
-
-  .product-name {
-    font-size: clamp(4rem, 9vw, 8rem);
-    font-weight: 500;
-    letter-spacing: -0.045em;
-    line-height: 0.95;
-    text-align: right;
-  }
-
-  .product-name sup {
-    font-size: 0.25em;
-    font-weight: 400;
-    color: #b5b5b0;
-    vertical-align: super;
-    margin-left: 0.1em;
-  }
-
-  /* --- Collage slide --- */
-  .slide.collage-slide {
-    background: #f5f5f3;
-    padding: 4vh 4vw;
-  }
-
-  .collage {
-    border-radius: 8px;
-    overflow: hidden;
-    box-shadow: 0 30px 80px rgba(0,0,0,0.15);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    line-height: 0;
-  }
-
-  .collage img,
-  .collage video {
-    max-height: 92vh;
-    max-width: 90vw;
-    height: auto;
-    width: auto;
-    display: block;
-  }
-
-  .collage .placeholder {
-    color: #b5b5b0;
-    font-size: 0.85rem;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    padding: 4rem;
-    text-align: center;
-    background: #eeeee9;
-    aspect-ratio: 3 / 4;
-    height: 92vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  /* --- JEDUF three-column comparison --- */
-  .jeduf {
-    display: grid;
-    grid-template-columns: 1fr 1.15fr 1fr;
-    gap: 1rem;
-    margin-top: 1.5rem;
-  }
-
-  .jeduf-col {
-    border: 1px solid #e0e0db;
-    border-radius: 10px;
-    padding: 1.25rem 1.1rem 1.5rem;
-    background: #fafaf8;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .jeduf-col.hero {
-    background: #1a1a1a;
-    color: #f5f5f3;
-    border-color: #1a1a1a;
-  }
-
-  .jeduf-label {
-    font-size: 0.6rem;
+  .spec-block h4 {
+    font-size: 0.7rem;
     font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    color: #a0a09a;
-    margin-bottom: 0.4rem;
-  }
-
-  .jeduf-col.hero .jeduf-label { color: #888; }
-  .jeduf-title { font-size: 1rem; font-weight: 500; margin-bottom: 0.35rem; }
-
-  .jeduf-philosophy {
-    font-size: 0.7rem;
-    color: #a0a09a;
-    font-style: italic;
-    margin-bottom: 1rem;
-    line-height: 1.5;
-    min-height: 30pt;
-  }
-
-  .jeduf-col.hero .jeduf-philosophy { color: #ccc; }
-
-  .jeduf-step {
-    border: 1px solid #d5d5d0;
-    border-radius: 4px;
-    padding: 0.4rem 0.6rem;
-    font-size: 0.72rem;
-    font-weight: 500;
-    text-align: center;
-    background: #fff;
-    margin-bottom: 0.35rem;
-  }
-
-  .jeduf-col.hero .jeduf-step {
-    background: #2a2a2a;
-    border-color: #3a3a3a;
-    color: #f5f5f3;
-  }
-
-  /* --- Timeline --- */
-  .timeline {
-    display: flex;
-    flex-direction: column;
-    margin-top: 2rem;
-  }
-
-  .timeline-row {
-    display: grid;
-    grid-template-columns: 120px 24px 1fr;
-    gap: 0 1.5rem;
-    align-items: start;
-  }
-
-  .timeline-year {
-    font-size: 0.85rem;
-    font-weight: 500;
-    text-align: right;
-    padding-top: 1.1rem;
-    color: #1a1a1a;
-  }
-
-  .timeline-track {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    position: relative;
-    height: 100%;
-  }
-
-  .timeline-dot {
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    background: #1a1a1a;
-    margin-top: 1.25rem;
-    flex-shrink: 0;
-    position: relative;
-    z-index: 1;
-  }
-
-  .timeline-line {
-    width: 1px;
-    flex: 1;
-    background: #d5d5d0;
-  }
-
-  .timeline-row:last-child .timeline-line { display: none; }
-
-  .timeline-content {
-    padding: 1rem 0 2rem;
-  }
-
-  .timeline-content h4 {
-    font-size: 0.95rem;
-    font-weight: 500;
-    margin-bottom: 0.25rem;
-  }
-
-  .timeline-content p {
-    font-size: 0.82rem;
-    color: #a0a09a;
-    line-height: 1.55;
-  }
-
-  /* --- Stat grid --- */
-  .stat-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 1.5rem;
-    margin-top: 2rem;
-  }
-
-  .stat-card {
-    border: 1px solid #e0e0db;
-    border-radius: 10px;
-    padding: 1.5rem 1.4rem;
-    background: #fafaf8;
-  }
-
-  .stat-card.stat-dark {
-    background: #1a1a1a;
-    border-color: #1a1a1a;
-    color: #f5f5f3;
-  }
-
-  .stat-number {
-    font-size: clamp(2.4rem, 4.5vw, 3.5rem);
-    font-weight: 600;
-    letter-spacing: -0.035em;
-    line-height: 1;
+    color: var(--text-muted);
     margin-bottom: 0.5rem;
   }
 
-  .stat-card.stat-dark .stat-number { color: #f5f5f3; }
+  .spec-block p { font-size: 0.9rem; line-height: 1.5; font-weight: 300; }
 
-  .stat-label {
+  .ctx-row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
+  .ctx-label { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); font-weight: 500; }
+  .ctx-pill {
     font-size: 0.7rem;
-    font-weight: 500;
+    padding: 0.25rem 0.75rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-weight: 400;
+  }
+
+  .ai-divider { display: flex; align-items: center; gap: 1rem; margin: 1rem 0; }
+  .ai-divider .line { flex: 1; height: 1px; background: var(--border); }
+  .ai-pill {
+    font-size: 0.65rem;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    color: #a0a09a;
-    margin-bottom: 0.4rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    padding: 0.3rem 1rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 999px;
   }
 
-  .stat-card.stat-dark .stat-label { color: #888; }
+  .outputs-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+  .output-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.25rem;
+  }
+  .output-card h5 { font-size: 0.7rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.4rem; }
+  .output-card p { font-size: 0.8rem; color: var(--text-secondary); line-height: 1.4; font-weight: 300; }
 
-  .stat-desc {
-    font-size: 0.82rem;
-    color: #a0a09a;
-    line-height: 1.5;
+  /* --- Product slide --- */
+  .product-row { display: grid; grid-template-columns: 1fr auto; gap: 4rem; align-items: center; }
+  .product-meta { max-width: 500px; }
+  .product-num { font-size: 0.75rem; font-weight: 400; color: var(--text-muted); margin-bottom: 0.75rem; }
+  .product-tag { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 500; color: var(--text-muted); margin-bottom: 1rem; }
+  .product-headline { font-size: 1.3rem; font-weight: 400; line-height: 1.3; margin-bottom: 0.75rem; }
+  .product-desc { font-size: 0.85rem; line-height: 1.6; color: var(--text-secondary); margin-bottom: 1rem; font-weight: 300; }
+  .product-stat { font-size: 0.75rem; font-weight: 500; color: var(--text-muted); padding-top: 0.75rem; border-top: 1px solid var(--border); }
+  .product-name {
+    font-size: clamp(3rem, 8vw, 7rem);
+    font-weight: 300;
+    line-height: 0.9;
+    letter-spacing: -0.04em;
+    text-align: right;
+    color: var(--text-faint);
   }
 
-  .stat-card.stat-dark .stat-desc { color: #ccc; }
+  /* --- Collage slide --- */
+  .collage-slide { padding: 0; background: var(--bg-dark); }
+  .collage { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  .collage img, .collage video { width: 100%; height: 100%; object-fit: cover; }
+
+  /* --- JEDUF --- */
+  .jeduf { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; margin-top: 2rem; }
+  .jeduf-col { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.5rem; }
+  .jeduf-col.hero { background: var(--bg-dark); color: var(--text-light); border-color: transparent; }
+  .jeduf-label { font-size: 0.6rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); margin-bottom: 0.5rem; }
+  .jeduf-col.hero .jeduf-label { color: #888; }
+  .jeduf-title { font-size: 1.1rem; font-weight: 400; margin-bottom: 0.5rem; }
+  .jeduf-philosophy { font-size: 0.8rem; font-style: italic; color: var(--text-muted); margin-bottom: 1rem; line-height: 1.4; font-weight: 300; }
+  .jeduf-col.hero .jeduf-philosophy { color: #aaa; }
+  .jeduf-step { font-size: 0.8rem; padding: 0.3rem 0; border-top: 1px solid var(--border); font-weight: 300; }
+  .jeduf-col.hero .jeduf-step { border-top-color: #333; }
+
+  /* --- Timeline --- */
+  .timeline { margin-top: 2rem; }
+  .timeline-row { display: grid; grid-template-columns: 80px 24px 1fr; gap: 1.5rem; min-height: 70px; align-items: start; }
+  .timeline-year { font-size: 0.8rem; font-weight: 500; text-align: right; padding-top: 2px; color: var(--text-muted); }
+  .timeline-track { display: flex; flex-direction: column; align-items: center; height: 100%; }
+  .timeline-dot { width: 8px; height: 8px; background: var(--accent); border-radius: 50%; flex-shrink: 0; }
+  .timeline-line { width: 1px; flex: 1; background: var(--border); margin-top: 4px; }
+  .timeline-row:last-child .timeline-line { display: none; }
+  .timeline-content h4 { font-size: 0.85rem; font-weight: 500; margin-bottom: 0.2rem; }
+  .timeline-content p { font-size: 0.8rem; color: var(--text-secondary); line-height: 1.4; font-weight: 300; }
+
+  /* --- Stat grid --- */
+  .stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-top: 2rem; }
+  .stat-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.5rem; }
+  .stat-card.stat-dark { background: var(--bg-dark); color: var(--text-light); border-color: transparent; }
+  .stat-label { font-size: 0.65rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); margin-bottom: 0.5rem; }
+  .stat-dark .stat-label { color: #888; }
+  .stat-number { font-size: clamp(2rem, 4vw, 3rem); font-weight: 300; letter-spacing: -0.03em; line-height: 1; margin-bottom: 0.5rem; }
+  .stat-desc { font-size: 0.75rem; color: var(--text-secondary); line-height: 1.4; font-weight: 300; }
+  .stat-dark .stat-desc { color: #999; }
 
   /* --- Quote pair --- */
-  .quote-pair {
+  .quote-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 2rem; }
+  .quote-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 2rem; }
+  .quote-card.quote-dark { background: var(--bg-dark); color: var(--text-light); border-color: transparent; }
+  .quote-text { font-size: 1rem; font-weight: 300; line-height: 1.5; margin-bottom: 1rem; }
+  .quote-attr { font-size: 0.7rem; font-weight: 500; color: var(--text-muted); }
+  .quote-dark .quote-attr { color: #888; }
+
+  /* --- Logo grid --- */
+  .logo-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-top: 2rem; }
+  .logo-cell { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.5rem; text-align: center; }
+  .logo-mark { width: 40px; height: 40px; background: var(--bg-dark); border-radius: var(--radius-sm); margin: 0 auto 0.75rem; }
+  .logo-name { font-size: 0.8rem; font-weight: 500; }
+  .logo-role { font-size: 0.65rem; color: var(--text-muted); margin-top: 0.15rem; }
+
+  /* --- Code frame --- */
+  .code-frame { background: var(--bg-dark); border-radius: var(--radius); margin-top: 1.5rem; overflow: hidden; }
+  .code-frame-header { display: flex; align-items: center; padding: 0.75rem 1.25rem; border-bottom: 1px solid #333; }
+  .code-frame-dot { width: 8px; height: 8px; border-radius: 50%; background: #444; margin-right: 6px; }
+  .code-frame-title { margin-left: auto; font-size: 0.65rem; color: #666; font-weight: 400; }
+  .code-frame pre { padding: 1.5rem; font-family: 'SF Mono', ui-monospace, monospace; font-size: 0.78rem; line-height: 1.7; color: #ccc; overflow-x: auto; }
+  .code-comment { color: #555; }
+  .code-keyword { color: #e0e0e0; }
+  .code-string { color: var(--accent); }
+  .code-dim { color: #666; }
+
+  /* ============================================================
+     NEW CRAFT-SPECIFIC COMPONENTS
+     ============================================================ */
+
+  /* --- 22. Testimonial grid --- */
+  .testimonial-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1.5rem;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
     margin-top: 2rem;
   }
 
-  .quote-card {
-    border: 1px solid #e0e0db;
-    border-radius: 10px;
-    padding: 1.75rem 1.5rem;
-    background: #fafaf8;
+  .testimonial-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.5rem;
     display: flex;
     flex-direction: column;
+    justify-content: space-between;
   }
 
-  .quote-card.quote-dark {
-    background: #1a1a1a;
-    border-color: #1a1a1a;
-    color: #f5f5f3;
-  }
-
-  .quote-text {
-    font-size: clamp(1rem, 1.4vw, 1.15rem);
+  .testimonial-quote {
+    font-size: 0.85rem;
+    line-height: 1.55;
+    color: var(--text);
     font-weight: 400;
-    line-height: 1.5;
-    flex: 1;
-    font-style: italic;
-    color: #1a1a1a;
     margin-bottom: 1.25rem;
   }
 
-  .quote-card.quote-dark .quote-text { color: #f5f5f3; }
+  .testimonial-author {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
 
-  .quote-attr {
-    font-size: 0.78rem;
+  .testimonial-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--border-strong);
+    flex-shrink: 0;
+  }
+
+  .testimonial-name {
+    font-size: 0.75rem;
     font-weight: 500;
-    color: #a0a09a;
-    padding-top: 1rem;
-    border-top: 1px solid #e0e0db;
+    line-height: 1.3;
   }
 
-  .quote-card.quote-dark .quote-attr {
-    color: #888;
-    border-top-color: #2a2a2a;
+  .testimonial-title {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    font-weight: 400;
   }
 
-  /* --- Logo grid --- */
-  .logo-grid {
+  /* --- 23. Logo bar --- */
+  .logo-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3rem;
+    margin-top: 2rem;
+    padding: 1.5rem 2rem;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+
+  .logo-bar-item {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: -0.02em;
+    white-space: nowrap;
+  }
+
+  /* --- 24. Art overlay (painting + UI) --- */
+  .art-overlay {
+    position: relative;
+    margin-top: 2rem;
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    aspect-ratio: 16/9;
+  }
+
+  .art-overlay-bg {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, #8b7355 0%, #a0926e 25%, #6b7c5a 50%, #8a9470 75%, #c4b896 100%);
+    filter: brightness(0.85) saturate(0.8);
+  }
+
+  .art-overlay-ui {
+    position: absolute;
+    inset: 10%;
+    background: var(--bg-card);
+    border-radius: var(--radius);
+    box-shadow: 0 25px 80px rgba(0,0,0,0.3), 0 8px 20px rgba(0,0,0,0.15);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .art-overlay-titlebar {
+    display: flex;
+    align-items: center;
+    padding: 0.6rem 1rem;
+    background: #f8f8f6;
+    border-bottom: 1px solid var(--border);
+    gap: 0.4rem;
+  }
+
+  .art-overlay-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+
+  .art-overlay-dot:nth-child(1) { background: #ff605c; }
+  .art-overlay-dot:nth-child(2) { background: #ffbd44; }
+  .art-overlay-dot:nth-child(3) { background: #00ca4e; }
+
+  .art-overlay-content {
+    flex: 1;
+    padding: 1.5rem;
+    display: flex;
+    gap: 1rem;
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    overflow: hidden;
+  }
+
+  .art-overlay-sidebar {
+    width: 35%;
+    border-right: 1px solid var(--border);
+    padding-right: 1rem;
+  }
+
+  .art-overlay-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .art-overlay-line {
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+  }
+
+  .art-overlay-line.short { width: 60%; }
+  .art-overlay-line.accent { background: var(--accent); width: 40%; opacity: 0.6; }
+
+  .art-overlay-caption {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 2rem 2.5rem;
+    background: linear-gradient(transparent, rgba(0,0,0,0.7));
+    color: #fff;
+  }
+
+  .art-overlay-caption h3 {
+    font-size: 1.1rem;
+    font-weight: 400;
+    color: #fff;
+    margin-bottom: 0.25rem;
+  }
+
+  .art-overlay-caption p {
+    font-size: 0.75rem;
+    color: rgba(255,255,255,0.7);
+    font-weight: 300;
+  }
+
+  /* --- 25. Feature card row --- */
+  .feature-cards {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+    margin-top: 2rem;
+  }
+
+  .feature-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.75rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 200px;
+  }
+
+  .feature-card-title {
+    font-size: 1rem;
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+  }
+
+  .feature-card-desc {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    line-height: 1.55;
+    font-weight: 300;
+    margin-bottom: 1.5rem;
+  }
+
+  .feature-card-inner {
+    background: var(--bg-card-warm);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 1rem;
+    flex: 1;
+    margin-top: 1rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 0.4rem;
+  }
+
+  .feature-card-mock-line {
+    height: 5px;
+    background: var(--border);
+    border-radius: 3px;
+  }
+
+  .feature-card-mock-line.short { width: 50%; }
+  .feature-card-mock-line.accent { background: var(--accent); width: 35%; opacity: 0.4; }
+
+  /* --- 26. Update row (changelog) --- */
+  .update-row {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     gap: 1rem;
     margin-top: 2rem;
   }
 
-  .logo-cell {
-    border: 1px solid #e0e0db;
-    border-radius: 10px;
-    padding: 1.5rem 1rem;
-    background: #fafaf8;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    min-height: 100px;
+  .update-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.25rem;
   }
 
-  .logo-cell img {
-    max-height: 36px;
-    max-width: 80%;
-    margin-bottom: 0.75rem;
-    object-fit: contain;
-  }
-
-  .logo-mark {
-    width: 36px;
-    height: 36px;
-    border-radius: 6px;
-    background: #1a1a1a;
-    margin-bottom: 0.75rem;
-    flex-shrink: 0;
-  }
-
-  .logo-name {
-    font-size: 0.82rem;
-    font-weight: 500;
-  }
-
-  .logo-role {
-    font-size: 0.7rem;
-    color: #a0a09a;
-    margin-top: 0.15rem;
-  }
-
-  /* --- Code slide --- */
-  .code-frame {
-    background: #1a1a1a;
-    border-radius: 10px;
-    padding: 1.5rem 1.75rem;
-    margin-top: 2rem;
-    overflow-x: auto;
-  }
-
-  .code-frame-header {
+  .update-header {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    margin-bottom: 1rem;
-    padding-bottom: 0.75rem;
-    border-bottom: 1px solid #2a2a2a;
+    margin-bottom: 0.75rem;
   }
 
-  .code-frame-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #3a3a3a;
+  .update-badge {
+    font-size: 0.6rem;
+    font-weight: 500;
+    padding: 0.15rem 0.5rem;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    color: var(--text-secondary);
   }
 
-  .code-frame-title {
-    font-family: 'Inter', sans-serif;
+  .update-date {
     font-size: 0.7rem;
-    color: #555;
-    margin-left: 0.5rem;
-    letter-spacing: 0.02em;
+    color: var(--text-muted);
+    font-weight: 400;
   }
 
-  .code-frame pre {
-    font-family: 'JetBrains Mono', 'SF Mono', monospace;
-    font-size: 0.82rem;
-    line-height: 1.7;
-    color: #f5f5f3;
-    margin: 0;
-    background: none;
+  .update-title {
+    font-size: 0.85rem;
+    font-weight: 400;
+    line-height: 1.4;
   }
 
-  .code-frame .code-comment { color: #555; }
-  .code-frame .code-keyword { color: #b5b5b0; font-weight: 500; }
-  .code-frame .code-string { color: #ccc; }
-  .code-frame .code-dim { color: #888; }
-
-  /* --- Dark slide --- */
-  .slide.dark { background: #1a1a1a; color: #f5f5f3; }
-  .slide.dark h1 { color: #f5f5f3; }
-  .slide.dark h1 span.dim { color: #888; }
-  .slide.dark .subtitle { color: #888; }
-  .slide.dark .eyebrow { color: #666; }
-
-  /* --- Nav --- */
-  .nav {
-    position: fixed;
-    bottom: 1.5rem;
-    right: 1.5rem;
-    font-size: 0.7rem;
-    color: #b5b5b0;
-    z-index: 100;
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-  }
-
-  .nav-buttons { display: flex; gap: 0.5rem; }
-
-  .nav-btn {
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    border: 1px solid #d5d5d0;
-    background: transparent;
-    color: #b5b5b0;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.75rem;
-    padding: 0;
-  }
-
-  .nav-btn:hover { border-color: #1a1a1a; color: #1a1a1a; }
-
-  .progress {
+  /* --- Progress bar --- */
+  #progress {
     position: fixed;
     top: 0;
     left: 0;
     height: 2px;
-    background: #1a1a1a;
+    background: var(--accent);
     transition: width 0.3s ease;
     z-index: 100;
   }
 
-  /* --- PDF download button --- */
-  .pdf-btn {
+  /* --- Navigation --- */
+  .nav {
     position: fixed;
-    bottom: 1.5rem;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 200;
-    background: #1a1a1a;
-    color: #f5f5f3;
-    border: none;
-    padding: 0.55rem 1.25rem;
-    border-radius: 100px;
-    font-size: 0.75rem;
-    font-weight: 500;
-    cursor: pointer;
-    font-family: inherit;
-    letter-spacing: 0.02em;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+    bottom: 2rem;
+    right: 2.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    z-index: 100;
   }
 
-  .pdf-btn:hover { background: #000; }
+  .nav span {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    font-weight: 400;
+  }
 
-  /* --- Print: each slide becomes one 16:9 PDF page --- */
+  .nav-buttons { display: flex; gap: 0.35rem; }
+  .nav-btn {
+    width: 32px;
+    height: 32px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-card);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+  }
+
+  .nav-btn:hover {
+    background: var(--text);
+    color: var(--bg);
+    border-color: var(--text);
+  }
+
+  /* --- PDF button --- */
+  .pdf-btn {
+    position: fixed;
+    bottom: 2rem;
+    left: 2.5rem;
+    font-size: 0.65rem;
+    font-weight: 500;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-card);
+    color: var(--text-muted);
+    padding: 0.5rem 1.25rem;
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 0.15s;
+    z-index: 100;
+  }
+
+  .pdf-btn:hover { background: var(--text); color: var(--bg); border-color: var(--text); }
+
+  /* --- Print --- */
   @page { size: 13.333in 7.5in; margin: 0; }
-
   @media print {
-    html, body {
-      width: 13.333in;
-      height: auto !important;
-      overflow: visible !important;
-      background: #f5f5f3;
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-    }
-    .deck { width: 13.333in; height: auto; position: static; }
-    .slide {
-      display: flex !important;
-      position: relative !important;
-      inset: auto !important;
-      width: 13.333in !important;
-      height: 7.5in !important;
-      page-break-after: always !important;
-      break-after: page !important;
-      -webkit-print-color-adjust: exact !important;
-    }
-    .slide:last-child { page-break-after: auto !important; }
-    .slide.dark { background: #1a1a1a !important; }
-    .nav, .progress, .pdf-btn { display: none !important; }
+    html, body { overflow: visible; height: auto; }
+    .slide { display: flex !important; position: relative; page-break-after: always; height: 100vh; }
+    .nav, .pdf-btn, #progress { display: none !important; }
   }
 </style>
 </head>
 <body>
 
-<div class="progress" id="progress"></div>
+<div id="progress"></div>
 
 <div class="deck">
 
   <!-- ========== 1. COVER ========== -->
   <section class="slide active">
     <div class="slide-inner">
-      <div class="eyebrow">Conference · Date</div>
-      <h1>Your headline.<br><span class="dim">Continuation that fades.</span></h1>
-      <div class="meta">Speaker name · 20 minutes</div>
+      <div class="eyebrow">Company · Product launch</div>
+      <h1>Built to make you<br>extraordinarily productive.</h1>
+      <p class="subtitle">A single sentence that frames what you've built, why it matters, and who it's for. Clear, warm, no jargon.</p>
+      <div class="meta">Name · Title · Date</div>
     </div>
   </section>
 
-  <!-- ========== 2. QUOTE SLIDE ========== -->
+  <!-- ========== 2. QUOTE ========== -->
   <section class="slide quote-slide">
     <div class="slide-inner">
-      <h1>A bold statement <span class="dim">that opens the talk.</span></h1>
+      <h1>The new way to build software.</h1>
     </div>
   </section>
 
-  <!-- ========== 3. EYEBROW + HEADLINE + SUBTITLE ========== -->
+  <!-- ========== 3. LOGO BAR ========== -->
   <section class="slide">
     <div class="slide-inner">
-      <div class="eyebrow">Section label</div>
-      <h1>Section headline. <span class="dim">One line that lands.</span></h1>
-      <p class="subtitle">A subtitle that adds nuance without saying everything. Keep it short. One or two sentences max.</p>
+      <div class="eyebrow" style="text-align:center;">Trusted every day by teams that build world-class software</div>
+      <div class="logo-bar">
+        <div class="logo-bar-item">Stripe</div>
+        <div class="logo-bar-item">OpenAI</div>
+        <div class="logo-bar-item">Linear</div>
+        <div class="logo-bar-item">Datadog</div>
+        <div class="logo-bar-item">NVIDIA</div>
+        <div class="logo-bar-item">Figma</div>
+        <div class="logo-bar-item">Adobe</div>
+      </div>
     </div>
   </section>
 
-  <!-- ========== 4. TWO-COLUMN (PROBLEM / FIX) ========== -->
+  <!-- ========== 4. ART OVERLAY ========== -->
   <section class="slide">
     <div class="slide-inner">
+      <div class="eyebrow">The experience</div>
+      <h2>Agents turn ideas into code.</h2>
+      <p class="subtitle">Accelerate development by handing off tasks, while you focus on making decisions.</p>
+      <div class="art-overlay">
+        <div class="art-overlay-bg"></div>
+        <div class="art-overlay-ui">
+          <div class="art-overlay-titlebar">
+            <div class="art-overlay-dot"></div>
+            <div class="art-overlay-dot"></div>
+            <div class="art-overlay-dot"></div>
+          </div>
+          <div class="art-overlay-content">
+            <div class="art-overlay-sidebar">
+              <div class="art-overlay-line" style="margin-bottom:0.5rem;"></div>
+              <div class="art-overlay-line short" style="margin-bottom:0.8rem;"></div>
+              <div class="art-overlay-line" style="margin-bottom:0.4rem;"></div>
+              <div class="art-overlay-line" style="margin-bottom:0.4rem;"></div>
+              <div class="art-overlay-line accent" style="margin-bottom:0.4rem;"></div>
+              <div class="art-overlay-line" style="margin-bottom:0.4rem;"></div>
+              <div class="art-overlay-line short"></div>
+            </div>
+            <div class="art-overlay-main">
+              <div class="art-overlay-line" style="width:80%;"></div>
+              <div class="art-overlay-line short"></div>
+              <div style="height:0.5rem;"></div>
+              <div class="art-overlay-line"></div>
+              <div class="art-overlay-line"></div>
+              <div class="art-overlay-line" style="width:70%;"></div>
+              <div style="height:0.5rem;"></div>
+              <div class="art-overlay-line accent" style="width:25%;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 5. FEATURE CARDS ========== -->
+  <section class="slide">
+    <div class="slide-inner">
+      <h2>Understands your codebase,<br><span class="dim">no matter the size.</span></h2>
+      <div class="feature-cards">
+        <div class="feature-card">
+          <div>
+            <div class="feature-card-title">Multiple models</div>
+            <div class="feature-card-desc">Subagents run in parallel to explore your codebase, each using the best model for the task.</div>
+          </div>
+          <div class="feature-card-inner">
+            <div class="feature-card-mock-line"></div>
+            <div class="feature-card-mock-line short"></div>
+            <div class="feature-card-mock-line accent"></div>
+          </div>
+        </div>
+        <div class="feature-card">
+          <div>
+            <div class="feature-card-title">Deep indexing</div>
+            <div class="feature-card-desc">A custom embedding model gives agents best-in-class recall across large codebases.</div>
+          </div>
+          <div class="feature-card-inner">
+            <div class="feature-card-mock-line"></div>
+            <div class="feature-card-mock-line"></div>
+            <div class="feature-card-mock-line short"></div>
+          </div>
+        </div>
+        <div class="feature-card">
+          <div>
+            <div class="feature-card-title">Team rules</div>
+            <div class="feature-card-desc">Teach it your preferences, from team conventions to specific architectural decisions.</div>
+          </div>
+          <div class="feature-card-inner">
+            <div class="feature-card-mock-line accent"></div>
+            <div class="feature-card-mock-line"></div>
+            <div class="feature-card-mock-line short"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 6. TWO-COLUMN ========== -->
+  <section class="slide">
+    <div class="slide-inner">
+      <div class="eyebrow">The shift</div>
+      <h2>Before and after.</h2>
       <div class="two-col">
         <div>
-          <div class="eyebrow">The problem</div>
-          <h2>What's broken.</h2>
-          <p>Describe the situation today. Be specific. Avoid abstractions. The reader should recognize their own pain.</p>
+          <h3>The old way</h3>
+          <p>Manual search across files. Copy-paste between tools. Context switching that kills focus. Hours spent on boilerplate that adds no value.</p>
         </div>
         <div>
-          <div class="eyebrow">The fix</div>
-          <h2>What we built.</h2>
-          <p>Describe the solution. Same length and tone as the problem. Side-by-side comparison drives the point.</p>
+          <h3>The new way</h3>
+          <p>Describe what you want. The agent reads your codebase, understands your patterns, and builds it. You review and iterate.</p>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- ========== 4b. TWO-COLUMN STEP STACK ========== -->
+  <!-- ========== 7. TESTIMONIAL GRID ========== -->
   <section class="slide">
     <div class="slide-inner">
-      <div class="two-col">
-        <div>
-          <div class="eyebrow">Section label</div>
-          <h2>Title for the steps on the right.</h2>
-          <p class="subtitle">Brief explanation of what these steps represent.</p>
+      <h2 style="text-align:center;">The new way to build software.</h2>
+      <div class="testimonial-grid">
+        <div class="testimonial-card">
+          <div class="testimonial-quote">"It was night and day from one batch to another, adoption went from single digits to over 80%."</div>
+          <div class="testimonial-author">
+            <div class="testimonial-avatar"></div>
+            <div><div class="testimonial-name">Name One</div><div class="testimonial-title">Role, Company</div></div>
+          </div>
         </div>
-        <div class="col-stack">
-          <div class="step">First step</div>
-          <div class="step">Second step</div>
-          <div class="step">Third step</div>
-          <div class="step dim">Fourth step (dimmed = blocker)</div>
-          <div class="step dim">Fifth step (dimmed)</div>
-          <div class="step kill">Final outcome (negative)</div>
+        <div class="testimonial-card">
+          <div class="testimonial-quote">"Every one of our engineers, some 40,000, are now assisted by AI and our productivity has gone up incredibly."</div>
+          <div class="testimonial-author">
+            <div class="testimonial-avatar"></div>
+            <div><div class="testimonial-name">Name Two</div><div class="testimonial-title">Role, Company</div></div>
+          </div>
+        </div>
+        <div class="testimonial-card">
+          <div class="testimonial-quote">"You control how much independence to give the AI. You can do targeted edits, or you can let it rip."</div>
+          <div class="testimonial-author">
+            <div class="testimonial-avatar"></div>
+            <div><div class="testimonial-name">Name Three</div><div class="testimonial-title">Role, Company</div></div>
+          </div>
+        </div>
+        <div class="testimonial-card">
+          <div class="testimonial-quote">"We spend more on R&D and software creation than any other undertaking, and there's significant economic advantages."</div>
+          <div class="testimonial-author">
+            <div class="testimonial-avatar"></div>
+            <div><div class="testimonial-name">Name Four</div><div class="testimonial-title">Role, Company</div></div>
+          </div>
+        </div>
+        <div class="testimonial-card">
+          <div class="testimonial-quote">"The most useful AI tool that I currently pay for, hands down. It's fast, autocompletes when and where you need it."</div>
+          <div class="testimonial-author">
+            <div class="testimonial-avatar"></div>
+            <div><div class="testimonial-name">Name Five</div><div class="testimonial-title">Role, Company</div></div>
+          </div>
+        </div>
+        <div class="testimonial-card">
+          <div class="testimonial-quote">"We are at the 1% of what's possible, and it's in interactive experiences like this where models shine brightest."</div>
+          <div class="testimonial-author">
+            <div class="testimonial-avatar"></div>
+            <div><div class="testimonial-name">Name Six</div><div class="testimonial-title">Role, Company</div></div>
+          </div>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- ========== 5. THREE-COLUMN (WHY / HOW / WHAT) ========== -->
+  <!-- ========== 8. CAPABILITY LIST ========== -->
   <section class="slide">
     <div class="slide-inner">
-      <div class="eyebrow">Section label</div>
-      <h2>Headline for the breakdown.</h2>
-      <div class="three-col" style="margin-top: 2rem;">
-        <div>
-          <h3>Why</h3>
-          <p>The motivation. Why this matters. Why now.</p>
+      <div class="eyebrow">Everywhere you work</div>
+      <h2>One agent across every surface.</h2>
+      <div class="cap-list">
+        <div class="cap-row"><div class="cap-q">Desktop</div><div class="cap-a">The full IDE experience. Manual to agentic coding, in one familiar editor.</div></div>
+        <div class="cap-row"><div class="cap-q">CLI</div><div class="cap-a">Run agents in any terminal, script, or editor. Same power, no GUI needed.</div></div>
+        <div class="cap-row"><div class="cap-q">Integrations</div><div class="cap-a">Start agents from GitHub, Slack, Linear, and more. Where your team already works.</div></div>
+        <div class="cap-row"><div class="cap-q">Web & Mobile</div><div class="cap-a">Run cloud agents from your browser or phone. No installation required.</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 9. STAT GRID ========== -->
+  <section class="slide">
+    <div class="slide-inner">
+      <div class="eyebrow">Impact</div>
+      <h2>The numbers.</h2>
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="stat-label">Adoption</div>
+          <div class="stat-number">80%+</div>
+          <div class="stat-desc">Team adoption rate within the first quarter of deployment.</div>
         </div>
-        <div>
-          <h3>How</h3>
-          <p>The mechanism. The four pillars. The structure.</p>
+        <div class="stat-card stat-dark">
+          <div class="stat-label">Engineers</div>
+          <div class="stat-number">40,000</div>
+          <div class="stat-desc">Engineers using AI-assisted development across the organization.</div>
         </div>
-        <div>
-          <h3>What</h3>
-          <p>The outcome. What you walk away with.</p>
+        <div class="stat-card">
+          <div class="stat-label">Velocity</div>
+          <div class="stat-number">3×</div>
+          <div class="stat-desc">Faster from idea to pull request compared to the previous year.</div>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- ========== 6. CAPABILITY LIST (Q&A) ========== -->
+  <!-- ========== 10. DOT FLOW ========== -->
   <section class="slide">
     <div class="slide-inner">
-      <div class="eyebrow">What it solves</div>
-      <h2>The questions you have. <span class="dim">Answered.</span></h2>
-      <div class="cap-list" style="margin-top: 2rem;">
-        <div class="cap-row">
-          <div class="cap-q">Question one?</div>
-          <div class="cap-a">A clear, specific answer that addresses the question directly.</div>
-        </div>
-        <div class="cap-row">
-          <div class="cap-q">Question two?</div>
-          <div class="cap-a">Another concrete answer. Avoid hedging.</div>
-        </div>
-        <div class="cap-row">
-          <div class="cap-q">Question three?</div>
-          <div class="cap-a">Keep answers parallel in length and tone.</div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ========== 7. DARK CALLOUT ========== -->
-  <section class="slide">
-    <div class="slide-inner">
-      <div class="callout">
-        <h3>Why now</h3>
-        <p>The moment lands here. <strong>The key insight in bold.</strong> Then the supporting context. One callout per deck max — too many and the emphasis stops working.</p>
-      </div>
-    </div>
-  </section>
-
-  <!-- ========== 8. DOT FLOW ========== -->
-  <section class="slide">
-    <div class="slide-inner">
-      <div class="eyebrow">The flow</div>
-      <h2>How it works. <span class="dim">Step by step.</span></h2>
+      <div class="eyebrow">Workflow</div>
+      <h2>How it works.</h2>
       <div class="dot-flow">
-        <div class="dot-step"><div class="dot"></div><h4>Step 1</h4><p>Short caption</p></div>
-        <div class="dot-step"><div class="dot"></div><h4>Step 2</h4><p>Short caption</p></div>
-        <div class="dot-step"><div class="dot"></div><h4>Step 3</h4><p>Short caption</p></div>
-        <div class="dot-step"><div class="dot"></div><h4>Step 4</h4><p>Short caption</p></div>
-        <div class="dot-step"><div class="dot"></div><h4>Step 5</h4><p>Short caption</p></div>
+        <div class="dot-step"><div class="dot"></div><h4>Describe</h4><p>Tell the agent what you need</p></div>
+        <div class="dot-step"><div class="dot"></div><h4>Plan</h4><p>Agent reads codebase, proposes steps</p></div>
+        <div class="dot-step"><div class="dot"></div><h4>Build</h4><p>Code written across files</p></div>
+        <div class="dot-step"><div class="dot"></div><h4>Review</h4><p>You inspect the diff</p></div>
+        <div class="dot-step"><div class="dot"></div><h4>Ship</h4><p>Merge and deploy</p></div>
       </div>
     </div>
   </section>
 
-  <!-- ========== 9. STACK GRID ========== -->
+  <!-- ========== 11. DARK CALLOUT ========== -->
   <section class="slide">
     <div class="slide-inner">
-      <div class="eyebrow">The stack</div>
-      <h2>Built on tools <span class="dim">you already know.</span></h2>
-      <div class="stack-grid">
-        <div class="stack-card">
-          <div class="stack-card-label">Category one</div>
-          <div class="stack-tool"><span class="mark"></span>Tool A</div>
-          <div class="stack-tool"><span class="mark"></span>Tool B</div>
-          <div class="stack-tool"><span class="mark"></span>Tool C</div>
-        </div>
-        <div class="stack-card">
-          <div class="stack-card-label">Category two</div>
-          <div class="stack-tool"><span class="mark"></span>Tool D</div>
-          <div class="stack-tool"><span class="mark"></span>Tool E</div>
-        </div>
-        <div class="stack-card">
-          <div class="stack-card-label">Category three</div>
-          <div class="stack-tool"><span class="mark"></span>Tool F</div>
-          <div class="stack-tool"><span class="mark"></span>Tool G</div>
-        </div>
-        <div class="stack-card">
-          <div class="stack-card-label">Category four</div>
-          <div class="stack-tool"><span class="mark"></span>Tool H</div>
-          <div class="stack-tool"><span class="mark"></span>Tool I</div>
-        </div>
+      <div class="eyebrow">Why now</div>
+      <h2>The moment matters.</h2>
+      <div class="callout">
+        <h3>Context</h3>
+        <p>The tools are finally good enough. <strong>Not because AI got smarter — because it learned to read your code.</strong> Context-aware agents change the economics of software development.</p>
       </div>
     </div>
   </section>
 
-  <!-- ========== 10. SPEC BLOCK + CONTEXT + OUTPUTS ========== -->
+  <!-- ========== 12. UPDATE ROW ========== -->
   <section class="slide">
     <div class="slide-inner">
-      <div class="eyebrow">The mechanism</div>
-      <h2>One input. <span class="dim">Three outputs.</span></h2>
-      <div class="spec-flow">
-        <div class="spec-block">
-          <h4>The Input</h4>
-          <p>What goes in</p>
+      <div class="eyebrow">Changelog</div>
+      <h2>Always shipping.</h2>
+      <div class="update-row">
+        <div class="update-card">
+          <div class="update-header">
+            <span class="update-badge">3.3</span>
+            <span class="update-date">May 7, 2026</span>
+          </div>
+          <div class="update-title">PR Review, Build Plan in Parallel, and Split PRs</div>
         </div>
-        <div class="ctx-row">
-          <span class="ctx-label">draws from</span>
-          <span class="ctx-pill">Source 1</span>
-          <span class="ctx-pill">Source 2</span>
-          <span class="ctx-pill">Source 3</span>
+        <div class="update-card">
+          <div class="update-header">
+            <span class="update-badge">3.3</span>
+            <span class="update-date">May 6, 2026</span>
+          </div>
+          <div class="update-title">Context Usage Breakdown</div>
         </div>
-        <div class="ai-divider">
-          <div class="line"></div>
-          <span class="ai-pill">Process</span>
-          <div class="line"></div>
+        <div class="update-card">
+          <div class="update-header">
+            <span class="update-date">May 4, 2026</span>
+          </div>
+          <div class="update-title">Model controls, spend management, and usage analytics</div>
         </div>
-        <div class="outputs-row">
-          <div class="output-card"><h5>Output A</h5><p>What it produces.</p></div>
-          <div class="output-card"><h5>Output B</h5><p>What it produces.</p></div>
-          <div class="output-card"><h5>Output C</h5><p>What it produces.</p></div>
+        <div class="update-card">
+          <div class="update-header">
+            <span class="update-date">May 1, 2026</span>
+          </div>
+          <div class="update-title">Team Marketplace Updates</div>
         </div>
+      </div>
+      <div style="margin-top:1.25rem;">
+        <a href="#" class="cta-link">See what's new &rarr;</a>
       </div>
     </div>
   </section>
 
-  <!-- ========== 11. PRODUCT SLIDE (SHOWCASE STYLE) ========== -->
+  <!-- ========== 13. THREE-COLUMN ========== -->
   <section class="slide">
     <div class="slide-inner">
-      <div class="product-row">
-        <div class="product-meta">
-          <div class="product-num">/01</div>
-          <div class="product-tag">A short, punchy quote or hook.</div>
-          <h3 class="product-headline">One-line description of what this thing does.</h3>
-          <p class="product-desc">Two or three sentences that explain it. Keep it concrete. Avoid abstract language. Tell the story behind it.</p>
-          <div class="product-stat">A few hours · One weekend · Or whatever's true</div>
-        </div>
-        <div class="product-name">Name<sup>™</sup></div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ========== 12. COLLAGE SLIDE (FULL MEDIA) ========== -->
-  <section class="slide collage-slide">
-    <div class="collage">
-      <img src="media/KMS1821.jpg" alt="" style="width:100%;height:100%;object-fit:cover;">
-    </div>
-  </section>
-
-  <!-- ========== 13. JEDUF THREE-COLUMN COMPARISON ========== -->
-  <section class="slide">
-    <div class="slide-inner">
-      <div class="eyebrow">The middle path</div>
-      <h2>Between two extremes. <span class="dim">The thing that actually works.</span></h2>
-      <div class="jeduf">
-        <div class="jeduf-col">
-          <div class="jeduf-label">Too much</div>
-          <div class="jeduf-title">Extreme A</div>
-          <div class="jeduf-philosophy">"A philosophy quote that captures the extreme."</div>
-          <div class="jeduf-step">Step 1</div>
-          <div class="jeduf-step">Step 2</div>
-          <div class="jeduf-step">Step 3</div>
-          <div class="jeduf-step">Step 4</div>
-        </div>
-        <div class="jeduf-col hero">
-          <div class="jeduf-label">Just right</div>
-          <div class="jeduf-title">The middle path</div>
-          <div class="jeduf-philosophy">"The philosophy of the balanced approach."</div>
-          <div class="jeduf-step">Step 1</div>
-          <div class="jeduf-step">Step 2</div>
-          <div class="jeduf-step">Step 3</div>
-          <div class="jeduf-step">Step 4</div>
-        </div>
-        <div class="jeduf-col">
-          <div class="jeduf-label">Too little</div>
-          <div class="jeduf-title">Extreme B</div>
-          <div class="jeduf-philosophy">"A philosophy quote that captures the other extreme."</div>
-          <div class="jeduf-step">Step 1</div>
-          <div class="jeduf-step">Step 2</div>
-          <div class="jeduf-step">Step 3</div>
-          <div class="jeduf-step">Step 4</div>
-        </div>
+      <div class="eyebrow">Architecture</div>
+      <h2>Three pillars.</h2>
+      <div class="three-col" style="margin-top: 2rem;">
+        <div><h3>Models</h3><p>The best foundation models, orchestrated to work together. Each sub-task routed to the right model.</p></div>
+        <div><h3>Context</h3><p>Deep codebase understanding through custom embeddings. The agent knows your patterns before you ask.</p></div>
+        <div><h3>Interface</h3><p>Meet developers where they are. Desktop, terminal, browser, phone. One experience everywhere.</p></div>
       </div>
     </div>
   </section>
@@ -1151,141 +1131,173 @@
   <!-- ========== 14. TIMELINE ========== -->
   <section class="slide">
     <div class="slide-inner">
-      <div class="eyebrow">The journey</div>
-      <h2>How we got here. <span class="dim">Year by year.</span></h2>
+      <div class="eyebrow">Journey</div>
+      <h2>How we got here.</h2>
       <div class="timeline">
         <div class="timeline-row">
-          <div class="timeline-year">Year 1</div>
+          <div class="timeline-year">2022</div>
           <div class="timeline-track"><div class="timeline-dot"></div><div class="timeline-line"></div></div>
-          <div class="timeline-content"><h4>The starting point</h4><p>Where things began. The initial conditions and constraints.</p></div>
+          <div class="timeline-content"><h4>Started</h4><p>Small team, big bet. The hypothesis: AI can understand entire codebases.</p></div>
         </div>
         <div class="timeline-row">
-          <div class="timeline-year">Year 2</div>
+          <div class="timeline-year">2023</div>
           <div class="timeline-track"><div class="timeline-dot"></div><div class="timeline-line"></div></div>
-          <div class="timeline-content"><h4>Early progress</h4><p>First experiments. Initial wins. Lessons learned.</p></div>
+          <div class="timeline-content"><h4>Product-market fit</h4><p>Tab completion that actually works. Developers started switching in weeks, not months.</p></div>
         </div>
         <div class="timeline-row">
-          <div class="timeline-year">Year 3</div>
+          <div class="timeline-year">2025</div>
           <div class="timeline-track"><div class="timeline-dot"></div><div class="timeline-line"></div></div>
-          <div class="timeline-content"><h4>The inflection</h4><p>The moment things accelerated. What changed and why.</p></div>
+          <div class="timeline-content"><h4>Agents</h4><p>From autocomplete to autonomous. Agents that plan, build, and iterate across entire projects.</p></div>
         </div>
         <div class="timeline-row">
-          <div class="timeline-year">Now</div>
+          <div class="timeline-year">2026</div>
           <div class="timeline-track"><div class="timeline-dot"></div><div class="timeline-line"></div></div>
-          <div class="timeline-content"><h4>Where we are</h4><p>Current state. What's been achieved. What's next.</p></div>
+          <div class="timeline-content"><h4>The platform</h4><p>Every surface. Every team. The way software gets built, fundamentally different.</p></div>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- ========== 15. STAT GRID ========== -->
+  <!-- ========== 15. PRODUCT SLIDE ========== -->
   <section class="slide">
     <div class="slide-inner">
-      <div class="eyebrow">The numbers</div>
-      <h2>Impact you can measure. <span class="dim">Not just feel.</span></h2>
-      <div class="stat-grid">
-        <div class="stat-card">
-          <div class="stat-label">Metric one</div>
-          <div class="stat-number">N×</div>
-          <div class="stat-desc">What this number means in context. Be specific.</div>
+      <div class="product-row">
+        <div class="product-meta">
+          <div class="product-num">/01</div>
+          <div class="product-tag">Core product</div>
+          <h3 class="product-headline">The IDE that thinks with you.</h3>
+          <p class="product-desc">Not just autocomplete. A full development environment that understands your codebase, your team's conventions, and your intent.</p>
+          <div class="product-stat">Used by 40,000+ engineers</div>
         </div>
-        <div class="stat-card stat-dark">
-          <div class="stat-label">Metric two</div>
-          <div class="stat-number">00</div>
-          <div class="stat-desc">The hero number. Dark card draws attention here.</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Metric three</div>
-          <div class="stat-number">00%</div>
-          <div class="stat-desc">Another concrete measurement with context.</div>
-        </div>
+        <div class="product-name">Editor</div>
       </div>
     </div>
   </section>
 
-  <!-- ========== 16. QUOTE PAIR ========== -->
+  <!-- ========== 16. COLLAGE ========== -->
+  <section class="slide collage-slide">
+    <div class="collage">
+      <img src="media/KMSsp437.jpg" alt="" style="width:100%;height:100%;object-fit:cover;">
+    </div>
+  </section>
+
+  <!-- ========== 17. QUOTE PAIR ========== -->
   <section class="slide">
     <div class="slide-inner">
-      <div class="eyebrow">Two perspectives</div>
-      <h2>The debate. <span class="dim">Both sides, one slide.</span></h2>
+      <div class="eyebrow">Perspectives</div>
+      <h2>Two views.</h2>
       <div class="quote-pair">
         <div class="quote-card">
-          <div class="quote-text">"The first perspective. A position or belief that one side holds."</div>
-          <div class="quote-attr">Perspective A</div>
+          <div class="quote-text">"The best tools disappear. You stop thinking about the tool and start thinking about the work."</div>
+          <div class="quote-attr">Builder</div>
         </div>
         <div class="quote-card quote-dark">
-          <div class="quote-text">"The counterpoint. A contrasting view that creates tension with the first."</div>
-          <div class="quote-attr">Perspective B</div>
+          <div class="quote-text">"Speed without quality is just faster failure. The bar has to stay high."</div>
+          <div class="quote-attr">Architect</div>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- ========== 17. LOGO GRID ========== -->
+  <!-- ========== 18. JEDUF ========== -->
   <section class="slide">
     <div class="slide-inner">
-      <div class="eyebrow">Who uses this</div>
-      <h2>Trusted by teams <span class="dim">who ship.</span></h2>
-      <div class="logo-grid">
-        <div class="logo-cell"><div class="logo-mark"></div><div class="logo-name">Partner A</div><div class="logo-role">Role or team</div></div>
-        <div class="logo-cell"><div class="logo-mark"></div><div class="logo-name">Partner B</div><div class="logo-role">Role or team</div></div>
-        <div class="logo-cell"><div class="logo-mark"></div><div class="logo-name">Partner C</div><div class="logo-role">Role or team</div></div>
-        <div class="logo-cell"><div class="logo-mark"></div><div class="logo-name">Partner D</div><div class="logo-role">Role or team</div></div>
-        <div class="logo-cell"><div class="logo-mark"></div><div class="logo-name">Partner E</div><div class="logo-role">Role or team</div></div>
-        <div class="logo-cell"><div class="logo-mark"></div><div class="logo-name">Partner F</div><div class="logo-role">Role or team</div></div>
-        <div class="logo-cell"><div class="logo-mark"></div><div class="logo-name">Partner G</div><div class="logo-role">Role or team</div></div>
-        <div class="logo-cell"><div class="logo-mark"></div><div class="logo-name">Partner H</div><div class="logo-role">Role or team</div></div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ========== 18. CODE SLIDE ========== -->
-  <section class="slide">
-    <div class="slide-inner">
-      <div class="eyebrow">Under the hood</div>
-      <h2>How it works. <span class="dim">The code behind it.</span></h2>
-      <div class="code-frame">
-        <div class="code-frame-header">
-          <div class="code-frame-dot"></div>
-          <div class="code-frame-dot"></div>
-          <div class="code-frame-dot"></div>
-          <div class="code-frame-title">deck.html</div>
+      <div class="eyebrow">Spectrum</div>
+      <h2>Finding the right level.</h2>
+      <div class="jeduf">
+        <div class="jeduf-col">
+          <div class="jeduf-label">Too manual</div>
+          <div class="jeduf-title">Write everything</div>
+          <div class="jeduf-philosophy">"Every line by hand."</div>
+          <div class="jeduf-step">Full control</div>
+          <div class="jeduf-step">Slow iteration</div>
+          <div class="jeduf-step">High cognitive load</div>
         </div>
-<pre><span class="code-comment">&lt;!-- A slide is just a section --&gt;</span>
-<span class="code-keyword">&lt;section</span> <span class="code-dim">class=</span><span class="code-string">"slide dark"</span><span class="code-keyword">&gt;</span>
-  <span class="code-keyword">&lt;div</span> <span class="code-dim">class=</span><span class="code-string">"slide-inner"</span><span class="code-keyword">&gt;</span>
-    <span class="code-keyword">&lt;div</span> <span class="code-dim">class=</span><span class="code-string">"eyebrow"</span><span class="code-keyword">&gt;</span>The shift<span class="code-keyword">&lt;/div&gt;</span>
-    <span class="code-keyword">&lt;h1&gt;</span>The bottleneck moved.
-      <span class="code-keyword">&lt;span</span> <span class="code-dim">class=</span><span class="code-string">"dim"</span><span class="code-keyword">&gt;</span>Ideas are the new blocker.<span class="code-keyword">&lt;/span&gt;</span>
-    <span class="code-keyword">&lt;/h1&gt;</span>
-  <span class="code-keyword">&lt;/div&gt;</span>
-<span class="code-keyword">&lt;/section&gt;</span></pre>
+        <div class="jeduf-col hero">
+          <div class="jeduf-label">Just right</div>
+          <div class="jeduf-title">Human + agent</div>
+          <div class="jeduf-philosophy">"You decide. It builds."</div>
+          <div class="jeduf-step">Intent-driven</div>
+          <div class="jeduf-step">Fast iteration</div>
+          <div class="jeduf-step">Quality preserved</div>
+        </div>
+        <div class="jeduf-col">
+          <div class="jeduf-label">Too autonomous</div>
+          <div class="jeduf-title">Fully automated</div>
+          <div class="jeduf-philosophy">"Just ship it, fix later."</div>
+          <div class="jeduf-step">No oversight</div>
+          <div class="jeduf-step">Drift from intent</div>
+          <div class="jeduf-step">Technical debt</div>
+        </div>
       </div>
     </div>
   </section>
 
-  <!-- ========== 19. DARK SLIDE (EMPHASIS) ========== -->
+  <!-- ========== 19. DARK SLIDE ========== -->
   <section class="slide dark">
     <div class="slide-inner">
-      <div class="eyebrow">Section label</div>
-      <h1>The pivot moment. <span class="dim">Lands harder in dark.</span></h1>
-      <p class="subtitle">Use dark slides sparingly. They mark turning points. Two or three per deck max.</p>
+      <div class="eyebrow">The honest part</div>
+      <h1>We're early. <span class="dim">And that's the point.</span></h1>
+      <p class="subtitle">The tools will get better. The models will get smarter. The teams that start building this way now will compound every advantage.</p>
     </div>
   </section>
 
-  <!-- ========== 20. CLOSING SLIDE ========== -->
+  <!-- ========== 20. ART OVERLAY (as closing visual) ========== -->
+  <section class="slide">
+    <div class="slide-inner" style="display:flex; flex-direction:column; align-items:center; text-align:center;">
+      <h2>Craft meets code.</h2>
+      <p class="subtitle" style="text-align:center; margin-bottom:2rem;">The best software has always been made by people who care deeply about their tools.</p>
+      <div class="art-overlay" style="width:100%; max-width:900px;">
+        <div class="art-overlay-bg" style="background:linear-gradient(160deg, #7a6a4a 0%, #9a8866 20%, #5a6a4a 45%, #889070 65%, #b4a876 85%, #d4c896 100%);"></div>
+        <div class="art-overlay-ui">
+          <div class="art-overlay-titlebar">
+            <div class="art-overlay-dot"></div>
+            <div class="art-overlay-dot"></div>
+            <div class="art-overlay-dot"></div>
+          </div>
+          <div class="art-overlay-content">
+            <div class="art-overlay-sidebar">
+              <div class="art-overlay-line" style="margin-bottom:0.5rem;"></div>
+              <div class="art-overlay-line short" style="margin-bottom:0.8rem;"></div>
+              <div class="art-overlay-line accent" style="margin-bottom:0.4rem;"></div>
+              <div class="art-overlay-line" style="margin-bottom:0.4rem;"></div>
+              <div class="art-overlay-line short"></div>
+            </div>
+            <div class="art-overlay-main">
+              <div class="art-overlay-line" style="width:85%;"></div>
+              <div class="art-overlay-line short"></div>
+              <div style="height:0.3rem;"></div>
+              <div class="art-overlay-line"></div>
+              <div class="art-overlay-line" style="width:75%;"></div>
+              <div style="height:0.3rem;"></div>
+              <div class="art-overlay-line accent" style="width:30%;"></div>
+            </div>
+          </div>
+        </div>
+        <div class="art-overlay-caption">
+          <h3>Your product, built with care.</h3>
+          <p>Classical craft. Modern tools. The same attention to detail.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 21. CLOSING ========== -->
   <section class="slide dark quote-slide">
     <div class="slide-inner">
-      <h1>The closing line.<br><span class="dim">Slow down for it.</span></h1>
+      <h1>Stay on<br>the frontier.</h1>
     </div>
   </section>
 
-  <!-- ========== 21. THANKS ========== -->
+  <!-- ========== 22. THANKS ========== -->
   <section class="slide">
     <div class="slide-inner">
-      <h1 style="font-size: clamp(2.5rem, 5vw, 4rem);">Thanks.</h1>
+      <h1 style="font-size: clamp(2.5rem, 5vw, 4rem); font-weight: 300;">Thank you.</h1>
       <p class="subtitle">Questions?</p>
-      <div class="meta">Speaker name · Affiliation</div>
+      <div class="meta">Name · Title</div>
+      <div style="margin-top: 1.5rem;">
+        <a href="#" class="cta-link">Learn more &rarr;</a>
+      </div>
     </div>
   </section>
 
@@ -1294,10 +1306,10 @@
 <button class="pdf-btn" onclick="downloadPDF()">Download PDF</button>
 
 <div class="nav">
-  <span id="counter">1 / 16</span>
+  <span id="counter">1 / 22</span>
   <div class="nav-buttons">
-    <button class="nav-btn" onclick="prev()">‹</button>
-    <button class="nav-btn" onclick="next()">›</button>
+    <button class="nav-btn" onclick="prev()">&#8249;</button>
+    <button class="nav-btn" onclick="next()">&#8250;</button>
   </div>
 </div>
 
@@ -1328,7 +1340,7 @@
 
   function downloadPDF() {
     const originalTitle = document.title;
-    document.title = 'deck';
+    document.title = 'deck-craft';
     window.print();
     setTimeout(() => { document.title = originalTitle; }, 1000);
   }

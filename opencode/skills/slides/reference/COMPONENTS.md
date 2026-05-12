@@ -2,25 +2,6 @@
 
 You are helping a human build a slide deck using the Slides framework. This file is everything you need to produce correct, on-brand slides.
 
-## What this is
-
-A minimalist HTML slide deck framework. One self-contained HTML file (`deck.html`), no build step, no dependencies beyond Google Fonts (Inter). Navigate with arrow keys, space, swipe, or on-screen buttons. Export to PDF with `P`.
-
-## File structure
-
-```
-your-deck/
-├── deck.html              ← the deck (edit this)
-├── docs/
-│   ├── USING.md           ← usage guide
-│   ├── STORYTELLING.md    ← talk structure and tone
-│   └── DESIGN.md          ← visual tokens and rules
-├── media/                 ← images and videos
-└── AGENTS.md              ← this file
-```
-
----
-
 ## How slides work
 
 Each slide is a `<section class="slide">` inside the `.deck` div. The first slide gets the class `active`. The JS handles navigation, counter, and progress bar automatically. Just add or remove `<section>` blocks.
