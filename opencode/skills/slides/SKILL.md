@@ -57,3 +57,7 @@ The 25 components are a library, not a ceiling. New layouts are fine when conten
 - "Add stats / metrics" → component 16 (stat-grid)
 - "Closing slide / thanks" → component 20
 - "Embed it" → user appends `?embed` to the URL; PDF button hides, navigation stays
+
+## Reference
+
+- [noskillish/slides](https://github.com/noskillish/slides)
