@@ -25,6 +25,13 @@
   // Any string works (e.g. "13 May 2026", "Q2 2026", "Spring '26").
   const presentationDate = "Date";
 
+  // Contact link on the Thanks slide. The displayed text is auto-derived
+  // (https/www stripped). Defaults to LinkedIn; any URL works.
+  const contactUrl = "https://www.linkedin.com/in/saattrupdan/";
+
+  // Speaker email — shown beside the contact link on the Thanks slide.
+  const speakerEmail = "dan.smart@alexandra.dk";
+
   // Set to true to enable Alexandra Institute branding (logo, brand
   // colors, Montserrat + Playfair Display, "Alexandra Institute"
   // appended to the cover affiliation).
@@ -761,12 +768,18 @@
       <h1 style="font-size: clamp(2.5rem, 5vw, 4rem); font-weight: 300;">Thank you.</h1>
       <p class="subtitle" data-reveal>Contact information</p>
       <div class="meta" data-reveal><span data-fill="speaker">Speaker name</span> · Contact</div>
-      <div style="margin-top: 1.5rem;" data-reveal>
-        <a href="https://www.linkedin.com/in/saattrupdan/" class="cta-link" target="_blank" rel="noopener">
+      <div style="margin-top: 1.5rem; display: flex; gap: 0.75rem; flex-wrap: wrap;" data-reveal>
+        <a class="cta-link" target="_blank" rel="noopener" href="#" data-fill-href="contact">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
             <path d="M20.45 20.45h-3.55v-5.57c0-1.33-.02-3.04-1.85-3.04-1.85 0-2.13 1.45-2.13 2.94v5.67H9.37V9h3.41v1.56h.05c.47-.9 1.63-1.85 3.36-1.85 3.6 0 4.26 2.37 4.26 5.45v6.29zM5.34 7.43a2.06 2.06 0 1 1 0-4.12 2.06 2.06 0 0 1 0 4.12zM7.12 20.45H3.56V9h3.56v11.45zM22.23 0H1.77C.79 0 0 .77 0 1.72v20.56C0 23.23.79 24 1.77 24h20.45c.98 0 1.78-.77 1.78-1.72V1.72C24 .77 23.2 0 22.22 0z"/>
           </svg>
-          linkedin.com/in/saattrupdan
+          <span data-fill="contact-label">contact link</span>
+        </a>
+        <a class="cta-link" href="#" data-fill-href="email-mailto">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+            <path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/>
+          </svg>
+          <span data-fill="email">email@example.com</span>
         </a>
       </div>
     </div>
@@ -2359,16 +2372,26 @@
 
   if (useAlexandra) document.body.classList.add('alexandra');
 
-  // Inject settings into [data-fill] spans and document title.
+  // Inject settings into [data-fill] spans, [data-fill-href] links, and the document title.
   const fillValues = {
     title: presentationTitle,
     speaker: speakerName,
     'speaker-title': speakerTitle,
     date: presentationDate,
+    'contact-label': contactUrl ? contactUrl.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '') : '',
+    email: speakerEmail,
+  };
+  const hrefValues = {
+    contact: contactUrl,
+    'email-mailto': speakerEmail ? 'mailto:' + speakerEmail : '',
   };
   document.querySelectorAll('[data-fill]').forEach(el => {
     const val = fillValues[el.dataset.fill];
     if (val) el.textContent = val;
+  });
+  document.querySelectorAll('[data-fill-href]').forEach(el => {
+    const val = hrefValues[el.dataset.fillHref];
+    if (val) el.href = val;
   });
   if (presentationTitle) document.title = presentationTitle;
 
