@@ -12,7 +12,7 @@ Produces a single self-contained `deck.html` file in the user's chosen directory
 
 This skill ships with everything you need — do not fetch from the internet:
 
-- `template/deck-standard.html` — the standard Craft theme. Minimalist editorial: warm off-white (`#f5f0e8`) base, burnt orange accent, Inter. All 25 components in `COMPONENTS.md` map to this file.
+- `template/standard-deck.html` — the standard Craft theme. Minimalist editorial: warm off-white (`#f5f0e8`) base, burnt orange accent, Inter. All 25 components in `COMPONENTS.md` map to this file.
 - `template/alexandra-deck.html` — the Alexandra Institute variant. Deep teal (`#16475e`) and burnt orange (`#be5d2b`) on parchment warmth. Same 22 components, brand-aligned colors.
 - `reference/COMPONENTS.md` — the full component library (25 components: cover, quote, two-column, three-column, capability list, dark callout, dot flow, stack grid, spec block, product, collage, JEDUF, dark, timeline, stat grid, quote pair, logo grid, code, closing, testimonial grid, logo bar, feature cards, update row, art overlay). **Read this before writing slides.** Copy HTML structures verbatim; change only text content.
 - `reference/DESIGN.md` — design tokens (colors, type scale, spacing). Stay strictly on-token.
@@ -37,9 +37,9 @@ When the user asks for a deck:
 3. **Read the matching storytelling reference** for the chosen type before drafting. Read `reference/COMPONENTS.md` as well — copy patterns verbatim.
 4. **Sketch the arc** using the structure from the chosen reference. State the beat plan back to the user in 5–10 lines before writing HTML.
 5. **Ask which template variant** to use (use `AskUserQuestion`). Options:
-    - **Standard (Craft)** — minimalist editorial with warm cream base and burnt orange accent. Recommended for general-purpose decks. Uses `template/deck-standard.html`.
+    - **Standard (Craft)** — minimalist editorial with warm cream base and burnt orange accent. Recommended for general-purpose decks. Uses `template/standard-deck.html`.
     - **Alexandra** — deep teal and burnt orange on parchment warmth, tailored for the Alexandra Institute brand. Uses `template/alexandra-deck.html`.
-    
+
     Skip this step only if the user has already clearly indicated which variant they want.
 6. **Copy the template** to the target location as `deck.html` (default `./deck.html` in the user's cwd unless they specify). Use `cp template/<variant>.html <target>/deck.html` — the template's `<style>` and `<script>` blocks must remain intact.
 6. **Edit the slides** inside `<div class="deck">`. Replace the placeholder `<section class="slide">` blocks with real content using the component patterns. First slide must keep `class="slide active"`.
@@ -132,7 +132,7 @@ ctx.fill();
 ## Template variants
 
 This skill ships with two template variants:
-- `template/deck-standard.html` — the default Craft theme with warm cream/parchment tones and burnt orange accent.
+- `template/standard-deck.html` — the default Craft theme with warm cream/parchment tones and burnt orange accent.
 - `template/alexandra-deck.html` — the Alexandra Institute brand variant with deep teal and burnt orange on parchment warmth.
 
 Both share the same 22 components, navigation behavior, and animation system. Choose based on the brand context of the deck.
