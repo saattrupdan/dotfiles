@@ -27,11 +27,12 @@ Dark slides add the `.dark` class to `<section>`:
 Bold anchor + dim extension. This is the visual identity of the system.
 
 ```html
-<h1>Anchor. <span class="dim">Extension that fades.</span></h1>
+<h1>Anchor <span class="dim">extension that fades</span></h1>
 ```
 
 - First phrase: weight 500, full color
 - Second phrase: weight 300, color `#b5b5b0` (or `#888` on dark slides)
+- **No trailing periods.** The weight contrast handles the separation; periods read as preachy.
 - Use on every headline that has the room
 
 ---
@@ -126,7 +127,7 @@ Use these exact patterns. Copy the HTML structure. Change only the text content.
 <section class="slide active">
   <div class="slide-inner">
     <div class="eyebrow">Conference · Date</div>
-    <h1>Your headline.<br><span class="dim">Continuation.</span></h1>
+    <h1>Your headline<br><span class="dim">Continuation</span></h1>
     <div class="meta">Speaker name · 20 minutes</div>
   </div>
 </section>
@@ -139,7 +140,7 @@ A single bold statement. No subtitle. No supporting text.
 ```html
 <section class="slide quote-slide">
   <div class="slide-inner">
-    <h1>A bold statement <span class="dim">that opens the talk.</span></h1>
+    <h1>A bold statement <span class="dim">that opens the talk</span></h1>
   </div>
 </section>
 ```
@@ -158,7 +159,7 @@ The default text slide.
 <section class="slide">
   <div class="slide-inner">
     <div class="eyebrow">Section label</div>
-    <h1>Headline. <span class="dim">One line that lands.</span></h1>
+    <h1>Headline <span class="dim">One line that lands</span></h1>
     <p class="subtitle">One or two sentences of nuance. Keep it short.</p>
   </div>
 </section>
@@ -172,12 +173,12 @@ The default text slide.
     <div class="two-col">
       <div>
         <div class="eyebrow">The problem</div>
-        <h2>What's broken.</h2>
+        <h2>What's broken</h2>
         <p>Description of the pain.</p>
       </div>
       <div>
         <div class="eyebrow">The fix</div>
-        <h2>What we built.</h2>
+        <h2>What we built</h2>
         <p>Description of the solution.</p>
       </div>
     </div>
@@ -337,7 +338,7 @@ Two extremes flanking a dark hero (the middle path):
 <section class="slide dark">
   <div class="slide-inner">
     <div class="eyebrow">Section label</div>
-    <h1>The pivot moment. <span class="dim">Lands harder in dark.</span></h1>
+    <h1>The pivot moment <span class="dim">Lands harder in dark</span></h1>
     <p class="subtitle">Use sparingly. Two or three per deck max.</p>
   </div>
 </section>
@@ -436,7 +437,7 @@ Dark code block with macOS-style header. Use `.code-comment`, `.code-keyword`, `
 ```html
 <section class="slide">
   <div class="slide-inner">
-    <h1 style="font-size: clamp(2.5rem, 5vw, 4rem);">Thanks.</h1>
+    <h1 style="font-size: clamp(2.5rem, 5vw, 4rem);">Thanks</h1>
     <p class="subtitle">Questions?</p>
     <div class="meta">Speaker name · Affiliation</div>
   </div>
@@ -759,7 +760,7 @@ Add `data-reveal` to any element you want to appear progressively. Elements star
 <section class="slide">
   <div class="slide-inner">
     <div class="eyebrow" data-reveal>Context</div>
-    <h1 data-reveal>The headline. <span class="dim">The extension.</span></h1>
+    <h1 data-reveal>The headline <span class="dim">The extension</span></h1>
     <p class="subtitle" data-reveal>One line of nuance.</p>
     <div class="two-col" style="margin-top:2rem;" data-reveal>
       <div><h3>Problem</h3><p>The pain.</p></div>

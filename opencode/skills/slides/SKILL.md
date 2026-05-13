@@ -40,7 +40,7 @@ When the user asks for a deck:
 
 ## Hard rules (do not violate)
 
-- **Headline pattern everywhere:** `<h1>Anchor. <span class="dim">Extension that fades.</span></h1>`. Bold the keyword, dim the rest.
+- **Headline pattern everywhere:** `<h1>Anchor <span class="dim">extension that fades</span></h1>`. Bold the keyword, dim the rest. **No trailing periods on headlines** — the weight contrast does the separation.
 - **No em-dashes in body copy.** Use periods.
 - **Stay on-token.** Only colors, fonts, weights, and spacing from the design tokens table in `reference/COMPONENTS.md`. Reference CSS variables (`var(--accent)`), not hex values. No new colors. No new fonts.
 - **Dark slides:** 2–3 per deck maximum. Reserved for pivot moments.
