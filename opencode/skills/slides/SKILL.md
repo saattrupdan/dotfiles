@@ -14,7 +14,6 @@ This skill ships with everything you need — do not fetch from the internet:
 
 - `template/deck.html` — the single template. Default theme is Craft: minimalist editorial with warm off-white (`#f5f0e8`) base, burnt orange (`#c05a3a`) accent, Inter + Fraunces. Flip the `useAlexandra` flag at the top of the `<script>` block to switch to the Alexandra Institute brand variant (deep teal `#002a3f` dark slides, burnt sienna `#be5d2b` accent, Montserrat + Playfair Display, Alexandra logo in the top-left of every slide, "Alexandra Institute" appended to the cover affiliation).
 - `reference/COMPONENTS.md` — the full component library (28 components: cover, quote, two-column, three-column, capability list, dark callout, dot flow, stack grid, spec block, product, collage, JEDUF, dark, timeline, stat grid, quote pair, logo grid, code, closing, testimonial grid, logo bar, feature cards, update row, art overlay, **bar chart**, **flow row**, **diagram**). **Read this before writing slides.** Copy HTML structures verbatim; change only text content.
-- `reference/DESIGN.md` — design tokens (colors, type scale, spacing). Stay strictly on-token.
 - `reference/ACADEMIC_STORYTELLING.md` — paper-style structure for research talks at scientific conferences, invited workshops, and lab seminars (Motivation / Background / Method / Results / Discussion / Limitations / Conclusion). Plain, precise, evidence-led.
 - `reference/CASUAL_STORYTELLING.md` — five-beat structure for internal team talks, casual meetups, demos for people you know (Hook / Context / The Thing / Caveats / Close). Allows light humour.
 - `reference/CLIENT_PRESENTATIONS.md` — pitch and results-readout structures for client meetings: either pitching new work or reporting progress on work already paid for. Serious, non-technical, outcome-driven.
@@ -43,7 +42,7 @@ When the user asks for a deck:
 
 - **Headline pattern everywhere:** `<h1>Anchor. <span class="dim">Extension that fades.</span></h1>`. Bold the keyword, dim the rest.
 - **No em-dashes in body copy.** Use periods.
-- **Stay on-token.** Only colors, fonts, weights, and spacing from `reference/DESIGN.md`. No new colors. No new fonts.
+- **Stay on-token.** Only colors, fonts, weights, and spacing from the design tokens table in `reference/COMPONENTS.md`. Reference CSS variables (`var(--accent)`), not hex values. No new colors. No new fonts.
 - **Dark slides:** 2–3 per deck maximum. Reserved for pivot moments.
 - **Dark callout (`.callout`):** one per deck maximum.
 - **Headlines are statements, not questions** (exception: Q&A capability rows).
@@ -78,7 +77,7 @@ Users expect visualisations in slides. **Prefer the built-in pure-CSS/SVG compon
 
 **Branching / architecture diagrams:** use component 28 (`.diagram`). Absolutely-positioned `.diagram-node` divs over an inline SVG arrow layer with arrowhead `<marker>` defs. Supports curved paths, dashed feedback loops, and optional `.diagram-node-icon` slots for inline SVG icons. To build along the flow, split arrows into separate `<svg>` overlays interleaved with the node divs (reveal fires in DOM order).
 
-**Pie / scatter / line charts:** these are NOT covered by the built-in components. Use Chart.js via CDN as a last resort. Always defer chart creation with `setTimeout(fn, N)` so the DOM is rendered first, and style with deck colours from `reference/DESIGN.md`.
+**Pie / scatter / line charts:** these are NOT covered by the built-in components. Use Chart.js via CDN as a last resort. Always defer chart creation with `setTimeout(fn, N)` so the DOM is rendered first, and style with deck colours from the design tokens table in `reference/COMPONENTS.md` (reference the CSS variables: `var(--accent)`, `var(--text)`, etc.).
 
 **Key rules:**
 - If real data exists on disk (CSV, JSON, model outputs), load it. Otherwise use illustrative numbers — be honest about it.

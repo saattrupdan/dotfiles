@@ -38,40 +38,81 @@ Bold anchor + dim extension. This is the visual identity of the system.
 
 ## Design tokens
 
-### Colors
+All tokens are CSS variables on `:root` in `template/deck.html`. **Reference them through the variables (`var(--accent)`) rather than hard-coding hex values** so the Alexandra brand toggle works automatically.
 
-| Token              | Hex       | Use                              |
-|--------------------|-----------|----------------------------------|
-| Background         | `#f5f5f3` | Page/slide background            |
-| Surface            | `#fafaf8` | Card backgrounds                 |
-| Surface (white)    | `#ffffff` | Cards that need more contrast    |
-| Ink / Hero         | `#1a1a1a` | Text primary, dark slides        |
-| Border soft        | `#e0e0db` | Default borders                  |
-| Border medium      | `#d5d5d0` | Emphasized borders               |
-| Pill background    | `#eeeee9` | Context pills                    |
-| Text dim           | `#a0a09a` | Subtitles, body copy             |
-| Text very dim      | `#b5b5b0` | Dim spans in headlines, meta     |
-| Text faint         | `#c5c5c0` | Labels, very low priority text   |
-| On-dark text       | `#f5f5f3` | Primary text on dark backgrounds |
-| On-dark dim        | `#ccc`    | Body text on dark backgrounds    |
-| On-dark very dim   | `#888`    | Labels on dark backgrounds       |
+### Colors — default (Craft)
+
+| Variable             | Value                          | Use                                              |
+|----------------------|--------------------------------|--------------------------------------------------|
+| `--bg`               | `#f5f0e8`                      | Page/slide background (warm cream)               |
+| `--bg-card`          | `#ffffff`                      | Standard card surface                            |
+| `--bg-card-warm`     | `#faf6ef`                      | Inset card surface (e.g. feature-card-inner)     |
+| `--bg-dark`          | `#161310`                      | Dark slide background                            |
+| `--bg-dark-warm`     | `#1f1a15`                      | Gradient companion to `--bg-dark`                |
+| `--text`             | `#1a1a1a`                      | Primary text                                     |
+| `--text-light`       | `#f5f0e8`                      | Primary text on dark backgrounds                 |
+| `--text-secondary`   | `#6b6560`                      | Body copy, captions                              |
+| `--text-muted`       | `#9a9490`                      | Labels, eyebrows, meta, dim spans                |
+| `--text-faint`       | `#b5b0aa`                      | Very low-priority text                           |
+| `--accent`           | `#c05a3a`                      | Burnt orange — CTAs, eyebrows, accent lines      |
+| `--accent-hover`     | `#a84d30`                      | Hover state for accent elements                  |
+| `--accent-soft`      | `rgba(192, 90, 58, 0.08)`      | Accent backgrounds and pills                     |
+| `--accent-glow`      | `rgba(192, 90, 58, 0.25)`      | Accent shadows and glows                         |
+| `--border`           | `#e5e0d8`                      | Default card borders                             |
+| `--border-strong`    | `#d5d0c8`                      | Emphasized borders, dividers                     |
+
+### Colors — Alexandra brand (when `useAlexandra = true`)
+
+The flag swaps these variables under `body.alexandra`. Same names, brand values:
+
+| Variable             | Value                          |
+|----------------------|--------------------------------|
+| `--bg`               | `#ffffff`                      |
+| `--bg-card`          | `#f9f9f9`                      |
+| `--bg-dark`          | `#002a3f` (deep teal)          |
+| `--bg-dark-warm`     | `#16475e`                      |
+| `--text`             | `#0c0c0c`                      |
+| `--text-secondary`   | `#353535`                      |
+| `--text-muted`       | `#839fad`                      |
+| `--text-faint`       | `#aabbc4`                      |
+| `--accent`           | `#be5d2b` (burnt sienna)       |
+| `--accent-hover`     | `#d17546`                      |
+| `--border`           | `#ededed`                      |
+| `--border-strong`    | `#aabbc4`                      |
 
 ### Typography
 
-- **Font:** Inter (weights 300, 400, 500, 600)
-- **H1 display:** `clamp(2.5rem, 6vw, 5rem)`, weight 500, tracking `-0.035em`
-- **H2 section:** `clamp(1.75rem, 3.5vw, 2.6rem)`, weight 500, tracking `-0.025em`
-- **H3 column:** ~1rem, weight 500
-- **Body/subtitle:** 0.85–1rem, weight 400, line-height 1.5–1.6
-- **Eyebrow:** 0.65–0.75rem, uppercase, weight 500, tracking `0.08–0.1em`, color `#a0a09a`
+Two fonts, paired. Sans for body and UI; serif for display headlines, stat numbers, product names, and quoted text.
 
-### Spacing
+- **Default (Craft):** Inter (300, 400, 500, 600, 700) for body. Fraunces (variable, weights 300–500) for `--serif`.
+- **Alexandra:** Montserrat (300–700) for body. Playfair Display (400–600) for `--serif`.
 
-- Slide padding: `6vh 8vw`
-- Max content width: `1100px`
-- Card padding: `1rem–1.5rem`
-- Border radius: `10px` cards, `4px` small elements
-- Section gaps: `2–4rem`
+| Element            | Size                                | Weight | Family   | Notes                              |
+|--------------------|-------------------------------------|--------|----------|------------------------------------|
+| `h1` (display)     | `clamp(3rem, 6.8vw, 5.8rem)`        | 400    | serif    | tracking `-0.035em`, line 1.02     |
+| `h1` (quote slide) | `clamp(3rem, 7.5vw, 6.5rem)`        | 300    | serif    | tracking `-0.04em`                 |
+| `h2`               | `clamp(2rem, 4vw, 3rem)`            | 400    | serif    | tracking `-0.025em`, line 1.08     |
+| `h3`               | `1.05rem`                           | 600    | sans     | tracking `-0.01em`                 |
+| `.subtitle`        | `clamp(1.05rem, 1.5vw, 1.25rem)`    | 400    | sans     | color `--text-secondary`           |
+| `.eyebrow`         | `0.78rem`                           | 500    | sans     | uppercase, tracking `0.14em`, accent-colored, with leading hairline |
+| `.stat-number`     | `clamp(2.8rem, 5.5vw, 4.2rem)`      | 400    | serif    | tracking `-0.04em`                 |
+| `.meta`            | `0.85rem`                           | 500    | sans     | color `--text-muted`               |
+
+### Spacing & radius
+
+- Slide padding: `3.5vh 5vw`
+- Max content width (`.slide-inner`): `1200px`
+- Card padding: `1.1rem–1.6rem` (varies by component)
+- `--radius`: `14px` (default cards)
+- `--radius-sm`: `8px` (steps, buttons, mock chrome)
+- `--radius-lg`: `20px` (art overlay)
+- Section gaps within a slide: `1.5–2rem` typical
+
+### Shadows
+
+- `--shadow-sm`: subtle card lift
+- `--shadow-md`: hover state, hero cards
+- `--shadow-lg`: floating UI mocks, JEDUF hero column
 
 ---
 
