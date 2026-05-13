@@ -7,6 +7,17 @@
 </head>
 <body>
 
+<!-- ============================================================
+     ⚙️  DECK SETTINGS  —  edit the values below
+     ============================================================ -->
+<script>
+  // Set to true to enable Alexandra Institute branding (logo, brand
+  // colors, Montserrat + Playfair Display, "Alexandra Institute"
+  // appended to the cover affiliation).
+  const useAlexandra = true;
+</script>
+<!-- ============================================================ -->
+
 <div id="progress"></div>
 
 <img class="alexandra-logo" alt="Alexandra Institute"
@@ -2325,9 +2336,7 @@
 </style>
 
 <script>
-  // Toggle Alexandra Institute branding (logo, colors, fonts, affiliation).
-  const useAlexandra = true;
-
+  // `useAlexandra` is declared in the settings block near the top of <body>.
   const slides = document.querySelectorAll('.slide');
   const counter = document.getElementById('counter');
   const progress = document.getElementById('progress');
