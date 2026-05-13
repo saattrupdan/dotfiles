@@ -11,6 +11,13 @@
      ⚙️  DECK SETTINGS  —  edit the values below
      ============================================================ -->
 <script>
+  // Speaker name — injected into every <span data-fill="speaker">.
+  const speakerName = "Dan Saattrup Smart";
+
+  // Presentation date — injected into every <span data-fill="date">.
+  // Any string works (e.g. "13 May 2026", "Q2 2026", "Spring '26").
+  const presentationDate = "Date";
+
   // Set to true to enable Alexandra Institute branding (logo, brand
   // colors, Montserrat + Playfair Display, "Alexandra Institute"
   // appended to the cover affiliation).
@@ -33,7 +40,7 @@
       <div class="eyebrow">Presentation</div>
       <h1>Project title. <span class="dim">A subtitle that sets the stage.</span></h1>
       <p class="subtitle">One sentence describing the topic, audience, and purpose.</p>
-      <div class="meta">Dan Saattrup Smart · Principal AI Specialist<span class="affiliation"> · Alexandra Institute</span> · Date</div>
+      <div class="meta"><span data-fill="speaker">Speaker name</span> · Principal AI Specialist<span class="affiliation"> · Alexandra Institute</span> · <span data-fill="date">Date</span></div>
     </div>
   </section>
 
@@ -746,7 +753,7 @@
     <div class="slide-inner">
       <h1 style="font-size: clamp(2.5rem, 5vw, 4rem); font-weight: 300;">Thank you.</h1>
       <p class="subtitle" data-reveal>Contact information</p>
-      <div class="meta" data-reveal>Dan Saattrup Smart · Contact</div>
+      <div class="meta" data-reveal><span data-fill="speaker">Speaker name</span> · Contact</div>
       <div style="margin-top: 1.5rem;" data-reveal>
         <a href="https://www.linkedin.com/in/saattrupdan/" class="cta-link" target="_blank" rel="noopener">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
@@ -2344,6 +2351,13 @@
   let current = 0;
 
   if (useAlexandra) document.body.classList.add('alexandra');
+
+  // Inject settings (speakerName, presentationDate) into [data-fill] spans.
+  const fillValues = { speaker: speakerName, date: presentationDate };
+  document.querySelectorAll('[data-fill]').forEach(el => {
+    const val = fillValues[el.dataset.fill];
+    if (val) el.textContent = val;
+  });
 
   function updateLogo(i) {
     if (!useAlexandra || !alexandraLogo) return;
