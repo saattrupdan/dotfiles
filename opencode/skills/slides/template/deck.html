@@ -18,6 +18,9 @@
   // Speaker name — injected into every <span data-fill="speaker">.
   const speakerName = "Dan Saattrup Smart";
 
+  // Speaker job title — injected into every <span data-fill="speaker-title">.
+  const speakerTitle = "Principal AI Specialist";
+
   // Presentation date — injected into every <span data-fill="date">.
   // Any string works (e.g. "13 May 2026", "Q2 2026", "Spring '26").
   const presentationDate = "Date";
@@ -44,7 +47,7 @@
       <div class="eyebrow">Presentation</div>
       <h1><span data-fill="title">Project title</span>. <span class="dim">A subtitle that sets the stage.</span></h1>
       <p class="subtitle">One sentence describing the topic, audience, and purpose.</p>
-      <div class="meta"><span data-fill="speaker">Speaker name</span> · Principal AI Specialist<span class="affiliation"> · Alexandra Institute</span> · <span data-fill="date">Date</span></div>
+      <div class="meta"><span data-fill="speaker">Speaker name</span> · <span data-fill="speaker-title">Speaker title</span><span class="affiliation"> · Alexandra Institute</span> · <span data-fill="date">Date</span></div>
     </div>
   </section>
 
@@ -2360,6 +2363,7 @@
   const fillValues = {
     title: presentationTitle,
     speaker: speakerName,
+    'speaker-title': speakerTitle,
     date: presentationDate,
   };
   document.querySelectorAll('[data-fill]').forEach(el => {
