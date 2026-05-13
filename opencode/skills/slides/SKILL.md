@@ -12,7 +12,7 @@ Produces a single self-contained `deck.html` file in the user's chosen directory
 
 This skill ships with everything you need — do not fetch from the internet:
 
-- `template/deck.html` — the single template. Default theme is Craft: minimalist editorial with warm off-white (`#f5f0e8`) base, burnt orange (`#c05a3a`) accent, Inter + Fraunces. Flip the `useAlexandra` flag at the top of the `<script>` block to switch to the Alexandra Institute brand variant (deep teal `#002a3f` dark slides, burnt sienna `#be5d2b` accent, Montserrat + Playfair Display, Alexandra logo in the top-left of every slide, "Alexandra Institute" appended to the cover affiliation).
+- `template/deck.html` — the single template. Default theme is Craft: minimalist editorial with warm off-white (`#f5f0e8`) base, burnt orange (`#c05a3a`) accent, Inter + Fraunces. Set `colourScheme = "alexandra-institute"` in the ⚙️ DECK SETTINGS block at the top of `<body>` to switch to the Alexandra Institute brand variant (deep teal `#002a3f` dark slides, burnt sienna `#be5d2b` accent, Montserrat + Playfair Display, "Alexandra Institute" appended to the cover affiliation). Logos shown in the top-left are driven independently by the `darkLogo` and `whiteLogo` settings.
 - `reference/COMPONENTS.md` — the full component library (28 components: cover, quote, two-column, three-column, capability list, dark callout, dot flow, stack grid, spec block, product, collage, JEDUF, dark, timeline, stat grid, quote pair, logo grid, code, closing, testimonial grid, logo bar, feature cards, update row, art overlay, **bar chart**, **flow row**, **diagram**). **Read this before writing slides.** Copy HTML structures verbatim; change only text content.
 - `reference/ACADEMIC_STORYTELLING.md` — paper-style structure for research talks at scientific conferences, invited workshops, and lab seminars (Motivation / Background / Method / Results / Discussion / Limitations / Conclusion). Plain, precise, evidence-led.
 - `reference/CASUAL_STORYTELLING.md` — five-beat structure for internal team talks, casual meetups, demos for people you know (Hook / Context / The Thing / Caveats / Close). Allows light humour.
@@ -32,9 +32,13 @@ When the user asks for a deck:
 2. **Ask for the story** (one short message): topic, audience/context, rough length, and the closing line. Skip if the user has already given enough.
 3. **Read the matching storytelling reference** for the chosen type before drafting. Read `reference/COMPONENTS.md` as well — copy patterns verbatim.
 4. **Sketch the arc** using the structure from the chosen reference. State the beat plan back to the user in 5–10 lines before writing HTML.
-5. **Ask whether to enable Alexandra branding** (use `AskUserQuestion`). Recommend "no" by default; flip to "yes" only when the user mentions Alexandra Institute or signals it's for an Alexandra-affiliated audience. Skip this step if the user has already clearly indicated.
+5. **Ask which colour scheme to use** (use `AskUserQuestion`). Options:
+   - **Standard (Craft)** — warm cream + burnt orange. Recommended unless the user signals otherwise.
+   - **Alexandra Institute** — pick when the user mentions Alexandra Institute or signals it's for an Alexandra-affiliated audience.
+
+   Skip if the user has already clearly indicated.
 6. **Copy the template** to the target location as `deck.html` (default `./deck.html` in the user's cwd unless they specify). Use `cp template/deck.html <target>/deck.html` — the template's `<style>` and `<script>` blocks must remain intact.
-7. **If Alexandra branding is on**, flip `const useAlexandra = false;` to `true` at the top of the `<script>` block in the copied file.
+7. **Edit the ⚙️ DECK SETTINGS block** at the top of `<body>` to set `colourScheme` (`"standard"` or `"alexandra-institute"`), `presentationTitle`, `speakerName`, `speakerTitle`, `presentationDate`, `contactUrl`, `speakerEmail`, and `darkLogo`/`whiteLogo` (set both to empty strings to hide the logo). Anything else is left as default.
 8. **Edit the slides** inside `<div class="deck">`. The `<style>` and `<script>` blocks live at the **bottom** of the file so the slide content is front-and-centre when you open `deck.html`. Each slide is delimited by a clear `<!-- ===== Slide NN: NAME ===== -->` marker. Replace the placeholder `<section class="slide">` blocks with real content using the component patterns. First slide must keep `class="slide active"`.
 9. **Iterate small.** One coherent change per turn. Show the user, get feedback.
 
@@ -88,19 +92,16 @@ Users expect visualisations in slides. **Prefer the built-in pure-CSS/SVG compon
 
 **Margin collapsing between `h1` and `.subtitle`.** The template's `.slide-inner` lacks `overflow: hidden`, so sibling margins collapse (the browser picks the larger margin instead of adding them). This makes the gap between a heading and its subtitle too small. Fix: add `overflow: hidden` to `.slide-inner` in the `<style>` block. This is inherited from the template and affects all decks — always check it when writing.
 
-## Alexandra branding toggle
+## Colour scheme and logo
 
-A single template ships with both themes baked in. The default is the Craft theme (warm cream + burnt orange, Inter + Fraunces). To switch to the Alexandra Institute brand variant, find this line near the top of the `<script>` block in `deck.html`:
+The template ships with the Craft theme as the default (warm cream + burnt orange, Inter + Fraunces). The ⚙️ DECK SETTINGS block at the top of `<body>` exposes two related knobs:
 
 ```js
-const useAlexandra = false;
+const colourScheme = "standard";        // or "alexandra-institute"
+const darkLogo  = "https://…Sort_DK.webp";   // dark logo, shown on light slides
+const whiteLogo = "https://…Hvid_DK.webp";   // light logo, shown on dark slides
 ```
 
-Set it to `true`. This:
+**`colourScheme`** controls the palette, fonts, and the "Alexandra Institute" affiliation suffix on the cover. Add more schemes by extending the `if (colourScheme === '…')` branch in the bottom `<script>` and matching the body class to a new `body.<name> { … }` CSS block.
 
-- Swaps the palette: white base, burnt sienna `#be5d2b` accent, deep teal `#002a3f` dark slides.
-- Switches fonts to Montserrat (body) and Playfair Display (display/headlines).
-- Shows the Alexandra logo fixed in the top-left of every slide; the logo auto-swaps to the white version on dark slides.
-- Reveals the `<span class="affiliation">` chunk on the cover slide, appending "Alexandra Institute" to the speaker's meta line.
-
-The flag is purely additive — flipping it back to `false` restores the Craft theme without any other edits needed.
+**`darkLogo` / `whiteLogo`** are independent. Set both to non-empty URLs to show a logo fixed in the top-left of every slide; the JS auto-swaps between them based on whether the active slide is dark. Set both to empty strings to hide the logo entirely. This works regardless of which colour scheme is active.

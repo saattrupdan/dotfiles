@@ -32,19 +32,24 @@
   // Speaker email — shown beside the contact link on the Thanks slide.
   const speakerEmail = "dan.smart@alexandra.dk";
 
-  // Set to true to enable Alexandra Institute branding (logo, brand
-  // colors, Montserrat + Playfair Display, "Alexandra Institute"
-  // appended to the cover affiliation).
-  const useAlexandra = true;
+  // Colour scheme — "standard" (warm cream + burnt orange, Inter +
+  // Fraunces) or "alexandra-institute" (Alexandra brand palette,
+  // Montserrat + Playfair Display, "Alexandra Institute" appended to
+  // the cover affiliation).
+  const colourScheme = "alexandra-institute";
+
+  // Logos shown fixed in the top-left of every slide. Set both to empty
+  // strings to hide them. `darkLogo` is the dark-coloured logo (used on
+  // light slides); `whiteLogo` is the light-coloured logo (used on dark
+  // slides). Defaults to Alexandra Institute logos.
+  const darkLogo = "https://alexandra.dk/wp-content/uploads/2020/02/Alexandra-Instituttet_Logo_Sort_DK.webp";
+  const whiteLogo = "https://alexandra.dk/wp-content/uploads/2020/02/Alexandra-Instituttet_Logo_Hvid_DK.webp";
 </script>
 <!-- ============================================================ -->
 
 <div id="progress"></div>
 
-<img class="alexandra-logo" alt="Alexandra Institute"
-     src="https://alexandra.dk/wp-content/uploads/2020/02/Alexandra-Instituttet_Logo_Sort_DK.webp"
-     data-light="https://alexandra.dk/wp-content/uploads/2020/02/Alexandra-Instituttet_Logo_Sort_DK.webp"
-     data-dark="https://alexandra.dk/wp-content/uploads/2020/02/Alexandra-Instituttet_Logo_Hvid_DK.webp">
+<img class="deck-logo" alt="" hidden>
 
 <div class="deck">
 
@@ -2214,7 +2219,7 @@
     border-radius: 999px;
   }
 
-  /* --- Alexandra Institute branding (toggled via useAlexandra flag) --- */
+  /* --- Alexandra Institute branding (applied when colourScheme = "alexandra-institute") --- */
   body.alexandra {
     --bg: #ffffff;
     --bg-card: #f9f9f9;
@@ -2248,18 +2253,16 @@
   /* Disable paper-grain texture under Alexandra (cleaner brand feel) */
   body.alexandra::before { display: none; }
 
-  .alexandra-logo {
+  .deck-logo {
     position: fixed;
     top: 1.5rem;
     left: 1.75rem;
     width: 140px;
     height: auto;
     z-index: 50;
-    display: none;
     pointer-events: none;
   }
-
-  body.alexandra .alexandra-logo { display: block; }
+  .deck-logo[hidden] { display: none; }
 
   /* Affiliation chunk shown only with Alexandra branding */
   .affiliation { display: none; }
@@ -2363,14 +2366,20 @@
 </style>
 
 <script>
-  // `useAlexandra` is declared in the settings block near the top of <body>.
+  // Settings (colourScheme, darkLogo, whiteLogo, …) are declared in the
+  // ⚙️ DECK SETTINGS block near the top of <body>.
   const slides = document.querySelectorAll('.slide');
   const counter = document.getElementById('counter');
   const progress = document.getElementById('progress');
-  const alexandraLogo = document.querySelector('.alexandra-logo');
+  const deckLogo = document.querySelector('.deck-logo');
   let current = 0;
 
-  if (useAlexandra) document.body.classList.add('alexandra');
+  // Apply colour scheme. Add more `else if` branches here when new schemes ship.
+  if (colourScheme === 'alexandra-institute') document.body.classList.add('alexandra');
+
+  // Reveal the logo if both URLs are provided; otherwise leave it hidden.
+  const hasLogo = Boolean(darkLogo && whiteLogo);
+  if (hasLogo) deckLogo.hidden = false;
 
   // Inject settings into [data-fill] spans, [data-fill-href] links, and the document title.
   const fillValues = {
@@ -2396,9 +2405,9 @@
   if (presentationTitle) document.title = presentationTitle;
 
   function updateLogo(i) {
-    if (!useAlexandra || !alexandraLogo) return;
+    if (!hasLogo) return;
     const isDark = slides[i].classList.contains('dark');
-    alexandraLogo.src = alexandraLogo.dataset[isDark ? 'dark' : 'light'];
+    deckLogo.src = isDark ? whiteLogo : darkLogo;
   }
 
   function show(i) {
