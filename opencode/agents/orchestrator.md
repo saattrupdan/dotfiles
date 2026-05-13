@@ -15,7 +15,7 @@ permission:
   question: allow
   webfetch: deny
   websearch: deny
-  external_directory: deny
+  external_directory: ask
   doom_loop: allow
   todowrite: deny
 ---

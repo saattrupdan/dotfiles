@@ -521,6 +521,66 @@ When you have a story to tell, use the **setup slide → evidence slide** pair. 
 
 ---
 
+## Progressive reveal
+
+Each slide can progressively reveal its content — like PowerPoint animations — by adding `data-reveal` to elements. Press **Space** or **Enter** to reveal the next element on the current slide. When all elements are revealed, the next press goes to the next slide. The counter shows `3/25 · 2/4` (slide 3 of 25, reveal 2 of 4 on that slide).
+
+### How it works
+
+Add `data-reveal` to any element you want to appear progressively. Elements start invisible and animate in with a subtle fade + slide-up. The reveal order is the DOM order — first `data-reveal` appears, then the second, etc.
+
+```html
+<section class="slide">
+  <div class="slide-inner">
+    <div class="eyebrow" data-reveal>Context</div>
+    <h1 data-reveal>The headline. <span class="dim">The extension.</span></h1>
+    <p class="subtitle" data-reveal>One line of nuance.</p>
+    <div class="two-col" style="margin-top:2rem;" data-reveal>
+      <div><h3>Problem</h3><p>The pain.</p></div>
+      <div><h3>Fix</h3><p>The solution.</p></div>
+    </div>
+  </div>
+</section>
+```
+
+Pressing Space/Enter cycles through: eyebrow → headline → subtitle → two-col. Pressing ArrowRight always goes to the next slide regardless of reveal state.
+
+### Typical reveal patterns
+
+- **Simple text slide:** eyebrow → headline → subtitle (3 reveals)
+- **Comparison slide:** eyebrow → headline → subtitle → two-col (4 reveals)
+- **Stats slide:** eyebrow → headline → stat-grid (3 reveals)
+- **Quote slide:** just the h1 (1 reveal, or none — quote slides show everything at once)
+- **Dark slide:** eyebrow → headline → subtitle (3 reveals for dramatic effect)
+- **Cover slide:** eyebrow → headline → subtitle → meta (4 reveals)
+
+### When to use it
+
+- Slides with dense content (many data points, multiple columns, long lists)
+- Slides where you want to control pacing and not overwhelm the audience
+- Complex architecture diagrams or flowcharts where you want to walk through step by step
+
+### When not to use it
+
+- Simple slides (one stat, one quote, one image) — reveal adds nothing
+- Slides meant to be absorbed at a glance
+- If you're just doing a demo and not presenting slides
+
+### Keyboard shortcuts
+
+| Key | Action |
+|-----|--------|
+| ArrowLeft | Previous slide |
+| ArrowRight | Next slide |
+| Space / Enter | Reveal next element (or next slide if all revealed) |
+| PageDown | Reveal next element (same as Space) |
+| PageUp | Previous slide |
+| Home | First slide |
+| End | Last slide |
+| P | Export to PDF |
+
+---
+
 ## Embed mode
 
 Adding `?embed` to the deck URL produces an embeddable version. The PDF button hides; navigation stays. Use this when the human wants to share a deck inside another page.
