@@ -1,6 +1,6 @@
 ---
 name: slides
-description: What — the noskillish/slides framework for building single-file HTML decks (no build step, 25+ ready components, PDF export, embed mode). Use when the user asks to create, draft, extend, or restyle a slideshow, presentation, or deck — e.g. "create a slideshow about X", "make a deck on Y", "add a quote slide", "turn these notes into slides".
+description: What — the noskillish/slides framework for building single-file HTML decks (no build step, 28+ ready components including pure-CSS bar charts and SVG diagrams, PDF export, embed mode). Use when the user asks to create, draft, extend, or restyle a slideshow, presentation, or deck — e.g. "create a slideshow about X", "make a deck on Y", "add a quote slide", "turn these notes into slides".
 last-updated: 2026-05-13
 ---
 
@@ -12,38 +12,32 @@ Produces a single self-contained `deck.html` file in the user's chosen directory
 
 This skill ships with everything you need — do not fetch from the internet:
 
-- `template/standard-deck.html` — the standard Craft theme. Minimalist editorial: warm off-white (`#f5f0e8`) base, burnt orange accent, Inter. All 25 components in `COMPONENTS.md` map to this file.
-- `template/alexandra-deck.html` — the Alexandra Institute variant. Deep teal (`#16475e`) and burnt orange (`#be5d2b`) on parchment warmth. Same 22 components, brand-aligned colors.
-- `reference/COMPONENTS.md` — the full component library (25 components: cover, quote, two-column, three-column, capability list, dark callout, dot flow, stack grid, spec block, product, collage, JEDUF, dark, timeline, stat grid, quote pair, logo grid, code, closing, testimonial grid, logo bar, feature cards, update row, art overlay). **Read this before writing slides.** Copy HTML structures verbatim; change only text content.
+- `template/deck.html` — the single template. Default theme is Craft: minimalist editorial with warm off-white (`#f5f0e8`) base, burnt orange (`#c05a3a`) accent, Inter + Fraunces. Flip the `useAlexandra` flag at the top of the `<script>` block to switch to the Alexandra Institute brand variant (deep teal `#002a3f` dark slides, burnt sienna `#be5d2b` accent, Montserrat + Playfair Display, Alexandra logo in the top-left of every slide, "Alexandra Institute" appended to the cover affiliation).
+- `reference/COMPONENTS.md` — the full component library (28 components: cover, quote, two-column, three-column, capability list, dark callout, dot flow, stack grid, spec block, product, collage, JEDUF, dark, timeline, stat grid, quote pair, logo grid, code, closing, testimonial grid, logo bar, feature cards, update row, art overlay, **bar chart**, **flow row**, **diagram**). **Read this before writing slides.** Copy HTML structures verbatim; change only text content.
 - `reference/DESIGN.md` — design tokens (colors, type scale, spacing). Stay strictly on-token.
-- `reference/TED_TALK_STORYTELLING.md` — six-beat structure for conference-style talks (Open / World Before / The Turn / Evidence / Honest Part / Close).
-- `reference/CASUAL_STORYTELLING.md` — five-beat structure for informal/internal presentations (Hook / Context / The Thing / Caveats / Close). Allows light humour.
-- `reference/CLIENT_PRESENTATIONS.md` — pitch and results-readout structures for paying or prospective clients. Serious, non-technical, outcome-driven.
-- `reference/ACADEMIC_STORYTELLING.md` — paper-style structure for research talks (Motivation / Background / Method / Results / Discussion / Limitations / Conclusion). Plain, precise, evidence-led.
+- `reference/ACADEMIC_STORYTELLING.md` — paper-style structure for research talks at scientific conferences, invited workshops, and lab seminars (Motivation / Background / Method / Results / Discussion / Limitations / Conclusion). Plain, precise, evidence-led.
+- `reference/CASUAL_STORYTELLING.md` — five-beat structure for internal team talks, casual meetups, demos for people you know (Hook / Context / The Thing / Caveats / Close). Allows light humour.
+- `reference/CLIENT_PRESENTATIONS.md` — pitch and results-readout structures for client meetings: either pitching new work or reporting progress on work already paid for. Serious, non-technical, outcome-driven.
 
 ## Workflow
 
 When the user asks for a deck:
 
 1. **Ask which presentation type** (use `AskUserQuestion`). Recommend one based on what the user has said about the topic and audience — put that option first with "(recommended)" attached. Options:
-   - **TED-style talk** — conference talks, keynotes, public-facing storytelling. Uses `TED_TALK_STORYTELLING.md`.
-   - **Casual / internal** — team updates, lunch-and-learns, demos for people you know. Uses `CASUAL_STORYTELLING.md`.
-   - **Client presentation** — pitches, sales decks, results readouts for paying clients. Uses `CLIENT_PRESENTATIONS.md`.
-   - **Academic / research** — conference papers, thesis defences, lab seminars. Uses `ACADEMIC_STORYTELLING.md`.
+   - **Academic / research** — scientific conferences, invited workshop talks, lab seminars, thesis defences. Audience is researchers. Uses `ACADEMIC_STORYTELLING.md`.
+   - **Casual / internal** — internal talks at the user's workplace, casual meetups, demos for people they know. Laid-back tone. Uses `CASUAL_STORYTELLING.md`.
+   - **Client** — client meetings for either pitching new work or updating on the progress of a project the client has already paid for. Uses `CLIENT_PRESENTATIONS.md`.
    - **Custom** — the user describes their own structure or none of the above fit. Fall back to the user's own framing; don't force a guide.
 
    Skip this step only if the user has already clearly indicated which one they want.
 2. **Ask for the story** (one short message): topic, audience/context, rough length, and the closing line. Skip if the user has already given enough.
 3. **Read the matching storytelling reference** for the chosen type before drafting. Read `reference/COMPONENTS.md` as well — copy patterns verbatim.
 4. **Sketch the arc** using the structure from the chosen reference. State the beat plan back to the user in 5–10 lines before writing HTML.
-5. **Ask which template variant** to use (use `AskUserQuestion`). Options:
-    - **Standard (Craft)** — minimalist editorial with warm cream base and burnt orange accent. Recommended for general-purpose decks. Uses `template/standard-deck.html`.
-    - **Alexandra** — deep teal and burnt orange on parchment warmth, tailored for the Alexandra Institute brand. Uses `template/alexandra-deck.html`.
-
-    Skip this step only if the user has already clearly indicated which variant they want.
-6. **Copy the template** to the target location as `deck.html` (default `./deck.html` in the user's cwd unless they specify). Use `cp template/<variant>.html <target>/deck.html` — the template's `<style>` and `<script>` blocks must remain intact.
-6. **Edit the slides** inside `<div class="deck">`. Replace the placeholder `<section class="slide">` blocks with real content using the component patterns. First slide must keep `class="slide active"`.
-7. **Iterate small.** One coherent change per turn. Show the user, get feedback.
+5. **Ask whether to enable Alexandra branding** (use `AskUserQuestion`). Recommend "no" by default; flip to "yes" only when the user mentions Alexandra Institute or signals it's for an Alexandra-affiliated audience. Skip this step if the user has already clearly indicated.
+6. **Copy the template** to the target location as `deck.html` (default `./deck.html` in the user's cwd unless they specify). Use `cp template/deck.html <target>/deck.html` — the template's `<style>` and `<script>` blocks must remain intact.
+7. **If Alexandra branding is on**, flip `const useAlexandra = false;` to `true` at the top of the `<script>` block in the copied file.
+8. **Edit the slides** inside `<div class="deck">`. The `<style>` and `<script>` blocks live at the **bottom** of the file so the slide content is front-and-centre when you open `deck.html`. Each slide is delimited by a clear `<!-- ===== Slide NN: NAME ===== -->` marker. Replace the placeholder `<section class="slide">` blocks with real content using the component patterns. First slide must keep `class="slide active"`.
+9. **Iterate small.** One coherent change per turn. Show the user, get feedback.
 
 ## Hard rules (do not violate)
 
@@ -58,14 +52,16 @@ When the user asks for a deck:
 
 ## Freestyling new components
 
-The 25 components are a library, not a ceiling. New layouts are fine when content demands them, but: stay on-token, use the bold/dim headline pattern, match existing border-radius (10px cards, 4px small), keep CSS in the existing `<style>` block grouped with a `/* --- Name --- */` comment, and only one novel layout per slide.
+The 28 components are a library, not a ceiling. New layouts are fine when content demands them, but: stay on-token, use the bold/dim headline pattern, match existing border-radius (10px cards, 4px small), keep CSS in the existing `<style>` block grouped with a `/* --- Name --- */` comment, and only one novel layout per slide.
 
 ## Common user requests → component mapping
 
 - "Add a quote slide" → component 2 (quote-slide)
 - "Make it dark" → add `.dark` to the `<section>`
 - "Add a comparison" → component 4 (two-col) or component 13 (JEDUF)
-- "Show the process" → component 8 (dot-flow) or component 10 (spec-flow)
+- "Show the process" → component 8 (dot-flow) for simple linear, 27 (flow-row) for boxes+arrows, 28 (diagram) for branching/loops
+- "Show an architecture" / "diagram with arrows" → component 28 (diagram); SVG arrows over positioned nodes
+- "Add a chart" / "show data" → component 26 (bar chart). Wrap in `.chart` for title/y-axis/legend; use `.bar-group` with `.s1`–`.s4` for grouped series
 - "Add an image/video" → component 12 (collage-slide); place media in `./media/`
 - "Add stats / metrics" → component 16 (stat-grid)
 - "Closing slide / thanks" → component 20
@@ -74,65 +70,38 @@ The 25 components are a library, not a ceiling. New layouts are fine when conten
 
 ## Plots and diagrams
 
-Users expect visualisations in slides. Prefer inline over external files — a self-contained deck should not need `media/` images.
+Users expect visualisations in slides. **Prefer the built-in pure-CSS/SVG components** over any external library — no CDN, no JS dependencies, plays nicely with `data-reveal` for step-by-step builds. See `reference/COMPONENTS.md` for full markup.
 
-**Bar/pie/scatter charts:** Use Chart.js via CDN. Import once in `<head>`, then create a `<canvas>` per chart. Style with deck colours from `reference/DESIGN.md`.
+**Bar charts:** use component 26 (`.bar-chart` / `.hbar-chart`). Heights/widths are CSS variables (`--h: 70%`). Series colors via `.s1`–`.s4`. Wrap in `.chart` for title, y-axis label, and legend. Use `.bar-group` for grouped multi-series bars. Animates on reveal.
 
-```html
-<head>
-  <link href="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.css" rel="stylesheet">
-  <!-- ... -->
-</head>
-<!-- Slide content -->
-<div class="chart-container" style="max-width:500px;margin:1rem auto;">
-  <canvas id="myChart"></canvas>
-</div>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-<script>
-  setTimeout(() => {
-    new Chart(document.getElementById('myChart'), {
-      type: 'bar',
-      data: { labels: ['A','B'], datasets: [{ data: [1.42, 1.09], backgroundColor: ['#1a1a1a','#b5b5b0'] }] },
-      options: { plugins: { legend: { display: false } } },
-    });
-  }, 100);
-</script>
-```
+**Linear flow diagrams:** use component 27 (`.flow-row`). Boxes connected by accent arrows. Each node + each arrow can have its own `data-reveal` so the pipeline builds left to right.
 
-**Flow diagrams / architecture:** Use vanilla Canvas (no library). Draw shapes with `ctx.rect`, `ctx.arc`, `ctx.moveTo`+`ctx.lineTo`. Scale with `ctx.scale(2,2)` for crisp rendering. Avoid `roundRect` — it's not supported in Safari. Use `quadraticCurveTo` for rounded corners instead.
+**Branching / architecture diagrams:** use component 28 (`.diagram`). Absolutely-positioned `.diagram-node` divs over an inline SVG arrow layer with arrowhead `<marker>` defs. Supports curved paths, dashed feedback loops, and optional `.diagram-node-icon` slots for inline SVG icons. To build along the flow, split arrows into separate `<svg>` overlays interleaved with the node divs (reveal fires in DOM order).
 
-```js
-const ctx = canvas.getContext('2d');
-ctx.scale(2, 2);
-const r = 8;
-ctx.fillStyle = '#1a1a1a';
-ctx.beginPath();
-ctx.moveTo(x + r, y);
-ctx.lineTo(x + w - r, y);
-ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-ctx.lineTo(x + w, y + h - r);
-ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-ctx.lineTo(x + r, y + h);
-ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-ctx.lineTo(x, y + r);
-ctx.quadraticCurveTo(x, y, x + r, y);
-ctx.closePath();
-ctx.fill();
-```
+**Pie / scatter / line charts:** these are NOT covered by the built-in components. Use Chart.js via CDN as a last resort. Always defer chart creation with `setTimeout(fn, N)` so the DOM is rendered first, and style with deck colours from `reference/DESIGN.md`.
 
 **Key rules:**
-- Always defer chart creation with `setTimeout(fn, N)` so the DOM is rendered first.
 - If real data exists on disk (CSV, JSON, model outputs), load it. Otherwise use illustrative numbers — be honest about it.
 - Keep text minimal. Users will complain about slides that are walls of text.
+- Reach for the CSS/SVG components first; only fall back to Chart.js when the chart type genuinely isn't supported.
 
 ## Known issues
 
 **Margin collapsing between `h1` and `.subtitle`.** The template's `.slide-inner` lacks `overflow: hidden`, so sibling margins collapse (the browser picks the larger margin instead of adding them). This makes the gap between a heading and its subtitle too small. Fix: add `overflow: hidden` to `.slide-inner` in the `<style>` block. This is inherited from the template and affects all decks — always check it when writing.
 
-## Template variants
+## Alexandra branding toggle
 
-This skill ships with two template variants:
-- `template/standard-deck.html` — the default Craft theme with warm cream/parchment tones and burnt orange accent.
-- `template/alexandra-deck.html` — the Alexandra Institute brand variant with deep teal and burnt orange on parchment warmth.
+A single template ships with both themes baked in. The default is the Craft theme (warm cream + burnt orange, Inter + Fraunces). To switch to the Alexandra Institute brand variant, find this line near the top of the `<script>` block in `deck.html`:
 
-Both share the same 22 components, navigation behavior, and animation system. Choose based on the brand context of the deck.
+```js
+const useAlexandra = false;
+```
+
+Set it to `true`. This:
+
+- Swaps the palette: white base, burnt sienna `#be5d2b` accent, deep teal `#002a3f` dark slides.
+- Switches fonts to Montserrat (body) and Playfair Display (display/headlines).
+- Shows the Alexandra logo fixed in the top-left of every slide; the logo auto-swaps to the white version on dark slides.
+- Reveals the `<span class="affiliation">` chunk on the cover slide, appending "Alexandra Institute" to the speaker's meta line.
+
+The flag is purely additive — flipping it back to `false` restores the Craft theme without any other edits needed.

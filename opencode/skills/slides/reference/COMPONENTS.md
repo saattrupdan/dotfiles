@@ -470,6 +470,191 @@ Four changelog cards with version badges and dates. For shipping cadence slides.
 </div>
 ```
 
+### 26. Bar chart
+
+Pure-CSS bar chart. No external libraries. Vertical or horizontal variants, with optional title, y-axis label, legend, and grouped (multi-series) bars.
+
+**Series colors:** `.s1` (accent orange), `.s2` (sage), `.s3` (slate blue), `.s4` (warm gray). `.hero` is an alias for `.s1` on vertical bars. Add to any `.bar` or `.hbar-fill`.
+
+**Animation:** Wrap the chart (or any ancestor) in `data-reveal`. Bars grow from zero when revealed, and values fade in. Without `data-reveal`, bars render at full size immediately.
+
+#### Vertical bars (basic)
+
+Set bar height with `--h` (CSS variable, 0–100%):
+
+```html
+<div class="bar-chart">
+  <div class="bar-col">
+    <div class="bar" style="--h: 38%"><span class="bar-value">21%</span></div>
+    <div class="bar-label">Q2</div>
+  </div>
+  <div class="bar-col">
+    <div class="bar hero" style="--h: 92%"><span class="bar-value">52%</span></div>
+    <div class="bar-label">Q4</div>
+  </div>
+</div>
+```
+
+#### Horizontal bars
+
+Set fill width with `--w`:
+
+```html
+<div class="hbar-chart">
+  <div class="hbar-row">
+    <div class="hbar-label">CLI</div>
+    <div class="hbar-track"><div class="hbar-fill hero" style="--w: 91%"></div></div>
+    <div class="hbar-value">91%</div>
+  </div>
+  <div class="hbar-row">
+    <div class="hbar-label">Web</div>
+    <div class="hbar-track"><div class="hbar-fill" style="--w: 54%"></div></div>
+    <div class="hbar-value">54%</div>
+  </div>
+</div>
+```
+
+#### Full-featured chart (title, y-axis label, legend, grouped bars)
+
+Wrap in `.chart` to add title/subtitle/y-label/legend. Use `.bar-group` inside each `.bar-col` to nest multiple bars side-by-side (one per series). All four wrapper pieces are independently optional.
+
+```html
+<div class="chart">
+  <div class="chart-title">Adoption rate by quarter and team</div>
+  <div class="chart-subtitle">Optional one-line context.</div>
+  <div class="chart-body">
+    <div class="chart-y-label">Adoption (%)</div>
+    <div class="bar-chart">
+      <div class="bar-col">
+        <div class="bar-group">
+          <div class="bar s1" style="--h: 70%"><span class="bar-value">35</span></div>
+          <div class="bar s2" style="--h: 58%"><span class="bar-value">29</span></div>
+          <div class="bar s3" style="--h: 42%"><span class="bar-value">21</span></div>
+        </div>
+        <div class="bar-label">Q3</div>
+      </div>
+      <!-- more bar-cols -->
+    </div>
+  </div>
+  <div class="chart-legend">
+    <div class="legend-item"><span class="legend-swatch s1"></span>Platform</div>
+    <div class="legend-item"><span class="legend-swatch s2"></span>Infrastructure</div>
+    <div class="legend-item"><span class="legend-swatch s3"></span>Product</div>
+  </div>
+</div>
+```
+
+**When to use which:**
+- Use the **basic** vertical/horizontal form when you have a single series. Highlight one bar with `.hero`.
+- Use the **chart wrapper** when you need any of: a title, a y-axis label, multiple series, or a legend.
+- Grouped bars (`.bar-group`) only make sense in vertical form. For horizontal multi-series, just stack more `.hbar-row` entries and color them with `.s1`–`.s4`.
+
+### 27. Flow row (linear process diagram)
+
+Boxes connected by accent-colored arrows, laid out horizontally. Use for input → process → output style flows. Add `data-reveal` to each `.flow-node` and `.flow-arrow` so the pipeline builds step by step.
+
+Node variants: default (light card), `.hero` (dark card), `.accent` (burnt orange — use for the terminal/output node).
+
+```html
+<div class="flow-row">
+  <div class="flow-node" data-reveal>
+    <div class="flow-node-title">Ingest</div>
+    <div class="flow-node-desc">Raw events</div>
+  </div>
+  <div class="flow-arrow" data-reveal></div>
+  <div class="flow-node" data-reveal>
+    <div class="flow-node-title">Normalize</div>
+    <div class="flow-node-desc">Clean and dedupe</div>
+  </div>
+  <div class="flow-arrow" data-reveal></div>
+  <div class="flow-node accent" data-reveal>
+    <div class="flow-node-title">Publish</div>
+    <div class="flow-node-desc">Downstream</div>
+  </div>
+</div>
+```
+
+### 28. Diagram (free-form, with arrows)
+
+For non-linear processes: branching, convergence, feedback loops. Nodes are absolutely positioned by `left`/`top` percentage (centered on that point via `transform: translate(-50%, -50%)`). Arrows are inline SVG paths in an overlay `<svg>` element. Coordinates are in the SVG viewBox units — define the viewBox to match your aspect ratio (e.g. `0 0 200 100` for a 2:1 diagram).
+
+Every node, arrow, and label can carry `data-reveal` for progressive build.
+
+**Arrow classes:** default (accent orange, solid), `.muted` (gray), `.dashed` (dashed stroke — combine with `.muted` for "feedback" style lines).
+
+**Node variants:** default, `.hero` (dark), `.accent` (burnt orange filled).
+
+**Optional icon:** drop a `.diagram-node-icon` with an inline SVG above the title. Use `stroke="currentColor"`, `fill="none"`, `stroke-width="1.6"`, viewBox `0 0 24 24`. The icon inherits the accent color by default (white on `.accent` nodes).
+
+```html
+<div class="diagram-node hero" style="left: 36%; top: 50%;" data-reveal>
+  <div class="diagram-node-icon">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="5" cy="12" r="2"/>
+      <circle cx="19" cy="6" r="2"/>
+      <circle cx="19" cy="18" r="2"/>
+      <path d="M7 12l10-6"/>
+      <path d="M7 12l10 6"/>
+    </svg>
+  </div>
+  <div class="diagram-node-title">Router</div>
+</div>
+```
+
+**Reveal order:** `data-reveal` fires in DOM order. To make the diagram build along the flow (node → arrow → node → arrow → …), interleave **separate `<svg>` overlays** with the node divs. All SVGs share `position: absolute; inset: 0` via the `.diagram-arrows` class, so they paint on the same coordinate space. Put the `<marker>` defs in a single (otherwise empty) SVG at the top — every later `<svg>` can reference the markers by ID.
+
+**Putting all arrows in one SVG** still works visually but reveals all arrows before any node. Only do that when you don't need progressive reveal.
+
+```html
+<div class="diagram" style="aspect-ratio: 2.2 / 1;">
+  <!-- Shared marker defs (invisible) -->
+  <svg class="diagram-arrows" viewBox="0 0 220 100" preserveAspectRatio="none" aria-hidden="true">
+    <defs>
+      <marker id="diagram-arrowhead" viewBox="0 0 10 10" refX="9" refY="5"
+              markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 Z" fill="#c05a3a" />
+      </marker>
+      <marker id="diagram-arrowhead-muted" viewBox="0 0 10 10" refX="9" refY="5"
+              markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 Z" fill="#d5d0c8" />
+      </marker>
+    </defs>
+  </svg>
+
+  <!-- 1. Source node -->
+  <div class="diagram-node" style="left: 9%; top: 50%;" data-reveal>
+    <div class="diagram-node-title">Source</div>
+  </div>
+
+  <!-- 2. Source -> Router arrow -->
+  <svg class="diagram-arrows" viewBox="0 0 220 100" preserveAspectRatio="none">
+    <path class="diagram-arrow" d="M 32 50 L 64 50"
+          vector-effect="non-scaling-stroke" data-reveal />
+  </svg>
+
+  <!-- 3. Router node -->
+  <div class="diagram-node hero" style="left: 36%; top: 50%;" data-reveal>
+    <div class="diagram-node-title">Router</div>
+  </div>
+
+  <!-- ...continue: arrow, node, arrow, node along the flow... -->
+
+  <!-- Dashed feedback loop (with optional floating label) -->
+  <svg class="diagram-arrows" viewBox="0 0 220 100" preserveAspectRatio="none">
+    <path class="diagram-arrow muted dashed" d="M 200 60 C 200 95, 30 95, 18 60"
+          vector-effect="non-scaling-stroke" data-reveal />
+  </svg>
+  <div class="diagram-label" style="left: 50%; top: 96%;" data-reveal>feedback</div>
+</div>
+```
+
+**Authoring tips:**
+- Always include `vector-effect="non-scaling-stroke"` on arrow paths so strokes stay consistent when the diagram resizes.
+- For curves, use SVG cubic Bezier (`C x1 y1, x2 y2, x y`). Eyeball the control points; small adjustments go a long way.
+- Node coords are percentages of the container (`left: 36%`). Path coords are viewBox units. Pick a viewBox where 1 unit ≈ 1% so the two systems align mentally — e.g. `viewBox="0 0 220 100"` for an aspect-ratio 2.2/1 diagram means x=92 is roughly 42% from the left.
+- Don't add inline `transform` to `.diagram-node` or `.diagram-label` — they already use `translate(-50%, -50%)` to center on their `left/top` point, and the deck CSS preserves that during reveal.
+
 ### 25. Art overlay
 
 Classical painting background with UI mockup floating on top. The "craft meets code" visual. Swap the gradient for a real painting via `background-image` on `.art-overlay-bg`.
@@ -616,7 +801,7 @@ Adding `?embed` to the deck URL produces an embeddable version. The PDF button h
 
 ## Freestyle: creating new components
 
-The 25 components above are the standard library, not a ceiling. You are encouraged to invent new slide layouts when the content demands it. Follow these rules when freestyling:
+The 28 components above are the standard library, not a ceiling. You are encouraged to invent new slide layouts when the content demands it. Follow these rules when freestyling:
 
 1. **Stay on-token.** Use only the colors, fonts, weights, and spacing from the design tokens table. No new colors, no new fonts.
 2. **Use the headline pattern.** Any new layout with a headline should use bold-then-dim (`<span class="dim">`).
@@ -648,6 +833,8 @@ When the human says things like:
 - "Add a quote slide" → use component 2
 - "Make it dark" → add `.dark` to the `<section>`
 - "Add a comparison" → use component 4 (two-column) or 13 (JEDUF)
-- "Show the process" → use component 8 (dot flow) or 10 (spec block)
+- "Show the process" → use component 8 (dot flow) for a simple linear, 27 (flow row) for boxes+arrows, 28 (diagram) for branching/loops
+- "Show an architecture" or "diagram with arrows" → use component 28 (diagram)
 - "Add an image" → use component 12 (collage slide), reference `media/`
+- "Show data" or "add a chart" → use component 26 (bar chart). Wrap in `.chart` for title/y-axis/legend; use `.bar-group` with `.s1`–`.s4` for grouped series.
 - "Shorten the headline" → keep the bold-then-dim pattern, just use fewer words

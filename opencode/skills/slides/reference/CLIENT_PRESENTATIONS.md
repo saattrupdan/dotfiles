@@ -2,7 +2,7 @@
 
 How to structure a presentation when the audience is paying for the work, or deciding whether to.
 
-This guide sits between the TED-style storytelling deck and the academic results deck. The room is serious but not technical. The goal is concrete: win the work, renew the work, or show what the work bought them. Either way, the audience is asking the same question — *was this (or will this be) worth our money?*
+The room is serious but not technical. The goal is concrete: win the work, renew the work, or show what the work bought them. Either way, the audience is asking the same question — *was this (or will this be) worth our money?*
 
 ---
 
