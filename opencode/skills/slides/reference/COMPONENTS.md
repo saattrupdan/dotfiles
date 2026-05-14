@@ -30,8 +30,8 @@ Bold anchor + dim extension. This is the visual identity of the system.
 <h1>Anchor <span class="dim">extension that fades</span></h1>
 ```
 
-- First phrase: weight 500, full color
-- Second phrase: weight 300, color `#b5b5b0` (or `#888` on dark slides)
+- First phrase: weight 500, full colour
+- Second phrase: weight 300, colour `#b5b5b0` (or `#888` on dark slides)
 - **No trailing periods.** The weight contrast handles the separation; periods read as preachy.
 - Use on every headline that has the room
 
@@ -41,7 +41,7 @@ Bold anchor + dim extension. This is the visual identity of the system.
 
 All tokens are CSS variables on `:root` in `template/deck.html`. **Reference them through the variables (`var(--accent)`) rather than hard-coding hex values** so the Alexandra brand toggle works automatically.
 
-### Colors — default (Craft)
+### Colours — default (Craft)
 
 | Variable             | Value                          | Use                                              |
 |----------------------|--------------------------------|--------------------------------------------------|
@@ -60,9 +60,9 @@ All tokens are CSS variables on `:root` in `template/deck.html`. **Reference the
 | `--accent-soft`      | `rgba(192, 90, 58, 0.08)`      | Accent backgrounds and pills                     |
 | `--accent-glow`      | `rgba(192, 90, 58, 0.25)`      | Accent shadows and glows                         |
 | `--border`           | `#e5e0d8`                      | Default card borders                             |
-| `--border-strong`    | `#d5d0c8`                      | Emphasized borders, dividers                     |
+| `--border-strong`    | `#d5d0c8`                      | Emphasised borders, dividers                     |
 
-### Colors — Alexandra brand (when `useAlexandra = true`)
+### Colours — Alexandra brand (when `colourScheme = "alexandra-institute"`)
 
 The flag swaps these variables under `body.alexandra`. Same names, brand values:
 
@@ -90,12 +90,11 @@ Two fonts, paired. Sans for body and UI; serif for display headlines, stat numbe
 
 | Element            | Size                                | Weight | Family   | Notes                              |
 |--------------------|-------------------------------------|--------|----------|------------------------------------|
-| `h1` (display)     | `clamp(3rem, 6.8vw, 5.8rem)`        | 400    | serif    | tracking `-0.035em`, line 1.02     |
-| `h1` (quote slide) | `clamp(3rem, 7.5vw, 6.5rem)`        | 300    | serif    | tracking `-0.04em`                 |
-| `h2`               | `clamp(2rem, 4vw, 3rem)`            | 400    | serif    | tracking `-0.025em`, line 1.08     |
+| `h1` (display)     | `clamp(2.2rem, 5vw, 4.2rem)`        | 400    | serif    | tracking `-0.035em`, line 1.02     |
+| `h2`               | `clamp(1.5rem, 3vw, 2.2rem)`        | 400    | serif    | tracking `-0.025em`, line 1.08     |
 | `h3`               | `1.05rem`                           | 600    | sans     | tracking `-0.01em`                 |
 | `.subtitle`        | `clamp(1.05rem, 1.5vw, 1.25rem)`    | 400    | sans     | color `--text-secondary`           |
-| `.eyebrow`         | `0.78rem`                           | 500    | sans     | uppercase, tracking `0.14em`, accent-colored, with leading hairline |
+| `.eyebrow`         | `0.78rem`                           | 500    | sans     | uppercase, tracking `0.14em`, accent-coloured, with leading hairline |
 | `.stat-number`     | `clamp(2.8rem, 5.5vw, 4.2rem)`      | 400    | serif    | tracking `-0.04em`                 |
 | `.meta`            | `0.85rem`                           | 500    | sans     | color `--text-muted`               |
 
@@ -131,24 +130,6 @@ Use these exact patterns. Copy the HTML structure. Change only the text content.
     <div class="meta">Speaker name · 20 minutes</div>
   </div>
 </section>
-```
-
-### 2. Quote slide
-
-A single bold statement. No subtitle. No supporting text.
-
-```html
-<section class="slide quote-slide">
-  <div class="slide-inner">
-    <h1>A bold statement <span class="dim">that opens the talk</span></h1>
-  </div>
-</section>
-```
-
-For a dark quote (closing slide, mic-drop):
-
-```html
-<section class="slide dark quote-slide">
 ```
 
 ### 3. Eyebrow + Headline + Subtitle
@@ -516,7 +497,7 @@ Four changelog cards with version badges and dates. For shipping cadence slides.
 
 Pure-CSS bar chart. No external libraries. Vertical or horizontal variants, with optional title, y-axis label, legend, and grouped (multi-series) bars.
 
-**Series colors:** `.s1` (accent orange), `.s2` (sage), `.s3` (slate blue), `.s4` (warm gray). `.hero` is an alias for `.s1` on vertical bars. Add to any `.bar` or `.hbar-fill`.
+**Series colours:** `.s1` (accent orange), `.s2` (sage), `.s3` (slate blue), `.s4` (warm grey). `.hero` is an alias for `.s1` on vertical bars. Add to any `.bar` or `.hbar-fill`.
 
 **Animation:** Wrap the chart (or any ancestor) in `data-reveal`. Bars grow from zero when revealed, and values fade in. Without `data-reveal`, bars render at full size immediately.
 
@@ -589,11 +570,11 @@ Wrap in `.chart` to add title/subtitle/y-label/legend. Use `.bar-group` inside e
 **When to use which:**
 - Use the **basic** vertical/horizontal form when you have a single series. Highlight one bar with `.hero`.
 - Use the **chart wrapper** when you need any of: a title, a y-axis label, multiple series, or a legend.
-- Grouped bars (`.bar-group`) only make sense in vertical form. For horizontal multi-series, just stack more `.hbar-row` entries and color them with `.s1`–`.s4`.
+- Grouped bars (`.bar-group`) only make sense in vertical form. For horizontal multi-series, just stack more `.hbar-row` entries and colour them with `.s1`–`.s4`.
 
 ### 27. Flow row (linear process diagram)
 
-Boxes connected by accent-colored arrows, laid out horizontally. Use for input → process → output style flows. Add `data-reveal` to each `.flow-node` and `.flow-arrow` so the pipeline builds step by step.
+Boxes connected by accent-coloured arrows, laid out horizontally. Use for input → process → output style flows. Add `data-reveal` to each `.flow-node` and `.flow-arrow` so the pipeline builds step by step.
 
 Node variants: default (light card), `.hero` (dark card), `.accent` (burnt orange — use for the terminal/output node).
 
@@ -618,15 +599,65 @@ Node variants: default (light card), `.hero` (dark card), `.accent` (burnt orang
 
 ### 28. Diagram (free-form, with arrows)
 
-For non-linear processes: branching, convergence, feedback loops. Nodes are absolutely positioned by `left`/`top` percentage (centered on that point via `transform: translate(-50%, -50%)`). Arrows are inline SVG paths in an overlay `<svg>` element. Coordinates are in the SVG viewBox units — define the viewBox to match your aspect ratio (e.g. `0 0 200 100` for a 2:1 diagram).
+For non-linear processes: branching, convergence, feedback loops. Nodes are absolutely positioned `<div>`s. Arrows are inline SVG paths in overlay `<svg>` elements that share the same coordinate space as the container.
 
 Every node, arrow, and label can carry `data-reveal` for progressive build.
 
-**Arrow classes:** default (accent orange, solid), `.muted` (gray), `.dashed` (dashed stroke — combine with `.muted` for "feedback" style lines).
+**Arrow classes:** default (accent orange, solid), `.muted` (grey), `.dashed` (dashed stroke — combine with `.muted` for "feedback" style lines).
 
 **Node variants:** default, `.hero` (dark), `.accent` (burnt orange filled).
 
-**Optional icon:** drop a `.diagram-node-icon` with an inline SVG above the title. Use `stroke="currentColor"`, `fill="none"`, `stroke-width="1.6"`, viewBox `0 0 24 24`. The icon inherits the accent color by default (white on `.accent` nodes).
+**Optional icon:** drop a `.diagram-node-icon` with an inline SVG above the title. Use `stroke="currentColor"`, `fill="none"`, `stroke-width="1.6"`, viewBox `0 0 24 24`. The icon inherits the accent colour by default (white on `.accent` nodes).
+
+#### Authoring procedure — follow these steps in order
+
+Most diagram bugs come from skipping the planning phase and writing HTML straight away. Don't. The two failure modes that show up over and over are:
+
+1. **All arrows reveal before any node.** Caused by putting every arrow in a single `<svg>` at the top of the diagram. Fix: one `<svg>` per arrow (or per logical arrow group), interleaved between the node divs in DOM order.
+2. **Nodes and arrow tips don't line up.** Caused by guessing coordinates. Fix: pick a grid first, write down every node's `(x, y)` in viewBox units, then derive both the node `left/top` percentages and the arrow path endpoints from that table.
+
+**Step 1 — Pick a viewBox that mirrors the aspect ratio.** Use `aspect-ratio: W / H` on the container and a viewBox of `0 0 (W*100) (H*100)`. That way **1 viewBox unit = 1% of width = 1% of height**, and node `left: 45%` lines up with viewBox `x=45`. Examples:
+- Wide flow (2.2:1): `aspect-ratio: 2.2 / 1`, `viewBox="0 0 220 100"`.
+- Square (1:1): `aspect-ratio: 1 / 1`, `viewBox="0 0 100 100"`.
+- Tall (1:1.4): `aspect-ratio: 1 / 1.4`, `viewBox="0 0 100 140"`.
+
+Use `preserveAspectRatio="none"` on every `<svg class="diagram-arrows">` so the SVG stretches to fill the container exactly.
+
+**Step 2 — Sketch the node grid before writing any HTML.** Make a table with one row per node:
+
+| Node | x (viewBox) | y (viewBox) | left % | top % | Variant |
+|------|-------------|-------------|--------|-------|---------|
+| Source | 10 | 50 | 10% | 50% | default |
+| Router | 36 | 50 | 36% | 50% | `.hero` |
+| Worker A | 65 | 30 | 65% | 30% | default |
+| Worker B | 65 | 70 | 65% | 70% | default |
+| Sink | 90 | 50 | 90% | 50% | `.accent` |
+
+With the viewBox-matches-percent trick from step 1, the two right columns are just the first two with a `%` appended. Keep nodes at least 18 viewBox units apart horizontally and 25 apart vertically so card edges don't touch.
+
+**Step 3 — Derive arrow endpoints from the grid.** Each `.diagram-node` is ~14 viewBox units wide and ~10 tall (depends on title length, but plan for it). So an arrow from Source (10, 50) to Router (36, 50) should start at roughly `x = 10 + 7 = 17` and end at `x = 36 - 7 = 29`. Don't start at the node centre — the arrow will disappear under the card.
+
+For each arrow, write down: `from-node`, `to-node`, start `(x1, y1)`, end `(x2, y2)`, type (`straight` / `curve` / `dashed feedback`).
+
+**Step 4 — Write the DOM in flow order.** The reveal order is the DOM order, so the file should read like the story:
+
+```
+[marker defs svg]      ← invisible, just <defs>
+[node A]               ← first thing the audience sees
+[arrow A→B svg]        ← then the arrow draws
+[node B]               ← then B appears
+[arrow B→C svg]
+[node C]
+[feedback arrow svg]   ← finally the loop closes
+[label svg or div]
+```
+
+Each arrow is its own `<svg class="diagram-arrows">`. They all share `position: absolute; inset: 0` (from the `.diagram-arrows` class) and the same viewBox, so they paint on the same coordinate system — but they reveal independently because they're separate DOM nodes.
+
+**Step 5 — Sanity-check positions before considering the diagram done.** Open the deck in a browser. The three things to verify:
+- Every arrow tip touches the edge of its target node, not the centre and not the empty space beside it.
+- No two nodes overlap.
+- The reveal order matches the narration order. Press Space repeatedly — node, arrow, node, arrow.
 
 ```html
 <div class="diagram-node hero" style="left: 36%; top: 50%;" data-reveal>
@@ -644,9 +675,9 @@ Every node, arrow, and label can carry `data-reveal` for progressive build.
 </div>
 ```
 
-**Reveal order:** `data-reveal` fires in DOM order. To make the diagram build along the flow (node → arrow → node → arrow → …), interleave **separate `<svg>` overlays** with the node divs. All SVGs share `position: absolute; inset: 0` via the `.diagram-arrows` class, so they paint on the same coordinate space. Put the `<marker>` defs in a single (otherwise empty) SVG at the top — every later `<svg>` can reference the markers by ID.
+#### Reference markup
 
-**Putting all arrows in one SVG** still works visually but reveals all arrows before any node. Only do that when you don't need progressive reveal.
+The marker defs sit in an invisible `<svg>` at the top. Every later arrow `<svg>` references them by id (`marker-end="url(#diagram-arrowhead)"` is wired up automatically by the `.diagram-arrow` CSS).
 
 ```html
 <div class="diagram" style="aspect-ratio: 2.2 / 1;">
@@ -691,11 +722,12 @@ Every node, arrow, and label can carry `data-reveal` for progressive build.
 </div>
 ```
 
-**Authoring tips:**
+**Other authoring rules:**
 - Always include `vector-effect="non-scaling-stroke"` on arrow paths so strokes stay consistent when the diagram resizes.
-- For curves, use SVG cubic Bezier (`C x1 y1, x2 y2, x y`). Eyeball the control points; small adjustments go a long way.
-- Node coords are percentages of the container (`left: 36%`). Path coords are viewBox units. Pick a viewBox where 1 unit ≈ 1% so the two systems align mentally — e.g. `viewBox="0 0 220 100"` for an aspect-ratio 2.2/1 diagram means x=92 is roughly 42% from the left.
-- Don't add inline `transform` to `.diagram-node` or `.diagram-label` — they already use `translate(-50%, -50%)` to center on their `left/top` point, and the deck CSS preserves that during reveal.
+- For curves, use SVG cubic Bezier (`C x1 y1, x2 y2, x y`). The two control points pull the curve toward themselves — start by placing them on the line between the endpoints and nudge perpendicular to taste.
+- Feedback loops (the dashed arrow looping back from the end to the start) belong at the bottom of the DOM so they reveal last.
+- Don't add inline `transform` to `.diagram-node` or `.diagram-label` — they already use `translate(-50%, -50%)` to centre on their `left/top` point, and the deck CSS preserves that during reveal.
+- Keep diagrams to 7 nodes or fewer. More than that and the reveal sequence becomes tedious and the layout gets cramped. Split into two slides instead.
 
 ### 25. Art overlay
 
@@ -742,7 +774,6 @@ When you have a story to tell, use the **setup slide → evidence slide** pair. 
 
 ### Punctuation slides
 
-- **Quote slides:** Bold statement, no other text. Use to open, close, and mark turning points.
 - **Dark slides:** Reserved for moments that matter. 2–3 per deck max.
 - **Breakers:** A quiet line between acts. *"That felt normal. Until it wasn't."*
 
@@ -756,11 +787,15 @@ Each slide can progressively reveal its content — like PowerPoint animations �
 
 Add `data-reveal` to any element you want to appear progressively. Elements start invisible and animate in with a subtle fade + slide-up. The reveal order is the DOM order — first `data-reveal` appears, then the second, etc.
 
+**Never put `data-reveal` on eyebrows or headlines (h1/h2).** The eyebrow and headline set the frame for the slide — they should be visible the moment the slide lands so the audience knows what they're looking at. Reveal the supporting content (subtitle, columns, stats, diagram nodes), not the title.
+
+**Never put `data-reveal` anywhere on the closing/thanks slide.** It's the final beat — everything should land at once so the speaker can stop talking and take questions.
+
 ```html
 <section class="slide">
   <div class="slide-inner">
-    <div class="eyebrow" data-reveal>Context</div>
-    <h1 data-reveal>The headline <span class="dim">The extension</span></h1>
+    <div class="eyebrow">Context</div>
+    <h1>The headline <span class="dim">The extension</span></h1>
     <p class="subtitle" data-reveal>One line of nuance.</p>
     <div class="two-col" style="margin-top:2rem;" data-reveal>
       <div><h3>Problem</h3><p>The pain.</p></div>
@@ -770,16 +805,15 @@ Add `data-reveal` to any element you want to appear progressively. Elements star
 </section>
 ```
 
-Pressing Space/Enter cycles through: eyebrow → headline → subtitle → two-col. Pressing ArrowRight always goes to the next slide regardless of reveal state.
+Pressing Space/Enter cycles through: subtitle → two-col. Pressing ArrowRight always goes to the next slide regardless of reveal state.
 
 ### Typical reveal patterns
 
-- **Simple text slide:** eyebrow → headline → subtitle (3 reveals)
-- **Comparison slide:** eyebrow → headline → subtitle → two-col (4 reveals)
-- **Stats slide:** eyebrow → headline → stat-grid (3 reveals)
-- **Quote slide:** just the h1 (1 reveal, or none — quote slides show everything at once)
-- **Dark slide:** eyebrow → headline → subtitle (3 reveals for dramatic effect)
-- **Cover slide:** eyebrow → headline → subtitle → meta (4 reveals)
+- **Simple text slide:** subtitle (1 reveal)
+- **Comparison slide:** subtitle → two-col (2 reveals)
+- **Stats slide:** stat-grid (1 reveal, or reveal each stat-card individually)
+- **Dark slide:** subtitle (1 reveal)
+- **Cover slide:** subtitle → meta (2 reveals)
 
 ### When to use it
 
@@ -843,9 +877,9 @@ Adding `?embed` to the deck URL produces an embeddable version. The PDF button h
 
 ## Freestyle: creating new components
 
-The 28 components above are the standard library, not a ceiling. You are encouraged to invent new slide layouts when the content demands it. Follow these rules when freestyling:
+The 27 components above are the standard library, not a ceiling. You are encouraged to invent new slide layouts when the content demands it. Follow these rules when freestyling:
 
-1. **Stay on-token.** Use only the colors, fonts, weights, and spacing from the design tokens table. No new colors, no new fonts.
+1. **Stay on-token.** Use only the colours, fonts, weights, and spacing from the design tokens table. No new colours, no new fonts.
 2. **Use the headline pattern.** Any new layout with a headline should use bold-then-dim (`<span class="dim">`).
 3. **Match existing craft.** Study how the existing components handle border radius (10px cards, 4px small elements), padding (1–1.5rem internal), and text hierarchy (eyebrow → headline → body).
 4. **Name the class.** Give your new component a descriptive class name that fits the existing naming style (lowercase, hyphenated: `timeline-row`, `stat-grid`, `quote-pair`).
@@ -859,7 +893,7 @@ Examples of good freestyle components:
 - A **logo grid** for partner/client slides
 - A **code block** slide for technical talks
 
-If it looks like it belongs next to the existing components, it's a good freestyle. If it needs a new color or a different font to work, rethink it.
+If it looks like it belongs next to the existing components, it's a good freestyle. If it needs a new colour or a different font to work, rethink it.
 
 ---
 
@@ -872,7 +906,6 @@ If it looks like it belongs next to the existing components, it's a good freesty
 5. **Iterate small.** One change at a time. Show the change, get feedback.
 
 When the human says things like:
-- "Add a quote slide" → use component 2
 - "Make it dark" → add `.dark` to the `<section>`
 - "Add a comparison" → use component 4 (two-column) or 13 (JEDUF)
 - "Show the process" → use component 8 (dot flow) for a simple linear, 27 (flow row) for boxes+arrows, 28 (diagram) for branching/loops

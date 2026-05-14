@@ -154,7 +154,7 @@ A few tone swaps:
 | Too formal | Better |
 |------------|--------|
 | "I'd like to walk you through our quarterly initiative." | "Here's what we shipped this quarter." |
-| "We identified an opportunity to optimize the workflow." | "The thing was slow. We made it less slow." |
+| "We identified an opportunity to optimise the workflow." | "The thing was slow. We made it less slow." |
 | "I want to acknowledge the constraints we encountered." | "A few things didn't work. Here's what." |
 | "In conclusion…" | "That's it." |
 
