@@ -88,10 +88,6 @@ Users expect visualisations in slides. **Prefer the built-in pure-CSS/SVG compon
 - Keep text minimal. Users will complain about slides that are walls of text.
 - Reach for the CSS/SVG components first; only fall back to Chart.js when the chart type genuinely isn't supported.
 
-## Known issues
-
-**Margin collapsing between `h1` and `.subtitle`.** The template's `.slide-inner` lacks `overflow: hidden`, so sibling margins collapse (the browser picks the larger margin instead of adding them). This makes the gap between a heading and its subtitle too small. Fix: add `overflow: hidden` to `.slide-inner` in the `<style>` block. This is inherited from the template and affects all decks — always check it when writing.
-
 ## Colour scheme and logo
 
 The template ships with the Craft theme as the default (warm cream + burnt orange, Inter + Fraunces). The ⚙️ DECK SETTINGS block at the top of `<body>` exposes two related knobs:
