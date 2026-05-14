@@ -599,7 +599,9 @@ Node variants: default (light card), `.hero` (dark card), `.accent` (burnt orang
 
 ### 28. Diagram (free-form, with arrows)
 
-For non-linear processes: branching, convergence, feedback loops. Nodes are absolutely positioned `<div>`s. Arrows are inline SVG paths in overlay `<svg>` elements that share the same coordinate space as the container.
+**For non-linear processes only**: branching, convergence, fan-out / fan-in, feedback loops. Anything that's just a left-to-right sequence of boxes ("input → process → output", "stage 1 → stage 2 → stage 3") is **not** a `.diagram` — it's a `.flow-row` (component 27). `.flow-row` uses flexbox so overlap is impossible by construction; `.diagram` requires hand-positioning, which is error-prone. If your diagram could be drawn as a horizontal line of boxes, you must use `.flow-row`.
+
+When the topology genuinely branches: nodes are absolutely positioned `<div>`s; arrows are inline SVG paths in overlay `<svg>` elements.
 
 Every node, arrow, and label can carry `data-reveal` for progressive build.
 
@@ -611,53 +613,90 @@ Every node, arrow, and label can carry `data-reveal` for progressive build.
 
 #### Authoring procedure — follow these steps in order
 
-Most diagram bugs come from skipping the planning phase and writing HTML straight away. Don't. The two failure modes that show up over and over are:
+The failure modes that show up over and over:
 
-1. **All arrows reveal before any node.** Caused by putting every arrow in a single `<svg>` at the top of the diagram. Fix: one `<svg>` per arrow (or per logical arrow group), interleaved between the node divs in DOM order.
-2. **Nodes and arrow tips don't line up.** Caused by guessing coordinates. Fix: pick a grid first, write down every node's `(x, y)` in viewBox units, then derive both the node `left/top` percentages and the arrow path endpoints from that table.
+1. **Used `.diagram` when the layout was linear.** Stop. Use `.flow-row` instead. Re-read the first paragraph of this section.
+2. **Arrows reveal in one big batch before any node appears.** Caused by putting every path inside a single `<svg>` at the top of the diagram. Fix: one `<svg>` per arrow, interleaved between the node divs in DOM order.
+3. **`data-reveal` on the `.diagram` wrapper itself.** That makes the entire diagram reveal as one step and breaks the per-node/per-arrow build. The wrapper must never carry `data-reveal` — only its children do.
+4. **Pointy / stretched arrowheads.** Caused by `preserveAspectRatio="none"` on the arrow SVG, which stretches the marker triangle. Solution: **never set `preserveAspectRatio="none"` on `.diagram-arrows`.** Leave it at the default (`xMidYMid meet`) and use an aspect-matched viewBox (see Rule 0).
+5. **Arrow tips land on top of (or under) the node card.** Caused by setting the arrow's end coordinate to the node's centre coordinate. The arrow must stop a card-half-width short.
+6. **Coordinates don't line up.** Caused by picking a viewBox that doesn't match the container's aspect ratio, then thinking in percentages. See Rule 0.
 
-**Step 1 — Pick a viewBox that mirrors the aspect ratio.** Use `aspect-ratio: W / H` on the container and a viewBox of `0 0 (W*100) (H*100)`. That way **1 viewBox unit = 1% of width = 1% of height**, and node `left: 45%` lines up with viewBox `x=45`. Examples:
-- Wide flow (2.2:1): `aspect-ratio: 2.2 / 1`, `viewBox="0 0 220 100"`.
-- Square (1:1): `aspect-ratio: 1 / 1`, `viewBox="0 0 100 100"`.
-- Tall (1:1.4): `aspect-ratio: 1 / 1.4`, `viewBox="0 0 100 140"`.
+**Rule 0 — Aspect-matched viewBox, no `preserveAspectRatio` override.**
 
-Use `preserveAspectRatio="none"` on every `<svg class="diagram-arrows">` so the SVG stretches to fill the container exactly.
+`.diagram` defaults to `aspect-ratio: 2 / 1`. The viewBox **must mirror that aspect ratio** so each viewBox unit is a uniform square on screen — that's what keeps strokes and arrowheads from stretching. Use these conventions:
 
-**Step 2 — Sketch the node grid before writing any HTML.** Make a table with one row per node:
+| Container `aspect-ratio` | `viewBox`         | x ranges over | y ranges over |
+|--------------------------|-------------------|---------------|---------------|
+| `1 / 1` (square)         | `0 0 100 100`     | 0–100         | 0–100         |
+| `1.5 / 1`                | `0 0 150 100`     | 0–150         | 0–100         |
+| `2 / 1` (default)        | `0 0 200 100`     | 0–200         | 0–100         |
+| `2.2 / 1`                | `0 0 220 100`     | 0–220         | 0–100         |
+| `2.5 / 1`                | `0 0 250 100`     | 0–250         | 0–100         |
 
-| Node | x (viewBox) | y (viewBox) | left % | top % | Variant |
-|------|-------------|-------------|--------|-------|---------|
-| Source | 10 | 50 | 10% | 50% | default |
-| Router | 36 | 50 | 36% | 50% | `.hero` |
-| Worker A | 65 | 30 | 65% | 30% | default |
-| Worker B | 65 | 70 | 65% | 70% | default |
-| Sink | 90 | 50 | 90% | 50% | `.accent` |
+Do **not** set `preserveAspectRatio` on `<svg class="diagram-arrows">`. The default (`xMidYMid meet`) is correct because the viewBox already matches the container aspect.
 
-With the viewBox-matches-percent trick from step 1, the two right columns are just the first two with a `%` appended. Keep nodes at least 18 viewBox units apart horizontally and 25 apart vertically so card edges don't touch.
+The trade-off is that viewBox coordinates are **not** percentages. Convert with the formulas below.
 
-**Step 3 — Derive arrow endpoints from the grid.** Each `.diagram-node` is ~14 viewBox units wide and ~10 tall (depends on title length, but plan for it). So an arrow from Source (10, 50) to Router (36, 50) should start at roughly `x = 10 + 7 = 17` and end at `x = 36 - 7 = 29`. Don't start at the node centre — the arrow will disappear under the card.
-
-For each arrow, write down: `from-node`, `to-node`, start `(x1, y1)`, end `(x2, y2)`, type (`straight` / `curve` / `dashed feedback`).
-
-**Step 4 — Write the DOM in flow order.** The reveal order is the DOM order, so the file should read like the story:
+**Conversion formulas (memorise these).** Let `W` be the first number of the aspect ratio (so 2 for `2/1`, 2.5 for `2.5/1`). Then for any node centred at `left: L%`, `top: T%`:
 
 ```
-[marker defs svg]      ← invisible, just <defs>
-[node A]               ← first thing the audience sees
-[arrow A→B svg]        ← then the arrow draws
-[node B]               ← then B appears
-[arrow B→C svg]
-[node C]
-[feedback arrow svg]   ← finally the loop closes
-[label svg or div]
+viewBox x = L × W
+viewBox y = T            (because the second number of the aspect ratio is always 1)
 ```
 
-Each arrow is its own `<svg class="diagram-arrows">`. They all share `position: absolute; inset: 0` (from the `.diagram-arrows` class) and the same viewBox, so they paint on the same coordinate system — but they reveal independently because they're separate DOM nodes.
+Examples for `W = 2.2`:
+- Node at `left: 9%, top: 50%`  → viewBox (19.8, 50) ≈ (20, 50)
+- Node at `left: 36%, top: 50%` → viewBox (79.2, 50) ≈ (79, 50)
+- Node at `left: 92%, top: 50%` → viewBox (202.4, 50) ≈ (202, 50)
 
-**Step 5 — Sanity-check positions before considering the diagram done.** Open the deck in a browser. The three things to verify:
-- Every arrow tip touches the edge of its target node, not the centre and not the empty space beside it.
+**Step 1 — Plan node positions in `left%`/`top%` first.** Build the grid in percentages where humans think:
+
+| Node | left % | top % | Variant |
+|------|--------|-------|---------|
+| Source | 9 | 50 | default |
+| Router | 36 | 50 | `.hero` |
+| Worker A | 68 | 22 | default |
+| Worker B | 68 | 78 | default |
+| Sink | 92 | 50 | `.accent` |
+
+Keep at least 20% horizontal separation and 25% vertical separation between neighbouring node centres. A `.diagram-node` is roughly 12–18% of the container wide (`min-width: 110px`, `max-width: 200px`), so half-width is ~9%.
+
+**Step 2 — Compute arrow endpoints in viewBox units using the W-aware setback rule.** An arrow from A to B should stop ~10% (of container width) short of B's centre and start ~10% past A's centre. In viewBox units, that's `10 × W` units of x-setback and `10` units of y-setback. So for a 2.2/1 diagram (`W = 2.2`):
+- Setback in x = 22 viewBox units (≈ 10% of width).
+- Setback in y = 10 viewBox units (= 10% of height).
+
+Example chain: Source (9%, 50%) → Router (36%, 50%) in a 2.2/1 diagram:
+- Source centre in viewBox = (20, 50). Router centre = (79, 50).
+- Arrow runs from (20 + 22, 50) = (42, 50) to (79 − 22, 50) = (57, 50)? Actually that's too short. Use a smaller setback when nodes are close: 16 viewBox units works (= ~7% of width). Path: `M 36 50 L 64 50`.
+
+In practice, **eyeball the gap**: if neighbouring nodes' rendered cards are tight (long titles), bump the setback; if they're loose, reduce it. The browser is the source of truth.
+
+For diagonal or curved arrows, apply the setback along the direction of travel. Cubic Bezier (`M x1 y1 C cx1 cy1, cx2 cy2, x2 y2`) is the right tool: place the control points roughly along the straight line between endpoints and nudge perpendicular to taste.
+
+**Step 3 — Write the DOM in flow order.** Reveal order = DOM order. The file should read like the story:
+
+```
+<div class="diagram">                  ← NO data-reveal here, ever
+  [marker defs svg]                    ← invisible, just <defs>
+  [node A, data-reveal]                ← first thing the audience sees
+  [arrow A→B svg, path data-reveal]    ← then the arrow draws
+  [node B, data-reveal]                ← then B appears
+  [arrow B→C svg, path data-reveal]
+  [node C, data-reveal]
+  [feedback arrow svg, data-reveal]    ← finally the loop closes
+  [label, data-reveal]
+</div>
+```
+
+Every arrow lives in its own `<svg class="diagram-arrows">`. They all use the same viewBox (from Rule 0) and share `position: absolute; inset: 0` (from the `.diagram-arrows` class), so they paint on the same coordinate space but reveal independently.
+
+**Step 4 — Sanity-check before declaring done.** Open the deck in a browser and verify:
+- Arrowheads are roughly equilateral triangles, not pointy slivers (if they're slivers, you set `preserveAspectRatio="none"` somewhere — find it and delete it).
+- Every arrow tip touches the edge of its target node, not the centre and not empty space.
 - No two nodes overlap.
-- The reveal order matches the narration order. Press Space repeatedly — node, arrow, node, arrow.
+- Pressing Space cycles node → arrow → node → arrow in narration order.
+- The `.diagram` wrapper itself has no `data-reveal`.
 
 ```html
 <div class="diagram-node hero" style="left: 36%; top: 50%;" data-reveal>
@@ -680,9 +719,10 @@ Each arrow is its own `<svg class="diagram-arrows">`. They all share `position: 
 The marker defs sit in an invisible `<svg>` at the top. Every later arrow `<svg>` references them by id (`marker-end="url(#diagram-arrowhead)"` is wired up automatically by the `.diagram-arrow` CSS).
 
 ```html
+<!-- aspect-ratio 2.2/1 → viewBox 0 0 220 100 (W = 2.2). NO preserveAspectRatio. -->
 <div class="diagram" style="aspect-ratio: 2.2 / 1;">
   <!-- Shared marker defs (invisible) -->
-  <svg class="diagram-arrows" viewBox="0 0 220 100" preserveAspectRatio="none" aria-hidden="true">
+  <svg class="diagram-arrows" viewBox="0 0 220 100" aria-hidden="true">
     <defs>
       <marker id="diagram-arrowhead" viewBox="0 0 10 10" refX="9" refY="5"
               markerWidth="5" markerHeight="5" orient="auto-start-reverse">
@@ -695,26 +735,27 @@ The marker defs sit in an invisible `<svg>` at the top. Every later arrow `<svg>
     </defs>
   </svg>
 
-  <!-- 1. Source node -->
+  <!-- 1. Source node (left: 9% → viewBox x = 9 × 2.2 ≈ 20) -->
   <div class="diagram-node" style="left: 9%; top: 50%;" data-reveal>
     <div class="diagram-node-title">Source</div>
   </div>
 
-  <!-- 2. Source -> Router arrow -->
-  <svg class="diagram-arrows" viewBox="0 0 220 100" preserveAspectRatio="none">
-    <path class="diagram-arrow" d="M 32 50 L 64 50"
+  <!-- 2. Source -> Router arrow. Source centre vbox x=20, Router x=79.
+       Setback 16 vbox units (~7% of width) on each side. -->
+  <svg class="diagram-arrows" viewBox="0 0 220 100">
+    <path class="diagram-arrow" d="M 36 50 L 64 50"
           vector-effect="non-scaling-stroke" data-reveal />
   </svg>
 
-  <!-- 3. Router node -->
+  <!-- 3. Router node (left: 36% → viewBox x = 36 × 2.2 ≈ 79) -->
   <div class="diagram-node hero" style="left: 36%; top: 50%;" data-reveal>
     <div class="diagram-node-title">Router</div>
   </div>
 
   <!-- ...continue: arrow, node, arrow, node along the flow... -->
 
-  <!-- Dashed feedback loop (with optional floating label) -->
-  <svg class="diagram-arrows" viewBox="0 0 220 100" preserveAspectRatio="none">
+  <!-- Dashed feedback loop curving from Sink back to Source -->
+  <svg class="diagram-arrows" viewBox="0 0 220 100">
     <path class="diagram-arrow muted dashed" d="M 200 60 C 200 95, 30 95, 18 60"
           vector-effect="non-scaling-stroke" data-reveal />
   </svg>

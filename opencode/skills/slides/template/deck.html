@@ -417,8 +417,10 @@
       <div class="eyebrow">Architecture</div>
       <h2>Diagram <span class="dim">Branching, with arrows</span></h2>
       <div class="diagram" style="aspect-ratio: 2.2 / 1;">
-        <!-- Shared marker defs (rendered first, invisible) -->
-        <svg class="diagram-arrows" viewBox="0 0 220 100" preserveAspectRatio="none" aria-hidden="true">
+        <!-- Shared marker defs (rendered first, invisible).
+             viewBox matches the container aspect ratio (W*100 × H*100) so units
+             stay uniform — markers and stroke widths render correctly. -->
+        <svg class="diagram-arrows" viewBox="0 0 220 100" aria-hidden="true">
           <defs>
             <marker id="diagram-arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
               <path d="M0,0 L10,5 L0,10 Z" fill="#c05a3a" />
@@ -442,8 +444,8 @@
         </div>
 
         <!-- 2. Source -> Router -->
-        <svg class="diagram-arrows" viewBox="0 0 220 100" preserveAspectRatio="none">
-          <path class="diagram-arrow" d="M 32 50 L 64 50" vector-effect="non-scaling-stroke" data-reveal />
+        <svg class="diagram-arrows" viewBox="0 0 220 100">
+          <path class="diagram-arrow" d="M 36 50 L 64 50" vector-effect="non-scaling-stroke" data-reveal />
         </svg>
 
         <!-- 3. Router -->
@@ -462,8 +464,8 @@
         </div>
 
         <!-- 4. Router -> Fast path -->
-        <svg class="diagram-arrows" viewBox="0 0 220 100" preserveAspectRatio="none">
-          <path class="diagram-arrow" d="M 92 50 C 110 50, 115 22, 138 22" vector-effect="non-scaling-stroke" data-reveal />
+        <svg class="diagram-arrows" viewBox="0 0 220 100">
+          <path class="diagram-arrow" d="M 95 50 C 115 50, 115 22, 134 22" vector-effect="non-scaling-stroke" data-reveal />
         </svg>
 
         <!-- 5. Fast path -->
@@ -478,8 +480,8 @@
         </div>
 
         <!-- 6. Router -> Slow path -->
-        <svg class="diagram-arrows" viewBox="0 0 220 100" preserveAspectRatio="none">
-          <path class="diagram-arrow" d="M 92 50 C 110 50, 115 78, 138 78" vector-effect="non-scaling-stroke" data-reveal />
+        <svg class="diagram-arrows" viewBox="0 0 220 100">
+          <path class="diagram-arrow" d="M 95 50 C 115 50, 115 78, 134 78" vector-effect="non-scaling-stroke" data-reveal />
         </svg>
 
         <!-- 7. Slow path -->
@@ -497,13 +499,13 @@
         </div>
 
         <!-- 8. Fast -> Response -->
-        <svg class="diagram-arrows" viewBox="0 0 220 100" preserveAspectRatio="none">
-          <path class="diagram-arrow" d="M 168 22 C 188 22, 188 50, 198 50" vector-effect="non-scaling-stroke" data-reveal />
+        <svg class="diagram-arrows" viewBox="0 0 220 100">
+          <path class="diagram-arrow" d="M 166 22 C 186 22, 188 50, 188 50" vector-effect="non-scaling-stroke" data-reveal />
         </svg>
 
         <!-- 9. Slow -> Response -->
-        <svg class="diagram-arrows" viewBox="0 0 220 100" preserveAspectRatio="none">
-          <path class="diagram-arrow" d="M 168 78 C 188 78, 188 50, 198 50" vector-effect="non-scaling-stroke" data-reveal />
+        <svg class="diagram-arrows" viewBox="0 0 220 100">
+          <path class="diagram-arrow" d="M 166 78 C 186 78, 188 50, 188 50" vector-effect="non-scaling-stroke" data-reveal />
         </svg>
 
         <!-- 10. Response -->
@@ -519,7 +521,7 @@
         </div>
 
         <!-- 11. Feedback loop -->
-        <svg class="diagram-arrows" viewBox="0 0 220 100" preserveAspectRatio="none">
+        <svg class="diagram-arrows" viewBox="0 0 220 100">
           <path class="diagram-arrow muted dashed" d="M 200 60 C 200 95, 30 95, 18 60" vector-effect="non-scaling-stroke" data-reveal />
         </svg>
         <div class="diagram-label" style="left: 50%; top: 96%;" data-reveal>feedback</div>

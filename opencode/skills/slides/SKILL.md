@@ -51,6 +51,7 @@ When the user asks for a deck:
 - **Dark slides:** 2–3 per deck maximum. Reserved for pivot moments.
 - **Dark callout (`.callout`):** one per deck maximum.
 - **Never put `data-reveal` on the closing/thanks slide.** It's the final beat — let everything land at once so the speaker can stop talking and take questions.
+- **Linear flows must use `.flow-row` (component 27), not `.diagram` (component 28).** `.flow-row` is flexbox-based and overlap is impossible. `.diagram` is for branching/converging/looping only. If the layout reads left-to-right with no branches, you must use `.flow-row` even when the user says "diagram".
 - **Never use quote slides** (`.quote-slide`). Even if the user asks for one, use a regular eyebrow + headline + subtitle slide and treat the quote as the headline.
 - **Headlines are statements, not questions** (exception: Q&A capability rows).
 - **Specific numbers beat vague claims.** "7×" not "huge gains."
@@ -65,8 +66,8 @@ The 27 components are a library, not a ceiling. New layouts are fine when conten
 - "Add a quote slide" → **don't.** Quote slides are disabled. Use a regular eyebrow + headline + subtitle slide and treat the quote as the headline.
 - "Make it dark" → add `.dark` to the `<section>`
 - "Add a comparison" → component 4 (two-col) or component 13 (JEDUF)
-- "Show the process" → component 8 (dot-flow) for simple linear, 27 (flow-row) for boxes+arrows, 28 (diagram) for branching/loops
-- "Show an architecture" / "diagram with arrows" → component 28 (diagram); SVG arrows over positioned nodes
+- "Show the process" / "show a pipeline" / "input → output" → component 27 (flow-row). Flexbox layout, overlap impossible. Use this for **anything that's a left-to-right sequence of boxes**, even when the user says "diagram".
+- "Show an architecture" / "diagram with arrows" → only reach for component 28 (`.diagram`) if the topology genuinely branches, fans out/in, or has a feedback loop. If it's just boxes in a row, use 27 (flow-row).
 - "Add a chart" / "show data" → component 26 (bar chart). Wrap in `.chart` for title/y-axis/legend; use `.bar-group` with `.s1`–`.s4` for grouped series
 - "Add an image/video" → component 12 (collage-slide); place media in `./media/`
 - "Add stats / metrics" → component 16 (stat-grid)
@@ -82,7 +83,7 @@ Users expect visualisations in slides. **Prefer the built-in pure-CSS/SVG compon
 
 **Linear flow diagrams:** use component 27 (`.flow-row`). Boxes connected by accent arrows. Each node + each arrow can have its own `data-reveal` so the pipeline builds left to right.
 
-**Branching / architecture diagrams:** use component 28 (`.diagram`). Absolutely-positioned `.diagram-node` divs over an inline SVG arrow layer with arrowhead `<marker>` defs. Supports curved paths, dashed feedback loops, and optional `.diagram-node-icon` slots for inline SVG icons. To build along the flow, split arrows into separate `<svg>` overlays interleaved with the node divs (reveal fires in DOM order).
+**Branching / architecture diagrams:** use component 28 (`.diagram`) **only** when the topology actually branches, converges, or loops — never for a left-to-right sequence. Absolutely-positioned `.diagram-node` divs over inline SVG arrow layers with arrowhead `<marker>` defs. **Critical rules:** viewBox must mirror the container's aspect ratio (so units are uniform and markers don't go pointy); never set `preserveAspectRatio="none"`; one `<svg>` per arrow, interleaved with the node divs in DOM order; never put `data-reveal` on the `.diagram` wrapper itself. See `reference/COMPONENTS.md` § 28 for the conversion table and worked examples.
 
 **Pie / scatter / line charts:** these are NOT covered by the built-in components. Use Chart.js via CDN as a last resort. Always defer chart creation with `setTimeout(fn, N)` so the DOM is rendered first, and style with deck colours from the design tokens table in `reference/COMPONENTS.md` (reference the CSS variables: `var(--accent)`, `var(--text)`, etc.).
 
