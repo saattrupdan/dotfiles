@@ -11,14 +11,13 @@ fpath+=~/.zfunc; autoload -Uz compinit; compinit
 source ~/znap-plugins/znap/znap.zsh  # Start Znap
 
 # Autocomplete plugin
-# TODO: Seems to freeze the terminal when the `znap source` command is run
-# [[ -r ~/znap-plugins/marlonrichert/zsh-autocomplete ]] ||
-#   znap clone marlonrichert/zsh-autocomplete
-# znap source zsh-autocomplete
-# zstyle ':autocomplete:*' append-semicolon no
-# bindkey -M menuselect '\r' .accept-line
-# bindkey -a 'j' down-line-or-search
-# bindkey -a 'k' up-line-or-search
+[[ -r ~/znap-plugins/marlonrichert/zsh-autocomplete ]] ||
+  znap clone marlonrichert/zsh-autocomplete
+znap source zsh-autocomplete
+zstyle ':autocomplete:*' append-semicolon no
+bindkey -M menuselect '\r' .accept-line
+bindkey -a 'j' down-line-or-search
+bindkey -a 'k' up-line-or-search
 
 # Another autocomplete plugin
 [[ -r ~/znap-plugins/zsh-users/zsh-autosuggestions ]] ||
