@@ -129,7 +129,7 @@ Add missing tests
 1. Use the @explore subagent to locate the functions/classes/modules with missing tests
 2. Use the @plan subagent and plan a series of actions to add tests to the
    functions/classes/modules with missing tests.
-2. Launch multiple @build subagents in parallel to run the planned actions, making sure
+3. Launch multiple @build subagents in parallel to run the planned actions, making sure
    to only run the actions in parallel that are not dependent on each other. They are
    allowed to edit the same files.
-3. Use the @review subagent to review the results of the actions.
+4. Use the @review subagent to review the results of the actions.
