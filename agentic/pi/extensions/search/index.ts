@@ -16,6 +16,8 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+import { binPath } from "@vscode/ripgrep";
+
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
@@ -152,7 +154,7 @@ function runRipgrep(repoRoot: string, query: string): RipgrepResult[] {
 	const results: RipgrepResult[] = [];
 
 	try {
-		const rgPath = require("@vscode/ripgrep").binPath;
+		const rgPath = binPath;
 		const proc = childProcess.spawnSync(
 			rgPath,
 			["--json", "-n", "--", query],
