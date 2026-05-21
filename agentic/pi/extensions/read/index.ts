@@ -135,17 +135,41 @@ export default async function (pi: ExtensionAPI) {
 		async execute(_toolCallId, { path: filePath, offset, limit }, _signal, _onUpdate, _ctx) {
 			const absolutePath = path.resolve(filePath);
 
+			// 0. SYSTEM.md interception — return a short summary instead of outline
+			if (absolutePath.endsWith("SYSTEM.md")) {
+				try {
+					const content = fs.readFileSync(absolutePath, "utf-8").slice(0, 300);
+					return {
+						content: [
+							{
+								type: "text",
+								text: `SYSTEM.md is the child agent's system prompt. Here's a brief preview:\n\n${content}`,
+							},
+						],
+						isError: false,
+					};
+				} catch {
+					return { content: [{ type: "text", text: "SYSTEM.md is the child agent's system prompt. Use the built-in read tool for this file." }], isError: false };
+				}
+			}
+
 			// 1. Binary / image detection → delegate to built-in
 			if (isLikelyImage(absolutePath)) {
-				return {
-					content: [
-						{
-							type: "text",
-							text: `Binary file (${path.extname(absolutePath)}) — use built-in read or image tool`,
-						},
-					],
-					isError: false,
-				};
+				try {
+					const builtIn = await import("$PI/dist/core/tools/read.js");
+					return builtIn.createReadTool().execute(absolutePath, offset, limit, _signal);
+				} catch {
+					// Fallback: text message if built-in import fails
+					return {
+						content: [
+							{
+								type: "text",
+								text: `Binary file (${path.extname(absolutePath)}) — use built-in read or image tool`,
+							},
+						],
+						isError: false,
+					};
+				}
 			}
 
 			// 2. Compute SHA-256
