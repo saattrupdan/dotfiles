@@ -255,11 +255,15 @@ export function removeMissingFiles(db: Database.Database, existingPaths: Set<str
 
 	if (toDelete.length === 0) return;
 
-	const stmt2 = db.prepare(`DELETE FROM files WHERE path IN (${toDelete.map(() => "?").join(",")})`);
-	stmt2.run(...toDelete);
+	const stmt2 = db.prepare("DELETE FROM files WHERE path = ?");
+	for (const p of toDelete) {
+		stmt2.run(p);
+	}
 
-	const stmt3 = db.prepare(`DELETE FROM symbols WHERE file IN (${toDelete.map(() => "?").join(",")})`);
-	stmt3.run(...toDelete);
+	const stmt3 = db.prepare("DELETE FROM symbols WHERE file = ?");
+	for (const p of toDelete) {
+		stmt3.run(p);
+	}
 }
 
 /**
