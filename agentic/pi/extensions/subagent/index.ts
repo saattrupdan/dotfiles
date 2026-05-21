@@ -272,6 +272,7 @@ async function runSingleAgent(
 	signal: AbortSignal | undefined,
 	onUpdate: OnUpdateCallback | undefined,
 	makeDetails: (results: SingleResult[]) => SubagentDetails,
+	taskSkills?: string[],
 ): Promise<SingleResult> {
 	const agent = agents.find((a) => a.name === agentName);
 
@@ -292,6 +293,16 @@ async function runSingleAgent(
 	const args: string[] = ["--mode", "json", "-p", "--no-session"];
 	if (agent.model) args.push("--model", agent.model);
 	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
+
+	// Compute effective skills: agent.skills ∪ taskSkills ∪ project overlay.
+	const effectiveSkills = new Set([
+		...agent.skills,
+		...(taskSkills ?? []),
+	]);
+	const effectiveSkillsList = Array.from(effectiveSkills);
+	if (effectiveSkillsList.length > 0) {
+		args.push("--skills", effectiveSkillsList.join(","));
+	}
 
 	let tmpPromptDir: string | null = null;
 	let tmpPromptPath: string | null = null;
@@ -477,12 +488,14 @@ const TaskItem = Type.Object({
 	agent: Type.String({ description: "Name of the agent to invoke" }),
 	task: Type.String({ description: "Task to delegate to the agent" }),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
+	skills: Type.Optional(Type.Array(Type.String(), { description: "Override skills for this task" })),
 });
 
 const ChainItem = Type.Object({
 	agent: Type.String({ description: "Name of the agent to invoke" }),
 	task: Type.String({ description: "Task with optional {previous} placeholder for prior output" }),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
+	skills: Type.Optional(Type.Array(Type.String(), { description: "Override skills for this step" })),
 });
 
 const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
@@ -500,6 +513,7 @@ const SubagentParams = Type.Object({
 		Type.Boolean({ description: "Prompt before running project-local agents. Default: true.", default: true }),
 	),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process (single mode)" })),
+	skills: Type.Optional(Type.Array(Type.String(), { description: "Override skills for all tasks in this call" })),
 });
 
 export default function (pi: ExtensionAPI) {
@@ -605,6 +619,7 @@ export default function (pi: ExtensionAPI) {
 						signal,
 						chainUpdate,
 						makeDetails("chain"),
+						step.skills,
 					);
 					results.push(result);
 
@@ -683,6 +698,7 @@ export default function (pi: ExtensionAPI) {
 							}
 						},
 						makeDetails("parallel"),
+						t.skills,
 					);
 					allResults[index] = result;
 					emitParallelUpdate();
@@ -719,6 +735,7 @@ export default function (pi: ExtensionAPI) {
 					signal,
 					onUpdate,
 					makeDetails("single"),
+					params.skills,
 				);
 				const isError = isFailedResult(result);
 				if (isError) {

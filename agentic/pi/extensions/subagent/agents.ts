@@ -19,6 +19,7 @@ export interface AgentConfig {
 	tools?: string[];
 	model?: string;
 	worktree: boolean;
+	skills: string[];
 	systemPrompt: string;
 	source: "user" | "project";
 	filePath: string;
@@ -75,12 +76,25 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
 						.filter(Boolean)
 				: undefined;
 
+		// Parse skills as a YAML list (array), not comma-split.
+		const skillsRaw = frontmatter.skills;
+		let skills: string[] = [];
+		if (Array.isArray(skillsRaw)) {
+			skills = skillsRaw.map((s: unknown) => String(s));
+		} else if (typeof skillsRaw === "string") {
+			skills = skillsRaw
+				.split(",")
+				.map((t: string) => t.trim())
+				.filter(Boolean);
+		}
+
 		agents.push({
 			name: String(frontmatter.name),
 			description: String(frontmatter.description),
 			tools: tools && tools.length > 0 ? tools : undefined,
 			model: frontmatter.model ? String(frontmatter.model) : undefined,
 			worktree: parseBool(frontmatter.worktree),
+			skills,
 			systemPrompt: body,
 			source,
 			filePath,
@@ -125,6 +139,32 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 		for (const a of userAgents) agentMap.set(a.name, a);
 	} else {
 		for (const a of projectAgents) agentMap.set(a.name, a);
+	}
+
+	// Project-level overlay: merge project agent skills into user-level agents.
+	if (projectAgentsDir && (scope === "both" || scope === "user")) {
+		for (const userAgent of userAgents) {
+			const projectAgentPath = path.join(projectAgentsDir, `${userAgent.name}.md`);
+			if (!fs.existsSync(projectAgentPath)) continue;
+			try {
+				const content = fs.readFileSync(projectAgentPath, "utf-8");
+				const { frontmatter } = parseFrontmatter<Record<string, unknown>>(content);
+				const skillsRaw = frontmatter.skills;
+				if (!skillsRaw) continue;
+				const projectSkills: string[] = Array.isArray(skillsRaw)
+					? skillsRaw.map((s: unknown) => String(s))
+					: typeof skillsRaw === "string"
+						? skillsRaw.split(",").map((t: string) => t.trim()).filter(Boolean)
+						: [];
+				const merged = new Set([...userAgents.find((a) => a.name === userAgent.name)!.skills, ...projectSkills]);
+				const entry = agentMap.get(userAgent.name);
+				if (entry) {
+					agentMap.set(userAgent.name, { ...entry, skills: Array.from(merged) });
+				}
+			} catch {
+				// Ignore parse errors for project-level overlays.
+			}
+		}
 	}
 
 	return { agents: Array.from(agentMap.values()), projectAgentsDir };
