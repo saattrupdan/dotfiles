@@ -1,7 +1,7 @@
 ---
 name: python
 description: Conventions for Python code style, organisation, quality checks, and documentation. Use when building or reviewing Python projects.
-tagline: Python code style, organisation, quality checks, and documentation conventions
+tagline: Python code style, organisation, quality checks
 last-updated: 2026-05-09
 ---
 

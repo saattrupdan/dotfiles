@@ -1,7 +1,7 @@
 ---
 name: sqlmodel
 description: Python ORM package for working with SQL databases. Use when creating database models, performing CRUD operations, or building database-backed APIs.
-tagline: SQLModel ORM for Python database models and CRUD operations
+tagline: SQLModel ORM for Python database models
 last-updated: 2026-05-09
 ---
 
