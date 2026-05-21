@@ -42,6 +42,7 @@ function pushBlock(out: OutlineEntry[], startRow: number, firstLine: string): vo
 	const name = firstLine.length > 80 ? `${firstLine.slice(0, 79)}\u2026` : firstLine;
 	out.push({
 		line: startRow + 1,
+		lineEnd: startRow + 1,
 		kind: "block",
 		name,
 	});

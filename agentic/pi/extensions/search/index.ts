@@ -12,9 +12,6 @@
  */
 
 import * as childProcess from "node:child_process";
-import * as crypto from "node:crypto";
-import * as fs from "node:fs";
-import * as path from "node:path";
 
 import { binPath } from "@vscode/ripgrep";
 
@@ -41,101 +38,12 @@ async function loadOutliner(): Promise<typeof import("../_outliner/outliner.js")
 // ---------------------------------------------------------------------------
 
 import {
-	resolveRepoId,
-	openDb,
-	getIndexDbPath,
-	writeMeta,
+	ensureFullIndex,
+	refreshFile,
 	touchMeta,
-	insertSymbol,
 	querySymbols,
 	queryExactSymbol,
-	listFiles,
-	incrementalRefresh,
 } from "./index-store.js";
-
-// Cached db handle per process
-let cachedDb: ReturnType<typeof openDb> | null = null;
-let cachedRepoId: string | null = null;
-let cachedRepoRoot: string | null = null;
-
-/**
- * Ensure the index is built (lazy build on first search call).
- */
-function ensureIndex(): void {
-	if (cachedDb) return;
-
-	const repoId = resolveRepoId(process.cwd());
-	cachedRepoId = repoId;
-	cachedRepoRoot = path.resolve(process.cwd());
-
-	// Write meta
-	writeMeta(repoId, cachedRepoRoot);
-
-	// Open DB
-	const db = openDb(repoId);
-	cachedDb = db;
-
-	// Check if index is empty
-	const countStmt = db.prepare("SELECT COUNT(*) AS cnt FROM files");
-	const count = countStmt.all()[0] as { cnt: number };
-
-	if (count.cnt === 0) {
-		// Full build
-		buildIndex(db, repoId, cachedRepoRoot);
-	}
-}
-
-/**
- * Build the full index from scratch.
- */
-function buildIndex(db: ReturnType<typeof openDb>, repoId: string, repoRoot: string): void {
-	const files = listFiles(repoRoot);
-	const outlinerModule = outlineModule || loadOutliner();
-	const { outline } = outlinerModule;
-
-	for (const relPath of files) {
-		const fullPath = path.join(repoRoot, relPath);
-		try {
-			const content = fs.readFileSync(fullPath, "utf-8");
-			const lines = content.split("\n").length;
-			const size = Buffer.byteLength(content);
-			const stat = fs.statSync(fullPath);
-			const mtimeSec = Math.floor(stat.mtime.getTime() / 1000);
-			const sha = crypto.createHash("sha256").update(content).digest("hex");
-
-			// Detect language from extension
-			const lang = detectLanguage(relPath);
-
-			insertFile(db, relPath, lines, size, lang, sha, mtimeSec);
-
-			// Extract symbols
-			const entries = outline(fullPath, content);
-			for (const entry of entries) {
-				insertSymbol(db, entry, relPath);
-			}
-		} catch {
-			// Skip files that can't be read
-		}
-	}
-}
-
-/**
- * Quick language detection from file extension.
- */
-function detectLanguage(filePath: string): string {
-	const ext = path.extname(filePath).toLowerCase();
-	const langMap: Record<string, string> = {
-		".ts": "typescript",
-		".tsx": "typescript",
-		".js": "javascript",
-		".jsx": "javascript",
-		".py": "python",
-		".vue": "vue",
-		".md": "markdown",
-		".json": "json",
-	};
-	return langMap[ext] ?? "text";
-}
 
 // ---------------------------------------------------------------------------
 // Ripgrep search
@@ -233,57 +141,16 @@ export default async function (pi: ExtensionAPI) {
 			_onUpdate,
 			_ctx,
 		) {
-			// Ensure index is built
-			ensureIndex();
+			const { db, repoId, repoRoot } = ensureFullIndex(process.cwd(), outline);
+			touchMeta(repoId);
 
-			const db = cachedDb!;
-			const repoRoot = cachedRepoRoot!;
-
-			// Touch meta (update last_used)
-			touchMeta(cachedRepoId!);
-
-			// Incremental refresh: stat files, re-parse only changed ones
-			const existingPaths = new Set<string>();
-			try {
-				const stmt = db.prepare("SELECT path FROM files");
-				const rows = stmt.all() as { path: string }[];
-				for (const r of rows) existingPaths.add(r.path);
-			} catch {
-				// If we can't read, that's fine
+			// Incremental refresh: re-parse only changed files.
+			const rows = db
+				.prepare("SELECT path FROM files")
+				.all() as { path: string }[];
+			for (const r of rows) {
+				refreshFile(db, repoRoot, r.path, outline);
 			}
-
-			// We need to pass updateFile to incrementalRefresh
-			const updateFile = (relPath: string) => {
-				const fullPath = path.join(repoRoot, relPath);
-				try {
-					const content = fs.readFileSync(fullPath, "utf-8");
-					const entries = outline(fullPath, content);
-					// Update file row
-					const lines = content.split("\n").length;
-					const size = Buffer.byteLength(content);
-					const stat = fs.statSync(fullPath);
-					const mtimeSec = Math.floor(stat.mtime.getTime() / 1000);
-					const sha = crypto.createHash("sha256").update(content).digest("hex");
-
-					const updateFileStmt = db.prepare(
-						`UPDATE files SET lines = ?, size = ?, sha = ?, mtime = ? WHERE path = ?`,
-					);
-					updateFileStmt.run(lines, size, sha, mtimeSec, relPath);
-
-					// Update symbols
-					const deleteStmt = db.prepare("DELETE FROM symbols WHERE file = ?");
-					deleteStmt.run(relPath);
-
-					for (const entry of entries) {
-						insertSymbol(db, entry, relPath);
-					}
-				} catch {
-					// Silently skip
-				}
-			};
-
-			// Incremental refresh
-			incrementalRefresh(db, repoRoot, existingPaths, updateFile);
 
 			// --- Definition lookup ---
 			let defResults: { file: string; line: number; kind: string; name: string; parent: string | null }[] = [];

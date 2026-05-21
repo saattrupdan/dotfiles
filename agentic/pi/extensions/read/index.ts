@@ -1,16 +1,17 @@
 /**
- * Hard-capped `read` tool extension.
+ * Index-backed `read` tool extension.
  *
- * Overrides the built-in read tool with:
- * - SHA-256 session dedupe cache (Map keyed by sha|path|offset|limit)
- * - Small-file passthrough (≤100 lines, no offset → verbatim)
- * - Large-file outline (>100 lines, no offset → tree-sitter outline)
- * - Slice read (offset set → read slice with hard cap)
- * - Binary / image detection (delegates to built-in)
- * - Hard 100-line cap (model can only request *less* than 100)
+ * Three modes (no pagination — model must use search to locate things):
+ *   1. Small file (≤ SMALL_FILE_LINES, no symbol) → verbatim
+ *   2. Large file (no symbol)                     → outline (module doc +
+ *      one line per symbol with signature & doc-first-line)
+ *   3. `symbol` set                               → body of that symbol
+ *      using line_start..line_end from the index. Supports "Class.method".
  *
- * This extension is loaded from the `.pi/agent/extensions/read/` directory
- * and registered via the standard pi extension API.
+ * Outline + symbol ranges come from the shared SQLite index in
+ * `~/.pi/index/<repo-id>/index.db`, which is also used by the `search`
+ * extension. The index is incrementally refreshed for the target file on
+ * every call, so edits are picked up without a full rebuild.
  */
 
 import * as crypto from "node:crypto";
@@ -22,35 +23,37 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 // ---------------------------------------------------------------------------
-// Resolve the outliner — use jiti-relative import from the extension dir
+// Resolve sibling modules via jiti
 // ---------------------------------------------------------------------------
-// The outliner is a sibling extension in the same extensions directory.
-// We import it via jiti at runtime (the pi loader provides jiti with aliases).
-let outlineModule: typeof import("../_outliner/outliner.js") | null = null;
 
-async function loadOutliner(): Promise<typeof import("../_outliner/outliner.js")> {
-	if (outlineModule) return outlineModule;
-	// jiti is available in the pi loader context — we import relative to this file.
-	// The pi extension loader configures jiti with aliases for node_modules.
+let outlineModule: typeof import("../_outliner/outliner.js") | null = null;
+let indexStoreModule: typeof import("../search/index-store.js") | null = null;
+
+async function loadModules() {
+	if (outlineModule && indexStoreModule) {
+		return { outliner: outlineModule, indexStore: indexStoreModule };
+	}
 	const jiti = await import("jiti").then((m) => m.createJiti(import.meta.url, { moduleCache: false }));
-	// @ts-expect-error - jiti.import returns unknown
-	outlineModule = await jiti.import("../_outliner/outliner.js", { default: true });
-	return outlineModule;
+	if (!outlineModule) {
+		// @ts-expect-error - jiti.import returns unknown
+		outlineModule = await jiti.import("../_outliner/outliner.js", { default: true });
+	}
+	if (!indexStoreModule) {
+		// @ts-expect-error - jiti.import returns unknown
+		indexStoreModule = await jiti.import("../search/index-store.js", { default: true });
+	}
+	return { outliner: outlineModule!, indexStore: indexStoreModule! };
 }
 
 // ---------------------------------------------------------------------------
 // Session dedupe cache
 // ---------------------------------------------------------------------------
 
-const callIndex = { current: 0 }; // resets on process restart
-
+const callIndex = { current: 0 };
 const dedupeCache = new Map<string, { sha: string; callIndex: number }>();
 
-/**
- * Build a cache key from sha, path, offset, limit.
- */
-function cacheKey(sha: string, filePath: string, offset: number | undefined, limit: number | undefined): string {
-	return `${sha}|${filePath}|${offset}|${limit}`;
+function cacheKey(sha: string, filePath: string, symbol: string | undefined): string {
+	return `${sha}|${filePath}|${symbol ?? ""}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -59,10 +62,6 @@ function cacheKey(sha: string, filePath: string, offset: number | undefined, lim
 
 const IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp"]);
 
-/**
- * Quick MIME sniff by checking first bytes.
- * Returns true if the file looks like a supported image.
- */
 function isLikelyImage(filePath: string): boolean {
 	const ext = path.extname(filePath).toLowerCase();
 	if (!IMAGE_EXTENSIONS.has(ext)) return false;
@@ -70,48 +69,32 @@ function isLikelyImage(filePath: string): boolean {
 		const buf = fs.readFileSync(filePath).slice(0, 8);
 		if (buf[0] === 0xff && buf[1] === 0xd8) return true; // JPEG
 		if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return true; // PNG
-		if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x4e && buf[3] === 0x47) return true; // GIF
-		if (buf[0] === 0x52 && buf[1] === 0x46 && buf[2] === 0x46 && buf[3] === 0x42) return true; // WebP
+		if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return true; // GIF
+		if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46) return true; // RIFF/WebP
 		return false;
 	} catch {
 		return false;
 	}
 }
 
-// ---------------------------------------------------------------------------
-// SHA-256 hash
-// ---------------------------------------------------------------------------
-
 function sha256(filePath: string): string {
 	const buf = fs.readFileSync(filePath);
 	return crypto.createHash("sha256").update(buf).digest("hex");
 }
 
-// ---------------------------------------------------------------------------
-// Line count
-// ---------------------------------------------------------------------------
-
-function lineCount(content: string): number {
-	return content.split("\n").length;
-}
+const SMALL_FILE_LINES = 100;
 
 // ---------------------------------------------------------------------------
 // Schema
 // ---------------------------------------------------------------------------
 
 const Params = Type.Object({
-	path: Type.String({ description: "Path to the file to read (relative or absolute)" }),
-	offset: Type.Optional(
-		Type.Integer({
-			description: "Line number to start reading from (1-indexed)",
-			minimum: 1,
-		}),
-	),
-	limit: Type.Optional(
-		Type.Integer({
-			description: "Maximum number of lines to read (hard-capped at 100)",
-			minimum: 1,
-			maximum: 100,
+	path: Type.String({ description: "Path to the file to read (relative or absolute)." }),
+	symbol: Type.Optional(
+		Type.String({
+			description:
+				"Optional symbol name (e.g. 'foo' or 'ClassName.method') to return the body of that symbol only. " +
+				"Use the outline returned by a path-only read to discover symbol names.",
 		}),
 	),
 });
@@ -121,21 +104,26 @@ const Params = Type.Object({
 // ---------------------------------------------------------------------------
 
 export default async function (pi: ExtensionAPI) {
-	// Load outliner eagerly (it's fast)
-	const outliner = await loadOutliner();
+	const { outliner, indexStore } = await loadModules();
 	const { outline, collapsedView } = outliner;
+	const { openIndex, refreshFile, getFileOutline, getSymbol } = indexStore;
 
 	pi.registerTool({
 		name: "read",
 		label: "read",
 		description:
-			"Read the contents of a file. Supports text files and images (jpg, png, gif, webp). For text files, output is hard-capped at 100 lines. Use offset/limit for large files. When you need the full file, continue with offset until complete.",
+			"Read a file. Modes:\n" +
+			"  • No symbol, small file → verbatim contents.\n" +
+			"  • No symbol, large file → outline (module doc, classes/functions with signatures, type hints, and doc-first-line). Use the outline to pick a symbol.\n" +
+			"  • symbol set → body of that symbol only (supports 'Class.method').\n" +
+			"  • symbol=\"__preamble__\" → everything before the first class/function (imports, constants, module setup).\n" +
+			"There is no pagination — you cannot walk a file via offset/limit. If the outline is not enough, use the `search` tool to locate what you need, then read the symbol.",
 		parameters: Params,
 
-		async execute(_toolCallId, { path: filePath, offset, limit }, _signal, _onUpdate, _ctx) {
+		async execute(_toolCallId, { path: filePath, symbol }, _signal, _onUpdate, _ctx) {
 			const absolutePath = path.resolve(filePath);
 
-			// 0. SYSTEM.md interception — return a short summary instead of outline
+			// 0. SYSTEM.md interception
 			if (absolutePath.endsWith("SYSTEM.md")) {
 				try {
 					const content = fs.readFileSync(absolutePath, "utf-8").slice(0, 300);
@@ -149,22 +137,32 @@ export default async function (pi: ExtensionAPI) {
 						isError: false,
 					};
 				} catch {
-					return { content: [{ type: "text", text: "SYSTEM.md is the child agent's system prompt. Use the built-in read tool for this file." }], isError: false };
+					return {
+						content: [{ type: "text", text: "SYSTEM.md is the child agent's system prompt." }],
+						isError: false,
+					};
 				}
 			}
 
-			// 1. Binary / image detection → delegate to built-in
+			// 1. Existence check
+			if (!fs.existsSync(absolutePath)) {
+				return {
+					content: [{ type: "text", text: `File not found: ${absolutePath}` }],
+					isError: true,
+				};
+			}
+
+			// 2. Image passthrough
 			if (isLikelyImage(absolutePath)) {
 				try {
 					const builtIn = await import("$PI/dist/core/tools/read.js");
-					return builtIn.createReadTool().execute(absolutePath, offset, limit, _signal);
+					return builtIn.createReadTool().execute(absolutePath, undefined, undefined, _signal);
 				} catch {
-					// Fallback: text message if built-in import fails
 					return {
 						content: [
 							{
 								type: "text",
-								text: `Binary file (${path.extname(absolutePath)}) — use built-in read or image tool`,
+								text: `Binary file (${path.extname(absolutePath)}) — use the built-in image tool.`,
 							},
 						],
 						isError: false,
@@ -172,86 +170,171 @@ export default async function (pi: ExtensionAPI) {
 				}
 			}
 
-			// 2. Compute SHA-256
+			// 3. SHA-256 + dedupe lookup
 			const sha = sha256(absolutePath);
+			const key = cacheKey(sha, absolutePath, symbol);
+			const cached = dedupeCache.get(key);
+			if (cached && cached.sha === sha) {
+				return {
+					content: [{ type: "text", text: `unchanged since call #${cached.callIndex}` }],
+					details: { dedupe: true, callIndex: cached.callIndex },
+				};
+			}
 
-			// 3. Effective limit: clamp at 100
-			const effectiveLimit = Math.min(limit ?? 100, 100);
+			// 4. Open the index (no full build) and refresh just this file.
+			const { db, repoRoot } = openIndex(process.cwd());
+			let relPath = path.relative(repoRoot, absolutePath);
+			if (relPath.startsWith("..")) {
+				// File lives outside the repo — fall back to verbatim/outline without the index.
+				return readOutsideRepo(absolutePath, symbol, outline, collapsedView, key, sha);
+			}
+			refreshFile(db, repoRoot, relPath, outline);
 
-			// 4. Read the file content
 			const content = fs.readFileSync(absolutePath, "utf-8");
 			const allLines = content.split("\n");
 			const totalLines = allLines.length;
 
-			// 5. Cache key
-			const key = cacheKey(sha, absolutePath, offset, limit);
-
-			// 6. Check dedupe cache
-			const cached = dedupeCache.get(key);
-			if (cached && cached.sha === sha) {
-				const n = cached.callIndex;
-				return {
-					content: [{ type: "text", text: `unchanged since call #${n}` }],
-					details: { dedupe: true, callIndex: n },
-				};
-			}
-
-			// 7. Small file passthrough (≤100 lines AND neither offset nor limit)
-			if (totalLines <= 100 && offset === undefined && limit === undefined) {
-				const header = `# lines 1-${totalLines} of ${absolutePath} (${totalLines} total)`;
+			// 5a. Preamble: everything before the first class/function.
+			if (symbol === "__preamble__") {
+				const firstDefRow = db
+					.prepare(
+						"SELECT MIN(line_start) AS line FROM symbols WHERE file = ? AND kind IN ('class','function')",
+					)
+					.get(relPath) as { line: number | null } | undefined;
+				const cutoff = firstDefRow?.line ?? null;
+				const lastLine = cutoff && cutoff > 1 ? cutoff - 1 : totalLines;
+				const slice = allLines.slice(0, lastLine);
+				const header = cutoff
+					? `# ${relPath}::__preamble__  lines 1-${lastLine} (before line ${cutoff})`
+					: `# ${relPath}::__preamble__  lines 1-${lastLine} (no class/function found — whole file)`;
 				dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
-				return {
-					content: [{ type: "text", text: `${header}\n${content}` }],
-				};
+				return { content: [{ type: "text", text: `${header}\n${slice.join("\n")}` }] };
 			}
 
-			// 8. Large file outline (>100 lines AND neither offset nor limit)
-			if (totalLines > 100 && offset === undefined && limit === undefined) {
-				try {
-					const entries = outline(absolutePath, content);
-					const collapsed = collapsedView(entries, { hidePrivate: true, maxLines: 100 });
-					const header = `# outline of ${absolutePath} (${totalLines} total lines)`;
-					dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
+			// 5. Symbol body
+			if (symbol) {
+				const sym = getSymbol(db, relPath, symbol);
+				if (!sym) {
 					return {
-						content: [{ type: "text", text: `${header}\n${collapsed.join("\n")}` }],
+						content: [
+							{
+								type: "text",
+								text: `Symbol "${symbol}" not found in ${relPath}. Read the file without \`symbol\` to see the outline, or use \`search\` to locate it.`,
+							},
+						],
+						isError: true,
 					};
-				} catch {
-					// Fall through to slice read on outline failure
 				}
+				const slice = allLines.slice(sym.line_start - 1, sym.line_end);
+				const header = `# ${relPath}::${symbol}  lines ${sym.line_start}-${sym.line_end} (${sym.kind})`;
+				dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
+				return { content: [{ type: "text", text: `${header}\n${slice.join("\n")}` }] };
 			}
 
-			// 9. Slice read (offset set, limit set, or fallback)
-			const startIdx = offset ? offset - 1 : 0;
-			const endIdx = limit !== undefined ? Math.min(startIdx + effectiveLimit, totalLines) : totalLines;
-			const slice = allLines.slice(startIdx, endIdx);
-			const sliceLines = slice.length;
-			const endLine = limit !== undefined ? startIdx + sliceLines : totalLines;
-			const header = offset !== undefined
-				? `# lines ${offset}-${endLine} of ${absolutePath} (${totalLines} total)`
-				: `# lines 1-${endLine} of ${absolutePath} (${totalLines} total)`;
+			// 6. Small file → verbatim
+			if (totalLines <= SMALL_FILE_LINES) {
+				const header = `# ${relPath} (${totalLines} lines)`;
+				dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
+				return { content: [{ type: "text", text: `${header}\n${content}` }] };
+			}
 
+			// 7. Large file → outline from the index
+			const stored = getFileOutline(db, relPath);
+			const result = stored
+				? { moduleDoc: stored.doc ?? undefined, entries: stored.entries }
+				: outline(absolutePath, content);
+			const view = collapsedView(result, { hidePrivate: true, maxLines: 200 });
+			const header = `# outline of ${relPath} (${totalLines} lines)`;
+			const footer =
+				`# read again with symbol="<name>" to see a function/class body, ` +
+				`symbol="__preamble__" for imports/constants, ` +
+				`or use \`search\` to locate something specific.`;
 			dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
 			return {
-				content: [{ type: "text", text: `${header}\n${slice.join("\n")}` }],
+				content: [
+					{ type: "text", text: `${header}\n${view.join("\n")}\n${footer}` },
+				],
 			};
 		},
 
 		renderCall(args, theme) {
 			const rawPath = args?.path ?? args?.file_path;
 			const pathStr = rawPath ? String(rawPath) : "...";
-			const offset = args?.offset;
-			const limit = args?.limit;
-			let range = "";
-			if (offset !== undefined || limit !== undefined) {
-				const start = offset ?? 1;
-				const end = limit !== undefined ? start + limit - 1 : "";
-				range = `:${start}${end ? `-${end}` : ""}`;
-			}
+			const symbol = args?.symbol;
+			const suffix = symbol ? `::${String(symbol)}` : "";
 			return new Text(
-				`${theme.fg("toolTitle", theme.bold("read"))} ${theme.fg("accent", pathStr)}${theme.fg("warning", range)}`,
+				`${theme.fg("toolTitle", theme.bold("read"))} ${theme.fg("accent", pathStr)}${theme.fg("warning", suffix)}`,
 				0,
 				0,
 			);
 		},
 	});
+}
+
+// ---------------------------------------------------------------------------
+// Fallback for files outside the indexed repo
+// ---------------------------------------------------------------------------
+
+function readOutsideRepo(
+	absolutePath: string,
+	symbol: string | undefined,
+	outline: (typeof import("../_outliner/outliner.js"))["outline"],
+	collapsedView: (typeof import("../_outliner/outliner.js"))["collapsedView"],
+	key: string,
+	sha: string,
+) {
+	const content = fs.readFileSync(absolutePath, "utf-8");
+	const allLines = content.split("\n");
+	const totalLines = allLines.length;
+
+	if (symbol === "__preamble__") {
+		const result = outline(absolutePath, content);
+		const firstDef = result.entries.find((e) => e.kind === "class" || e.kind === "function");
+		const cutoff = firstDef?.line ?? null;
+		const lastLine = cutoff && cutoff > 1 ? cutoff - 1 : totalLines;
+		const slice = allLines.slice(0, lastLine);
+		const header = cutoff
+			? `# ${absolutePath}::__preamble__  lines 1-${lastLine} (before line ${cutoff})`
+			: `# ${absolutePath}::__preamble__  lines 1-${lastLine} (no class/function found — whole file)`;
+		dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
+		return { content: [{ type: "text", text: `${header}\n${slice.join("\n")}` }] };
+	}
+
+	if (symbol) {
+		const result = outline(absolutePath, content);
+		const dot = symbol.lastIndexOf(".");
+		const lookupName = dot >= 0 ? symbol.slice(dot + 1) : symbol;
+		const lookupParent = dot >= 0 ? symbol.slice(0, dot) : undefined;
+		const hit = result.entries.find(
+			(e) =>
+				e.name === lookupName &&
+				(lookupParent === undefined || e.parent === lookupParent),
+		);
+		if (!hit) {
+			return {
+				content: [{ type: "text", text: `Symbol "${symbol}" not found in ${absolutePath}.` }],
+				isError: true,
+			};
+		}
+		const slice = allLines.slice(hit.line - 1, hit.lineEnd);
+		const header = `# ${absolutePath}::${symbol}  lines ${hit.line}-${hit.lineEnd} (${hit.kind})`;
+		dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
+		return { content: [{ type: "text", text: `${header}\n${slice.join("\n")}` }] };
+	}
+
+	if (totalLines <= SMALL_FILE_LINES) {
+		dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
+		return {
+			content: [{ type: "text", text: `# ${absolutePath} (${totalLines} lines)\n${content}` }],
+		};
+	}
+
+	const result = outline(absolutePath, content);
+	const view = collapsedView(result, { hidePrivate: true, maxLines: 200 });
+	dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
+	return {
+		content: [
+			{ type: "text", text: `# outline of ${absolutePath} (${totalLines} lines)\n${view.join("\n")}` },
+		],
+	};
 }

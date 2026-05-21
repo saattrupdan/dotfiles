@@ -46,7 +46,7 @@
         "chunkTimeout": 3600000
       },
       "models": {
-        "Qwen/Qwen3.6-35B-A3B-FP8": {
+        "unsloth/Qwen3.6-35B-A3B-NVFP4": {
           "name": "Qwen3.6-35B-A3B"
         }
       }

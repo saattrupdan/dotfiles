@@ -1,12 +1,14 @@
 /**
- * SQLite-backed index store for the search extension.
+ * SQLite-backed index store for the search and read extensions.
  *
  * Manages two tables:
- * - `files`   — file manifest (path, lines, size, language, sha, mtime)
- * - `symbols` — extracted symbols (name, kind, file, line_start, line_end, parent)
+ * - `files`   — file manifest (path, lines, size, language, sha, mtime, doc)
+ * - `symbols` — extracted symbols (name, kind, file, line_start, line_end, parent, signature, doc)
  *
  * Each repo gets its own index.db under `~/.pi/index/<repo-id>/`.
  */
+
+const SCHEMA_VERSION = 5;
 
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
@@ -15,7 +17,9 @@ import * as path from "node:path";
 import { execSync } from "node:child_process";
 
 import type Database from "better-sqlite3";
-import type { OutlineEntry } from "../_outliner/outliner.js";
+import type { OutlineEntry, OutlineResult } from "../_outliner/outliner.js";
+
+export type OutlinerFn = (filePath: string, source: string) => OutlineResult;
 
 // ---------------------------------------------------------------------------
 // Repo ID resolution
@@ -135,6 +139,15 @@ export function openDb(repoId: string): Database.Database {
 	fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 	const db = require("better-sqlite3")(dbPath);
 
+	const currentVersion = (db.pragma("user_version", { simple: true }) as number) ?? 0;
+	if (currentVersion !== SCHEMA_VERSION) {
+		db.exec(`
+			DROP TABLE IF EXISTS symbols;
+			DROP TABLE IF EXISTS files;
+		`);
+		db.pragma(`user_version = ${SCHEMA_VERSION}`);
+	}
+
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS files (
 			path    TEXT PRIMARY KEY,
@@ -142,7 +155,8 @@ export function openDb(repoId: string): Database.Database {
 			size    INTEGER,
 			language TEXT,
 			sha     TEXT,
-			mtime   INTEGER
+			mtime   INTEGER,
+			doc     TEXT
 		);
 
 		CREATE TABLE IF NOT EXISTS symbols (
@@ -152,6 +166,8 @@ export function openDb(repoId: string): Database.Database {
 			line_start INTEGER,
 			line_end   INTEGER,
 			parent     TEXT,
+			signature  TEXT,
+			doc        TEXT,
 			PRIMARY KEY (name, file, line_start)
 		);
 
@@ -184,12 +200,13 @@ export function insertFile(
 	language: string,
 	sha: string,
 	mtime: number,
+	doc: string | null = null,
 ): void {
 	const stmt = db.prepare(
-		`INSERT OR REPLACE INTO files (path, lines, size, language, sha, mtime)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
+		`INSERT OR REPLACE INTO files (path, lines, size, language, sha, mtime, doc)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 	);
-	stmt.run(relativePath, lines, size, language, sha, mtime);
+	stmt.run(relativePath, lines, size, language, sha, mtime, doc);
 }
 
 /**
@@ -201,10 +218,91 @@ export function insertSymbol(
 	file: string,
 ): void {
 	const stmt = db.prepare(
-		`INSERT OR REPLACE INTO symbols (name, kind, file, line_start, line_end, parent)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
+		`INSERT OR REPLACE INTO symbols (name, kind, file, line_start, line_end, parent, signature, doc)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 	);
-	stmt.run(entry.name, entry.kind, file, entry.line, entry.line, entry.parent ?? null);
+	stmt.run(
+		entry.name,
+		entry.kind,
+		file,
+		entry.line,
+		entry.lineEnd,
+		entry.parent ?? null,
+		entry.signature ?? null,
+		entry.docFirstLine ?? null,
+	);
+}
+
+/**
+ * Read the full outline (module doc + symbols ordered by line) for a file.
+ */
+export function getFileOutline(
+	db: Database.Database,
+	file: string,
+): { doc: string | null; entries: OutlineEntry[] } | null {
+	const fileStmt = db.prepare("SELECT doc FROM files WHERE path = ?");
+	const fileRow = fileStmt.get(file) as { doc: string | null } | undefined;
+	if (!fileRow) return null;
+
+	const symStmt = db.prepare(
+		`SELECT name, kind, line_start, line_end, parent, signature, doc
+		 FROM symbols WHERE file = ? ORDER BY line_start ASC`,
+	);
+	const rows = symStmt.all(file) as {
+		name: string;
+		kind: string;
+		line_start: number;
+		line_end: number;
+		parent: string | null;
+		signature: string | null;
+		doc: string | null;
+	}[];
+
+	const entries: OutlineEntry[] = rows.map((r) => ({
+		line: r.line_start,
+		lineEnd: r.line_end,
+		kind: r.kind as OutlineEntry["kind"],
+		name: r.name,
+		parent: r.parent ?? undefined,
+		signature: r.signature ?? undefined,
+		docFirstLine: r.doc ?? undefined,
+	}));
+
+	return { doc: fileRow.doc, entries };
+}
+
+/**
+ * Look up a single symbol (line range) by file and (optionally dotted) name.
+ * Supports "Class.method" — splits on the last dot for parent disambiguation.
+ */
+export function getSymbol(
+	db: Database.Database,
+	file: string,
+	dottedName: string,
+): { line_start: number; line_end: number; kind: string; name: string; parent: string | null } | null {
+	const dot = dottedName.lastIndexOf(".");
+	if (dot >= 0) {
+		const parent = dottedName.slice(0, dot);
+		const name = dottedName.slice(dot + 1);
+		const stmt = db.prepare(
+			`SELECT name, kind, line_start, line_end, parent
+			 FROM symbols WHERE file = ? AND name = ? AND parent = ?
+			 ORDER BY line_start ASC LIMIT 1`,
+		);
+		const row = stmt.get(file, name, parent) as
+			| { name: string; kind: string; line_start: number; line_end: number; parent: string | null }
+			| undefined;
+		return row ?? null;
+	}
+	const stmt = db.prepare(
+		`SELECT name, kind, line_start, line_end, parent
+		 FROM symbols WHERE file = ? AND name = ?
+		 ORDER BY (parent IS NULL) DESC, line_start ASC LIMIT 1`,
+	);
+	const row = stmt.get(file, dottedName) as
+		| { name: string; kind: string; line_start: number; line_end: number; parent: string | null }
+		| undefined;
+	return row ?? null;
 }
 
 /**
@@ -316,11 +414,147 @@ export function incrementalRefresh(
 }
 
 // ---------------------------------------------------------------------------
-// File tree traversal
+// Shared bootstrap (used by both `search` and `read` extensions)
 // ---------------------------------------------------------------------------
 
+let cachedDb: Database.Database | null = null;
+let cachedRepoId: string | null = null;
+let cachedRepoRoot: string | null = null;
+
+const LANG_MAP: Record<string, string> = {
+	".ts": "typescript",
+	".tsx": "typescript",
+	".js": "javascript",
+	".jsx": "javascript",
+	".py": "python",
+	".vue": "vue",
+	".md": "markdown",
+	".json": "json",
+};
+
+function detectLanguage(filePath: string): string {
+	return LANG_MAP[path.extname(filePath).toLowerCase()] ?? "text";
+}
+
 /**
- * Recursively list all files in a directory tree, skipping .git/, node_modules/, .pi/index/.
+ * Open (and cache) the per-repo index. Does NOT build — callers that need a
+ * fully populated index (e.g. `search`) should call `ensureFullIndex` instead.
+ * Cheap enough to call on every tool invocation.
+ */
+export function openIndex(cwd: string): {
+	db: Database.Database;
+	repoId: string;
+	repoRoot: string;
+} {
+	if (cachedDb && cachedRepoId && cachedRepoRoot) {
+		return { db: cachedDb, repoId: cachedRepoId, repoRoot: cachedRepoRoot };
+	}
+
+	const repoId = resolveRepoId(cwd);
+	const repoRoot = path.resolve(cwd);
+	writeMeta(repoId, repoRoot);
+
+	const db = openDb(repoId);
+	cachedDb = db;
+	cachedRepoId = repoId;
+	cachedRepoRoot = repoRoot;
+
+	return { db, repoId, repoRoot };
+}
+
+/**
+ * Open the index and build it from scratch if it's empty. Used by `search`,
+ * which needs every file indexed up-front. NOT used by `read` — read indexes
+ * lazily per file.
+ */
+export function ensureFullIndex(cwd: string, outline: OutlinerFn): {
+	db: Database.Database;
+	repoId: string;
+	repoRoot: string;
+} {
+	const handle = openIndex(cwd);
+	const count = handle.db
+		.prepare("SELECT COUNT(*) AS cnt FROM files")
+		.all()[0] as { cnt: number };
+	if (count.cnt === 0) {
+		buildIndex(handle.db, handle.repoRoot, outline);
+	}
+	return handle;
+}
+
+/**
+ * Full build from scratch.
+ */
+function buildIndex(db: Database.Database, repoRoot: string, outline: OutlinerFn): void {
+	const files = listFiles(repoRoot);
+	for (const relPath of files) {
+		const fullPath = path.join(repoRoot, relPath);
+		try {
+			const content = fs.readFileSync(fullPath, "utf-8");
+			indexFile(db, repoRoot, relPath, content, outline);
+		} catch {
+			// Skip unreadable files
+		}
+	}
+}
+
+/**
+ * Index a single file: write its file row + delete-and-reinsert its symbols.
+ * Used both by full build and incremental refresh.
+ */
+export function indexFile(
+	db: Database.Database,
+	repoRoot: string,
+	relPath: string,
+	content: string,
+	outline: OutlinerFn,
+): void {
+	const fullPath = path.join(repoRoot, relPath);
+	const lines = content.split("\n").length;
+	const size = Buffer.byteLength(content);
+	const stat = fs.statSync(fullPath);
+	const mtimeSec = Math.floor(stat.mtime.getTime() / 1000);
+	const sha = crypto.createHash("sha256").update(content).digest("hex");
+	const lang = detectLanguage(relPath);
+
+	const result = outline(fullPath, content);
+	insertFile(db, relPath, lines, size, lang, sha, mtimeSec, result.moduleDoc ?? null);
+
+	const deleteStmt = db.prepare("DELETE FROM symbols WHERE file = ?");
+	deleteStmt.run(relPath);
+	for (const entry of result.entries) {
+		insertSymbol(db, entry, relPath);
+	}
+}
+
+/**
+ * Refresh a single file in-place. Returns true if anything changed.
+ */
+export function refreshFile(
+	db: Database.Database,
+	repoRoot: string,
+	relPath: string,
+	outline: OutlinerFn,
+): boolean {
+	const fullPath = path.join(repoRoot, relPath);
+	try {
+		const stat = fs.statSync(fullPath);
+		const mtimeSec = Math.floor(stat.mtime.getTime() / 1000);
+		const size = stat.size;
+		const row = db
+			.prepare("SELECT mtime, size FROM files WHERE path = ?")
+			.get(relPath) as { mtime: number; size: number } | undefined;
+		if (row && row.mtime === mtimeSec && row.size === size) return false;
+		const content = fs.readFileSync(fullPath, "utf-8");
+		indexFile(db, repoRoot, relPath, content, outline);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Recursively list all files in a directory tree, skipping .git/, node_modules/, .pi/.
  */
 export function listFiles(repoRoot: string): string[] {
 	const results: string[] = [];

@@ -1,7 +1,7 @@
 ---
 name: full-stack
 description: Conventions for building full-stack applications with Vue.js frontend, FastAPI backend, PostgreSQL database, and Docker Compose deployment. Use when building full-stack apps.
-tagline: Full-stack: Vue, FastAPI, PostgreSQL, Docker Compose
+tagline: Full-stack, Vue, FastAPI, PostgreSQL, Docker Compose
 last-updated: 2026-05-09
 ---
 

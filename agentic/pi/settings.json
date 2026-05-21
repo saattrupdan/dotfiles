@@ -1,0 +1,6 @@
+{
+  "lastChangelogVersion": "0.75.4",
+  "defaultProvider": "sparkie",
+  "defaultModel": "unsloth/Qwen3.6-35B-A3B-NVFP4",
+  "defaultThinkingLevel": "medium"
+}

@@ -3,7 +3,7 @@
  *
  * Runs once per pi process at extension init.
  *
- * Scans `~/.pi/index/*/meta.json`. For each entry:
+ * Scans `meta.json`. For each entry:
  * - If `root` directory no longer exists → remove the entire index directory.
  * - If `last_used` is >30 days ago → same removal.
  */

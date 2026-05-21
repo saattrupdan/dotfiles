@@ -17,10 +17,17 @@ import { fallbackOutline } from "./fallback.ts";
 
 export type OutlineEntry = {
 	line: number;
+	lineEnd: number;
 	kind: "class" | "function" | "method" | "heading" | "block";
 	name: string;
 	parent?: string;
+	signature?: string;
 	docFirstLine?: string;
+};
+
+export type OutlineResult = {
+	moduleDoc?: string;
+	entries: OutlineEntry[];
 };
 
 export type CollapsedViewOpts = {
@@ -28,43 +35,54 @@ export type CollapsedViewOpts = {
 	hidePrivate?: boolean;
 };
 
-const DOC_CAP = 80;
+const DOC_CAP = 120;
 
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
-export function outline(filePath: string, source: string): OutlineEntry[] {
+export function outline(filePath: string, source: string): OutlineResult {
+	const info = detectLanguage(filePath);
 	try {
-		const info = detectLanguage(filePath);
 		switch (info.kind) {
 			case "python":
-				return runTreeSitter(source, info.parserLanguage, extractPython);
+				return {
+					moduleDoc: pythonModuleDoc(source, info.parserLanguage),
+					entries: runTreeSitter(source, info.parserLanguage, extractPython),
+				};
 			case "typescript":
 			case "tsx":
 			case "javascript":
-				return runTreeSitter(source, info.parserLanguage, extractTsJs);
+				return {
+					moduleDoc: leadingJsDoc(source),
+					entries: runTreeSitter(source, info.parserLanguage, extractTsJs),
+				};
 			case "vue":
-				return outlineVue(source);
+				return { entries: outlineVue(source) };
 			case "markdown":
-				return outlineMarkdown(source);
+				return { entries: outlineMarkdown(source) };
 			case "fallback":
 			default:
-				return fallbackOutline(source);
+				return { entries: fallbackOutline(source) };
 		}
-	} catch {
-		return fallbackOutline(source);
+	} catch (err) {
+		const reason = err instanceof Error ? err.message : String(err);
+		return {
+			moduleDoc: `outline parse failed (${info.kind}): ${reason}`,
+			entries: fallbackOutline(source),
+		};
 	}
 }
 
-export function collapsedView(entries: OutlineEntry[], opts: CollapsedViewOpts = {}): string[] {
-	const maxLines = opts.maxLines ?? 100;
+export function collapsedView(result: OutlineResult, opts: CollapsedViewOpts = {}): string[] {
+	const entries = result.entries;
+	const maxLines = opts.maxLines ?? 200;
 	const hidePrivate = opts.hidePrivate ?? true;
 	const filtered = hidePrivate ? entries.filter((e) => !e.name.startsWith("_")) : entries.slice();
 	filtered.sort((a, b) => a.line - b.line);
 
 	const collapsed = new Set<number>();
-	const renderable = () => renderEntries(filtered, collapsed);
+	const renderable = () => renderEntries(filtered, collapsed, result.moduleDoc);
 
 	let rendered = renderable();
 	if (rendered.length <= maxLines) return rendered;
@@ -93,7 +111,11 @@ export function collapsedView(entries: OutlineEntry[], opts: CollapsedViewOpts =
 // Rendering
 // ---------------------------------------------------------------------------
 
-function renderEntries(entries: OutlineEntry[], collapsedClassIdx: Set<number>): string[] {
+function renderEntries(
+	entries: OutlineEntry[],
+	collapsedClassIdx: Set<number>,
+	moduleDoc: string | undefined,
+): string[] {
 	const collapsedClassNames = new Set<string>();
 	for (const idx of collapsedClassIdx) {
 		const e = entries[idx];
@@ -109,22 +131,25 @@ function renderEntries(entries: OutlineEntry[], collapsedClassIdx: Set<number>):
 
 	const maxLineNum = visible.reduce((m, v) => Math.max(m, v.entry.line), 1);
 	const lineWidth = String(maxLineNum).length;
-	const nameColWidth = 40;
 
 	const out: string[] = [];
+	if (moduleDoc) {
+		out.push(`  ${" ".repeat(lineWidth)}  """${truncate(moduleDoc, DOC_CAP)}"""`);
+	}
 	for (const { entry, index } of visible) {
 		const lineStr = String(entry.line).padStart(lineWidth, " ");
 		const methodIndent = entry.kind === "method" ? "  " : "";
 		const prefix = kindPrefix(entry.kind);
-		const sig = entry.kind === "function" || entry.kind === "method" ? "()" : "";
+		const sig = (entry.kind === "function" || entry.kind === "method")
+			? (entry.signature ?? "()")
+			: "";
 		const nameCell = `${methodIndent}${prefix}${entry.name}${sig}`;
-		const padded = nameCell.length >= nameColWidth ? `${nameCell}  ` : nameCell.padEnd(nameColWidth, " ");
-		const docPart = entry.docFirstLine ? entry.docFirstLine : "";
-		let row = `  ${lineStr}  ${padded}${docPart}`.replace(/\s+$/, "");
+		const docPart = entry.docFirstLine ? `  — ${entry.docFirstLine}` : "";
+		let row = `  ${lineStr}  ${nameCell}${docPart}`;
 
 		if (entry.kind === "class" && collapsedClassIdx.has(index)) {
 			const n = entries.filter((m) => m.kind === "method" && m.parent === entry.name).length;
-			row = `${row}  (${n} methods \u2014 read offset=${entry.line} to expand)`;
+			row = `${row}  (${n} methods — read symbol="${entry.name}" to expand)`;
 		}
 		out.push(row);
 	}
@@ -154,7 +179,10 @@ type Extractor = (rootNode: Parser.SyntaxNode, source: string, lineOffset: numbe
 function runTreeSitter(source: string, language: unknown, extract: Extractor, lineOffset = 0): OutlineEntry[] {
 	if (!language) return fallbackOutline(source);
 	const parser = makeParser(language);
-	const tree = parser.parse(source);
+	// tree-sitter's default bufferSize (~32 KB) rejects larger sources with
+	// "Invalid argument" — size it to the input.
+	const bufferSize = Math.max(32 * 1024, source.length + 1024);
+	const tree = parser.parse(source, undefined, { bufferSize });
 	const entries = extract(tree.rootNode, source, lineOffset);
 	entries.sort((a, b) => a.line - b.line);
 	return entries;
@@ -172,11 +200,11 @@ function extractPython(root: Parser.SyntaxNode, _source: string, lineOffset: num
 			const child = node.namedChild(i)!;
 			if (child.type === "decorated_definition") {
 				const def = child.childForFieldName("definition") ?? child.namedChildren.find((c: Parser.SyntaxNode) => c.type === "class_definition" || c.type === "function_definition");
-				if (def) handlePyDef(def, parent, out, lineOffset, visit);
+				if (def) handlePyDef(def, parent, out, lineOffset, visit, child);
 				continue;
 			}
 			if (child.type === "class_definition" || child.type === "function_definition") {
-				handlePyDef(child, parent, out, lineOffset, visit);
+				handlePyDef(child, parent, out, lineOffset, visit, child);
 				continue;
 			}
 			visit(child, parent);
@@ -193,21 +221,28 @@ function handlePyDef(
 	out: OutlineEntry[],
 	lineOffset: number,
 	visit: (n: Parser.SyntaxNode, p: string | undefined) => void,
+	container: Parser.SyntaxNode,
 ): void {
 	const nameNode = node.childForFieldName("name");
 	const name = nameNode?.text ?? "<anon>";
-	const line = node.startPosition.row + 1 + lineOffset;
+	const line = container.startPosition.row + 1 + lineOffset;
+	const lineEnd = container.endPosition.row + 1 + lineOffset;
 	const doc = pythonDocstring(node);
 	if (node.type === "class_definition") {
-		out.push({ line, kind: "class", name, docFirstLine: doc });
+		out.push({ line, lineEnd, kind: "class", name, docFirstLine: doc });
 		const body = node.childForFieldName("body");
 		if (body) visit(body, name);
 	} else {
+		const params = flattenSignature(node.childForFieldName("parameters")?.text ?? "()");
+		const ret = node.childForFieldName("return_type")?.text;
+		const signature = ret ? `${params} -> ${flattenSignature(ret)}` : params;
 		out.push({
 			line,
+			lineEnd,
 			kind: parent ? "method" : "function",
 			name,
 			parent,
+			signature,
 			docFirstLine: doc,
 		});
 	}
@@ -232,6 +267,32 @@ function pythonDocstring(defNode: Parser.SyntaxNode): string | undefined {
 	return truncate(firstLine, DOC_CAP);
 }
 
+function pythonModuleDoc(source: string, language: unknown): string | undefined {
+	if (!language) return undefined;
+	try {
+		const parser = makeParser(language);
+		const bufferSize = Math.max(32 * 1024, source.length + 1024);
+		const tree = parser.parse(source, undefined, { bufferSize });
+		const root = tree.rootNode;
+		const first = root.namedChild(0);
+		if (!first) return undefined;
+		let strNode: Parser.SyntaxNode | null = null;
+		if (first.type === "expression_statement") {
+			strNode = first.namedChild(0);
+		} else if (first.type === "string") {
+			strNode = first;
+		}
+		if (!strNode || strNode.type !== "string") return undefined;
+		const raw = strNode.text;
+		const inner = raw.replace(/^[rubRUB]*("""|'''|"|')/, "").replace(/("""|'''|"|')$/, "");
+		const firstLine = inner.split("\n").map((l) => l.trim()).find((l) => l.length > 0);
+		if (!firstLine) return undefined;
+		return truncate(firstLine, DOC_CAP);
+	} catch {
+		return undefined;
+	}
+}
+
 // ---------------------------------------------------------------------------
 // TypeScript / JavaScript
 // ---------------------------------------------------------------------------
@@ -253,6 +314,7 @@ function extractTsJs(root: Parser.SyntaxNode, source: string, lineOffset: number
 				const name = target.childForFieldName("name")?.text ?? "<anon>";
 				out.push({
 					line: target.startPosition.row + 1 + lineOffset,
+					lineEnd: target.endPosition.row + 1 + lineOffset,
 					kind: "class",
 					name,
 					docFirstLine: jsdocBefore(child, lines),
@@ -264,10 +326,15 @@ function extractTsJs(root: Parser.SyntaxNode, source: string, lineOffset: number
 
 			if (target.type === "function_declaration") {
 				const name = target.childForFieldName("name")?.text ?? "<anon>";
+				const params = flattenSignature(target.childForFieldName("parameters")?.text ?? "()");
+				const ret = target.childForFieldName("return_type")?.text;
+				const signature = ret ? `${params}${flattenSignature(ret)}` : params;
 				out.push({
 					line: target.startPosition.row + 1 + lineOffset,
+					lineEnd: target.endPosition.row + 1 + lineOffset,
 					kind: "function",
 					name,
+					signature,
 					docFirstLine: jsdocBefore(child, lines),
 				});
 				continue;
@@ -275,11 +342,16 @@ function extractTsJs(root: Parser.SyntaxNode, source: string, lineOffset: number
 
 			if (target.type === "method_definition") {
 				const name = target.childForFieldName("name")?.text ?? "<anon>";
+				const params = flattenSignature(target.childForFieldName("parameters")?.text ?? "()");
+				const ret = target.childForFieldName("return_type")?.text;
+				const signature = ret ? `${params}${flattenSignature(ret)}` : params;
 				out.push({
 					line: target.startPosition.row + 1 + lineOffset,
+					lineEnd: target.endPosition.row + 1 + lineOffset,
 					kind: "method",
 					name,
 					parent,
+					signature,
 					docFirstLine: jsdocBefore(target, lines),
 				});
 				continue;
@@ -310,6 +382,26 @@ function jsdocBefore(node: Parser.SyntaxNode, lines: string[]): string | undefin
 	while (j >= 0 && !lines[j]!.trim().startsWith("/**")) j--;
 	if (j < 0) return undefined;
 	for (let k = j; k <= i; k++) {
+		const cleaned = lines[k]!
+			.replace(/^\s*\/\*+/, "")
+			.replace(/\*+\/\s*$/, "")
+			.replace(/^\s*\*\s?/, "")
+			.trim();
+		if (cleaned.length > 0) return truncate(cleaned, DOC_CAP);
+	}
+	return undefined;
+}
+
+function leadingJsDoc(source: string): string | undefined {
+	const lines = source.split("\n");
+	let i = 0;
+	while (i < lines.length && lines[i]!.trim() === "") i++;
+	if (i >= lines.length) return undefined;
+	if (!lines[i]!.trim().startsWith("/**")) return undefined;
+	let j = i;
+	while (j < lines.length && !lines[j]!.trim().endsWith("*/")) j++;
+	if (j >= lines.length) return undefined;
+	for (let k = i; k <= j; k++) {
 		const cleaned = lines[k]!
 			.replace(/^\s*\/\*+/, "")
 			.replace(/\*+\/\s*$/, "")
@@ -370,7 +462,7 @@ function outlineMarkdown(source: string): OutlineEntry[] {
 		const m = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
 		if (!m) continue;
 		const name = truncate(m[2]!.trim(), DOC_CAP);
-		out.push({ line: i + 1, kind: "heading", name });
+		out.push({ line: i + 1, lineEnd: i + 1, kind: "heading", name });
 	}
 	return out;
 }
@@ -381,5 +473,12 @@ function outlineMarkdown(source: string): OutlineEntry[] {
 
 function truncate(s: string, cap: number): string {
 	if (s.length <= cap) return s;
-	return `${s.slice(0, cap - 1)}\u2026`;
+	return `${s.slice(0, cap - 1)}…`;
+}
+
+const SIG_CAP = 120;
+
+function flattenSignature(s: string): string {
+	const flat = s.replace(/\s+/g, " ").replace(/\(\s+/g, "(").replace(/\s+\)/g, ")").trim();
+	return truncate(flat, SIG_CAP);
 }

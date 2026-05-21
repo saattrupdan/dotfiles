@@ -1,102 +1,147 @@
-# Pi Extensions
+# pi
 
-This directory contains extensions that extend pi's behavior. Extensions are TypeScript modules that can register custom tools, commands, keyboard shortcuts, event handlers, and UI components.
+Personal pi-coding-agent configuration: settings, prompts, subagents, and a
+suite of custom extensions that shape how the agent reads code, searches the
+repo, browses the web, and delegates work to subagents.
 
-## subagent
+This directory mirrors the layout expected by pi:
 
-Delegate tasks to specialized subagents with isolated context windows.
-
-**Features:**
-- Spawns a separate `pi` process for each subagent invocation
-- Supports single, parallel, and chain execution modes
-- Git worktree support: agents can run in isolated worktrees with automatic merge-back
-- Streaming output: see tool calls and progress as they happen
-
-### Agent Configuration
-
-Agents are loaded from `~/.pi/agent/agent-configs/*.md`. Each file has YAML frontmatter with configuration and a body with the system prompt.
-
-### Frontmatter fields
-- `name` (string) - Agent name
-- `description` (string) - What the agent does
-- `mode` ("primary" | "subagent") - Agent mode
-- `model` (string) - Optional model override
-- `worktree` (boolean) - Whether to spawn in a separate git worktree
-- `worktreeBranch` (string) - Branch name for the worktree
-- `worktreePath` (string) - Custom worktree path
-- `permission` (object) - Tool permissions (read: allow/deny, edit: allow/deny, etc.)
-
-### Example agent file
-
-```markdown
----
-name: build
-description: Edit files in the codebase
-mode: subagent
-permission:
-  read: allow
-  edit: allow
-  grep: allow
-  bash: allow
-  skill: allow
----
-
-You are a senior software developer who writes precise code.
+```
+agentic/pi/
+├── settings.json      pi settings (model, extensions, tool wiring)
+├── SYSTEM.md          system prompt prepended to every session
+├── prompts/           reusable user prompts
+├── agents/            subagent definitions (markdown + frontmatter)
+└── extensions/        custom tool/behavior extensions (this README)
 ```
 
-### Execution Modes
+## Extensions
 
-The subagent tool supports three execution modes:
+Each subdirectory under `extensions/` is a self-contained pi extension. They
+fall into three categories:
 
-### Git Worktree Support
+- **Tools the agent calls** — `read`, `search`, `code-tree`, `web-fetch`,
+  `web-search`, `web-browse`, `subagent`.
+- **Behavioural guardrails** (no tools registered) — `orchestrator-lockdown`,
+  `no-repeat`.
+- **Shared internal library** — `_outliner` (consumed by `read` and `search`).
 
-Agents can be configured to run in isolated git worktrees. When `worktree: true` is set in an agent's frontmatter, the agent runs in a separate git worktree branch. Any changes made by the agent are automatically staged, committed, and merged back into the main branch after completion.
+### `read`
 
-- `worktree: true` - Enable worktree mode
-- `worktreeBranch` (optional) - Custom branch name for the worktree (default: auto-generated)
-- `worktreePath` (optional) - Custom worktree path (default: auto-generated in /tmp)
+Index-backed file reader with no pagination. Three modes:
 
-This is useful for agents that modify code, as changes are cleanly isolated and merged without affecting the main branch until the agent completes.
+1. Small file, no symbol → returned verbatim.
+2. Large file, no symbol → outline (module doc + one line per symbol with
+   signature and doc-first-line).
+3. `symbol` set → body of that symbol via `line_start..line_end` from the
+   shared index. Supports `Class.method`.
 
-- **Single** - Run one agent with one task:
-  ```
-  Use build to refactor the auth module
-  ```
+Outline + symbol ranges come from the SQLite index in
+`~/.pi/index/<repo-id>/index.db` (shared with `search`). The target file is
+incrementally refreshed on every call so edits are picked up without a full
+rebuild. Includes a per-session dedupe cache and a MIME sniff that surfaces
+images as image content rather than raw bytes.
 
-- **Parallel** - Run multiple agents concurrently:
-  ```
-  Run build agents in parallel to implement the plan
-  ```
+### `search`
 
-- **Chain** - Run agents sequentially, passing output between them:
-  ```
-  First have plan create a spec, then use build to implement it
-  ```
+Per-repo indexed search tool. Builds a SQLite index with a file manifest plus
+tree-sitter symbol extraction, then merges definition-first results from
+SQLite with ripgrep full-text references. Exact symbol matches are promoted
+to the top. The index refreshes incrementally on every call.
 
-See [subagent/README.md](extensions/subagent/README.md) for full documentation.
+`gc.ts` handles index garbage collection; `index-store.ts` is the storage
+layer reused by `read`.
 
-## Installing Extensions
+### `code-tree`
 
-Extensions are auto-discovered from this directory. To install a new extension:
+Directory tree of the repo (or a subdirectory). Token-efficient defaults:
+directories only, depth-limited (default 2, max 6), with recursive file
+counts per directory. The agent probes deeper by passing `path` and/or
+`depth` explicitly. Uses `git ls-files` as the source of truth so
+`.gitignore` is honoured automatically; falls back to a filesystem walk
+outside a git repo.
 
-1. Create a new directory here: `mkdir ~/.pi/agent/extensions/my-extension`
-2. Add an `index.ts` file that exports the extension factory
-3. Reload pi with `/reload` or restart
+### `web-fetch`
 
-## Development
+Fetches an HTTP(S) URL and collapses it into the smallest useful text form.
+HTML is stripped to readable text (scripts, styles, nav boilerplate, SVG,
+head, comments removed), entities decoded, whitespace collapsed. Non-HTML
+responses (JSON, plain text) are returned as-is. Hard cap on output size;
+`max_chars` overrides up to 100k. A `raw: true` flag returns the
+unprocessed body.
 
-Extensions run with full system permissions. Only install extensions from trusted sources.
+### `web-search`
 
-Extensions can be tested with:
-```bash
-pi -e ~/.pi/agent/extensions/my-extension/index.ts
-```
+DuckDuckGo HTML-endpoint search. Returns the top results (title, URL,
+snippet) as a compact Markdown list. Access-controlled: only agents whose
+frontmatter lists `web_search` in `tools:` see it (in this config, the
+`web-explorer` subagent). The orchestrator cannot call it because
+`orchestrator-lockdown` blocks everything except `subagent` and `question`.
 
-## Sharing Extensions
+### `web-browse`
 
-To share extensions via npm or git as [pi packages](https://www.npmjs.com/search?q=keywords%3Api-package):
+Thin wrapper around the `agent-browser` CLI. Takes a single command string
+(e.g. `open https://example.com`, `click @ref-2`, `type input.search hello`)
+and returns its stdout/stderr. Session state is preserved across calls by
+`agent-browser` itself, so multi-step exploration works as a sequence of
+`web_browse` calls.
 
-```bash
-pi install npm:@foo/pi-tools
-pi install git:github.com/user/repo
-```
+### `subagent`
+
+Delegates tasks to specialised subagents with isolated context. Modes:
+
+- **single** — one task to one agent.
+- **parallel** — `tasks: [...]` runs multiple subagents concurrently.
+- **chain** — `chain: [...]` with `{previous}` placeholder threads output
+  between steps.
+
+Agents are discovered from `~/.pi/agent/agents/*.md` (user scope) and, when
+`agentScope` is `project` or `both`, from `<repo>/.pi/agents/*.md`. Agent
+frontmatter declares `tools`, `model`, optional `worktree: true` (run in a
+fresh git worktree, merged back on exit), and an optional `skills:`
+allow-list which scopes the child's `<available_skills>` block. Per-call
+`skills: [...]` arrays at the top level, per task, or per chain step
+union-merge with the agent's frontmatter list.
+
+See `extensions/subagent/README.md` for the full frontmatter and
+skill-scoping semantics.
+
+### `orchestrator-lockdown`
+
+The main agent is a pure orchestrator with no permissions of its own —
+only `subagent` and the user-facing `question` tool. This extension:
+
+1. Strips every other tool from the provider request payload before send,
+   so the LLM does not even see the tools it cannot use (token-efficient).
+2. As a belt-and-braces measure, also blocks any non-allowed tool call at
+   the `tool_call` boundary.
+
+Subagent child processes set `PI_SUBAGENT_CHILD=1` and opt out of both
+mechanisms — they need full access to their declared tools.
+
+### `no-repeat`
+
+Blocks consecutive duplicate tool calls. If the agent calls the same tool
+with the same arguments twice in a row, the second call is blocked with a
+short nudge telling it to do something different. Catches the common "loop
+forever on the same failing call" failure mode and saves tokens. Runs in
+both the orchestrator and each subagent process (per-process state).
+"Consecutive" means: not separated by any other tool call.
+
+### `_outliner` (library, not a tool)
+
+Shared tree-sitter outliner consumed by `read` and `search`. Registers no
+tools. Given a file path and contents, `outline()` returns a list of
+structural entries (classes, functions, methods, headings, blocks);
+`collapsedView()` renders them as an indented listing that fits a
+caller-specified line budget, collapsing the largest classes first when
+over budget.
+
+Supported languages: Python, TypeScript (`.ts`/`.tsx`), JavaScript
+(`.js`/`.jsx`/`.mjs`/`.cjs`), Vue single-file components, Markdown
+headings. Unknown extensions fall back to a heuristic blank-line splitter.
+Docstrings (Python triple-quoted, JS/TS `/** */`) are extracted as the
+first non-empty line, capped at 80 chars.
+
+See `extensions/_outliner/README.md` for the public API, language table,
+and collapsed-view format.
