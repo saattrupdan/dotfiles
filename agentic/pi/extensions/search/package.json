@@ -1,0 +1,14 @@
+{
+	"name": "search",
+	"private": true,
+	"version": "0.1.0",
+	"description": "Per-repo SQLite index + ripgrep search tool with definitions-first merge.",
+	"type": "module",
+	"dependencies": {
+		"@vscode/ripgrep": "^1.14.0",
+		"better-sqlite3": "^11.9.0"
+	},
+	"devDependencies": {
+		"jiti": "^2.7.0"
+	}
+}
