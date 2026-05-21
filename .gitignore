@@ -12,3 +12,6 @@
 
 # Cache files
 **/.ruff_cache/
+
+# Node
+**/node_modules/
