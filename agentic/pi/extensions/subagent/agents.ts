@@ -146,6 +146,10 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 		for (const userAgent of userAgents) {
 			const projectAgentPath = path.join(projectAgentsDir, `${userAgent.name}.md`);
 			if (!fs.existsSync(projectAgentPath)) continue;
+			const existing = userAgents.find((a) => a.name === userAgent.name);
+			if (!existing) {
+				continue;
+			}
 			try {
 				const content = fs.readFileSync(projectAgentPath, "utf-8");
 				const { frontmatter } = parseFrontmatter<Record<string, unknown>>(content);
@@ -156,7 +160,7 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 					: typeof skillsRaw === "string"
 						? skillsRaw.split(",").map((t: string) => t.trim()).filter(Boolean)
 						: [];
-				const merged = new Set([...userAgents.find((a) => a.name === userAgent.name)!.skills, ...projectSkills]);
+				const merged = new Set([...existing.skills, ...projectSkills]);
 				const entry = agentMap.get(userAgent.name);
 				if (entry) {
 					agentMap.set(userAgent.name, { ...entry, skills: Array.from(merged) });
