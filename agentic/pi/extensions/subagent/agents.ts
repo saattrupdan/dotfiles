@@ -19,7 +19,13 @@ export interface AgentConfig {
 	tools?: string[];
 	model?: string;
 	worktree: boolean;
-	skills: string[];
+	/**
+	 * Allow-list of skill names. Semantics:
+	 *  - undefined  → no `skills:` field in frontmatter; child sees all
+	 *                discovered skills (backwards compatible).
+	 *  - string[]   → explicit allow-list (may be empty for "no skills").
+	 */
+	skills?: string[];
 	systemPrompt: string;
 	source: "user" | "project";
 	filePath: string;
@@ -77,8 +83,10 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
 				: undefined;
 
 		// Parse skills as a YAML list (array), not comma-split.
+		// `skills` omitted → undefined (= "all skills", backwards compatible).
+		// `skills: []`     → empty allow-list (= "no skills").
 		const skillsRaw = frontmatter.skills;
-		let skills: string[] = [];
+		let skills: string[] | undefined;
 		if (Array.isArray(skillsRaw)) {
 			skills = skillsRaw.map((s: unknown) => String(s));
 		} else if (typeof skillsRaw === "string") {
@@ -86,6 +94,8 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
 				.split(",")
 				.map((t: string) => t.trim())
 				.filter(Boolean);
+		} else if (skillsRaw !== undefined) {
+			skills = [];
 		}
 
 		agents.push({
@@ -160,7 +170,7 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 					: typeof skillsRaw === "string"
 						? skillsRaw.split(",").map((t: string) => t.trim()).filter(Boolean)
 						: [];
-				const merged = new Set([...existing.skills, ...projectSkills]);
+				const merged = new Set([...(existing.skills ?? []), ...projectSkills]);
 				const entry = agentMap.get(userAgent.name);
 				if (entry) {
 					agentMap.set(userAgent.name, { ...entry, skills: Array.from(merged) });
