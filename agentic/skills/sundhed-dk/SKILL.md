@@ -1,6 +1,6 @@
 ---
 name: sundhed-dk
-description: sundhed.dk — Danish national e-health portal. Covers citizen (MitID) and clinician (MitID Erhverv/SOSI) flows: public content, Min Side dashboards, and the internal undocumented JSON API. Use for Danish health-portal tasks.
+description: sundhed.dk — Danish national e-health portal. Covers citizen (MitID) and clinician (MitID Erhverv/SOSI) flows - public content, Min Side dashboards, and the internal undocumented JSON API. Use for Danish health-portal tasks.
 last-updated: 2026-05-07
 ---
 

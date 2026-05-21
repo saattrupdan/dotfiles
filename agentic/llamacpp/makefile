@@ -1,4 +1,4 @@
-start-server:
+llamacpp:
 	@llama-server \
 		--models-preset ./preset.ini \
 		--models-dir ./ \
