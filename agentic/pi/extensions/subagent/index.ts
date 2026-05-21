@@ -23,7 +23,7 @@ import { type ExtensionAPI, getMarkdownTheme, withFileMutationQueue } from "@ear
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
-import { createWorktree, mergeAndCleanup, type WorktreeCleanupResult } from "./worktree.ts";
+import { createWorktree, findRepoRoot, mergeAndCleanup, type WorktreeCleanupResult } from "./worktree.ts";
 
 const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
@@ -301,21 +301,27 @@ async function runSingleAgent(
 	// new branch and run the subagent there. Cleanup/merge happens in finally.
 	let effectiveCwd: string | undefined = cwd;
 	if (agent.worktree) {
-		try {
-			worktreeHandle = await createWorktree(cwd ?? defaultCwd, agent.name);
-			effectiveCwd = worktreeHandle.worktreePath;
-		} catch (err) {
-			return {
-				agent: agentName,
-				agentSource: agent.source,
-				task,
-				exitCode: 1,
-				messages: [],
-				stderr: `Failed to create worktree: ${(err as Error).message}`,
-				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
-				errorMessage: (err as Error).message,
-				step,
-			};
+		const worktreeCwd = cwd ?? defaultCwd;
+		const repoRoot = await findRepoRoot(worktreeCwd);
+		if (!repoRoot) {
+			console.error("subagent: worktree requested but cwd is not a git repo; running in-place.");
+		} else {
+			try {
+				worktreeHandle = await createWorktree(worktreeCwd, agent.name);
+				effectiveCwd = worktreeHandle.worktreePath;
+			} catch (err) {
+				return {
+					agent: agentName,
+					agentSource: agent.source,
+					task,
+					exitCode: 1,
+					messages: [],
+					stderr: `Failed to create worktree: ${(err as Error).message}`,
+					usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
+					errorMessage: (err as Error).message,
+					step,
+				};
+			}
 		}
 	}
 
