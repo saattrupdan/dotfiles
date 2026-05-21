@@ -1,6 +1,7 @@
 ---
 name: recursive-language-model
 description: Recursive Language Model workflow for processing documents that exceed context window limits. Uses a persistent Python REPL and subordinate agents to chunk, search, and analyze large context files.
+tagline: Process large documents by recursively chunking and analysing
 license: MIT
 ---
 

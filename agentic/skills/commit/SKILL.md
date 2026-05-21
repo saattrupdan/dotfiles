@@ -1,6 +1,7 @@
 ---
 name: commit
 description: Conventions for structuring git commit messages using the Conventional Commits specification. Use when writing or reviewing commits.
+tagline: Structure git commits with conventional commit message format
 last-updated: 2026-05-09
 ---
 

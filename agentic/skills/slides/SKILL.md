@@ -1,6 +1,7 @@
 ---
 name: slides
 description: What — the noskillish/slides framework for building single-file HTML decks (no build step, 27+ ready components including pure-CSS bar charts and SVG diagrams, PDF export, embed mode). Use when the user asks to create, draft, extend, or restyle a slideshow, presentation, or deck — e.g. "create a slideshow about X", "make a deck on Y", "turn these notes into slides".
+tagline: Build single-file HTML presentations with the slides framework
 last-updated: 2026-05-13
 ---
 
