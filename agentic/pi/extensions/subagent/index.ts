@@ -19,7 +19,7 @@ import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import { StringEnum } from "@earendil-works/pi-ai";
-import { type ExtensionAPI, getMarkdownTheme, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, getAgentDir, getMarkdownTheme, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
@@ -294,14 +294,33 @@ async function runSingleAgent(
 	if (agent.model) args.push("--model", agent.model);
 	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
 
-	// Compute effective skills: agent.skills ∪ taskSkills ∪ project overlay.
-	const effectiveSkills = new Set([
-		...agent.skills,
-		...(taskSkills ?? []),
-	]);
-	const effectiveSkillsList = Array.from(effectiveSkills);
-	if (effectiveSkillsList.length > 0) {
-		args.push("--skills", effectiveSkillsList.join(","));
+	// Skill scoping.
+	//
+	// Child pi accepts `--skill <path>` (repeatable; takes a path to either a
+	// SKILL.md file or a directory containing one) plus `--no-skills` to
+	// disable default discovery from `~/.pi/agent/skills` and `./.pi/skills`.
+	// There is no `PI_SKILL_PATHS` env var; the CLI flags are the supported
+	// surface. See $PI/dist/core/skills.js (`loadSkills`) and
+	// $PI/dist/core/resource-loader.js (`reload`/`updateSkillsFromPaths`).
+	//
+	// Allow-list semantics (see agents.ts AgentConfig.skills):
+	//   undefined  → no restriction; let the child discover skills normally.
+	//   []         → strict empty allow-list; child sees no skills.
+	//   ["a","b"]  → only those skills (plus any per-task additions).
+	const hasAllowList = agent.skills !== undefined || (taskSkills && taskSkills.length > 0);
+	if (hasAllowList) {
+		const effectiveSkills = Array.from(new Set([...(agent.skills ?? []), ...(taskSkills ?? [])]));
+		args.push("--no-skills");
+		const skillsRoot = path.join(getAgentDir(), "skills");
+		for (const name of effectiveSkills) {
+			const skillDir = path.join(skillsRoot, name);
+			const skillFile = path.join(skillDir, "SKILL.md");
+			if (fs.existsSync(skillFile)) {
+				args.push("--skill", skillDir);
+			} else {
+				console.error(`subagent: skill "${name}" not found at ${skillFile}; skipping for agent "${agent.name}".`);
+			}
+		}
 	}
 
 	let tmpPromptDir: string | null = null;
