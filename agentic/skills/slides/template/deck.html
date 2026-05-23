@@ -12,7 +12,7 @@
      ============================================================ -->
 <script>
   // Presentation title — injected into every <span data-fill="title">.
-  // Also used as the browser tab title and PDF export filename.
+  // Also used as the browser tab title.
   const presentationTitle = "Project title";
 
   // Speaker name — injected into every <span data-fill="speaker">.
@@ -786,8 +786,6 @@
   </section>
 
 </div>
-
-<button class="pdf-btn" onclick="downloadPDF()">Download PDF</button>
 
 <div class="nav">
   <span id="counter">1 / 22</span>
@@ -2286,26 +2284,6 @@
     transform: translateY(-1px);
   }
 
-  /* --- PDF button --- */
-  .pdf-btn {
-    position: fixed;
-    bottom: 2rem;
-    left: 2.5rem;
-    font-size: 0.72rem;
-    font-weight: 500;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--bg-card);
-    color: var(--text-muted);
-    padding: 0.4rem 1.1rem;
-    cursor: pointer;
-    font-family: inherit;
-    transition: all 0.15s;
-    z-index: 100;
-  }
-
-  .pdf-btn:hover { background: var(--text); color: var(--bg); border-color: var(--text); }
-
   /* --- Nav reveal indicator --- */
   .nav .reveal-indicator {
     font-size: 0.72rem;
@@ -2325,7 +2303,39 @@
   @media print {
     html, body { overflow: visible; height: auto; }
     .slide { display: flex !important; position: relative; page-break-after: always; height: 100vh; }
-    .nav, .pdf-btn, #progress { display: none !important; }
+    .nav, #progress { display: none !important; }
+  }
+
+  .deck-toast {
+    position: fixed;
+    bottom: 2rem;
+    left: 50%;
+    transform: translate(-50%, 1rem);
+    background: rgba(20, 20, 20, 0.92);
+    color: #fff;
+    padding: 0.75rem 1.25rem;
+    border-radius: 999px;
+    font-size: 0.9rem;
+    font-family: inherit;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+    opacity: 0;
+    transition: opacity 0.4s ease, transform 0.4s ease;
+    pointer-events: none;
+    z-index: 1000;
+    max-width: 90vw;
+    text-align: center;
+  }
+  .deck-toast.visible {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  .deck-toast kbd {
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 4px;
+    padding: 0.1rem 0.4rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.8rem;
+    margin: 0 0.1rem;
   }
 </style>
 
@@ -2422,15 +2432,7 @@
     if (e.key === 'PageUp') { e.preventDefault(); prev(); }
     if (e.key === 'Home') { show(0); }
     if (e.key === 'End') { show(slides.length - 1); }
-    if (e.key === 'p' || e.key === 'P') { e.preventDefault(); downloadPDF(); }
   });
-
-  function downloadPDF() {
-    const originalTitle = document.title;
-    document.title = (presentationTitle || 'deck').replace(/[^\w\s-]/g, '').replace(/\s+/g, '-').toLowerCase();
-    window.print();
-    setTimeout(() => { document.title = originalTitle; }, 1000);
-  }
 
   let touchStartX = 0;
   let touchStartY = 0;
@@ -2442,16 +2444,34 @@
   }, { passive: true });
 
   document.addEventListener('touchend', (e) => {
+    if (e.target.closest('a, button, input, textarea, select, video, iframe')) return;
     const dx = e.changedTouches[0].screenX - touchStartX;
     const dy = e.changedTouches[0].screenY - touchStartY;
-    if (Math.abs(dx) < SWIPE_THRESHOLD || Math.abs(dy) > Math.abs(dx)) return;
-    if (dx < 0) next();
-    else prev();
+    const isHorizontalSwipe = Math.abs(dx) >= SWIPE_THRESHOLD && Math.abs(dx) > Math.abs(dy);
+    if (isHorizontalSwipe) {
+      if (dx < 0) next();
+      else prev();
+    } else if (Math.abs(dx) < 10 && Math.abs(dy) < 10) {
+      revealNext();
+    }
   }, { passive: true });
 
   const isEmbed = new URLSearchParams(window.location.search).has('embed');
+  const isTouch = matchMedia('(hover: none) and (pointer: coarse)').matches;
 
   show(0);
+
+  if (!isEmbed) {
+    const toast = document.createElement('div');
+    toast.className = 'deck-toast';
+    toast.innerHTML = isTouch
+      ? 'Tap for next content · swipe ← → to skip slides'
+      : 'Press <kbd>Enter</kbd> or <kbd>Space</kbd> for next content · <kbd>←</kbd> <kbd>→</kbd> to skip slides';
+    document.body.appendChild(toast);
+    requestAnimationFrame(() => toast.classList.add('visible'));
+    setTimeout(() => toast.classList.remove('visible'), 3000);
+    setTimeout(() => toast.remove(), 3600);
+  }
 </script>
 
 </body>

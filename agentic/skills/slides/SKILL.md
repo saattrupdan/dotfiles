@@ -1,19 +1,20 @@
 ---
 name: slides
-description: What — the noskillish/slides framework for building single-file HTML decks (no build step, 27+ ready components including pure-CSS bar charts and SVG diagrams, PDF export, embed mode). Use when the user asks to create, draft, extend, or restyle a slideshow, presentation, or deck — e.g. "create a slideshow about X", "make a deck on Y", "turn these notes into slides".
+description: What — the noskillish/slides framework for building single-file HTML decks (no build step, 27+ ready components including pure-CSS bar charts and SVG diagrams, embed mode, stepped PDF export). Use when the user asks to create, draft, extend, or restyle a slideshow, presentation, or deck — e.g. "create a slideshow about X", "make a deck on Y", "turn these notes into slides", "export the deck to PDF".
 tagline: Build single-file HTML presentations with the slides framework
 last-updated: 2026-05-13
 ---
 
 ## What this skill does
 
-Produces a single self-contained `deck.html` file in the user's chosen directory using the noskillish/slides framework. No build step, no dependencies beyond Google Fonts (Inter). Navigate with arrow keys / space / swipe; export to PDF with `P`; embed with `?embed`.
+Produces a single self-contained `deck.html` file in the user's chosen directory using the noskillish/slides framework. No build step, no dependencies beyond Google Fonts (Inter). Navigate with arrow keys / space / swipe; embed with `?embed`. A separate node script (`scripts/deck-to-pdf.mjs`) converts the finished deck into a stepped PDF.
 
 ## Bundled assets
 
 This skill ships with everything you need — do not fetch from the internet:
 
 - `template/deck.html` — the single template. Default theme is Craft: minimalist editorial with warm off-white (`#f5f0e8`) base, burnt orange (`#c05a3a`) accent, Inter + Fraunces. Set `colourScheme = "alexandra-institute"` in the ⚙️ DECK SETTINGS block at the top of `<body>` to switch to the Alexandra Institute brand variant (deep teal `#002a3f` dark slides, burnt sienna `#be5d2b` accent, Montserrat + Playfair Display, "Alexandra Institute" appended to the cover affiliation). Logos shown in the top-left are driven independently by the `darkLogo` and `whiteLogo` settings.
+- `scripts/deck-to-pdf.mjs` — node script that exports a finished `deck.html` to a stepped PDF (one page per reveal state). See the "Exporting to PDF" section below.
 - `reference/COMPONENTS.md` — the full component library (27 components: cover, two-column, three-column, capability list, dark callout, dot flow, stack grid, spec block, product, collage, JEDUF, dark, timeline, stat grid, quote pair, logo grid, code, closing, testimonial grid, logo bar, feature cards, update row, art overlay, **bar chart**, **flow row**, **diagram**). **Read this before writing slides.** Copy HTML structures verbatim; change only text content.
 - `reference/ACADEMIC_STORYTELLING.md` — paper-style structure for research talks at scientific conferences, invited workshops, and lab seminars (Motivation / Background / Method / Results / Discussion / Limitations / Conclusion). Plain, precise, evidence-led.
 - `reference/CASUAL_STORYTELLING.md` — five-beat structure for internal team talks, casual meetups, demos for people you know (Hook / Context / The Thing / Caveats / Close). Allows light humour.
@@ -73,7 +74,8 @@ The 27 components are a library, not a ceiling. New layouts are fine when conten
 - "Add an image/video" → component 12 (collage-slide); place media in `./media/`
 - "Add stats / metrics" → component 16 (stat-grid)
 - "Closing slide / thanks" → component 20
-- "Embed it" → user appends `?embed` to the URL; PDF button hides, navigation stays
+- "Embed it" → user appends `?embed` to the URL; toast hint is suppressed, navigation stays
+- "Export to PDF" / "save as PDF" / "make a PDF" → run `scripts/deck-to-pdf.mjs` (see "Exporting to PDF" below)
 - "Add progressive reveal" → add `data-reveal` to eyebrow, headline, subtitle, and content blocks in order; see `COMPONENTS.md` "Progressive reveal" section
 
 ## Plots and diagrams
@@ -92,6 +94,26 @@ Users expect visualisations in slides. **Prefer the built-in pure-CSS/SVG compon
 - If real data exists on disk (CSV, JSON, model outputs), load it. Otherwise use illustrative numbers — be honest about it.
 - Keep text minimal. Users will complain about slides that are walls of text.
 - Reach for the CSS/SVG components first; only fall back to Chart.js when the chart type genuinely isn't supported.
+
+## Exporting to PDF
+
+When the user asks to export, save, or convert a deck to PDF, run the bundled script:
+
+```bash
+node ~/.claude/skills/slides/scripts/deck-to-pdf.mjs <path-to-deck.html> [output.pdf]
+```
+
+- Output defaults to `<parent-dir>.pdf` when the input is `…/<dir>/deck.html` or `…/<dir>/index.html`, otherwise `<basename>.pdf`, written to the current working directory.
+- The script produces a **stepped PDF**: each slide expands into N+1 pages (initial state + one page per `data-reveal`), matching the live keypress sequence the speaker walks through.
+- Page size is 13.333 × 7.5 in (16:9) with no margins. Box-shadows, text-shadows, and CSS filters are suppressed in the export because they render as muddy grey blocks in print rasterization.
+- The final PDF is losslessly deduplicated (`mutool clean`) and linearized for snappy viewer load (`qpdf --linearize`).
+
+**Dependencies — the script self-bootstraps:**
+
+- Playwright + Chromium: auto-installed into the script's own folder on first run (~300 MB), with a yes/no confirmation prompt.
+- `qpdf` and `mutool` (mupdf-tools): auto-installed via Homebrew on macOS or apt on Debian/Ubuntu, with confirmation. On other platforms the script prints install instructions and exits.
+
+The agent should invoke the script directly; do not modify `template/deck.html` to add a "Save as PDF" button or override the print dialog. Those approaches were tried and don't survive Firefox's `file://` canvas-taint rule.
 
 ## Known issues
 
