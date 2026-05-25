@@ -562,6 +562,47 @@ async function runSingleAgent(
 			const responseChannel = proc.stdio[3] as NodeJS.WritableStream | null;
 			let buffer = "";
 
+			// Track toolCallId → toolName mapping as tool_call parts arrive in
+			// message_end events. Used to annotate tool_result entries in the
+			// copy-paste context file.
+			const toolNameMap = new Map<string, string>();
+
+			// Write a single entry to the per-cwd context file. The file is an
+			// array that accumulates entries across the entire subagent run.
+			const writeContextEntry = (entry: {
+				toolCallId: string;
+				toolName: string;
+				content: string;
+				timestamp: string;
+			}) => {
+				const contextsDir = path.join(
+					path.dirname(path.dirname(__dirname)),
+					"copy-paste-contexts",
+				);
+				const encoded = encodeURIComponent(effectiveCwd ?? defaultCwd);
+				const filePath = path.join(contextsDir, `${encoded}.json`);
+
+				try {
+					fs.mkdirSync(contextsDir, { recursive: true });
+					let entries: {
+						toolCallId: string;
+						toolName: string;
+						content: string;
+						timestamp: string;
+					}[] = [];
+					try {
+						const raw = fs.readFileSync(filePath, "utf-8");
+						entries = JSON.parse(raw);
+					} catch {
+						/* file doesn't exist yet – start fresh */
+					}
+					entries.push(entry);
+					fs.writeFileSync(filePath, JSON.stringify(entries, null, 2));
+				} catch {
+					/* silently ignore write failures — non-critical */
+				}
+			};
+
 			const processLine = (line: string) => {
 				if (!line.trim()) return;
 				let event: any;
@@ -589,9 +630,16 @@ async function runSingleAgent(
 						if (!currentResult.model && msg.model) currentResult.model = msg.model;
 						if (msg.stopReason) currentResult.stopReason = msg.stopReason;
 						if (msg.errorMessage) currentResult.errorMessage = msg.errorMessage;
+
+					// Extract toolCall parts so we can annotate results later.
+					for (const part of (msg as any).content ?? []) {
+						if (part.type === "toolCall") {
+							toolNameMap.set(part.id, part.name);
+						}
 					}
-					emitUpdate();
 				}
+				emitUpdate();
+			}
 
 				if (event.type === "tool_result_end" && event.message) {
 					currentResult.messages.push(event.message as Message);
@@ -600,6 +648,21 @@ async function runSingleAgent(
 					if (tcid && currentResult.partialResults) {
 						delete currentResult.partialResults[tcid];
 					}
+
+					// Write the tool result to the context file immediately so that
+					// copy_paste can reference it during execution.
+					const tr = event.message as any;
+					const content = (tr.content ?? [])
+						.map((c: { type?: string; text?: string }) => (c.type === "text" ? c.text : ""))
+						.filter(Boolean)
+						.join("\n");
+					writeContextEntry({
+						toolCallId: tr.toolCallId,
+						toolName: toolNameMap.get(tr.toolCallId) ?? "unknown",
+						content,
+						timestamp: new Date().toISOString(),
+					});
+
 					emitUpdate();
 				}
 
@@ -703,54 +766,6 @@ async function runSingleAgent(
 
 		currentResult.exitCode = exitCode;
 		if (wasAborted) throw new Error("Subagent was aborted");
-
-		// ── Write tool-result context for `copy_paste` ──────────────────────
-		// Build a map of toolCallId → toolName from assistant messages, then
-		// collect tool results and write them to the per-cwd context file.
-		const toolNameMap = new Map<string, string>();
-		for (const msg of currentResult.messages) {
-			if (msg.role === "assistant") {
-				for (const part of (msg as any).content ?? []) {
-					if (part.type === "toolCall") {
-						toolNameMap.set(part.id, part.name);
-					}
-				}
-			}
-		}
-		const contextEntries: {
-			toolCallId: string;
-			toolName: string;
-			content: string;
-			timestamp: string;
-		}[] = [];
-		for (const msg of currentResult.messages) {
-			if ((msg as any).role === "toolResult") {
-				const tr = msg as any;
-				const content = (tr.content ?? [])
-					.map((c: { type?: string; text?: string }) => (c.type === "text" ? c.text : ""))
-					.filter(Boolean)
-					.join("\n");
-				contextEntries.push({
-					toolCallId: tr.toolCallId,
-					toolName: toolNameMap.get(tr.toolCallId) ?? "unknown",
-					content,
-					timestamp: new Date().toISOString(),
-				});
-			}
-		}
-		if (contextEntries.length > 0) {
-			const contextsDir = path.join(
-				path.dirname(path.dirname(__dirname)),
-				"copy-paste-contexts",
-			);
-			try {
-				fs.mkdirSync(contextsDir, { recursive: true });
-				const encoded = encodeURIComponent(effectiveCwd ?? defaultCwd);
-				fs.writeFileSync(path.join(contextsDir, `${encoded}.json`), JSON.stringify(contextEntries, null, 2));
-			} catch {
-				/* silently ignore write failures — non-critical */
-			}
-		}
 
 		return currentResult;
 	} finally {
