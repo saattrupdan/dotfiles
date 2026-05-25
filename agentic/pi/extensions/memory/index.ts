@@ -307,7 +307,7 @@ const SaveParams = Type.Object({
 	}),
 	description: Type.String({
 		description:
-			"One-line summary shown by `memory_index`. Be specific — this is what future-you will use to decide whether to read the full memory.",
+			"Brief summary (a short phrase, ideally under ~80 chars) shown by `memory_index` so future-you can decide whether to read the full body. Keep it tight — the full detail belongs in `content`.",
 	}),
 	content: Type.String({
 		description:
@@ -526,7 +526,7 @@ function updateIndex(scope: "system" | "project", cwd: string): void {
 		lines.push("(none yet)");
 	} else {
 		for (const e of list) {
-			lines.push(`- [${e.name}](${e.name}.md) — ${e.description}`);
+			lines.push(`- [${e.name}](${e.name}.md)`);
 		}
 	}
 	fs.writeFileSync(indexPath, lines.join("\n") + "\n", "utf-8");
