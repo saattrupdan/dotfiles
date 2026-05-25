@@ -1,0 +1,106 @@
+/**
+ * Desktop notifications for attention-worthy agent events.
+ *
+ * Fires a macOS Notification Center alert (with a gentle sound) when the
+ * orchestrator agent:
+ *
+ *  - asked the user a question (the `question` tool is about to run),
+ *  - finished a turn normally (agent loop ended, ready for next prompt),
+ *  - failed or was aborted (last assistant message has stopReason
+ *    "error" or "aborted").
+ *
+ * The notification reaches the user even when the terminal is not focused
+ * (that's the whole point — macOS surfaces it system-wide). Sounds are
+ * built-in macOS system sounds chosen to be brief and unobtrusive.
+ *
+ * Orchestrator-only: subagent processes never have a UI and their question
+ * dialogs are bridged to the parent — the parent's own listeners already
+ * see those, so subagent-side notifications would just duplicate noise.
+ *
+ * macOS-only. On other platforms the extension loads but does nothing.
+ */
+
+import { spawn } from "node:child_process";
+import * as os from "node:os";
+
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+const IS_MACOS = os.platform() === "darwin";
+
+// Built-in /System/Library/Sounds/*.aiff names. All chosen to be short and
+// gentle; Basso is the lowest-pitched of the bunch, used for failures.
+const SOUND_FINISHED = "Glass";
+const SOUND_QUESTION = "Tink";
+const SOUND_FAILED = "Basso";
+
+// Minimum gap between any two notifications. Cheap defence against
+// back-to-back events (e.g. question dialog dismissed → agent_end fires
+// immediately after the question notification) collapsing into one
+// indistinguishable beep.
+const MIN_GAP_MS = 400;
+
+let lastNotifyAt = 0;
+
+function escapeForAppleScript(s: string): string {
+	return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function notify(title: string, body: string, sound: string): void {
+	if (!IS_MACOS) return;
+	const now = Date.now();
+	if (now - lastNotifyAt < MIN_GAP_MS) return;
+	lastNotifyAt = now;
+	const script =
+		`display notification "${escapeForAppleScript(body)}" ` +
+		`with title "${escapeForAppleScript(title)}" ` +
+		`sound name "${escapeForAppleScript(sound)}"`;
+	try {
+		const p = spawn("osascript", ["-e", script], { stdio: "ignore", detached: true });
+		p.on("error", () => {});
+		p.unref();
+	} catch {
+		// best-effort, never throw out of an event handler
+	}
+}
+
+function truncate(s: string, max = 120): string {
+	const clean = s.replace(/\s+/g, " ").trim();
+	return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
+}
+
+export default function (pi: ExtensionAPI) {
+	// Subagent children don't drive a UI; the orchestrator gets the events
+	// that actually matter to the human.
+	if (process.env.PI_SUBAGENT_CHILD === "1") return;
+	if (!IS_MACOS) return;
+
+	pi.on("tool_call", async (event) => {
+		if (event.toolName !== "question") return;
+		const input = event.input as { questions?: Array<{ question?: unknown }> } | undefined;
+		const first = input?.questions?.[0]?.question;
+		const preview = typeof first === "string" && first.length > 0 ? truncate(first) : "Pi needs your input.";
+		notify("Pi has a question", preview, SOUND_QUESTION);
+	});
+
+	pi.on("agent_end", async (event) => {
+		const msgs = event.messages ?? [];
+		// Walk from the end to find the most recent assistant message — tool
+		// results may have been appended after it.
+		let stopReason: string | undefined;
+		let errorMessage: string | undefined;
+		for (let i = msgs.length - 1; i >= 0; i--) {
+			const m = msgs[i] as { role?: string; stopReason?: string; errorMessage?: string };
+			if (m?.role === "assistant") {
+				stopReason = m.stopReason;
+				errorMessage = m.errorMessage;
+				break;
+			}
+		}
+		if (stopReason === "error" || stopReason === "aborted") {
+			const detail = errorMessage ? truncate(errorMessage) : stopReason;
+			notify("Pi failed", detail, SOUND_FAILED);
+		} else {
+			notify("Pi finished", "Ready for your next prompt.", SOUND_FINISHED);
+		}
+	});
+}
