@@ -15,9 +15,16 @@
  * Subagents are spawned in separate `pi` child processes (the subagent
  * extension sets `PI_SUBAGENT_CHILD=1` in their env) and opt out of both
  * mechanisms — they need full access to their declared tools.
+ *
+ * Solo mode (`PI_SOLO_MODE=1`) also opts out of both mechanisms,
+ * allowing the orchestrator to use any tool directly.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+function isSoloMode(): boolean {
+	return process.env.PI_SOLO_MODE === "1";
+}
 
 const ALLOWED = new Set([
 	"subagent",
@@ -63,6 +70,7 @@ export default function (pi: ExtensionAPI) {
 	// `subagent` extension) and need full access to their declared tools.
 	// The parent sets PI_SUBAGENT_CHILD=1 in the child env to opt out.
 	if (process.env.PI_SUBAGENT_CHILD === "1") return;
+	if (isSoloMode()) return;
 
 	pi.on("before_provider_request", async (event) => {
 		return stripTools(event.payload);
