@@ -43,6 +43,7 @@ import {
 	touchMeta,
 	querySymbols,
 	queryExactSymbol,
+	queryFilesByName,
 } from "./index-store.js";
 
 // ---------------------------------------------------------------------------
@@ -131,7 +132,7 @@ export default async function (pi: ExtensionAPI) {
 		name: "search",
 		label: "search",
 		description:
-			"Search the repository using a per-repo SQLite index + ripgrep full-text search. Returns definitions first, then reference matches. Use for finding symbols, functions, classes, or grep-style text matches.",
+			"Search the repository using a per-repo SQLite index + ripgrep full-text search. Returns filename matches first, then definitions, then reference matches. Use for finding files by name, symbols (functions/classes), or grep-style text matches.",
 		parameters: Params,
 
 		async execute(
@@ -194,6 +195,9 @@ export default async function (pi: ExtensionAPI) {
 				defResults = merged;
 			}
 
+			// --- Filename matches ---
+			const fileMatches = queryFilesByName(db, query);
+
 			// --- Ripgrep refs ---
 			let refResults: RipgrepResult[] = [];
 			if (kind === "ref" || kind === "any") {
@@ -234,6 +238,13 @@ export default async function (pi: ExtensionAPI) {
 			if (hasExactMatch && defLines.length > 0) {
 				const first = defLines[0];
 				output.push(`→ read("${first.file}", offset=${first.line})`);
+			}
+
+			// Add filename matches (skip files already represented by a def hit)
+			const defFiles = new Set(defLines.map((d) => d.file));
+			for (const f of fileMatches) {
+				if (defFiles.has(f.path)) continue;
+				output.push(`${f.path}  [file]  ${f.lines} lines`);
 			}
 
 			// Add def lines

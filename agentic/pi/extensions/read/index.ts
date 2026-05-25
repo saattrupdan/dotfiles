@@ -83,6 +83,37 @@ function sha256(filePath: string): string {
 }
 
 const SMALL_FILE_LINES = 100;
+const DIR_ENTRY_LIMIT = 200;
+
+function listDirectory(absolutePath: string) {
+	let entries: fs.Dirent[];
+	try {
+		entries = fs.readdirSync(absolutePath, { withFileTypes: true });
+	} catch (err) {
+		return {
+			content: [{ type: "text", text: `Could not read directory ${absolutePath}: ${(err as Error).message}` }],
+			isError: true,
+		};
+	}
+	const dirs: string[] = [];
+	const files: string[] = [];
+	for (const e of entries) {
+		if (e.isDirectory()) dirs.push(`${e.name}/`);
+		else files.push(e.name);
+	}
+	dirs.sort();
+	files.sort();
+	const all = [...dirs, ...files];
+	const total = all.length;
+	const shown = all.slice(0, DIR_ENTRY_LIMIT);
+	const header = `# directory ${absolutePath} (${total} entries${total > DIR_ENTRY_LIMIT ? `, showing ${DIR_ENTRY_LIMIT}` : ""})`;
+	const footer = total > DIR_ENTRY_LIMIT
+		? `\n# … ${total - DIR_ENTRY_LIMIT} more entries truncated — use \`search\` to find specific files.`
+		: "";
+	return {
+		content: [{ type: "text", text: `${header}\n${shown.join("\n")}${footer}` }],
+	};
+}
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -112,7 +143,8 @@ export default async function (pi: ExtensionAPI) {
 		name: "read",
 		label: "read",
 		description:
-			"Read a file. Modes:\n" +
+			"Read a file or list a directory. Modes:\n" +
+			"  • Path is a directory → truncated listing of entries (dirs first, then files).\n" +
 			"  • No symbol, small file → verbatim contents.\n" +
 			"  • No symbol, large file → outline (module doc, classes/functions with signatures, type hints, and doc-first-line). Use the outline to pick a symbol.\n" +
 			"  • symbol set → body of that symbol only (supports 'Class.method').\n" +
@@ -150,6 +182,16 @@ export default async function (pi: ExtensionAPI) {
 					content: [{ type: "text", text: `File not found: ${absolutePath}` }],
 					isError: true,
 				};
+			}
+
+			// 1b. Directory listing (truncated)
+			try {
+				const stat = fs.statSync(absolutePath);
+				if (stat.isDirectory()) {
+					return listDirectory(absolutePath);
+				}
+			} catch {
+				// fall through
 			}
 
 			// 2. Image passthrough

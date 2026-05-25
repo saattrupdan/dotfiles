@@ -336,6 +336,20 @@ export function querySymbols(db: Database.Database, query: string): SymbolResult
 /**
  * Query files for exact name match (for promotion).
  */
+/**
+ * Query files by path substring (case-insensitive). Used to surface filename
+ * matches alongside symbol/content hits.
+ */
+export function queryFilesByName(db: Database.Database, query: string): { path: string; lines: number }[] {
+	const stmt = db.prepare(
+		`SELECT path, lines FROM files
+		 WHERE LOWER(path) LIKE LOWER(?)
+		 ORDER BY length(path) ASC
+		 LIMIT 50`,
+	);
+	return stmt.all(`%${query}%`) as { path: string; lines: number }[];
+}
+
 export function queryExactSymbol(db: Database.Database, query: string): SymbolResult[] {
 	const stmt = db.prepare(
 		`SELECT name, kind, file, line_start, line_end, parent
