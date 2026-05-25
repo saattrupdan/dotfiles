@@ -280,6 +280,19 @@ export function getSymbol(
 	file: string,
 	dottedName: string,
 ): { line_start: number; line_end: number; kind: string; name: string; parent: string | null } | null {
+	// Exact-name match wins — handles entries whose own name contains a dot
+	// (e.g. TOML `[tool.poetry]`, CSS selectors like `.btn:hover`).
+	const exactStmt = db.prepare(
+		`SELECT name, kind, line_start, line_end, parent
+		 FROM symbols WHERE file = ? AND name = ?
+		 ORDER BY (parent IS NULL) DESC, line_start ASC LIMIT 1`,
+	);
+	const exact = exactStmt.get(file, dottedName) as
+		| { name: string; kind: string; line_start: number; line_end: number; parent: string | null }
+		| undefined;
+	if (exact) return exact;
+
+	// Fall back to dotted Parent.Child disambiguation.
 	const dot = dottedName.lastIndexOf(".");
 	if (dot >= 0) {
 		const parent = dottedName.slice(0, dot);
@@ -294,15 +307,7 @@ export function getSymbol(
 			| undefined;
 		return row ?? null;
 	}
-	const stmt = db.prepare(
-		`SELECT name, kind, line_start, line_end, parent
-		 FROM symbols WHERE file = ? AND name = ?
-		 ORDER BY (parent IS NULL) DESC, line_start ASC LIMIT 1`,
-	);
-	const row = stmt.get(file, dottedName) as
-		| { name: string; kind: string; line_start: number; line_end: number; parent: string | null }
-		| undefined;
-	return row ?? null;
+	return null;
 }
 
 /**

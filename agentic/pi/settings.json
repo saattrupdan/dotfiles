@@ -1,6 +1,9 @@
 {
-  "lastChangelogVersion": "0.75.4",
-  "defaultProvider": "llamacpp",
-  "defaultModel": "qwen3.6-35B-A3B",
-  "defaultThinkingLevel": "medium"
+  "lastChangelogVersion": "0.75.5",
+  "defaultProvider": "sparkie",
+  "defaultModel": "unsloth/Qwen3.6-35B-A3B-NVFP4",
+  "defaultThinkingLevel": "medium",
+  "hideThinkingBlock": true,
+  "quietStartup": true,
+  "theme": "gruvbox"
 }

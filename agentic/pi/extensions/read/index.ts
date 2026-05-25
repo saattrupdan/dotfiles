@@ -198,7 +198,7 @@ export default async function (pi: ExtensionAPI) {
 			if (symbol === "__preamble__") {
 				const firstDefRow = db
 					.prepare(
-						"SELECT MIN(line_start) AS line FROM symbols WHERE file = ? AND kind IN ('class','function')",
+						"SELECT MIN(line_start) AS line FROM symbols WHERE file = ? AND kind IN ('class','function','heading','block')",
 					)
 					.get(relPath) as { line: number | null } | undefined;
 				const cutoff = firstDefRow?.line ?? null;
@@ -289,7 +289,7 @@ function readOutsideRepo(
 
 	if (symbol === "__preamble__") {
 		const result = outline(absolutePath, content);
-		const firstDef = result.entries.find((e) => e.kind === "class" || e.kind === "function");
+		const firstDef = result.entries.find((e) => e.kind === "class" || e.kind === "function" || e.kind === "heading" || e.kind === "block");
 		const cutoff = firstDef?.line ?? null;
 		const lastLine = cutoff && cutoff > 1 ? cutoff - 1 : totalLines;
 		const slice = allLines.slice(0, lastLine);
@@ -302,14 +302,18 @@ function readOutsideRepo(
 
 	if (symbol) {
 		const result = outline(absolutePath, content);
-		const dot = symbol.lastIndexOf(".");
-		const lookupName = dot >= 0 ? symbol.slice(dot + 1) : symbol;
-		const lookupParent = dot >= 0 ? symbol.slice(0, dot) : undefined;
-		const hit = result.entries.find(
-			(e) =>
-				e.name === lookupName &&
-				(lookupParent === undefined || e.parent === lookupParent),
-		);
+		// Exact match first (handles dotted entry names like TOML sections).
+		let hit = result.entries.find((e) => e.name === symbol);
+		if (!hit) {
+			const dot = symbol.lastIndexOf(".");
+			if (dot >= 0) {
+				const lookupName = symbol.slice(dot + 1);
+				const lookupParent = symbol.slice(0, dot);
+				hit = result.entries.find(
+					(e) => e.name === lookupName && e.parent === lookupParent,
+				);
+			}
+		}
 		if (!hit) {
 			return {
 				content: [{ type: "text", text: `Symbol "${symbol}" not found in ${absolutePath}.` }],

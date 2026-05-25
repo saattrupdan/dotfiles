@@ -2,9 +2,9 @@
  * Orchestrator lockdown.
  *
  * The main agent is an orchestrator and has *no* permissions of its own —
- * only `subagent`, the user-facing `question` tool, and `read` (so it can
- * load SKILL.md files; skills are invoked by reading their file per pi's
- * `formatSkillsForPrompt`). This extension:
+ * only `subagent`, the user-facing `question` tool, and `skill` (so it can
+ * load skill instructions by name without being granted general filesystem
+ * read access). This extension:
  *
  *  1. Strips every other tool from the provider request payload before it
  *     is sent, so the LLM does not even *see* the tools it cannot use.
@@ -19,7 +19,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-const ALLOWED = new Set(["subagent", "question", "read"]);
+const ALLOWED = new Set(["subagent", "question", "skill"]);
 
 /**
  * Walk a provider request payload and strip any `tools` array entries whose
@@ -66,7 +66,7 @@ export default function (pi: ExtensionAPI) {
 				block: true,
 				reason:
 					`Orchestrator is not permitted to call '${event.toolName}'. ` +
-					`Delegate this work to a subagent instead (planner, builder, code-explorer, web-explorer, or reviewer).`,
+					`Delegate this work to a subagent instead (planner, builder, explorer, or reviewer).`,
 			};
 		}
 	});

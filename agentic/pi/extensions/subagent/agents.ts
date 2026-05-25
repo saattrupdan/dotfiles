@@ -13,6 +13,12 @@ import { getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 
 export type AgentScope = "user" | "project" | "both";
 
+export interface RefuseRule {
+	pattern: string;
+	message: string;
+	flags?: string;
+}
+
 export interface AgentConfig {
 	name: string;
 	description: string;
@@ -26,6 +32,14 @@ export interface AgentConfig {
 	 *  - string[]   → explicit allow-list (may be empty for "no skills").
 	 */
 	skills?: string[];
+	/**
+	 * Optional list of regex patterns the agent will refuse to act on. When a
+	 * task matches, the subagent is not spawned; instead the configured
+	 * `message` is returned to the caller as the agent's error. Useful for
+	 * cheaply enforcing "don't ask me to X" contracts without relying on the
+	 * child model to obey instructions in its system prompt.
+	 */
+	refuse?: RefuseRule[];
 	systemPrompt: string;
 	source: "user" | "project";
 	filePath: string;
@@ -43,6 +57,38 @@ function parseBool(v: unknown): boolean {
 		return s === "true" || s === "yes" || s === "1";
 	}
 	return false;
+}
+
+function parseRefuseRules(raw: unknown, filePath: string): RefuseRule[] | undefined {
+	if (raw === undefined || raw === null) return undefined;
+	if (!Array.isArray(raw)) {
+		console.error(`subagent: invalid \`refuse:\` in ${filePath} — must be a YAML list; ignoring.`);
+		return undefined;
+	}
+	const rules: RefuseRule[] = [];
+	for (const entry of raw) {
+		if (!entry || typeof entry !== "object") {
+			console.error(`subagent: invalid refuse entry in ${filePath} — must be a mapping; skipping.`);
+			continue;
+		}
+		const obj = entry as Record<string, unknown>;
+		const pattern = typeof obj.pattern === "string" ? obj.pattern : undefined;
+		const message = typeof obj.message === "string" ? obj.message : undefined;
+		const flags = typeof obj.flags === "string" ? obj.flags : undefined;
+		if (!pattern || !message) {
+			console.error(`subagent: refuse entry in ${filePath} needs both \`pattern\` and \`message\`; skipping.`);
+			continue;
+		}
+		try {
+			// Validate the regex up front so bad configs are caught at load time.
+			new RegExp(pattern, flags ?? "i");
+		} catch (err) {
+			console.error(`subagent: refuse pattern in ${filePath} is not a valid regex (${(err as Error).message}); skipping.`);
+			continue;
+		}
+		rules.push({ pattern, message, flags });
+	}
+	return rules.length > 0 ? rules : undefined;
 }
 
 function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig[] {
@@ -98,6 +144,8 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
 			skills = [];
 		}
 
+		const refuse = parseRefuseRules(frontmatter.refuse, filePath);
+
 		agents.push({
 			name: String(frontmatter.name),
 			description: String(frontmatter.description),
@@ -105,6 +153,7 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
 			model: frontmatter.model ? String(frontmatter.model) : undefined,
 			worktree: parseBool(frontmatter.worktree),
 			skills,
+			refuse,
 			systemPrompt: body,
 			source,
 			filePath,

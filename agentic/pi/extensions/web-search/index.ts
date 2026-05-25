@@ -7,7 +7,7 @@
  *
  * Access control is enforced by pi's per-agent `--tools` allowlist:
  * only agents whose frontmatter lists `web_search` in `tools:` will see
- * this tool. In the bundled setup that is **only the `web-explorer`
+ * this tool. In the bundled setup that is **only the `explorer`
  * subagent**. The orchestrator can't call it because the
  * `orchestrator-lockdown` extension blocks every tool except `subagent`
  * and `question`.

@@ -17,6 +17,9 @@ tools: read, write, edit, bash           # optional, comma-separated allow-list
 model: anthropic/claude-sonnet-4-5       # optional
 worktree: true                            # optional; run in a fresh git worktree
 skills: [commit, python, fastapi]         # optional; see "Skill scoping" below
+refuse:                                   # optional; see "Refusal patterns" below
+  - pattern: "full file contents?"
+    message: "Ask me for paths and line ranges instead of file contents."
 ---
 
 Body becomes the agent's appended system prompt.
@@ -52,6 +55,31 @@ allow-list before launching the child:
 
 Passing extra skills via the task does **not** widen the allow-list to "all
 skills"; it only adds the named ones to the (possibly empty) frontmatter list.
+
+## Refusal patterns
+
+`refuse:` is a list of `{ pattern, message, flags? }` entries. Before the child
+process is spawned, the incoming task text is tested against each pattern in
+order; the first match short-circuits the call and returns `message` to the
+caller as the agent's error (`stopReason: "refused"`).
+
+```yaml
+refuse:
+  - pattern: "(full|entire|complete) file contents?"
+    message: "Refer to files by path and (optionally) symbol or line range — don't ask me to paste contents."
+  - pattern: "implement|write|edit|fix"
+    message: "I only locate and summarise. Hand implementation tasks to `builder`."
+    flags: "i"                # optional; default is "i" (case-insensitive)
+```
+
+This is a cheap, deterministic guardrail — it runs in the orchestrator's
+process, costs no model tokens, and triggers whether or not the child would
+have respected an instruction in its system prompt. Use it for hard contracts
+(e.g. "don't return file contents", "don't implement"); use prompt text for
+softer guidance.
+
+Invalid patterns are warned to stderr at load time and skipped. A missing
+`pattern` or `message` field also causes the entry to be skipped.
 
 ## Worktree mode
 

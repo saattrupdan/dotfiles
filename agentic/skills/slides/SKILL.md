@@ -103,7 +103,7 @@ When the user asks to export, save, or convert a deck to PDF, run the bundled sc
 node ~/.claude/skills/slides/scripts/deck-to-pdf.mjs <path-to-deck.html> [output.pdf]
 ```
 
-- Output defaults to `<parent-dir>.pdf` when the input is `…/<dir>/deck.html` or `…/<dir>/index.html`, otherwise `<basename>.pdf`, written to the current working directory.
+- Output is written **alongside the input HTML** by default. Filename is `<parent-dir>.pdf` when the input is `…/<dir>/deck.html` or `…/<dir>/index.html`, otherwise `<basename>.pdf`. Pass an explicit output path as the second arg to override.
 - The script produces a **stepped PDF**: each slide expands into N+1 pages (initial state + one page per `data-reveal`), matching the live keypress sequence the speaker walks through.
 - Page size is 13.333 × 7.5 in (16:9) with no margins. Box-shadows, text-shadows, and CSS filters are suppressed in the export because they render as muddy grey blocks in print rasterization.
 - The final PDF is losslessly deduplicated (`mutool clean`) and linearized for snappy viewer load (`qpdf --linearize`).

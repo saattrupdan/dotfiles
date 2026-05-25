@@ -20,8 +20,8 @@ agentic/pi/
 Each subdirectory under `extensions/` is a self-contained pi extension. They
 fall into three categories:
 
-- **Tools the agent calls** — `read`, `search`, `code-tree`, `web-fetch`,
-  `web-search`, `web-browse`, `subagent`.
+- **Tools the agent calls** — `read`, `skill`, `search`, `code-tree`,
+  `web-fetch`, `web-search`, `web-browse`, `subagent`.
 - **Behavioural guardrails** (no tools registered) — `orchestrator-lockdown`,
   `no-repeat`.
 - **Shared internal library** — `_outliner` (consumed by `read` and `search`).
@@ -41,6 +41,24 @@ Outline + symbol ranges come from the SQLite index in
 incrementally refreshed on every call so edits are picked up without a full
 rebuild. Includes a per-session dedupe cache and a MIME sniff that surfaces
 images as image content rather than raw bytes.
+
+See [`extensions/read/EXAMPLES.md`](extensions/read/EXAMPLES.md) for sample
+outputs across all supported file types — Python, TypeScript, Lua, Rust, Go,
+Shell, SQL, CSS, HTML, Markdown, JSON, JSONL, CSV, YAML, and TOML.
+
+### `skill`
+
+Loads a named skill's full `SKILL.md` in one shot. Takes a single `name`
+argument (the skill's frontmatter `name`, e.g. `commit`, `fastapi`) and
+returns the file verbatim — no outlining, no truncation. Skill discovery
+goes through `loadSkills` from `pi-coding-agent`, so the surface matches
+exactly what pi advertises in its system prompt.
+
+Why not just use `read`? The local `read` extension returns an outline for
+any file over 100 lines, which silently truncates real skills. Splitting
+`skill` from `read` also lets `orchestrator-lockdown` grant the orchestrator
+the ability to load its own playbooks without granting general filesystem
+read access.
 
 ### `search`
 
@@ -75,7 +93,7 @@ unprocessed body.
 DuckDuckGo HTML-endpoint search. Returns the top results (title, URL,
 snippet) as a compact Markdown list. Access-controlled: only agents whose
 frontmatter lists `web_search` in `tools:` see it (in this config, the
-`web-explorer` subagent). The orchestrator cannot call it because
+`explorer` subagent). The orchestrator cannot call it because
 `orchestrator-lockdown` blocks everything except `subagent` and `question`.
 
 ### `web-browse`

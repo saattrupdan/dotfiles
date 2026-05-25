@@ -82,15 +82,61 @@ function formatToolCall(
 		case "read": {
 			const rawPath = (args.file_path || args.path || "...") as string;
 			const filePath = shortenPath(rawPath);
+			const symbol = args.symbol as string | undefined;
 			const offset = args.offset as number | undefined;
 			const limit = args.limit as number | undefined;
 			let text = themeFg("accent", filePath);
-			if (offset !== undefined || limit !== undefined) {
+			if (symbol) {
+				text += themeFg("warning", `::${symbol}`);
+			} else if (offset !== undefined || limit !== undefined) {
 				const startLine = offset ?? 1;
 				const endLine = limit !== undefined ? startLine + limit - 1 : "";
 				text += themeFg("warning", `:${startLine}${endLine ? `-${endLine}` : ""}`);
 			}
 			return themeFg("muted", "read ") + text;
+		}
+		case "search": {
+			const query = (args.query || "") as string;
+			const kind = args.kind as string | undefined;
+			const previewed = query.length > 80 ? `${query.slice(0, 80)}...` : query;
+			let text = themeFg("muted", "search ") + themeFg("accent", `/${previewed}/`);
+			if (kind && kind !== "any") text += themeFg("dim", ` [${kind}]`);
+			return text;
+		}
+		case "code_tree": {
+			const rawPath = (args.path || ".") as string;
+			const depth = args.depth as number | undefined;
+			let text = themeFg("muted", "code_tree ") + themeFg("accent", shortenPath(rawPath));
+			if (depth !== undefined) text += themeFg("dim", ` depth=${depth}`);
+			return text;
+		}
+		case "web_fetch": {
+			const url = (args.url || "...") as string;
+			const preview = url.length > 80 ? `${url.slice(0, 80)}...` : url;
+			return themeFg("muted", "web_fetch ") + themeFg("accent", preview);
+		}
+		case "web_search": {
+			const query = (args.query || "") as string;
+			const preview = query.length > 80 ? `${query.slice(0, 80)}...` : query;
+			return themeFg("muted", "web_search ") + themeFg("accent", `"${preview}"`);
+		}
+		case "web_browse": {
+			const command = (args.command || "...") as string;
+			const preview = command.length > 80 ? `${command.slice(0, 80)}...` : command;
+			return themeFg("muted", "web_browse ") + themeFg("accent", preview);
+		}
+		case "subagent": {
+			if (args.chain && Array.isArray(args.chain)) {
+				return themeFg("muted", "subagent ") + themeFg("accent", `chain(${args.chain.length})`);
+			}
+			if (args.tasks && Array.isArray(args.tasks)) {
+				const agentList = args.tasks.map((t: any) => t?.agent).filter(Boolean).join(",");
+				return themeFg("muted", "subagent ") + themeFg("accent", `parallel(${args.tasks.length})`) + themeFg("dim", ` [${agentList}]`);
+			}
+			const agent = (args.agent || "?") as string;
+			const task = (args.task || "") as string;
+			const preview = task.length > 80 ? `${task.slice(0, 80)}...` : task;
+			return themeFg("muted", "subagent ") + themeFg("accent", agent) + themeFg("dim", ` ${preview}`);
 		}
 		case "write": {
 			const rawPath = (args.file_path || args.path || "...") as string;
@@ -125,7 +171,7 @@ function formatToolCall(
 		}
 		default: {
 			const argsStr = JSON.stringify(args);
-			const preview = argsStr.length > 50 ? `${argsStr.slice(0, 50)}...` : argsStr;
+			const preview = argsStr.length > 120 ? `${argsStr.slice(0, 120)}...` : argsStr;
 			return themeFg("accent", toolName) + themeFg("dim", ` ${preview}`);
 		}
 	}
@@ -156,6 +202,14 @@ interface SingleResult {
 	worktreePath?: string;
 	worktreeBranch?: string;
 	worktreeCleanup?: WorktreeCleanupResult;
+	/**
+	 * Live tool-execution partials, keyed by the assistant's toolCallId. Pi
+	 * emits `tool_execution_update` events with a `partialResult` while a
+	 * tool is still running; we stash the latest one per call so the renderer
+	 * can show in-progress state for nested subagent invocations *before* the
+	 * final `tool_result_end` arrives. Cleared once the real result lands.
+	 */
+	partialResults?: Record<string, { content?: any[]; details?: any; isError?: boolean }>;
 }
 
 interface SubagentDetails {
@@ -199,15 +253,55 @@ function truncateParallelOutput(output: string): string {
 	return `${truncated}\n\n[Output truncated: ${byteLength - Buffer.byteLength(truncated, "utf8")} bytes omitted. Full output preserved in tool details.]`;
 }
 
-type DisplayItem = { type: "text"; text: string } | { type: "toolCall"; name: string; args: Record<string, any> };
+type DisplayItem =
+	| { type: "text"; text: string }
+	| {
+			type: "toolCall";
+			id: string;
+			name: string;
+			args: Record<string, any>;
+			/**
+			 * The matching tool-result message, if it has arrived. For nested
+			 * `subagent` calls, `result.details` is a `SubagentDetails` and
+			 * carries the full child transcript — so we can render what the
+			 * child (and its children, recursively) did inline under this call.
+			 */
+			result?: { content: any[]; details?: any; isError: boolean };
+	  };
 
-function getDisplayItems(messages: Message[]): DisplayItem[] {
+function getDisplayItems(
+	messages: Message[],
+	partialResults?: Record<string, { content?: any[]; details?: any; isError?: boolean }>,
+): DisplayItem[] {
 	const items: DisplayItem[] = [];
+	const resultById = new Map<string, { content: any[]; details?: any; isError: boolean }>();
+	for (const msg of messages) {
+		if ((msg as any).role === "toolResult") {
+			const tr = msg as any;
+			resultById.set(tr.toolCallId, { content: tr.content, details: tr.details, isError: tr.isError });
+		}
+	}
 	for (const msg of messages) {
 		if (msg.role === "assistant") {
 			for (const part of msg.content) {
 				if (part.type === "text") items.push({ type: "text", text: part.text });
-				else if (part.type === "toolCall") items.push({ type: "toolCall", name: part.name, args: part.arguments });
+				else if (part.type === "toolCall") {
+					const id = (part as any).id;
+					const real = resultById.get(id);
+					const partial = partialResults?.[id];
+					const result = real
+						? real
+						: partial
+							? { content: partial.content ?? [], details: partial.details, isError: !!partial.isError }
+							: undefined;
+					items.push({
+						type: "toolCall",
+						id,
+						name: part.name,
+						args: part.arguments,
+						result,
+					});
+				}
 			}
 		}
 	}
@@ -288,6 +382,37 @@ async function runSingleAgent(
 			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
 			step,
 		};
+	}
+
+	// Frontmatter-defined refusal patterns: a cheap, deterministic guardrail
+	// that runs before we spawn the child process. The agent decides what it
+	// will not accept (e.g. "don't ask me for full file contents") and we
+	// short-circuit with the configured explanation rather than burning a
+	// subagent turn just to have the child reject the request.
+	if (agent.refuse && agent.refuse.length > 0) {
+		for (const rule of agent.refuse) {
+			let regex: RegExp;
+			try {
+				regex = new RegExp(rule.pattern, rule.flags ?? "i");
+			} catch {
+				continue; // already warned at load time
+			}
+			if (regex.test(task)) {
+				const refusal = `[${agentName}] refused: ${rule.message}`;
+				return {
+					agent: agentName,
+					agentSource: agent.source,
+					task,
+					exitCode: 1,
+					messages: [],
+					stderr: refusal,
+					usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
+					stopReason: "refused",
+					errorMessage: refusal,
+					step,
+				};
+			}
+		}
 	}
 
 	const args: string[] = ["--mode", "json", "-p", "--no-session"];
@@ -432,6 +557,30 @@ async function runSingleAgent(
 
 				if (event.type === "tool_result_end" && event.message) {
 					currentResult.messages.push(event.message as Message);
+					// Final result has landed; drop any stashed partial for this call.
+					const tcid = (event.message as any).toolCallId;
+					if (tcid && currentResult.partialResults) {
+						delete currentResult.partialResults[tcid];
+					}
+					emitUpdate();
+				}
+
+				// `tool_execution_update` carries the in-progress AgentToolResult
+				// emitted by an extension via `onUpdate`. For nested subagent
+				// calls, this is how we see the grandchild's live tool calls
+				// before the parent's `subagent` tool returns. Stash by
+				// toolCallId; the renderer falls back to this when the matching
+				// tool_result_end hasn't arrived yet.
+				if (event.type === "tool_execution_update" && event.toolCallId) {
+					const partial = event.partialResult;
+					if (partial) {
+						if (!currentResult.partialResults) currentResult.partialResults = {};
+						currentResult.partialResults[event.toolCallId] = {
+							content: partial.content,
+							details: partial.details,
+							isError: partial.isError,
+						};
+					}
 					emitUpdate();
 				}
 			};
@@ -831,27 +980,115 @@ export default function (pi: ExtensionAPI) {
 
 			const mdTheme = getMarkdownTheme();
 
-			const renderDisplayItems = (items: DisplayItem[], limit?: number) => {
-				const toShow = limit ? items.slice(-limit) : items;
-				const skipped = limit && items.length > limit ? items.length - limit : 0;
-				let text = "";
-				if (skipped > 0) text += theme.fg("muted", `... ${skipped} earlier items\n`);
-				for (const item of toShow) {
+			// Strip blank/whitespace-only text items, and collapse internal blank
+			// lines inside the text we do show. Otherwise streamed assistant
+			// "thinking" text introduces random gaps in the per-subagent log.
+			const cleanTextItem = (raw: string): string => {
+				const lines = raw.split("\n").map((l) => l.replace(/\s+$/, ""));
+				const kept: string[] = [];
+				for (const line of lines) {
+					if (line.trim() === "") continue;
+					kept.push(line);
+				}
+				return kept.join("\n");
+			};
+
+			// Per-nested-block cap so a chatty grandchild doesn't drown the view.
+			const NESTED_ITEM_LIMIT = 12;
+
+			// Recursively render the tool calls a nested subagent made. We walk
+			// the child's full message stream, dedupe blank text, and only show
+			// tool calls + non-blank text. Each level is indented two spaces.
+			const renderNested = (
+				messages: Message[],
+				depth: number,
+				partials?: Record<string, any>,
+			): string[] => {
+				const items = getDisplayItems(messages, partials);
+				const cleaned: DisplayItem[] = [];
+				for (const item of items) {
 					if (item.type === "text") {
-						const preview = expanded ? item.text : item.text.split("\n").slice(0, 3).join("\n");
-						text += `${theme.fg("toolOutput", preview)}\n`;
+						const text = cleanTextItem(item.text);
+						if (!text) continue;
+						cleaned.push({ type: "text", text });
 					} else {
-						text += `${theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme))}\n`;
+						cleaned.push(item);
 					}
 				}
-				return text.trimEnd();
+				const skipped = cleaned.length > NESTED_ITEM_LIMIT ? cleaned.length - NESTED_ITEM_LIMIT : 0;
+				const toShow = skipped > 0 ? cleaned.slice(-NESTED_ITEM_LIMIT) : cleaned;
+				const indent = "  ".repeat(depth);
+				const lines: string[] = [];
+				if (skipped > 0) lines.push(`${indent}${theme.fg("muted", `... ${skipped} earlier items`)}`);
+				for (const item of toShow) {
+					lines.push(...renderItem(item, depth));
+				}
+				return lines;
+			};
+
+			// Render a single item, recursing into nested subagent results.
+			const renderItem = (item: DisplayItem, depth: number): string[] => {
+				const indent = "  ".repeat(depth);
+				if (item.type === "text") {
+					// Only show the first line at depth >= 1 — nested text is
+					// usually the child's intermediate narration and clutters
+					// the parent's view.
+					const text = depth > 0 ? item.text.split("\n")[0] : (expanded ? item.text : item.text.split("\n").slice(0, 3).join("\n"));
+					return [`${indent}${theme.fg("toolOutput", text)}`];
+				}
+				const head = `${indent}${theme.fg("muted", "→ ")}${formatToolCall(item.name, item.args, theme.fg.bind(theme))}`;
+				if (item.name !== "subagent" || !item.result) return [head];
+
+				const nestedDetails = item.result.details as SubagentDetails | undefined;
+				if (!nestedDetails || !nestedDetails.results || nestedDetails.results.length === 0) return [head];
+
+				const lines = [head];
+				const showHeaders = nestedDetails.mode !== "single" || nestedDetails.results.length > 1;
+				for (const r of nestedDetails.results) {
+					const childIndent = "  ".repeat(depth + 1);
+					if (showHeaders) {
+						const statusIcon =
+							r.exitCode === -1
+								? theme.fg("warning", "⏳")
+								: isFailedResult(r)
+									? theme.fg("error", "✗")
+									: theme.fg("success", "✓");
+						const stepLabel = r.step ? `step ${r.step}: ` : "";
+						lines.push(
+							`${childIndent}${theme.fg("muted", "─── ")}${stepLabel}${theme.fg("accent", r.agent)} ${statusIcon}`,
+						);
+					}
+					lines.push(...renderNested(r.messages, depth + 1, (r as any).partialResults));
+				}
+				return lines;
+			};
+
+			const renderDisplayItems = (items: DisplayItem[], limit?: number) => {
+				const normalized: DisplayItem[] = [];
+				for (const item of items) {
+					if (item.type === "text") {
+						const cleaned = cleanTextItem(item.text);
+						if (!cleaned) continue;
+						normalized.push({ type: "text", text: cleaned });
+					} else {
+						normalized.push(item);
+					}
+				}
+				const toShow = limit ? normalized.slice(-limit) : normalized;
+				const skipped = limit && normalized.length > limit ? normalized.length - limit : 0;
+				const lines: string[] = [];
+				if (skipped > 0) lines.push(theme.fg("muted", `... ${skipped} earlier items`));
+				for (const item of toShow) {
+					lines.push(...renderItem(item, 0));
+				}
+				return lines.join("\n");
 			};
 
 			if (details.mode === "single" && details.results.length === 1) {
 				const r = details.results[0];
 				const isError = isFailedResult(r);
 				const icon = isError ? theme.fg("error", "✗") : theme.fg("success", "✓");
-				const displayItems = getDisplayItems(r.messages);
+				const displayItems = getDisplayItems(r.messages, (r as any).partialResults);
 				const finalOutput = getFinalOutput(r.messages);
 
 				if (expanded) {
@@ -937,7 +1174,7 @@ export default function (pi: ExtensionAPI) {
 
 					for (const r of details.results) {
 						const rIcon = r.exitCode === 0 ? theme.fg("success", "✓") : theme.fg("error", "✗");
-						const displayItems = getDisplayItems(r.messages);
+						const displayItems = getDisplayItems(r.messages, (r as any).partialResults);
 						const finalOutput = getFinalOutput(r.messages);
 
 						container.addChild(new Spacer(1));
@@ -989,7 +1226,7 @@ export default function (pi: ExtensionAPI) {
 					theme.fg("accent", `${successCount}/${details.results.length} steps`);
 				for (const r of details.results) {
 					const rIcon = r.exitCode === 0 ? theme.fg("success", "✓") : theme.fg("error", "✗");
-					const displayItems = getDisplayItems(r.messages);
+					const displayItems = getDisplayItems(r.messages, (r as any).partialResults);
 					text += `\n\n${theme.fg("muted", `─── Step ${r.step}: `)}${theme.fg("accent", r.agent)} ${rIcon}`;
 					if (displayItems.length === 0) text += `\n${theme.fg("muted", "(no output)")}`;
 					else text += `\n${renderDisplayItems(displayItems, 5)}`;
@@ -1026,7 +1263,7 @@ export default function (pi: ExtensionAPI) {
 
 					for (const r of details.results) {
 						const rIcon = isFailedResult(r) ? theme.fg("error", "✗") : theme.fg("success", "✓");
-						const displayItems = getDisplayItems(r.messages);
+						const displayItems = getDisplayItems(r.messages, (r as any).partialResults);
 						const finalOutput = getFinalOutput(r.messages);
 
 						container.addChild(new Spacer(1));
@@ -1075,7 +1312,7 @@ export default function (pi: ExtensionAPI) {
 							: isFailedResult(r)
 								? theme.fg("error", "✗")
 								: theme.fg("success", "✓");
-					const displayItems = getDisplayItems(r.messages);
+					const displayItems = getDisplayItems(r.messages, (r as any).partialResults);
 					text += `\n\n${theme.fg("muted", "─── ")}${theme.fg("accent", r.agent)} ${rIcon}`;
 					if (displayItems.length === 0)
 						text += `\n${theme.fg("muted", r.exitCode === -1 ? "(running...)" : "(no output)")}`;

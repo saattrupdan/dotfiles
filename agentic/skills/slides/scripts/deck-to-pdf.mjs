@@ -12,9 +12,9 @@
 // Usage:
 //   node ~/.claude/skills/slides/scripts/deck-to-pdf.mjs <input.html> [output.pdf]
 //
-// Output defaults to:
-//   - <parent-dir>.pdf if input is .../<dir>/index.html
-//   - <basename>.pdf otherwise
+// Output defaults to a file alongside the input:
+//   - <input-dir>/<parent-dir>.pdf if input is .../<dir>/index.html (or deck.html)
+//   - <input-dir>/<basename>.pdf otherwise
 //
 // Dependencies:
 //   - playwright + chromium  (auto-installed into this script's folder if missing)
@@ -130,8 +130,11 @@ const { chromium } = await ensurePlaywright();
 
 const input = resolve(inputArg);
 const stem = basename(input, extname(input));
-const defaultName = (stem === 'index' ? basename(dirname(input)) : stem) + '.pdf';
-const output = resolve(outputArg ?? defaultName);
+// For .../<dir>/index.html or .../<dir>/deck.html, name the PDF after the
+// parent directory; otherwise use the input's basename.
+const useParent = stem === 'index' || stem === 'deck';
+const defaultName = (useParent ? basename(dirname(input)) : stem) + '.pdf';
+const output = outputArg ? resolve(outputArg) : join(dirname(input), defaultName);
 
 const PAGE_W = '13.333in';
 const PAGE_H = '7.5in';

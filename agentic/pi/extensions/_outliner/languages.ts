@@ -15,14 +15,46 @@ import JavaScript from "tree-sitter-javascript";
 // @ts-ignore
 import TypeScript from "tree-sitter-typescript";
 
-export type LanguageKind = "python" | "typescript" | "javascript" | "tsx" | "markdown" | "vue" | "fallback";
+export type LanguageKind =
+	| "python"
+	| "typescript"
+	| "javascript"
+	| "tsx"
+	| "markdown"
+	| "vue"
+	| "lua"
+	| "rust"
+	| "go"
+	| "shell"
+	| "sql"
+	| "css"
+	| "html"
+	| "json"
+	| "jsonl"
+	| "csv"
+	| "yaml"
+	| "toml"
+	| "fallback";
 
 export type LanguageInfo = {
 	kind: LanguageKind;
 	parserLanguage?: unknown;
 };
 
+const SHELL_BASENAMES = new Set([
+	".zshrc",
+	".bashrc",
+	".bash_profile",
+	".profile",
+	".zprofile",
+	".zshenv",
+	".bash_aliases",
+	".kshrc",
+]);
+
 export function detectLanguage(filePath: string): LanguageInfo {
+	const base = path.basename(filePath).toLowerCase();
+	if (SHELL_BASENAMES.has(base)) return { kind: "shell" };
 	const ext = path.extname(filePath).toLowerCase();
 	switch (ext) {
 		case ".py":
@@ -41,6 +73,40 @@ export function detectLanguage(filePath: string): LanguageInfo {
 		case ".md":
 		case ".markdown":
 			return { kind: "markdown" };
+		case ".lua":
+			return { kind: "lua" };
+		case ".rs":
+			return { kind: "rust" };
+		case ".go":
+			return { kind: "go" };
+		case ".sh":
+		case ".bash":
+		case ".zsh":
+		case ".ksh":
+			return { kind: "shell" };
+		case ".sql":
+			return { kind: "sql" };
+		case ".css":
+		case ".scss":
+		case ".sass":
+		case ".less":
+			return { kind: "css" };
+		case ".html":
+		case ".htm":
+			return { kind: "html" };
+		case ".json":
+			return { kind: "json" };
+		case ".jsonl":
+		case ".ndjson":
+			return { kind: "jsonl" };
+		case ".csv":
+		case ".tsv":
+			return { kind: "csv" };
+		case ".yaml":
+		case ".yml":
+			return { kind: "yaml" };
+		case ".toml":
+			return { kind: "toml" };
 		default:
 			return { kind: "fallback" };
 	}
