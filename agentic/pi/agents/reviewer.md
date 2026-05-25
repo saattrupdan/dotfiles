@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: Reviews recent changes for correctness, style, and scope. Read-only — produces a verdict and a list of issues, never edits.
-tools: read, search, bash, memory_index, memory_read, question
+tools: read, search, bash, memory_index, memory_read, question, copy_paste
 skills: [commit, python, fastapi, vue, sqlmodel, full-stack, slides, agent-browser]
 worktree: false
 refuse:

@@ -703,6 +703,55 @@ async function runSingleAgent(
 
 		currentResult.exitCode = exitCode;
 		if (wasAborted) throw new Error("Subagent was aborted");
+
+		// ── Write tool-result context for `copy_paste` ──────────────────────
+		// Build a map of toolCallId → toolName from assistant messages, then
+		// collect tool results and write them to the per-cwd context file.
+		const toolNameMap = new Map<string, string>();
+		for (const msg of currentResult.messages) {
+			if (msg.role === "assistant") {
+				for (const part of (msg as any).content ?? []) {
+					if (part.type === "toolCall") {
+						toolNameMap.set(part.id, part.name);
+					}
+				}
+			}
+		}
+		const contextEntries: {
+			toolCallId: string;
+			toolName: string;
+			content: string;
+			timestamp: string;
+		}[] = [];
+		for (const msg of currentResult.messages) {
+			if ((msg as any).role === "toolResult") {
+				const tr = msg as any;
+				const content = (tr.content ?? [])
+					.map((c: { type?: string; text?: string }) => (c.type === "text" ? c.text : ""))
+					.filter(Boolean)
+					.join("\n");
+				contextEntries.push({
+					toolCallId: tr.toolCallId,
+					toolName: toolNameMap.get(tr.toolCallId) ?? "unknown",
+					content,
+					timestamp: new Date().toISOString(),
+				});
+			}
+		}
+		if (contextEntries.length > 0) {
+			const contextsDir = path.join(
+				path.dirname(path.dirname(__dirname)),
+				"copy-paste-contexts",
+			);
+			try {
+				fs.mkdirSync(contextsDir, { recursive: true });
+				const encoded = encodeURIComponent(effectiveCwd ?? defaultCwd);
+				fs.writeFileSync(path.join(contextsDir, `${encoded}.json`), JSON.stringify(contextEntries, null, 2));
+			} catch {
+				/* silently ignore write failures — non-critical */
+			}
+		}
+
 		return currentResult;
 	} finally {
 		if (tmpPromptPath)
