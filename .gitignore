@@ -15,3 +15,10 @@
 
 # Node
 **/node_modules/
+
+# Pi agent memories — stored at ~/.pi/agent/memories (outside this repo by
+# design), but ignored here as a safety net in case anyone ever drops a copy
+# into the tree. Memories may contain private/local notes — keep them out.
+**/memories/
+agentic/pi/memories/
+.pi/agent/memories/

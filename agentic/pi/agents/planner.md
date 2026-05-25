@@ -1,7 +1,7 @@
 ---
 name: planner
 description: Produces concrete implementation plans for code changes. Can delegate fact-finding to the explorer subagent (code + web). Cannot edit files.
-tools: read, subagent
+tools: read, subagent, memory_index, memory_read, question
 skills: []
 worktree: false
 refuse:

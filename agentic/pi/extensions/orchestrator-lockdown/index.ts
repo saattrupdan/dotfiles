@@ -19,7 +19,15 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-const ALLOWED = new Set(["subagent", "question", "skill"]);
+const ALLOWED = new Set([
+	"subagent",
+	"question",
+	"skill",
+	"memory_index",
+	"memory_read",
+	"memory_save",
+	"memory_delete",
+]);
 
 /**
  * Walk a provider request payload and strip any `tools` array entries whose

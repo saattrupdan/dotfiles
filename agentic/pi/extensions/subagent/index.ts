@@ -23,7 +23,20 @@ import { type ExtensionAPI, getAgentDir, getMarkdownTheme, withFileMutationQueue
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
-import { createWorktree, findRepoRoot, mergeAndCleanup, type WorktreeCleanupResult } from "./worktree.ts";
+import {
+	createWorktree,
+	findRepoRoot,
+	mergeAndCleanup,
+	sweepOrphanedSubagentArtifacts,
+	type WorktreeCleanupResult,
+} from "./worktree.ts";
+import {
+	encodeResponse,
+	tryParseRequest,
+	type QuestionItem,
+	type QuestionResponse,
+} from "../_question_protocol/protocol.ts";
+import { dispatchAsk } from "../question/index.ts";
 
 const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
@@ -356,6 +369,16 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 
 type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
 
+/**
+ * Fulfil a question request coming up from a child subagent. The caller
+ * decides where the answer comes from (orchestrator's ctx.ui, or forwarded
+ * further up the chain via this process's own stdin/stderr).
+ */
+export type QuestionFulfiller = (
+	questions: QuestionItem[],
+	signal: AbortSignal | undefined,
+) => Promise<{ answers?: string[]; error?: string }>;
+
 async function runSingleAgent(
 	defaultCwd: string,
 	agents: AgentConfig[],
@@ -366,6 +389,7 @@ async function runSingleAgent(
 	signal: AbortSignal | undefined,
 	onUpdate: OnUpdateCallback | undefined,
 	makeDetails: (results: SingleResult[]) => SubagentDetails,
+	fulfillQuestion: QuestionFulfiller | undefined,
 	taskSkills?: string[],
 ): Promise<SingleResult> {
 	const agent = agents.find((a) => a.name === agentName);
@@ -461,6 +485,10 @@ async function runSingleAgent(
 		if (!repoRoot) {
 			console.error("subagent: worktree requested but cwd is not a git repo; running in-place.");
 		} else {
+			// Reclaim any orphaned subagent worktrees/branches left behind by
+			// previous pi runs that died before they could clean up. Cheap,
+			// idempotent, runs at most once per repo per process.
+			await sweepOrphanedSubagentArtifacts(repoRoot);
 			try {
 				worktreeHandle = await createWorktree(worktreeCwd, agent.name);
 				effectiveCwd = worktreeHandle.worktreePath;
@@ -516,12 +544,22 @@ async function runSingleAgent(
 
 		const exitCode = await new Promise<number>((resolve) => {
 			const invocation = getPiInvocation(args);
+			// stdin stays "ignore" (= /dev/null in the child) so the child
+			// never blocks on a startup stdin read. The question bridge uses
+			// an extra pipe on fd 3 for parent→child responses; the child
+			// finds it via PI_QUESTION_RESPONSE_FD. Child→parent requests
+			// still travel on stderr as tagged lines.
 			const proc = spawn(invocation.command, invocation.args, {
 				cwd: effectiveCwd ?? defaultCwd,
 				shell: false,
-				stdio: ["ignore", "pipe", "pipe"],
-				env: { ...process.env, PI_SUBAGENT_CHILD: "1" },
+				stdio: ["ignore", "pipe", "pipe", "pipe"],
+				env: {
+					...process.env,
+					PI_SUBAGENT_CHILD: "1",
+					PI_QUESTION_RESPONSE_FD: "3",
+				},
 			});
+			const responseChannel = proc.stdio[3] as NodeJS.WritableStream | null;
 			let buffer = "";
 
 			const processLine = (line: string) => {
@@ -592,12 +630,57 @@ async function runSingleAgent(
 				for (const line of lines) processLine(line);
 			});
 
+			// Stderr carries both real diagnostics and (when the child calls the
+			// `question` tool) tagged protocol lines we must intercept. Buffer
+			// by line; route protocol lines to fulfillQuestion, append the rest
+			// to the visible stderr.
+			let stderrBuffer = "";
+			const handleStderrLine = (line: string) => {
+				const req = tryParseRequest(line);
+				if (!req) {
+					currentResult.stderr += `${line}\n`;
+					return;
+				}
+				if (!fulfillQuestion) {
+					const res: QuestionResponse = {
+						id: req.id,
+						error: "No question handler available in this parent process.",
+					};
+					try {
+						responseChannel?.write(encodeResponse(res));
+					} catch {
+						/* ignore */
+					}
+					return;
+				}
+				void (async () => {
+					let out: { answers?: string[]; error?: string };
+					try {
+						out = await fulfillQuestion(req.questions, signal);
+					} catch (err) {
+						out = { error: `bridge failed: ${(err as Error).message}` };
+					}
+					const res: QuestionResponse = { id: req.id, ...out };
+					try {
+						responseChannel?.write(encodeResponse(res));
+					} catch {
+						/* child may have exited */
+					}
+				})();
+			};
 			proc.stderr.on("data", (data) => {
-				currentResult.stderr += data.toString();
+				stderrBuffer += data.toString();
+				let nl = stderrBuffer.indexOf("\n");
+				while (nl !== -1) {
+					handleStderrLine(stderrBuffer.slice(0, nl));
+					stderrBuffer = stderrBuffer.slice(nl + 1);
+					nl = stderrBuffer.indexOf("\n");
+				}
 			});
 
 			proc.on("close", (code) => {
 				if (buffer.trim()) processLine(buffer);
+				if (stderrBuffer.trim()) handleStderrLine(stderrBuffer);
 				resolve(code ?? 0);
 			});
 
@@ -702,6 +785,12 @@ export default function (pi: ExtensionAPI) {
 			const agents = discovery.agents;
 			const confirmProjectAgents = params.confirmProjectAgents ?? true;
 
+			// Builds the per-call question fulfiller used when a child subagent
+			// emits a PI_QUESTION_REQUEST: defers to ctx.ui in the orchestrator,
+			// or forwards up the chain when this process is itself a subagent.
+			const fulfillQuestion: QuestionFulfiller = (questions, sig) =>
+				dispatchAsk(ctx, questions, sig);
+
 			const hasChain = (params.chain?.length ?? 0) > 0;
 			const hasTasks = (params.tasks?.length ?? 0) > 0;
 			const hasSingle = Boolean(params.agent && params.task);
@@ -787,6 +876,7 @@ export default function (pi: ExtensionAPI) {
 						signal,
 						chainUpdate,
 						makeDetails("chain"),
+						fulfillQuestion,
 						step.skills,
 					);
 					results.push(result);
@@ -866,6 +956,7 @@ export default function (pi: ExtensionAPI) {
 							}
 						},
 						makeDetails("parallel"),
+						fulfillQuestion,
 						t.skills,
 					);
 					allResults[index] = result;
@@ -903,6 +994,7 @@ export default function (pi: ExtensionAPI) {
 					signal,
 					onUpdate,
 					makeDetails("single"),
+					fulfillQuestion,
 					params.skills,
 				);
 				const isError = isFailedResult(result);

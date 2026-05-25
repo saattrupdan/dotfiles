@@ -12,7 +12,7 @@
  * mutex so that parallel subagents don't race on `.git/index`.
  */
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -64,6 +64,96 @@ async function git(cwd: string, args: string[]): Promise<string> {
 	return r.stdout.trim();
 }
 
+/**
+ * Live registry of worktrees this process created and hasn't cleaned up yet.
+ * Used by the signal/exit handlers below to release leftover worktrees and
+ * branches if the parent pi process is killed abruptly (Ctrl+C twice, SIGTERM,
+ * terminal close, crash) before `mergeAndCleanup` runs.
+ */
+const activeWorktrees = new Set<WorktreeHandle>();
+
+/** Best-effort synchronous teardown — must be safe to call from signal/exit handlers. */
+function cleanupHandleSync(h: WorktreeHandle): void {
+	const opts = { cwd: h.parentRepoRoot, stdio: "ignore" as const };
+	// Try the polite path first.
+	spawnSync("git", ["worktree", "remove", "--force", h.worktreePath], opts);
+	// If that didn't fully work (locked, in-use, missing), nuke the dir and
+	// let `prune` reconcile the worktree admin records.
+	try {
+		fs.rmSync(h.worktreePath, { recursive: true, force: true });
+	} catch {
+		/* ignore */
+	}
+	spawnSync("git", ["worktree", "prune"], opts);
+	spawnSync("git", ["branch", "-D", h.branchName], opts);
+	// Remove the mkdtemp parent dir.
+	try {
+		fs.rmSync(path.dirname(h.worktreePath), { recursive: true, force: true });
+	} catch {
+		/* ignore */
+	}
+}
+
+let exitHandlersRegistered = false;
+function registerExitHandlers(): void {
+	if (exitHandlersRegistered) return;
+	exitHandlersRegistered = true;
+
+	const drain = () => {
+		for (const h of activeWorktrees) {
+			try {
+				cleanupHandleSync(h);
+			} catch {
+				/* ignore */
+			}
+		}
+		activeWorktrees.clear();
+	};
+
+	process.on("exit", drain);
+	for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+		process.on(sig, () => {
+			drain();
+			// Re-raise default behavior so the parent sees the correct exit code.
+			process.exit(sig === "SIGINT" ? 130 : sig === "SIGTERM" ? 143 : 129);
+		});
+	}
+}
+
+/**
+ * Reclaim worktrees and branches left over from previous pi runs that died
+ * before they could clean up. Safe to run with sibling pi sessions active:
+ *   - `git worktree prune` only removes admin records for worktree directories
+ *     that no longer exist on disk, so it can't disturb a live sibling.
+ *   - Branches are only deleted when no worktree is currently linked to them
+ *     (checked via `worktree list --porcelain`).
+ *
+ * Tracked per-repo so it runs at most once per process per repo.
+ */
+const sweptRepos = new Set<string>();
+export async function sweepOrphanedSubagentArtifacts(repoRoot: string): Promise<void> {
+	if (sweptRepos.has(repoRoot)) return;
+	sweptRepos.add(repoRoot);
+	try {
+		await execGit(repoRoot, ["worktree", "prune"]);
+		const wtList = await execGit(repoRoot, ["worktree", "list", "--porcelain"]);
+		const linkedBranches = new Set<string>();
+		for (const line of wtList.stdout.split("\n")) {
+			const m = /^branch refs\/heads\/(.+)$/.exec(line.trim());
+			if (m) linkedBranches.add(m[1]);
+		}
+		const brList = await execGit(repoRoot, ["for-each-ref", "--format=%(refname:short)", "refs/heads/subagent/"]);
+		if (brList.code !== 0) return;
+		for (const raw of brList.stdout.split("\n")) {
+			const branch = raw.trim();
+			if (!branch || linkedBranches.has(branch)) continue;
+			await execGit(repoRoot, ["branch", "-D", branch]);
+		}
+	} catch {
+		/* best-effort */
+	}
+}
+
 /** Serialize merges per-repo so parallel subagents don't fight over the index. */
 const repoLocks = new Map<string, Promise<unknown>>();
 export function withRepoMergeLock<T>(repoRoot: string, fn: () => Promise<T>): Promise<T> {
@@ -74,6 +164,73 @@ export function withRepoMergeLock<T>(repoRoot: string, fn: () => Promise<T>): Pr
 		next.catch(() => {}),
 	);
 	return next;
+}
+
+/** Stream `git <args>` stdout straight to a file (binary-safe). */
+function gitToFile(cwd: string, args: string[], filePath: string): Promise<ExecResult> {
+	return new Promise((resolve) => {
+		const out = fs.createWriteStream(filePath);
+		const proc = spawn("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+		let stderr = "";
+		proc.stdout.pipe(out);
+		proc.stderr.on("data", (d) => {
+			stderr += d.toString();
+		});
+		proc.on("close", (code) => {
+			out.end(() => resolve({ code: code ?? 0, stdout: "", stderr }));
+		});
+		proc.on("error", (err) => {
+			out.end(() => resolve({ code: 1, stdout: "", stderr: stderr + String(err) }));
+		});
+	});
+}
+
+/**
+ * Capture all changes in `worktreePath` (tracked modifications, additions,
+ * deletions, and untracked files) as a binary-safe patch against `baseSha`,
+ * then apply it to the parent repo with 3-way merge to tolerate parent HEAD
+ * having advanced since the worktree was created.
+ */
+async function applyUncommittedChanges(
+	worktreePath: string,
+	parentRepoRoot: string,
+	baseSha: string,
+): Promise<{ ok: boolean; empty: boolean; error?: string }> {
+	const addRes = await execGit(worktreePath, ["add", "-A"]);
+	if (addRes.code !== 0) {
+		return { ok: false, empty: false, error: `git add -A failed: ${addRes.stderr.trim()}` };
+	}
+
+	const patchPath = path.join(
+		os.tmpdir(),
+		`pi-subagent-patch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.patch`,
+	);
+	try {
+		const diffRes = await gitToFile(
+			worktreePath,
+			["diff", "--cached", "--binary", "--no-color", baseSha],
+			patchPath,
+		);
+		if (diffRes.code !== 0) {
+			return { ok: false, empty: false, error: `git diff failed: ${diffRes.stderr.trim()}` };
+		}
+		const stat = await fs.promises.stat(patchPath).catch(() => null);
+		if (!stat || stat.size === 0) {
+			return { ok: true, empty: true };
+		}
+		const applyRes = await execGit(parentRepoRoot, [
+			"apply",
+			"--3way",
+			"--whitespace=nowarn",
+			patchPath,
+		]);
+		if (applyRes.code !== 0) {
+			return { ok: false, empty: false, error: applyRes.stderr.trim() || applyRes.stdout.trim() };
+		}
+		return { ok: true, empty: false };
+	} finally {
+		await fs.promises.unlink(patchPath).catch(() => {});
+	}
 }
 
 /** Detect if `cwd` is inside a git work tree and return its top-level. */
@@ -106,7 +263,10 @@ export async function createWorktree(parentCwd: string, agentName: string): Prom
 
 	await git(repoRoot, ["worktree", "add", "-b", branchName, worktreePath, baseSha]);
 
-	return { parentRepoRoot: repoRoot, worktreePath, branchName, baseSha };
+	const handle: WorktreeHandle = { parentRepoRoot: repoRoot, worktreePath, branchName, baseSha };
+	registerExitHandlers();
+	activeWorktrees.add(handle);
+	return handle;
 }
 
 /**
@@ -127,8 +287,22 @@ export async function mergeAndCleanup(handle: WorktreeHandle): Promise<WorktreeC
 			// Did the subagent actually produce any commits?
 			const headSha = await git(parentRepoRoot, ["rev-parse", branchName]).catch(() => baseSha);
 			if (headSha === baseSha) {
-				skipped = true;
-				messages.push(`Worktree branch ${branchName} had no new commits; nothing to merge.`);
+				// No commits — but the subagent may have left uncommitted
+				// changes in the working tree (e.g. when explicitly asked
+				// not to commit). Capture those as a patch and apply them
+				// to the parent so the work isn't discarded.
+				const applied = await applyUncommittedChanges(worktreePath, parentRepoRoot, baseSha);
+				if (applied.empty) {
+					skipped = true;
+					messages.push(`Worktree branch ${branchName} had no new commits or changes; nothing to propagate.`);
+				} else if (applied.ok) {
+					merged = true;
+					messages.push(`Propagated uncommitted worktree changes from ${branchName} to parent (no commit).`);
+				} else {
+					messages.push(
+						`Failed to apply uncommitted worktree changes from ${branchName}: ${applied.error ?? "unknown error"}`,
+					);
+				}
 			} else {
 				const r = await execGit(parentRepoRoot, [
 					"merge",
@@ -152,10 +326,22 @@ export async function mergeAndCleanup(handle: WorktreeHandle): Promise<WorktreeC
 			messages.push(`Merge error: ${(err as Error).message}`);
 		}
 
-		// Always remove the worktree.
+		// Always remove the worktree. If git's own command fails (locked file,
+		// filesystem race, etc.), fall back to nuking the directory and
+		// running `worktree prune` so admin records still get reconciled.
 		const rmRes = await execGit(parentRepoRoot, ["worktree", "remove", "--force", worktreePath]);
 		if (rmRes.code !== 0) {
-			messages.push(`Failed to remove worktree ${worktreePath}: ${rmRes.stderr.trim() || rmRes.stdout.trim()}`);
+			try {
+				await fs.promises.rm(worktreePath, { recursive: true, force: true });
+			} catch {
+				/* ignore */
+			}
+			const pruneRes = await execGit(parentRepoRoot, ["worktree", "prune"]);
+			if (pruneRes.code !== 0) {
+				messages.push(
+					`Failed to remove worktree ${worktreePath}: ${rmRes.stderr.trim() || rmRes.stdout.trim()}`,
+				);
+			}
 		}
 
 		// Delete the temp branch (force, since it may be unmerged on failure).
@@ -171,6 +357,7 @@ export async function mergeAndCleanup(handle: WorktreeHandle): Promise<WorktreeC
 			/* ignore */
 		}
 
+		activeWorktrees.delete(handle);
 		return { merged, skipped, message: messages.join(" ") };
 	});
 }

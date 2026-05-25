@@ -1,7 +1,7 @@
 ---
 name: explorer
 description: Read-only locator for code and the web. Returns paths, line ranges, and tight summaries. Cannot edit or implement.
-tools: code_tree, search, read, web_fetch, web_browse, web_search
+tools: code_tree, search, read, web_fetch, web_browse, web_search, memory_index, memory_read, question
 skills: []
 worktree: false
 refuse:
