@@ -1,25 +1,28 @@
 /**
  * `web_fetch` tool.
  *
- * Fetches an HTTP(S) URL and returns its content collapsed into the smallest
- * useful text form. HTML is stripped to readable text (scripts/styles/nav
- * boilerplate removed), then collapsed to single-newline-separated paragraphs.
- * Non-HTML responses (JSON, plain text) are returned as-is, truncated.
+ * Fetches an HTTP(S) URL and converts it to Markdown via docling — which
+ * handles HTML, PDF, DOCX, PPTX, images, and more. Always returns Markdown.
+ *
+ * Saves the output to a cache file under ~/.pi/cache/web-fetch/ and returns
+ * the path in `details.path`. The agent can then use `read` on that path to
+ * get an outline and navigate sections individually.
  *
  * Token efficiency:
- *  - Drops <script>, <style>, <noscript>, <svg>, <head>, comments.
- *  - Decodes entities, collapses whitespace.
  *  - Hard cap on output size; agent can pass `max_chars` to override.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { mkdtemp, rm, readFile, writeFile, mkdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { spawn } from "node:child_process";
 
 const DEFAULT_MAX_CHARS = 20_000;
 const HARD_MAX_CHARS = 100_000;
-const DEFAULT_UA =
-	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36";
 
 const Params = Type.Object({
 	url: Type.String({ description: "URL to fetch (http/https)." }),
@@ -31,47 +34,17 @@ const Params = Type.Object({
 			default: DEFAULT_MAX_CHARS,
 		}),
 	),
-	raw: Type.Optional(
-		Type.Boolean({
-			description: "If true, return the raw response body without HTML stripping. Default false.",
-			default: false,
-		}),
-	),
 });
 
-function decodeEntities(s: string): string {
-	return s
-		.replace(/&nbsp;/g, " ")
-		.replace(/&amp;/g, "&")
-		.replace(/&lt;/g, "<")
-		.replace(/&gt;/g, ">")
-		.replace(/&quot;/g, '"')
-		.replace(/&#39;/g, "'")
-		.replace(/&#x27;/g, "'")
-		.replace(/&apos;/g, "'")
-		.replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
-		.replace(/&#x([0-9a-fA-F]+);/g, (_, n) => String.fromCodePoint(parseInt(n, 16)));
+const CACHE_DIR = join(tmpdir(), "pi-web-fetch-cache");
+
+function ensureCacheDir(): void {
+	try { mkdir(CACHE_DIR, { recursive: true }); } catch { /* ignore */ }
 }
 
-function htmlToText(html: string): string {
-	let s = html;
-	// Strip non-content blocks wholesale.
-	s = s.replace(/<!--[\s\S]*?-->/g, "");
-	s = s.replace(/<(script|style|noscript|svg|head|template)\b[^>]*>[\s\S]*?<\/\1>/gi, "");
-	// Block elements → newline so paragraphs survive.
-	s = s.replace(
-		/<\/(p|div|section|article|header|footer|main|nav|aside|li|tr|h[1-6]|blockquote|pre|br)>/gi,
-		"\n",
-	);
-	s = s.replace(/<br\s*\/?>/gi, "\n");
-	// Strip remaining tags.
-	s = s.replace(/<[^>]+>/g, "");
-	s = decodeEntities(s);
-	// Collapse whitespace.
-	s = s.replace(/[ \t]+/g, " ");
-	s = s.replace(/\n[ \t]+/g, "\n");
-	s = s.replace(/\n{3,}/g, "\n\n");
-	return s.trim();
+function cachePath(url: string): string {
+	const hash = createHash("sha256").update(url).digest("hex").slice(0, 16);
+	return join(CACHE_DIR, `${hash}.md`);
 }
 
 function truncate(s: string, max: number): { text: string; truncated: boolean } {
@@ -79,39 +52,76 @@ function truncate(s: string, max: number): { text: string; truncated: boolean } 
 	return { text: `${s.slice(0, max)}\n[truncated ${s.length - max} chars]`, truncated: true };
 }
 
+function runDocling(outputDir: string, url: string, signal?: AbortSignal): Promise<{ stdout: string; stderr: string; status: number }> {
+	return new Promise((resolve, reject) => {
+		const proc = spawn("docling", ["--to", "md", "--device", "auto", "--output", outputDir, url], {
+			stdio: ["inherit", "pipe", "pipe"],
+		});
+		const out: Buffer[] = [];
+		const err: Buffer[] = [];
+		proc.stdout.on("data", (d: Buffer) => out.push(d));
+		proc.stderr.on("data", (d: Buffer) => err.push(d));
+		proc.on("close", (code) => resolve({ stdout: Buffer.concat(out).toString(), stderr: Buffer.concat(err).toString(), status: code ?? 1 }));
+		proc.on("error", (e) => reject(e));
+		if (signal) {
+			signal.addEventListener("abort", () => proc.kill());
+		}
+	});
+}
+
 export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "web_fetch",
 		label: "web fetch",
 		description:
-			"Fetch an HTTP(S) URL and return its body as compact text. HTML is stripped to readable paragraphs (scripts/styles/nav/svg dropped). Output is hard-capped — pass `max_chars` to raise. If you need to navigate (login, click, JS-rendered pages), use `web_browse` instead.",
+			"Fetch an HTTP(S) URL and convert it to Markdown via docling. Handles HTML, PDF, DOCX, PPTX, images, and more. Saves to a cache file and returns the path — use `read` on the returned path to get an outline and navigate sections. Output is hard-capped — pass `max_chars` to raise. For interactive/JS-heavy pages, use `web_browse` instead.",
 		parameters: Params,
 
 		async execute(_toolCallId, params, signal) {
 			const max = Math.min(params.max_chars ?? DEFAULT_MAX_CHARS, HARD_MAX_CHARS);
+			ensureCacheDir();
+			const filePath = cachePath(params.url);
+
+			// If cache already exists, return it directly (skip docling).
 			try {
-				const res = await fetch(params.url, {
-					signal,
-					redirect: "follow",
-					headers: {
-						"User-Agent": DEFAULT_UA,
-						Accept: "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
-						"Accept-Language": "en-US,en;q=0.9",
-					},
-				});
-				const contentType = res.headers.get("content-type") ?? "";
-				const body = await res.text();
-				const isHtml = /text\/html|application\/xhtml/i.test(contentType) || /^\s*<(!DOCTYPE|html)/i.test(body);
-				const processed = params.raw || !isHtml ? body : htmlToText(body);
-				const { text, truncated } = truncate(processed, max);
-				const header =
-					`# ${params.url}  [${res.status} ${contentType.split(";")[0] || "unknown"}` +
-					`${isHtml && !params.raw ? ", stripped" : ""}${truncated ? ", truncated" : ""}]`;
-				return {
-					content: [{ type: "text", text: `${header}\n${text}` }],
-					details: { url: params.url, status: res.status, contentType, bytes: body.length, truncated },
-					isError: !res.ok,
-				};
+				const cached = await readFile(filePath, "utf8");
+				if (cached.length > 0) {
+					const { text, truncated } = truncate(cached, max);
+					const header = `# ${params.url}  [cached]`;
+					return {
+						content: [{ type: "text", text: `${header}\n${text}` }],
+						details: { url: params.url, path: filePath, cached: true, truncated },
+						isError: false,
+					};
+				}
+			} catch { /* cache miss, continue */ }
+
+			try {
+				// Delegate all fetching + conversion to docling CLI — handles HTML,
+				// PDF, DOCX, PPTX, images, etc. Always exports to Markdown.
+				const tmpDir = await mkdtemp(join(tmpdir(), "docling-"));
+				try {
+					const { stdout, stderr, status } = await runDocling(tmpDir, params.url, signal);
+
+					// Read the output file: docling writes `file.md` for URLs,
+					// or `<basename>.md` for local files.
+					const mdFile = join(tmpDir, "file.md");
+					let body = "";
+					try { body = await readFile(mdFile, "utf8"); } catch { /* ignore */ }
+
+					// Write to cache so the agent can `read` it for outlines.
+					await writeFile(filePath, body, "utf8");
+
+					const { text, truncated } = truncate(body, max);
+					const header = `# ${params.url}  [${status === 0 ? "ok" : "error"}]`;
+					return {
+						content: [{ type: "text", text: `${header}\n${text}` }],
+						details: { url: params.url, path: filePath, truncated },
+						isError: status !== 0,
+					};
+				} finally {
+					await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+				}
 			} catch (err) {
 				const msg = (err as Error).message || String(err);
 				return {

@@ -124,6 +124,8 @@ function formatResultsMarkdown(query: string, results: SearchResult[]): string {
 		lines.push(`${i + 1}. **${r.title}** — <${r.url}>`);
 		if (r.snippet) lines.push(`   ${r.snippet}`);
 	});
+	lines.push("");
+	lines.push("Note: use the \`web_fetch\` tool to read any of these URLs.");
 	return lines.join("\n");
 }
 
