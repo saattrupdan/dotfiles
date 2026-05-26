@@ -21,8 +21,9 @@ Each subdirectory under `extensions/` is a self-contained pi extension. They
 fall into three categories:
 
 - **Tools the agent calls** — `read`, `skill`, `search`, `code-tree`,
-  `web-fetch`, `web-search`, `web-browse`, `subagent`.
-- **Behavioural guardrails** (no tools registered) — `no-repeat`.
+  `web-fetch`, `web-search`, `web-browse`, `subagent`, `memory_index`,
+  `memory_read`, `memory_save`, `memory_delete`, `memory_suggest`.
+- **Behavioural guardrails** (no tools registered) — `no-repeat`, `memory-audit`.
 - **Shared internal library** — `_outliner` (consumed by `read` and `search`).
 
 ### `read`
@@ -129,6 +130,54 @@ short nudge telling it to do something different. Catches the common "loop
 forever on the same failing call" failure mode and saves tokens. Runs in
 both the orchestrator and each subagent process (per-process state).
 "Consecutive" means: not separated by any other tool call.
+
+### `memory`
+
+Persistent markdown notes the agent can write to and recall across
+conversations. Memories are stored as plain markdown files under
+`~/.pi/agent/memories/`:
+
+```
+~/.pi/agent/memories/
+├── system/                    # system-wide, available to every agent run
+│   └── <slug>.md
+└── projects/
+    └── <project-id>/          # scoped to a git repo
+        └── <slug>.md
+```
+
+Five tools:
+
+- **`memory_index`** — list all memories (system + project) with one-line
+  descriptions. Call this first to discover what's available.
+- **`memory_read`** — fetch the full body of one memory by scope + name.
+- **`memory_save`** — create or overwrite a memory. Body is markdown; frontmatter
+  (name + description) is added automatically.
+- **`memory_delete`** — remove a memory.
+- **`memory_suggest`** — fuzzy keyword search across all memories. Returns
+  top-k results sorted by relevance score. Scores name (×3) > description (×1.5)
+  > body (×1), with a bonus for near-matches via Levenshtein distance.
+
+Memory files use frontmatter with `name`, `description`, `created_at`, and
+`accessed_at` fields. `accessed_at` is bumped on every `memory_read`; `memory_save`
+runs an LRU sweep so a scope never exceeds ~50 files or 256 KB.
+
+### `memory-audit`
+
+Dual-purpose extension:
+
+1. **Background audit** (fires on `turn_end`): spawns a background process that
+   scans new conversation lines since the last audit and saves anything worth
+   remembering as a memory. Cooldown: 5 minutes between runs.
+
+2. **Auto-injection** (fires on `input`): on each user message, performs fuzzy
+   keyword search across all memories and prepends the top-5 results to the user
+   message. This injects memories into the conversation context without modifying
+   the system prompt (preserving prefix caching).
+
+Both use the same fuzzy keyword search logic: tokenize query and memory text
+(lowercase, strip stop words, split on non-alphanumeric), score by token overlap
+with Levenshtein bonus for near-matches.
 
 ### `_outliner` (library, not a tool)
 

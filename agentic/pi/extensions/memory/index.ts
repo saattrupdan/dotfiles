@@ -22,11 +22,12 @@
  * notes is fine. The directory lives outside any repo by design; see the
  * project README for the gitignore safety net.
  *
- * Four tools are registered:
+ * Five tools are registered:
  *   • memory_index  — list all memories (system + project) with descriptions.
  *   • memory_read   — fetch the body of one memory.
  *   • memory_save   — create or overwrite a memory.
  *   • memory_delete — remove a memory.
+ *   • memory_suggest — fuzzy keyword search across all memories, returns top-k by relevance.
  *
  * Memory files use this frontmatter so the index can summarise them cheaply:
  *
@@ -320,6 +321,108 @@ const DeleteParams = Type.Object({
 	name: Type.String({ description: "Memory slug to delete." }),
 });
 
+const SuggestParams = Type.Object({
+	query: Type.String({
+		description: "The query text to search for relevant memories.",
+	}),
+	top_k: Type.Optional(
+		Type.Number({ minimum: 1, maximum: 20, description: "Max results to return. Defaults to 5." }),
+	),
+});
+
+// ---------------------------------------------------------------------------
+// Fuzzy keyword search helpers
+// ---------------------------------------------------------------------------
+
+const STOP_WORDS = new Set([
+	"a","an","the","and","or","but","in","on","at","to","for",
+	"of","with","by","from","is","it","this","that","these","those",
+	"was","were","been","be","have","has","had","do","does","did",
+	"will","would","could","should","may","might","can","shall",
+	"not","no","nor","if","then","than","too","very","just",
+	"about","above","after","again","all","am","any","are",
+	"as","because","before","between","both","during","each",
+	"few","further","got","here","how","i","into","its","let",
+	"more","most","much","my","new","now","off","once","only",
+	"our","out","over","own","same","she","so","some","still",
+	"such","take","them","there","they","through","under",
+	"up","us","use","used","using","what","when","where",
+	"which","who","whom","why","you","your",
+]);
+
+function tokenize(text: string): string[] {
+	return text
+		.toLowerCase()
+		.replace(/[^a-z0-9\-_]/g, " ")
+		.split(/\s+/)
+		.filter((w) => w.length > 1 && !STOP_WORDS.has(w));
+}
+
+function levenshtein(a: string, b: string): number {
+	const m = a.length;
+	const n = b.length;
+	if (m === 0) return n;
+	if (n === 0) return m;
+	const dp: number[][] = Array.from({ length: m + 1 }, (_, i) =>
+		Array.from({ length: n + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)),
+	);
+	for (let i = 1; i <= m; i++) {
+		for (let j = 1; j <= n; j++) {
+			dp[i][j] = Math.min(
+				dp[i - 1][j] + 1,
+				dp[i][j - 1] + 1,
+				dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+			);
+		}
+	}
+	return dp[m][n];
+}
+
+function fuzzyScore(queryTokens: string[], memoryTokens: string[]): number {
+	if (queryTokens.length === 0) return 0;
+
+	let score = 0;
+	let exactMatches = 0;
+
+	for (const qt of queryTokens) {
+		let bestExact = 0;
+		let bestFuzzy = 0;
+		for (const mt of memoryTokens) {
+			if (qt === mt) {
+				bestExact = Math.max(bestExact, 1);
+			} else {
+				const dist = levenshtein(qt, mt);
+				const maxLen = Math.max(qt.length, mt.length);
+				const sim = maxLen === 0 ? 0 : 1 - dist / maxLen;
+				if (sim > 0.7) {
+					bestFuzzy = Math.max(bestFuzzy, sim * 0.5);
+				}
+			}
+		}
+		if (bestExact > 0) {
+			exactMatches++;
+			score += bestExact;
+		} else if (bestFuzzy > 0) {
+			score += bestFuzzy;
+		}
+	}
+
+	// Bonus: ratio of exact matches
+	if (exactMatches > 0) {
+		score *= (1 + exactMatches * 0.3);
+	}
+
+	return score;
+}
+
+interface Suggestion {
+	scope: "system" | "project";
+	name: string;
+	description: string;
+	score: number;
+	body?: string;
+}
+
 export default function (pi: ExtensionAPI) {
 	// -----------------------------------------------------------------------
 	// memory_index
@@ -452,6 +555,102 @@ export default function (pi: ExtensionAPI) {
 			const name = args?.name ? String(args.name) : "...";
 			return new Text(
 				`${theme.fg("toolTitle", theme.bold("memory_save"))} ${theme.fg("accent", `${scope}/${name}`)}`,
+				0,
+				0,
+			);
+		},
+	});
+
+	// -----------------------------------------------------------------------
+	// memory_suggest
+	// -----------------------------------------------------------------------
+	const cachedMemories: Suggestion[] = [];
+
+	function collectMemories(): Suggestion[] {
+		if (cachedMemories.length > 0) return cachedMemories;
+		for (const scope of ["system", "project"] as const) {
+			for (const entry of listScope(scope, ctx.cwd)) {
+				try {
+					const raw = fs.readFileSync(entry.filePath, "utf-8");
+					const { meta, body } = parseFrontmatter(raw);
+					cachedMemories.push({
+						scope,
+						name: entry.name,
+						description: meta.description ?? "",
+						score: 0,
+						body,
+					});
+				} catch {
+					cachedMemories.push({
+						scope,
+						name: entry.name,
+						description: "",
+						score: 0,
+					});
+				}
+			}
+		}
+		return cachedMemories;
+	}
+
+	pi.registerTool({
+		name: "memory_suggest",
+		label: "memory_suggest",
+		description:
+		"Find relevant memories using fuzzy keyword search. " +
+		"Returns memories sorted by relevance score. " +
+		"Use this to discover memories related to a topic or query.",
+		parameters: SuggestParams,
+
+		async execute(_id, { query, top_k = 5 }, _signal, _onUpdate, ctx) {
+			const memories = collectMemories();
+			const queryTokens = tokenize(query);
+			if (queryTokens.length === 0) {
+				return { content: [{ type: "text", text: "No meaningful tokens in query." }] };
+			}
+
+			const scored = memories.map((m) => {
+				const nameTokens = tokenize(m.name);
+				const descTokens = tokenize(m.description);
+				const bodyTokens = m.body ? tokenize(m.body) : [];
+
+				// Weighted scoring: name > description > body
+				const nameScore = fuzzyScore(queryTokens, nameTokens) * 3;
+				const descScore = fuzzyScore(queryTokens, descTokens) * 1.5;
+				const bodyScore = fuzzyScore(queryTokens, bodyTokens);
+
+				return { ...m, score: nameScore + descScore + bodyScore };
+			});
+
+			const top = scored
+				.filter((m) => m.score > 0)
+				.sort((a, b) => b.score - a.score)
+				.slice(0, top_k);
+
+			if (top.length === 0) {
+				return { content: [{ type: "text", text: "No relevant memories found." }] };
+			}
+
+			const results = top.map(
+				(m) =>
+					`- \`${m.scope}/${m.name}\` (score: ${m.score.toFixed(2)}) — ${m.description}\n${m.body ? `  ${m.body.trim().split("\n").slice(0, 3).join("\n  ")}\n` : ""}`,
+			);
+
+			return {
+				content: [
+					{
+						type: "text",
+						text: `Relevant memories for "${query}":\n\n${results.join("\n")}`,
+					},
+				],
+			};
+		},
+
+		renderCall(args, theme) {
+			const query = args?.query ? String(args.query) : "...";
+			const topK = args?.top_k ? String(args.top_k) : "5";
+			return new Text(
+				`${theme.fg("toolTitle", theme.bold("memory_suggest"))} "${theme.fg("accent", query)}" top_k=${topK}`,
 				0,
 				0,
 			);
