@@ -3,7 +3,7 @@
   "defaultProvider": "sparkie",
   "defaultModel": "unsloth/Qwen3.6-35B-A3B-NVFP4",
   "defaultThinkingLevel": "medium",
-  "hideThinkingBlock": true,
+  "hideThinkingBlock": false,
   "quietStartup": true,
   "theme": "gruvbox"
 }

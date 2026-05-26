@@ -17,7 +17,9 @@
  * mechanisms — they need full access to their declared tools.
  *
  * Solo mode (`PI_SOLO_MODE=1`) also opts out of both mechanisms,
- * allowing the orchestrator to use any tool directly.
+ * allowing the orchestrator to use any tool directly. The check is done
+ * inside each hook callback (not at load time) because `/solo` toggles
+ * the env var after this extension has already been loaded.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -70,13 +72,14 @@ export default function (pi: ExtensionAPI) {
 	// `subagent` extension) and need full access to their declared tools.
 	// The parent sets PI_SUBAGENT_CHILD=1 in the child env to opt out.
 	if (process.env.PI_SUBAGENT_CHILD === "1") return;
-	if (isSoloMode()) return;
 
 	pi.on("before_provider_request", async (event) => {
+		if (isSoloMode()) return;
 		return stripTools(event.payload);
 	});
 
 	pi.on("tool_call", async (event) => {
+		if (isSoloMode()) return;
 		if (!ALLOWED.has(event.toolName)) {
 			return {
 				block: true,

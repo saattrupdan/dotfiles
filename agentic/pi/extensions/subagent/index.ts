@@ -562,47 +562,6 @@ async function runSingleAgent(
 			const responseChannel = proc.stdio[3] as NodeJS.WritableStream | null;
 			let buffer = "";
 
-			// Track toolCallId → toolName mapping as tool_call parts arrive in
-			// message_end events. Used to annotate tool_result entries in the
-			// copy-paste context file.
-			const toolNameMap = new Map<string, string>();
-
-			// Write a single entry to the per-cwd context file. The file is an
-			// array that accumulates entries across the entire subagent run.
-			const writeContextEntry = (entry: {
-				toolCallId: string;
-				toolName: string;
-				content: string;
-				timestamp: string;
-			}) => {
-				const contextsDir = path.join(
-					path.dirname(path.dirname(__dirname)),
-					"copy-paste-contexts",
-				);
-				const encoded = encodeURIComponent(effectiveCwd ?? defaultCwd);
-				const filePath = path.join(contextsDir, `${encoded}.json`);
-
-				try {
-					fs.mkdirSync(contextsDir, { recursive: true });
-					let entries: {
-						toolCallId: string;
-						toolName: string;
-						content: string;
-						timestamp: string;
-					}[] = [];
-					try {
-						const raw = fs.readFileSync(filePath, "utf-8");
-						entries = JSON.parse(raw);
-					} catch {
-						/* file doesn't exist yet – start fresh */
-					}
-					entries.push(entry);
-					fs.writeFileSync(filePath, JSON.stringify(entries, null, 2));
-				} catch {
-					/* silently ignore write failures — non-critical */
-				}
-			};
-
 			const processLine = (line: string) => {
 				if (!line.trim()) return;
 				let event: any;
@@ -630,39 +589,15 @@ async function runSingleAgent(
 						if (!currentResult.model && msg.model) currentResult.model = msg.model;
 						if (msg.stopReason) currentResult.stopReason = msg.stopReason;
 						if (msg.errorMessage) currentResult.errorMessage = msg.errorMessage;
-
-					// Extract toolCall parts so we can annotate results later.
-					for (const part of (msg as any).content ?? []) {
-						if (part.type === "toolCall") {
-							toolNameMap.set(part.id, part.name);
-						}
 					}
+					emitUpdate();
 				}
-				emitUpdate();
-			}
 
-				if (event.type === "tool_result_end" && event.message) {
-					currentResult.messages.push(event.message as Message);
-					// Final result has landed; drop any stashed partial for this call.
-					const tcid = (event.message as any).toolCallId;
-					if (tcid && currentResult.partialResults) {
+				if (event.type === "tool_execution_end" && event.toolCallId) {
+					const tcid = event.toolCallId as string;
+					if (currentResult.partialResults) {
 						delete currentResult.partialResults[tcid];
 					}
-
-					// Write the tool result to the context file immediately so that
-					// copy_paste can reference it during execution.
-					const tr = event.message as any;
-					const content = (tr.content ?? [])
-						.map((c: { type?: string; text?: string }) => (c.type === "text" ? c.text : ""))
-						.filter(Boolean)
-						.join("\n");
-					writeContextEntry({
-						toolCallId: tr.toolCallId,
-						toolName: toolNameMap.get(tr.toolCallId) ?? "unknown",
-						content,
-						timestamp: new Date().toISOString(),
-					});
-
 					emitUpdate();
 				}
 
@@ -831,16 +766,43 @@ const SubagentParams = Type.Object({
 	skills: Type.Optional(Type.Array(Type.String(), { description: "Override skills for all tasks in this call" })),
 });
 
+function buildSubagentDescription(): string {
+	const base = [
+		"Delegate tasks to specialized subagents with isolated context.",
+		"Modes: single (agent + task), parallel (tasks array), chain (sequential with {previous} placeholder).",
+		'Default agent scope is "user" (from ~/.pi/agent/agents).',
+		'To enable project-local agents in .pi/agents, set agentScope: "both" (or "project").',
+	].join(" ");
+
+	// Enumerate user-scope agents at load time so the orchestrator can see
+	// each agent's name, one-line description, and tool allow-list without
+	// having to guess. Project-scope agents aren't included (cwd isn't known
+	// at load time), but they're rare; the orchestrator still gets a list on
+	// invocation errors.
+	let agents: AgentConfig[] = [];
+	try {
+		agents = discoverAgents(process.cwd(), "user").agents;
+	} catch {
+		return base;
+	}
+	if (agents.length === 0) return base;
+
+	const lines = agents
+		.slice()
+		.sort((a, b) => a.name.localeCompare(b.name))
+		.map((a) => {
+			const tools = a.tools && a.tools.length > 0 ? a.tools.join(", ") : "(default)";
+			return `- ${a.name}: ${a.description} Tools: ${tools}.`;
+		});
+
+	return `${base}\n\nAvailable agents (user scope):\n${lines.join("\n")}`;
+}
+
 export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "subagent",
 		label: "Subagent",
-		description: [
-			"Delegate tasks to specialized subagents with isolated context.",
-			"Modes: single (agent + task), parallel (tasks array), chain (sequential with {previous} placeholder).",
-			'Default agent scope is "user" (from ~/.pi/agent/agents).',
-			'To enable project-local agents in .pi/agents, set agentScope: "both" (or "project").',
-		].join(" "),
+		description: buildSubagentDescription(),
 		parameters: SubagentParams,
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
