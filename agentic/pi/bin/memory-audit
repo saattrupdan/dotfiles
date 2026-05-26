@@ -1,0 +1,121 @@
+#!/bin/bash
+# Incremental background memory audit — only reviews NEW conversation lines
+# since the last audit.
+# Usage: memory-audit [--timeout SECONDS] [--force]
+#
+# --force: re-process entire conversation (skip incremental check)
+
+TIMEOUT="${MEMORY_AUDIT_TIMEOUT:-60}"
+CHUNK_SIZE="${MEMORY_AUDIT_CHUNK_SIZE:-30}"
+FORCE="${1:-}"
+
+# Record start time
+START_TIME=$(date +%s)
+
+# Marker file: tracks last processed line number
+MARKER_FILE=~/.pi/agent/memories/.last-audit-lines
+
+# Find latest session
+SESSION_DIR=~/.pi/agent/sessions/--Users-dansmart-gitsky-dotfiles--
+LATEST=$(ls -t "$SESSION_DIR"/*.jsonl 2>/dev/null | head -1)
+if [ -z "$LATEST" ] || [ ! -f "$LATEST" ]; then
+  echo "[memory-audit] No session file found" >&2
+  exit 0
+fi
+
+# Extract conversation as plain text
+CONV_FILE=$(mktemp)
+python3 -c "
+import json
+with open('$LATEST') as f:
+    for line in f:
+        line = line.strip()
+        if not line: continue
+        try:
+            obj = json.loads(line)
+            if obj.get('type') == 'message':
+                msg = obj.get('message', {})
+                role = msg.get('role', '?')
+                content = msg.get('content', [])
+                if isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and block.get('type') == 'text':
+                            text = block.get('text', '').strip()
+                            if text: print(f'{role.upper()}: {text}')
+        except: pass
+" > "$CONV_FILE"
+
+TOTAL_LINES=$(wc -l < "$CONV_FILE")
+
+# Determine start line (incremental or full)
+LAST_LINE=0
+if [ "$FORCE" != "--force" ] && [ -f "$MARKER_FILE" ]; then
+  LAST_LINE=$(cat "$MARKER_FILE")
+fi
+
+# Detect session rotation: if the new session has fewer lines than the marker,
+# it's a brand-new session — reset the marker to 0.
+if [ "$LAST_LINE" -gt "$TOTAL_LINES" ]; then
+  echo "[memory-audit] Session rotated (marker=$LAST_LINE > $TOTAL_LINES lines) — resetting" >&2
+  LAST_LINE=0
+fi
+
+if [ "$LAST_LINE" -ge "$TOTAL_LINES" ]; then
+  echo "[memory-audit] Nothing new (already processed $TOTAL_LINES lines)" >&2
+  rm -f "$CONV_FILE"
+  exit 0
+fi
+
+NEW_LINES=$((TOTAL_LINES - LAST_LINE))
+echo "[memory-audit] $NEW_LINES new lines since last audit (line $((LAST_LINE + 1))-$TOTAL_LINES)" >&2
+
+# Extract only new lines
+NEW_CONV_FILE=$(mktemp)
+sed -n "$((LAST_LINE + 1)),\$p" "$CONV_FILE" > "$NEW_CONV_FILE"
+
+# Split into chunks and process each
+CHUNK_NUM=0
+TOTAL_PROCESSED=0
+
+while IFS= read -r chunk; do
+  CHUNK_NUM=$((CHUNK_NUM + 1))
+  
+  # Check timeout
+  ELAPSED=$(( $(date +%s) - START_TIME ))
+  if [ "$ELAPSED" -ge "$TIMEOUT" ]; then
+    echo "[memory-audit] Timeout at chunk $CHUNK_NUM (${ELAPSED}s)" >&2
+    break
+  fi
+  
+  # Launch pi in background for this chunk
+  # --no-extensions prevents notify extension spam and speeds up startup.
+  # Preload memory extension so memory_index tool is available (SYSTEM.md
+  # instructs the orchestrator to call memory_index at conversation start).
+  (
+    pi --no-extensions -e "$HOME/.pi/agent/extensions/memory/index.ts" "Conversation excerpt #$CHUNK_NUM: $chunk. Save anything worth remembering to memory using memory_save: tool errors, user preferences, project gotchas, repeated requests, feedback." 2>&1
+  ) &
+  TOTAL_PROCESSED=$((TOTAL_PROCESSED + 1))
+done < <(awk -v n="$CHUNK_SIZE" '{lines[NR]=$0} END {for(i=1;i<=NR;i+=n) {for(j=i;j<i+n&&j<=NR;j++) printf "%s ", lines[j]; print ""}}' "$NEW_CONV_FILE")
+
+# Update marker
+echo "$TOTAL_LINES" > "$MARKER_FILE"
+
+echo "[memory-audit] Launched $TOTAL_PROCESSED pi processes, marker updated to line $TOTAL_LINES" >&2
+
+# Wait for children or timeout
+WAIT_START=$(date +%s)
+while true; do
+  CHILDREN=$(jobs -p | wc -l)
+  if [ "$CHILDREN" -eq 0 ]; then
+    break
+  fi
+  ELAPSED=$(( $(date +%s) - WAIT_START ))
+  if [ "$ELAPSED" -ge 30 ]; then
+    echo "[memory-audit] Killing remaining children after 30s wait" >&2
+    jobs -p | xargs kill 2>/dev/null
+    break
+  fi
+  sleep 1
+done
+
+rm -f "$CONV_FILE" "$NEW_CONV_FILE"
