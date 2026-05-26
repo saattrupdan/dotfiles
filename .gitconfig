@@ -24,3 +24,5 @@
 	repo = /Users/dan/zsh-snap
 [commit]
 	gpgsign = false
+[safe]
+	directory = /tmp
