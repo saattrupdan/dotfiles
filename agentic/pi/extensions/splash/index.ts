@@ -96,22 +96,6 @@ export default function (pi: ExtensionAPI) {
 		ctx.ui.setEditorComponent((tui, editorTheme, keybindings) => {
 			const inner = new CustomEditor(tui, editorTheme, keybindings);
 			const innerRender = inner.render.bind(inner);
-			// Dismiss as soon as the user starts typing. The editor's render
-			// emits autocomplete rows *after* the bottom rule, and the
-			// wrapper below assumes the last line in `innerLines` is the
-			// bottom rule — so once a slash-menu dropdown opens, its rows
-			// get wrapped in `│ … │` and the dropdown becomes unreadable.
-			// Tearing the wrapper down on first keystroke avoids that.
-			//
-			// Hook `handleInput` rather than `onChange`: interactive-mode
-			// overwrites `newEditor.onChange = defaultEditor.onChange`
-			// immediately after this factory returns, so our onChange would
-			// be clobbered. `handleInput` isn't touched.
-			const originalHandleInput = inner.handleInput.bind(inner);
-			inner.handleInput = (data: string) => {
-				originalHandleInput(data);
-				if (!dismissed && inner.getText().length > 0) dismiss();
-			};
 			// Horizontal padding inside the box, matching the visual breathing
 			// room provided by the top/bottom rules. Done in the wrapper rather
 			// than via inner.setPaddingX() because interactive-mode overwrites
@@ -134,17 +118,36 @@ export default function (pi: ExtensionAPI) {
 				const sideR = bc("│");
 				const innerPad = " ".repeat(INNER_PAD_X);
 
+				// Editor.render emits `[top_rule, content..., bottom_rule, autocomplete_rows...]`
+				// — autocomplete rows come *after* the bottom rule when the slash
+				// menu (or any other dropdown) is open. Find the bottom rule by
+				// matching its shape (a row of `─`, optionally with a scroll
+				// indicator) so we wrap only the content lines in `│ … │` and
+				// pass the dropdown rows through untouched.
+				const isRule = (s: string): boolean => {
+					const t = s.replace(/\x1b\[[0-9;]*m/g, "").trimEnd();
+					return /^─+$/.test(t) || /^─+ [↑↓] \d+ more ─*$/.test(t);
+				};
+				let bottomIdx = innerLines.length - 1;
+				for (let i = 1; i < innerLines.length; i++) {
+					if (isRule(innerLines[i]!)) {
+						bottomIdx = i;
+						break;
+					}
+				}
+
 				const out: string[] = [leftPad + top];
-				// innerLines[0] and innerLines[last] are the editor's own horizontal
-				// rules — drop them, since we're providing corner-capped replacements.
-				const lastContentIdx = innerLines.length - 1;
-				for (let i = 1; i < lastContentIdx; i++) {
+				for (let i = 1; i < bottomIdx; i++) {
 					const line = innerLines[i]!;
 					const vw = visibleWidth(line);
 					const rightFill = " ".repeat(Math.max(0, editW - vw));
 					out.push(leftPad + sideL + innerPad + line + rightFill + innerPad + sideR);
 				}
 				out.push(leftPad + bottom);
+				// Dropdown / autocomplete rows: align with the box's inner edge.
+				for (let i = bottomIdx + 1; i < innerLines.length; i++) {
+					out.push(leftPad + innerPad + innerLines[i]!);
+				}
 				return out;
 			};
 			return inner;
