@@ -96,14 +96,21 @@ export default function (pi: ExtensionAPI) {
 		ctx.ui.setEditorComponent((tui, editorTheme, keybindings) => {
 			const inner = new CustomEditor(tui, editorTheme, keybindings);
 			const innerRender = inner.render.bind(inner);
-			// Dismiss as soon as the user starts typing — otherwise the
-			// `aboveEditor` splash widget keeps fighting the slash-command
-			// dropdown (also an `aboveEditor` overlay) for vertical space,
-			// and the dropdown gets clipped once it shifts size.
-			const prevOnChange = inner.onChange;
-			inner.onChange = (text: string) => {
-				if (text.length > 0) dismiss();
-				prevOnChange?.(text);
+			// Dismiss as soon as the user starts typing. The editor's render
+			// emits autocomplete rows *after* the bottom rule, and the
+			// wrapper below assumes the last line in `innerLines` is the
+			// bottom rule — so once a slash-menu dropdown opens, its rows
+			// get wrapped in `│ … │` and the dropdown becomes unreadable.
+			// Tearing the wrapper down on first keystroke avoids that.
+			//
+			// Hook `handleInput` rather than `onChange`: interactive-mode
+			// overwrites `newEditor.onChange = defaultEditor.onChange`
+			// immediately after this factory returns, so our onChange would
+			// be clobbered. `handleInput` isn't touched.
+			const originalHandleInput = inner.handleInput.bind(inner);
+			inner.handleInput = (data: string) => {
+				originalHandleInput(data);
+				if (!dismissed && inner.getText().length > 0) dismiss();
 			};
 			// Horizontal padding inside the box, matching the visual breathing
 			// room provided by the top/bottom rules. Done in the wrapper rather
