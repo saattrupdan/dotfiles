@@ -96,6 +96,15 @@ export default function (pi: ExtensionAPI) {
 		ctx.ui.setEditorComponent((tui, editorTheme, keybindings) => {
 			const inner = new CustomEditor(tui, editorTheme, keybindings);
 			const innerRender = inner.render.bind(inner);
+			// Dismiss as soon as the user starts typing — otherwise the
+			// `aboveEditor` splash widget keeps fighting the slash-command
+			// dropdown (also an `aboveEditor` overlay) for vertical space,
+			// and the dropdown gets clipped once it shifts size.
+			const prevOnChange = inner.onChange;
+			inner.onChange = (text: string) => {
+				if (text.length > 0) dismiss();
+				prevOnChange?.(text);
+			};
 			// Horizontal padding inside the box, matching the visual breathing
 			// room provided by the top/bottom rules. Done in the wrapper rather
 			// than via inner.setPaddingX() because interactive-mode overwrites
