@@ -63,7 +63,7 @@ section. Where useful, symbol-body calls are shown beneath each outline.
 
 ```
 > read agentic/pi/README.md
-# outline of agentic/pi/README.md (166 lines)
+# outline of agentic/pi/README.md (149 lines)
     1  # pi
    18    ## Extensions
    29      ### `read`
@@ -74,15 +74,14 @@ section. Where useful, symbol-body calls are shown beneath each outline.
    91      ### `web-search`
    99      ### `web-browse`
   107      ### `subagent`
-  127      ### `orchestrator-lockdown`
-  140      ### `no-repeat`
-  149      ### `_outliner` (library, not a tool)
+  124      ### `no-repeat`
+  133      ### `_outliner` (library, not a tool)
 # read again with symbol="<name>" to see a function/class body, symbol="__preamble__" for imports/constants, or use `search` to locate something specific.
 ```
 
 ```
 > read agentic/pi/README.md symbol="Extensions.`read`"
-# agentic/pi/README.md::Extensions.`read`  lines 29-48 (heading)
+# agentic/pi/README.md::Extensions.`read`  lines 28-46 (heading)
 ### `read`
 
 Index-backed file reader with no pagination. Three modes:
@@ -104,7 +103,6 @@ outputs across all supported file types — Python, TypeScript, Lua, Rust, Go,
 Shell, SQL, CSS, HTML, Markdown, JSON, JSONL, CSV, YAML, and TOML.
 
 ```
-
 ## Lua
 
 ```

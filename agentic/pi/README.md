@@ -22,8 +22,7 @@ fall into three categories:
 
 - **Tools the agent calls** — `read`, `skill`, `search`, `code-tree`,
   `web-fetch`, `web-search`, `web-browse`, `subagent`.
-- **Behavioural guardrails** (no tools registered) — `orchestrator-lockdown`,
-  `no-repeat`.
+- **Behavioural guardrails** (no tools registered) — `no-repeat`.
 - **Shared internal library** — `_outliner` (consumed by `read` and `search`).
 
 ### `read`
@@ -56,9 +55,8 @@ exactly what pi advertises in its system prompt.
 
 Why not just use `read`? The local `read` extension returns an outline for
 any file over 100 lines, which silently truncates real skills. Splitting
-`skill` from `read` also lets `orchestrator-lockdown` grant the orchestrator
-the ability to load its own playbooks without granting general filesystem
-read access.
+`skill` from `read` also lets the orchestrator load its own playbooks
+without being granted general filesystem read access.
 
 ### `search`
 
@@ -93,8 +91,7 @@ unprocessed body.
 DuckDuckGo HTML-endpoint search. Returns the top results (title, URL,
 snippet) as a compact Markdown list. Access-controlled: only agents whose
 frontmatter lists `web_search` in `tools:` see it (in this config, the
-`explorer` subagent). The orchestrator cannot call it because
-`orchestrator-lockdown` blocks everything except `subagent` and `question`.
+`explorer` subagent).
 
 ### `web-browse`
 
@@ -123,13 +120,6 @@ union-merge with the agent's frontmatter list.
 
 See `extensions/subagent/README.md` for the full frontmatter and
 skill-scoping semantics.
-
-### `orchestrator-lockdown` — **disabled**
-
-Previously this extension stripped all tools from the orchestrator's view and
-blocked non-allowed tool calls. It is now a no-op stub — the orchestrator has
-full tool access. Guidance on when to use subagents vs direct tools lives in
-`SYSTEM.md` instead.
 
 ### `no-repeat`
 

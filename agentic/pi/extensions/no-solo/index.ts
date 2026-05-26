@@ -1,6 +1,6 @@
 /**
- * `/no-solo [prompt]` — disable solo mode and restore normal orchestrator
- * lockdown by clearing the `PI_SOLO_MODE` environment variable.
+ * `/no-solo [prompt]` — disable solo mode and return to subagent-delegate mode
+ * by clearing the `PI_SOLO_MODE` environment variable.
  *
  * After clearing the flag, dispatches a user message announcing the mode
  * change to the agent so it doesn't get confused about losing access to
@@ -18,15 +18,14 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 const ENV_FLAG = "PI_SOLO_MODE";
 
 const BANNER =
-	"NORMAL MODE RESTORED: solo mode is now disabled. The orchestrator " +
-	"lockdown is back in force — you no longer have direct access to tools " +
-	"like bash, read, write, or edit. Delegate any work that needs those " +
-	"tools to a subagent (planner, builder, explorer, or reviewer).";
+	"NORMAL MODE RESTORED: solo mode is now disabled. You should delegate " +
+	"any work that needs direct tool access to a subagent (planner, builder, " +
+	"explorer, or reviewer).";
 
 export default function (pi: ExtensionAPI) {
 	pi.registerCommand("no-solo", {
 		description:
-			"Disable solo mode and restore normal orchestrator lockdown.",
+			"Disable solo mode and return to subagent-delegate mode (until /solo).",
 		async handler(args, _ctx) {
 			const wasActive = process.env[ENV_FLAG] === "1";
 			if (wasActive) delete process.env[ENV_FLAG];
