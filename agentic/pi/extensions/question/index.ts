@@ -50,7 +50,7 @@ import {
 
 const OTHER_LABEL = "Other (type your own)…";
 
-const QuestionItemSchema = Type.Object({
+const Params = Type.Object({
 	question: Type.String({
 		description:
 			"The question to ask. Be specific and self-contained — the user only sees this text, not your reasoning.",
@@ -58,20 +58,11 @@ const QuestionItemSchema = Type.Object({
 	options: Type.Optional(
 		Type.Array(Type.String(), {
 			description:
-				"Optional list of choices. If provided, the user picks one of these strings; an 'Other…' entry is appended automatically so they can always type a freeform answer instead.",
+				"Optional list of choices. If provided, the user picks one of these strings; an 'Other…' entry is appended automatically so they can always type a freeform answer instead. Omit for a free-text question.",
 			minItems: 2,
 			maxItems: 10,
 		}),
 	),
-});
-
-const Params = Type.Object({
-	questions: Type.Array(QuestionItemSchema, {
-		description:
-			"One or more questions to ask, answered one-at-a-time in order. With more than one, the dialog title shows `(i/N)` progress. Returned together once all are answered.",
-		minItems: 1,
-		maxItems: 10,
-	}),
 });
 
 // ---------------------------------------------------------------------------
@@ -277,30 +268,24 @@ export default function (pi: ExtensionAPI) {
 		name: "question",
 		label: "question",
 		description:
-			"Ask the user a question and wait for their answer. " +
+			"Ask the user a single question and wait for their answer. " +
 			"Call this whenever you need information from the user, or when the user explicitly asks you to ask them something. " +
-			"Pass one or more items in `questions`: each is either free-text (just `question`) or multiple-choice (`question` + `options`); " +
-			"multiple-choice always gets an automatic 'Other…' option so the user can type a custom answer. " +
-			"With multiple items they're asked one at a time with a `(i/N)` progress indicator and the answers come back together.",
+			"Pass `question` (the text the user sees) and optionally `options` (a list of choices); " +
+			"with `options`, an 'Other…' entry is appended automatically so the user can still type a custom answer. " +
+			"To ask several things, call this tool multiple times in sequence.",
 		parameters: Params,
 
-		async execute(_toolCallId, { questions }, signal, _onUpdate, ctx: ExtensionContext) {
-			const items = questions as QuestionItem[];
-			const out = await dispatchAsk(ctx, items, signal);
-			return buildResult(items, out);
+		async execute(_toolCallId, { question, options }, signal, _onUpdate, ctx: ExtensionContext) {
+			const item: QuestionItem = { question, ...(options ? { options } : {}) };
+			const out = await dispatchAsk(ctx, [item], signal);
+			return buildResult(item, out);
 		},
 
 		renderCall(args, theme) {
-			const list = Array.isArray(args?.questions) ? args!.questions : [];
-			const n = list.length;
-			const first =
-				n > 0 && typeof list[0] === "object" && list[0] !== null && "question" in list[0]
-					? String((list[0] as { question: unknown }).question)
-					: "...";
-			const preview = first.length > 50 ? `${first.slice(0, 47)}...` : first;
-			const suffix = n > 1 ? ` (+${n - 1} more)` : "";
+			const q = typeof args?.question === "string" ? args.question : "...";
+			const preview = q.length > 50 ? `${q.slice(0, 47)}...` : q;
 			return new Text(
-				`${theme.fg("toolTitle", theme.bold("question"))} ${theme.fg("accent", preview)}${theme.fg("warning", suffix)}`,
+				`${theme.fg("toolTitle", theme.bold("question"))} ${theme.fg("accent", preview)}`,
 				0,
 				0,
 			);
@@ -313,35 +298,24 @@ export default function (pi: ExtensionAPI) {
 // ---------------------------------------------------------------------------
 
 function buildResult(
-	questions: QuestionItem[],
+	_item: QuestionItem,
 	out: { answers?: string[]; error?: string },
 ) {
 	if (out.error) {
-		const collected =
-			out.answers && out.answers.length
-				? `\n\nAnswers collected so far:\n${formatAnswers(questions.slice(0, out.answers.length), out.answers)}`
-				: "";
 		return {
 			content: [
 				{
 					type: "text",
 					text:
 						`${out.error} ` +
-						`Proceed with a reasonable default and note the assumption, or ask a more specific question.${collected}`,
+						`Proceed with a reasonable default and note the assumption, or ask a more specific question.`,
 				},
 			],
 			isError: true,
 		};
 	}
+	const answer = out.answers?.[0] ?? "";
 	return {
-		content: [{ type: "text", text: formatAnswers(questions, out.answers ?? []) }],
+		content: [{ type: "text", text: `User answered: ${answer}` }],
 	};
-}
-
-function formatAnswers(questions: QuestionItem[], answers: string[]): string {
-	if (questions.length === 1) {
-		return `User answered: ${answers[0]}`;
-	}
-	const lines = questions.map((q, i) => `${i + 1}. ${q.question}\n   → ${answers[i]}`);
-	return `User answers:\n${lines.join("\n")}`;
 }
