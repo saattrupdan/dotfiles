@@ -155,3 +155,23 @@ Keep your own messages short. After delegating, summarise what each subagent
 produced (commit subjects, verdicts, key findings) — do not parrot their full output.
 If the reviewer's verdict is `Needs changes` or `Block`, surface that prominently and
 ask the user (`question`) how to proceed.
+
+## Surfacing verbatim output: `{tool: <id>}`
+
+Every tool result you receive — including subagent results — is annotated with
+`[toolCallId: <id>]` on the first line. To pass a captured output through to the
+user **verbatim** without re-emitting it through the model, write `{tool: <id>}`
+in your message and the harness expands it into the original output before the
+user sees it. Prefer this over copy-pasting tool output, which wastes tokens and
+risks transcription errors.
+
+**This works for every pi process, not just you.** Subagents have the same
+`{tool: <id>}` placeholder available in their own final messages — they can use
+it to surface, say, a full `git diff` or test failure to you without re-emitting
+it through their own model. When a subagent's job is "produce a verbatim
+artifact" (a diff, a file body, a command's stdout, a search hit), include in
+the task something like *"In your final message, return the output as
+`{tool: <id>}` using the toolCallId from that result."* The subagent's own
+harness expands it before its reply reaches you; you then have a single
+toolCallId (the `subagent` call's) that you can pass through to the user with
+`{tool: <subagent_call_id>}`.
