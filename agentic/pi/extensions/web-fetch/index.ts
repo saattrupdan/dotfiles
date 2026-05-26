@@ -4,9 +4,9 @@
  * Fetches an HTTP(S) URL and converts it to Markdown via docling — which
  * handles HTML, PDF, DOCX, PPTX, images, and more. Always returns Markdown.
  *
- * Saves the output to a cache file under ~/.pi/cache/web-fetch/ and returns
- * the path in `details.path`. The agent can then use `read` on that path to
- * get an outline and navigate sections individually.
+ * Saves the output to a cache file and returns the path in the output text.
+ * The agent can then use `read` on that path to get an outline and navigate
+ * sections individually.
  *
  * Token efficiency:
  *  - Hard cap on output size; agent can pass `max_chars` to override.
@@ -74,7 +74,7 @@ export default function (pi: ExtensionAPI) {
 		name: "web_fetch",
 		label: "web fetch",
 		description:
-			"Fetch an HTTP(S) URL and convert it to Markdown via docling. Handles HTML, PDF, DOCX, PPTX, images, and more. Saves to a cache file and returns the path — use `read` on the returned path to get an outline and navigate sections. Output is hard-capped — pass `max_chars` to raise. For interactive/JS-heavy pages, use `web_browse` instead.",
+			"Fetch an HTTP(S) URL and convert it to Markdown via docling. Handles HTML, PDF, DOCX, PPTX, images, and more. Returns the cached file path in the output text — use `read` on that path to get an outline and navigate sections. Output is hard-capped — pass `max_chars` to raise. For interactive/JS-heavy pages, use `web_browse` instead.",
 		parameters: Params,
 
 		async execute(_toolCallId, params, signal) {
@@ -89,7 +89,7 @@ export default function (pi: ExtensionAPI) {
 					const { text, truncated } = truncate(cached, max);
 					const header = `# ${params.url}  [cached]`;
 					return {
-						content: [{ type: "text", text: `${header}\n${text}` }],
+						content: [{ type: "text", text: `${header}\n\nPath: \`${filePath}\`\n\n${text}` }],
 						details: { url: params.url, path: filePath, cached: true, truncated },
 						isError: false,
 					};
@@ -115,7 +115,7 @@ export default function (pi: ExtensionAPI) {
 					const { text, truncated } = truncate(body, max);
 					const header = `# ${params.url}  [${status === 0 ? "ok" : "error"}]`;
 					return {
-						content: [{ type: "text", text: `${header}\n${text}` }],
+						content: [{ type: "text", text: `${header}\n\nPath: \`${filePath}\`\n\n${text}` }],
 						details: { url: params.url, path: filePath, truncated },
 						isError: status !== 0,
 					};

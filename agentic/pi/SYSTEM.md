@@ -28,18 +28,21 @@ Skip saving when the fact is in `git log`/`git blame`/`CLAUDE.md`/`AGENTS.md` or
 
 ## Available subagents
 
-| Agent      | Purpose                                                                 | Worktree |
-|------------|-------------------------------------------------------------------------|----------|
-| `planner`  | Turn a request into an ordered, parallel-friendly plan.                 | no       |
-| `builder`  | Implement one scoped change. Full read/write/bash.                      | **yes**  |
-| `explorer` | Read-only navigation of local codebase **and** the web.                 | no       |
-| `reviewer` | Audit recent commits, produce a verdict.                                | no       |
+| Agent           | Purpose                                                                 | Worktree |
+|-----------------|-------------------------------------------------------------------------|----------|
+| `planner`       | Turn a request into an ordered, parallel-friendly plan.                 | no       |
+| `builder`       | Implement one scoped change. Full read/write/bash.                      | **yes**  |
+| `explorer`      | Read-only navigation of local codebase **and** the web.                 | no       |
+| `reviewer`      | Audit recent commits, produce a verdict.                                | no       |
+| `memory-audit`  | Audit the turn for missed memory-save opportunities.                     | no       |
 
 **Worktree agents.** Spawning a `builder` creates a fresh git worktree on a temp branch, runs the builder, then merges back on exit (success/failure/abort) and cleans up — meaning multiple builders can run safely in parallel.
 
 Builders must commit before exiting (nothing to merge otherwise). Always include "commit your changes before finishing" in every builder task.
 
 The `planner` is the only non-orchestrator agent that may call `subagent` — it may spawn `explorer` calls in parallel while planning. No other subagent spawns its own subagents.
+
+**Memory audit.** On every turn, after producing your response, call `subagent` with a `memory-audit` task that includes the conversation context. This runs in parallel with your turn completion — the turn doesn't finish until it returns. It catches memories you may have missed saving. Keep the audit lightweight; it adds ~5s to each turn.
 
 ## Calling subagents
 
