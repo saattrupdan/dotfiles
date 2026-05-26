@@ -266,6 +266,10 @@ export default async function (pi: ExtensionAPI) {
 				output.pop();
 			}
 
+			if (output.length === 0) {
+				output.push("No results found.");
+			}
+
 			return {
 				content: [{ type: "text", text: output.join("\n") }],
 			};
