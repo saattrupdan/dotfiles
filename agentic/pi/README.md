@@ -124,18 +124,12 @@ union-merge with the agent's frontmatter list.
 See `extensions/subagent/README.md` for the full frontmatter and
 skill-scoping semantics.
 
-### `orchestrator-lockdown`
+### `orchestrator-lockdown` — **disabled**
 
-The main agent is a pure orchestrator with no permissions of its own —
-only `subagent` and the user-facing `question` tool. This extension:
-
-1. Strips every other tool from the provider request payload before send,
-   so the LLM does not even see the tools it cannot use (token-efficient).
-2. As a belt-and-braces measure, also blocks any non-allowed tool call at
-   the `tool_call` boundary.
-
-Subagent child processes set `PI_SUBAGENT_CHILD=1` and opt out of both
-mechanisms — they need full access to their declared tools.
+Previously this extension stripped all tools from the orchestrator's view and
+blocked non-allowed tool calls. It is now a no-op stub — the orchestrator has
+full tool access. Guidance on when to use subagents vs direct tools lives in
+`SYSTEM.md` instead.
 
 ### `no-repeat`
 
