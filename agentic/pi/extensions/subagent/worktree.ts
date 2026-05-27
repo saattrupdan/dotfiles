@@ -304,22 +304,72 @@ export async function mergeAndCleanup(handle: WorktreeHandle): Promise<WorktreeC
 					);
 				}
 			} else {
-				const r = await execGit(parentRepoRoot, [
-					"merge",
-					"--no-ff",
-					"-m",
-					`merge subagent worktree ${branchName}`,
-					branchName,
-				]);
-				if (r.code === 0) {
-					merged = true;
-					messages.push(`Merged ${branchName} into parent worktree.`);
-				} else {
-					messages.push(
-						`Failed to merge ${branchName} into parent worktree (exit ${r.code}): ${r.stderr.trim() || r.stdout.trim()}`,
-					);
-					// Try to abort an in-progress merge so we leave the repo clean.
-					await execGit(parentRepoRoot, ["merge", "--abort"]);
+				// Pre-check for untracked files that would be overwritten by
+				// the merge. Git refuses to merge when untracked files in the
+				// parent worktree would be overwritten. Back them up, remove
+				// them, merge, then restore. See: builder merge exit 2 with
+				// "untracked working tree files would be overwritten by merge".
+				const backupDir = path.join(parentRepoRoot, ".pi", "temp", "untracked-backup");
+				let backedUpFiles: string[] = [];
+				try {
+					const statusLines = (await git(parentRepoRoot, ["status", "--porcelain"]).trim()).split("\n");
+					const conflicts = statusLines
+						.filter(l => l.trimStart().startsWith("??")) // untracked
+						.map(l => l.slice(3).trim()); // path after "?? "
+
+					if (conflicts.length > 0) {
+						await fs.promises.mkdir(backupDir, { recursive: true });
+						for (const f of conflicts) {
+							const src = path.join(parentRepoRoot, f);
+							const dst = path.join(backupDir, f);
+							await fs.promises.mkdir(path.dirname(dst), { recursive: true });
+							await fs.promises.rename(src, dst);
+							backedUpFiles.push(f);
+						}
+						messages.push(
+							`Backed up ${backedUpFiles.length} untracked file(s) that would conflict with merge.`,
+						);
+					}
+				} catch {
+					/* ignore pre-check failures — continue anyway */
+				}
+
+				try {
+					const r = await execGit(parentRepoRoot, [
+						"merge",
+						"--no-ff",
+						"-m",
+						`merge subagent worktree ${branchName}`,
+						branchName,
+					]);
+					if (r.code === 0) {
+						merged = true;
+						messages.push(`Merged ${branchName} into parent worktree.`);
+					} else {
+						messages.push(
+							`Failed to merge ${branchName} into parent worktree (exit ${r.code}): ${r.stderr.trim() || r.stdout.trim()}`,
+						);
+						// Try to abort an in-progress merge so we leave the repo clean.
+						await execGit(parentRepoRoot, ["merge", "--abort"]);
+					}
+				} finally {
+					// Restore backed-up files.
+					for (const f of backedUpFiles) {
+						try {
+							const src = path.join(backupDir, f);
+							const dst = path.join(parentRepoRoot, f);
+							await fs.promises.mkdir(path.dirname(dst), { recursive: true });
+							await fs.promises.rename(src, dst);
+						} catch {
+							/* file may have been consumed by merge — best effort */
+						}
+					}
+					// Clean up backup dir.
+					try {
+						await fs.promises.rm(backupDir, { recursive: true, force: true });
+					} catch {
+						/* ignore */
+					}
 				}
 			}
 		} catch (err) {
