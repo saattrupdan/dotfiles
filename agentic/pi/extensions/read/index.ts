@@ -271,10 +271,10 @@ export default async function (pi: ExtensionAPI) {
 				const symbolHeader = `# ${relPath}::${symbol}  lines ${sym.line_start}-${sym.line_end} (${sym.kind})`;
 				const meta: string[] = [];
 				if (sym.docFirstLine) meta.push(`Docstring: ${sym.docFirstLine}`);
-				const preamble = meta.length > 0 ? `${preambleHeader}\n${meta.join("\n")}\n` : `${preambleHeader}\n`;
+				const symbolPreamble = meta.length > 0 ? `${symbolHeader}\n${meta.join("\n")}\n` : `${symbolHeader}\n`;
 				const numbered = slice.map((line, i) => `  ${sym.line_start + i}: ${line}`).join("\n");
 				dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
-				return { content: [{ type: "text", text: `${preamble}${numbered}` }] };
+				return { content: [{ type: "text", text: `${symbolPreamble}${numbered}` }] };
 			}
 
 			// 6. Small file → verbatim
