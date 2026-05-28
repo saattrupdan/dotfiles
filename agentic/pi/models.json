@@ -18,7 +18,10 @@
       "models": [
         {
           "id": "unsloth/Qwen3.6-35B-A3B-NVFP4",
-          "contextWindow": 262144
+          "contextWindow": 262144,
+          "compat": {
+            "thinking_token_budget": 2048
+          }
         }
       ]
     }
