@@ -217,26 +217,39 @@ function touchCooldown(): boolean {
 // Main
 // ---------------------------------------------------------------------------
 
-// Persistent dedup store — survives hot-reloads.
-// Stores injected memory slugs (scope/name) per project.
-const INJECTED_FILE = join(PI, "memories", ".injected-slugs");
+// Per-session dedup store — survives hot-reloads within a session.
+// Different conversations (different cwd) get separate dedup files.
+const INJECTED_DIR = join(PI, "memories", ".injected-slugs");
 
-function loadInjectedSlugs(): Set<string> {
+function getProjectSlug(): string {
 	try {
-		if (!existsSync(INJECTED_FILE)) return new Set();
-		return new Set(JSON.parse(readFileSync(INJECTED_FILE, "utf8")));
+		const root = require("child_process").execSync("git rev-parse --show-toplevel", { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+		return require("crypto").createHash("sha1").update(root).digest("hex").slice(0, 10);
+	} catch {
+		return require("crypto").createHash("sha1").update(process.cwd()).digest("hex").slice(0, 10);
+	}
+}
+
+function injectedFile(project: string): string {
+	require("fs").mkdirSync(INJECTED_DIR, { recursive: true });
+	return join(INJECTED_DIR, project + ".json");
+}
+
+function loadInjectedSlugs(project: string): Set<string> {
+	try {
+		const f = injectedFile(project);
+		if (!require("fs").existsSync(f)) return new Set();
+		return new Set(JSON.parse(require("fs").readFileSync(f, "utf8")));
 	} catch {
 		return new Set();
 	}
 }
 
-function saveInjectedSlugs(slugs: Set<string>) {
+function saveInjectedSlugs(project: string, slugs: Set<string>) {
 	try {
-		writeFileSync(INJECTED_FILE, JSON.stringify([...slugs]));
+		writeFileSync(injectedFile(project), JSON.stringify([...slugs]));
 	} catch { /* ignore */ }
 }
-
-const injectedSlugs = loadInjectedSlugs();
 
 export default function (pi: ExtensionAPI) {
 	const MAX_INJECT = 5; // max memories to inject per message
@@ -249,6 +262,7 @@ export default function (pi: ExtensionAPI) {
 		if (!message || message.trim().length < 3) return;
 		const result = searchMemories(message, MAX_INJECT);
 		if (!result) return;
+		const project = getProjectSlug();
 		// Extract memory slugs from result to deduplicate
 		const slugs: string[] = [];
 		for (const line of result.trim().split("\n")) {
@@ -263,7 +277,7 @@ export default function (pi: ExtensionAPI) {
 				return undefined;
 			}
 		}
-		saveInjectedSlugs(injectedSlugs);
+		saveInjectedSlugs(project, injectedSlugs);
 		return { action: "transform" as const, text: result };
 	}
 
@@ -287,6 +301,13 @@ export default function (pi: ExtensionAPI) {
 				: JSON.stringify(event.message.content);
 			return injectAssistantMemories(content);
 		}
+		// Also inject on tool results to catch tool-output-triggered patterns
+		if (event.message?.role === "tool") {
+			const content = typeof event.message.content === "string"
+				? event.message.content
+				: JSON.stringify(event.message.content);
+			return injectAssistantMemories(content);
+		}
 		return undefined;
 	});
 
@@ -302,6 +323,7 @@ export default function (pi: ExtensionAPI) {
 			return { action: "continue" };
 		}
 
+		const project = getProjectSlug();
 		// Deduplicate against already-injected slugs
 		const slugs: string[] = [];
 		for (const line of result.trim().split("\n")) {
@@ -315,7 +337,7 @@ export default function (pi: ExtensionAPI) {
 				return { action: "continue" };
 			}
 		}
-		saveInjectedSlugs(injectedSlugs);
+		saveInjectedSlugs(project, injectedSlugs);
 
 		return {
 			action: "transform",
