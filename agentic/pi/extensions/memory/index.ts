@@ -115,6 +115,7 @@ interface Frontmatter {
 	description?: string;
 	created_at?: string;
 	accessed_at?: string;
+	triggers?: string;
 }
 
 function parseFrontmatter(content: string): { meta: Frontmatter; body: string } {
@@ -129,7 +130,7 @@ function parseFrontmatter(content: string): { meta: Frontmatter; body: string } 
 	const body = content.slice(end + 5);
 	const meta: Frontmatter = {};
 	for (const line of block.split("\n")) {
-		const m = line.match(/^(name|description|created_at|accessed_at):\s*(.*)$/);
+		const m = line.match(/^(name|description|created_at|accessed_at|triggers):\s*(.*)$/);
 		if (m) {
 			let value = m[2].trim();
 			if (
@@ -144,6 +145,72 @@ function parseFrontmatter(content: string): { meta: Frontmatter; body: string } 
 	return { meta, body };
 }
 
+/**
+ * Parse the `triggers` field from a memory's frontmatter.
+ *
+ * Triggers are specified as a YAML-style list:
+ *   triggers: - event: startup
+ *             - event: tool
+ *               tool: edit
+ *             - event: pattern
+ *               pattern: /commit/
+ *
+ * Returns null if no triggers are defined (memory is never auto-injected).
+ */
+interface Trigger {
+	event: "startup" | "tool" | "pattern";
+	tool?: string;
+	pattern?: string;
+}
+
+function parseTriggers(raw: string | undefined): Trigger[] | null {
+	if (!raw) return null;
+	const lines = raw.split("\n").map(l => l.trim()).filter(l => l.length > 0);
+	const triggers: Trigger[] = [];
+	let current: Trigger = { event: "startup" };
+	let inTrigger = false;
+
+	for (const line of lines) {
+		if (line.startsWith("- event:")) {
+			if (inTrigger) triggers.push(current);
+			current = { event: line.replace(/^\s*-\s*event:\s*/, "").trim() as Trigger["event"] };
+			inTrigger = true;
+		} else if (inTrigger && line.includes(":")) {
+			const idx = line.indexOf(":");
+			const key = line.slice(0, idx).trim();
+			const val = line.slice(idx + 1).trim();
+			if (key === "tool") current.tool = val;
+			else if (key === "pattern") current.pattern = val;
+		}
+	}
+	if (inTrigger) triggers.push(current);
+	return triggers.length > 0 ? triggers : null;
+}
+
+/**
+ * Evaluate a single trigger against the suggest context.
+ * Returns true if the trigger fires.
+ */
+function evaluateTrigger(trigger: Trigger, context: NonNullable<SuggestContext>): boolean {
+	switch (trigger.event) {
+		case "startup":
+			return true;
+		case "tool":
+			if (!trigger.tool) return false;
+			return (context.tool_calls ?? []).includes(trigger.tool);
+		case "pattern":
+			if (!trigger.pattern || !context.message) return false;
+			try {
+				const re = new RegExp(trigger.pattern);
+				return re.test(context.message);
+			} catch {
+				return false; // invalid regex = no match
+			}
+		default:
+			return false;
+	}
+}
+
 function escapeYaml(value: string): string {
 	const needsQuoting = /[:#\n"']/.test(value);
 	if (!needsQuoting) return value;
@@ -156,17 +223,27 @@ function renderFrontmatter(
 	createdAt: string,
 	accessedAt: string,
 	body: string,
+	triggers?: Trigger[],
 ): string {
 	const trimmedBody = body.replace(/^\n+/, "");
-	return (
+	let fm = (
 		"---\n" +
 		`name: ${escapeYaml(name)}\n` +
 		`description: ${escapeYaml(description)}\n` +
 		`created_at: ${createdAt}\n` +
-		`accessed_at: ${accessedAt}\n` +
-		"---\n\n" +
-		trimmedBody
+		`accessed_at: ${accessedAt}\n`
 	);
+	if (triggers && triggers.length > 0) {
+		fm += "triggers:\n";
+		for (const t of triggers) {
+			fm += `- event: ${t.event}`;
+			if (t.tool) fm += `\n  tool: ${t.tool}`;
+			if (t.pattern) fm += `\n  pattern: ${t.pattern}`;
+			fm += "\n";
+		}
+	}
+	fm += "---\n\n" + trimmedBody;
+	return fm;
 }
 
 /**
@@ -301,6 +378,15 @@ const ReadParams = Type.Object({
 	name: Type.String({ description: "Memory slug (without `.md`)." }),
 });
 
+const TriggerParam = Type.Object({
+	event: Type.Union(
+		[Type.Literal("startup"), Type.Literal("tool"), Type.Literal("pattern")],
+		{ description: "Trigger type: 'startup' (every turn), 'tool' (specific tool call), 'pattern' (regex match)." },
+	),
+	tool: Type.Optional(Type.String({ description: "Tool name to match (required when event is 'tool')." })),
+	pattern: Type.Optional(Type.String({ description: "Regex pattern to match against user message (required when event is 'pattern')." })),
+});
+
 const SaveParams = Type.Object({
 	scope: ScopeType,
 	name: Type.String({
@@ -312,14 +398,34 @@ const SaveParams = Type.Object({
 	}),
 	content: Type.String({
 		description:
-			"Markdown body of the memory. Don't include frontmatter — it's generated from `name` and `description`.",
+			"Markdown body of the memory. Pure markdown content — frontmatter (name, description, triggers, timestamps) is generated from the separate arguments.",
 	}),
+	triggers: Type.Optional(
+		Type.Array(TriggerParam, {
+			description: "When this memory should be auto-injected. Empty or omitted = never auto-injected (manual retrieval only).",
+		}),
+	),
 });
 
 const DeleteParams = Type.Object({
 	scope: ScopeType,
 	name: Type.String({ description: "Memory slug to delete." }),
 });
+
+const SuggestContext = Type.Optional(
+	Type.Object({
+		tool_calls: Type.Optional(
+			Type.Array(Type.String(), {
+				description: "Tool names called in the current turn (e.g. ['edit', 'write']). Memories with matching `tool` triggers fire.",
+			}),
+		),
+		message: Type.Optional(
+			Type.String({
+				description: "The user's message. Memories with `pattern` triggers are evaluated against this.",
+			}),
+		),
+	}),
+);
 
 const SuggestParams = Type.Object({
 	query: Type.String({
@@ -328,6 +434,7 @@ const SuggestParams = Type.Object({
 	top_k: Type.Optional(
 		Type.Number({ minimum: 1, maximum: 20, description: "Max results to return. Defaults to 5." }),
 	),
+	context: SuggestContext,
 });
 
 // ---------------------------------------------------------------------------
@@ -421,6 +528,7 @@ interface Suggestion {
 	description: string;
 	score: number;
 	body?: string;
+	triggers?: Trigger[];
 }
 
 export default function (pi: ExtensionAPI) {
@@ -507,11 +615,11 @@ export default function (pi: ExtensionAPI) {
 		label: "memory_save",
 		description:
 			"Create or overwrite a memory. `scope=system` is global; `scope=project` is scoped to the current repo. " +
-			"Body is markdown; frontmatter (name + description) is added for you. " +
+			"Frontmatter (name, description, triggers, timestamps) is generated from separate arguments. " +
 			"Save things that will be useful in *future* conversations — user preferences, project context, references, feedback — not transient task state.",
 		parameters: SaveParams,
 
-		async execute(_id, { scope, name, description, content }, _signal, _onUpdate, ctx) {
+		async execute(_id, { scope, name, description, content, triggers }, _signal, _onUpdate, ctx) {
 			const nameErr = validateName(name);
 			if (nameErr) return errorResult(nameErr);
 			if (!description.trim()) {
@@ -533,9 +641,11 @@ export default function (pi: ExtensionAPI) {
 					// keep `now`
 				}
 			}
-			const rendered = renderFrontmatter(name, description, createdAt, now, content);
+			const rendered = renderFrontmatter(name, description, createdAt, now, content, triggers);
 			fs.writeFileSync(filePath, rendered, "utf-8");
 
+			// Invalidate suggestion cache so new triggers are picked up
+			cachedMemories.length = 0;
 			enforceLruCaps(scope, ctx.cwd);
 			updateIndex(scope, ctx.cwd);
 
@@ -579,6 +689,7 @@ export default function (pi: ExtensionAPI) {
 						description: meta.description ?? "",
 						score: 0,
 						body,
+						triggers: parseTriggers(meta.triggers),
 					});
 				} catch {
 					cachedMemories.push({
@@ -599,11 +710,52 @@ export default function (pi: ExtensionAPI) {
 		description:
 		"Find relevant memories using fuzzy keyword search. " +
 		"Returns memories sorted by relevance score. " +
-		"Use this to discover memories related to a topic or query.",
+		"Use this to discover memories related to a topic or query. " +
+		"When called without a query, evaluates trigger-based auto-injection rules." +
+		"The orchestrator should pass tool_calls and message in context for trigger evaluation.",
 		parameters: SuggestParams,
 
-		async execute(_id, { query, top_k = 5 }, _signal, _onUpdate, ctx) {
+		async execute(_id, { query, top_k = 5, context }, _signal, _onUpdate, ctx) {
 			const memories = collectMemories();
+
+			// No query = auto-injection mode: only trigger-based, no fuzzy search
+			if (!query || query.trim().length === 0) {
+				const triggerResults: Map<string, Suggestion> = new Map();
+				if (context) {
+					for (const m of memories) {
+						if (!m.triggers) continue;
+						for (const trigger of m.triggers) {
+							if (evaluateTrigger(trigger, context)) {
+								if (!triggerResults.has(m.name)) {
+									triggerResults.set(m.name, { ...m, score: 10 });
+									break; // each memory fires at most once
+								}
+							}
+						}
+					}
+				}
+
+				const top = Array.from(triggerResults.values()).sort((a, b) => b.score - a.score);
+				if (top.length === 0) {
+					return { content: [{ type: "text", text: "No relevant memories found." }] };
+				}
+
+				const results = top.map(
+					(m) =>
+						`- \`${m.scope}/${m.name}\` (${m.description})`,
+				);
+
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Relevant memories:\n\n${results.join("\n")}\n\nThe agent should remember these memories when formulating an answer to the query below.`,
+						},
+					],
+				};
+			}
+
+			// Query present = manual retrieval: fuzzy search only, no triggers
 			const queryTokens = tokenize(query);
 			if (queryTokens.length === 0) {
 				return { content: [{ type: "text", text: "No meaningful tokens in query." }] };
@@ -633,14 +785,14 @@ export default function (pi: ExtensionAPI) {
 
 			const results = top.map(
 				(m) =>
-					`- \`${m.scope}/${m.name}\` (score: ${m.score.toFixed(2)}) — ${m.description}\n${m.body ? `  ${m.body.trim().split("\n").slice(0, 3).join("\n  ")}\n` : ""}`,
+					`- \`${m.scope}/${m.name}\` (${m.description})`,
 			);
 
 			return {
 				content: [
 					{
 						type: "text",
-						text: `Relevant memories for "${query}":\n\n${results.join("\n")}`,
+						text: `Relevant memories for "${query}":\n\n${results.join("\n")}\n\nThe agent should remember these memories when formulating an answer to the query below.`,
 					},
 				],
 			};
@@ -675,6 +827,8 @@ export default function (pi: ExtensionAPI) {
 				return errorResult(`No memory "${name}" in scope "${scope}".`);
 			}
 			fs.unlinkSync(filePath);
+			// Invalidate suggestion cache
+			cachedMemories.length = 0;
 			updateIndex(scope, ctx.cwd);
 
 			return {
