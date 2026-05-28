@@ -25,7 +25,7 @@ const RGP_PATHS = [
 function findRipgrep(): string {
 	for (const p of RGP_PATHS) {
 		try {
-			require("child_process").execSync(`"${p}" --version`, { stdio: "ignore" });
+			childProcess.execSync(`"${p}" --version`, { stdio: "ignore" });
 			return p;
 		} catch { /* try next */ }
 	}
@@ -45,7 +45,7 @@ let outlineModule: typeof import("../_outliner/outliner.js") | null = null;
 async function loadOutliner(): Promise<typeof import("../_outliner/outliner.js") | null> {
 	if (outlineModule) return outlineModule;
 	const jiti = await import("jiti").then((m) => m.createJiti(import.meta.url, { moduleCache: false }));
-	// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+	 
 	outlineModule = await jiti.import("../_outliner/outliner.js", { default: true }) as typeof import("../_outliner/outliner.js") | null;
 	return outlineModule;
 }

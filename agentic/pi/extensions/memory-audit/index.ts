@@ -10,8 +10,8 @@
  *    without modifying the system prompt (preserving prefix caching).
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { writeFileSync, existsSync, readFileSync, readdirSync, statSync, readFileSync as rf } from "node:fs";
-import { join, basename, parse } from "node:path";
+import { writeFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
+import { join, basename } from "node:path";
 
 const PI = join(process.env.HOME ?? "/Users/dansmart", ".pi", "agent");
 const COOLDOWN_FILE = join(PI, "memories", ".audit-cooldown");
@@ -132,10 +132,10 @@ function listMemories(scope: "system" | "project", cwd: string): MemoryDoc[] {
 		? join(PI, "memories", "system")
 		: (() => {
 			try {
-				const root = require("child_process").execSync("git rev-parse --show-toplevel", { cwd, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
-				return join(PI, "memories", "projects", require("crypto").createHash("sha1").update(root).digest("hex").slice(0, 10));
+				const root = childProcess.execSync("git rev-parse --show-toplevel", { cwd, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+				return join(PI, "memories", "projects", crypto.createHash("sha1").update(root).digest("hex").slice(0, 10));
 			} catch {
-				return join(PI, "memories", "projects", "root-" + require("crypto").createHash("sha1").update(cwd).digest("hex").slice(0, 10));
+				return join(PI, "memories", "projects", "root-" + crypto.createHash("sha1").update(cwd).digest("hex").slice(0, 10));
 			}
 		})();
 
@@ -222,18 +222,8 @@ function touchCooldown(): boolean {
 const INJECTED_DIR = join(PI, "memories", ".injected-slugs");
 
 function injectedFile(sessionId: string): string {
-	require("fs").mkdirSync(INJECTED_DIR, { recursive: true });
+	fs.mkdirSync(INJECTED_DIR, { recursive: true });
 	return join(INJECTED_DIR, sessionId + ".json");
-}
-
-function loadInjectedSlugs(sessionId: string): Set<string> {
-	try {
-		const f = injectedFile(sessionId);
-		if (!require("fs").existsSync(f)) return new Set();
-		return new Set(JSON.parse(require("fs").readFileSync(f, "utf8")));
-	} catch {
-		return new Set();
-	}
 }
 
 function saveInjectedSlugs(sessionId: string, slugs: Set<string>) {

@@ -36,7 +36,7 @@ const CELL_W = 6;
 const CELL_H = 3;
 const BLOCK = "█";
 const LOGO_W = GRID[0]!.length * CELL_W;
-const LOGO_H = GRID.length * CELL_H;
+
 
 function renderLogo(theme: Theme, width: number): string[] {
 	const lines: string[] = [];
@@ -125,7 +125,7 @@ export default function (pi: ExtensionAPI) {
 				// indicator) so we wrap only the content lines in `│ … │` and
 				// pass the dropdown rows through untouched.
 				const isRule = (s: string): boolean => {
-					const t = s.replace(/\x1b\[[0-9;]*m/g, "").trimEnd();
+					const t = s.replace(new RegExp(String.fromCharCode(27) + "\\[[0-9;]*m", "g"), "").trimEnd();
 					return /^─+$/.test(t) || /^─+ [↑↓] \d+ more ─*$/.test(t);
 				};
 				let bottomIdx = innerLines.length - 1;

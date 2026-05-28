@@ -16,7 +16,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { execSync } from "node:child_process";
 
-import type Database from "better-sqlite3";
+import Database from "better-sqlite3";
 
 type DatabaseInstance = InstanceType<typeof Database>;
 import type { OutlineEntry, OutlineResult } from "../_outliner/outliner.js";
@@ -139,7 +139,7 @@ export function readMeta(repoId: string): { root: string; created: string; last_
 export function openDb(repoId: string): DatabaseInstance {
 	const dbPath = getIndexDbPath(repoId);
 	fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-	const db = require("better-sqlite3")(dbPath);
+	const db = Database(dbPath);
 
 	const currentVersion = (db.pragma("user_version", { simple: true }) as number) ?? 0;
 	if (currentVersion !== SCHEMA_VERSION) {
@@ -183,7 +183,7 @@ export function openDb(repoId: string): DatabaseInstance {
 /**
  * Full rebuild: delete all data and re-populate from scratch.
  */
-export function rebuildIndex(db: DatabaseInstance, repoId: string, repoRoot: string): void {
+export function rebuildIndex(db: DatabaseInstance, _repoId: string, _repoRoot: string): void {
 	const stmt = db.prepare("DELETE FROM symbols");
 	stmt.run();
 	const stmt2 = db.prepare("DELETE FROM files");

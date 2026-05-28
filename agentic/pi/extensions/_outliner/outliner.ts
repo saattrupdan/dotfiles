@@ -10,7 +10,7 @@
  * imported via a relative path from sibling extensions.
  */
 
-// @ts-ignore - tree-sitter ships without bundled types
+// @ts-expect-error - tree-sitter ships without bundled types
 import type Parser from "tree-sitter";
 import { detectLanguage, makeParser } from "./languages.ts";
 import { fallbackOutline } from "./fallback.ts";
@@ -582,7 +582,7 @@ function findBlockEnd(lines: string[], startIdx: number): number {
 	let inStr = false;
 	let quote = "";
 	let esc = false;
-	let inLineComment = false;
+	let inLineComment: boolean;
 	let inBlockComment = false;
 	for (let i = startIdx; i < lines.length; i++) {
 		const line = lines[i]!;
@@ -601,7 +601,7 @@ function findBlockEnd(lines: string[], startIdx: number): number {
 				else if (ch === quote) { inStr = false; }
 				continue;
 			}
-			if (ch === "/" && next === "/") { inLineComment = true; break; }
+			if (ch === "/" && next === "/") { break; }
 			if (ch === "/" && next === "*") { inBlockComment = true; c++; continue; }
 			if (ch === '"' || ch === "'" || ch === "`") { inStr = true; quote = ch; continue; }
 			if (ch === "{") { depth++; started = true; }
@@ -896,7 +896,6 @@ function outlineCss(source: string): OutlineEntry[] {
 
 function outlineHtml(source: string): OutlineEntry[] {
 	const out: OutlineEntry[] = [];
-	const lines = source.split("\n");
 	// Track current line for offset computation as we walk regex matches.
 	const lineStarts: number[] = [0];
 	for (let i = 0; i < source.length; i++) {
@@ -1209,10 +1208,9 @@ function outlineCsv(source: string): OutlineResult {
 		return { entries: [], moduleDoc: "empty file" };
 	}
 	// Detect separator from the first non-empty line.
-	let headerLine = "";
 	let headerIdx = 0;
 	while (headerIdx < lines.length && lines[headerIdx]!.trim() === "") headerIdx++;
-	headerLine = lines[headerIdx] ?? "";
+	const headerLine = lines[headerIdx] ?? "";
 	const tabCount = (headerLine.match(/\t/g) ?? []).length;
 	const commaCount = (headerLine.match(/,/g) ?? []).length;
 	const sep = tabCount > commaCount ? "\t" : ",";

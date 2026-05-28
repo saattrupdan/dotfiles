@@ -204,7 +204,7 @@ function evaluateTrigger(trigger: Trigger, context: SuggestContext): boolean {
 		case "tool":
 			if (!trigger.tool) return false;
 			return (context.tool_calls ?? []).includes(trigger.tool);
-		case "pattern":
+		case "pattern": {
 			if (!trigger.pattern) return false;
 			// Check against message AND tool results (combined)
 			const checkText = [context.message, ...(context.tool_results ?? [])].join("\n");
@@ -215,6 +215,8 @@ function evaluateTrigger(trigger: Trigger, context: SuggestContext): boolean {
 			} catch {
 				return false; // invalid regex = no match
 			}
+			break;
+		}
 		default:
 			return false;
 	}

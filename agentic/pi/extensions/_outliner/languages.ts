@@ -6,13 +6,13 @@
  */
 
 import * as path from "node:path";
-// @ts-ignore - tree-sitter ships without bundled types
+// @ts-expect-error - tree-sitter ships without bundled types
 import Parser from "tree-sitter";
-// @ts-ignore
+// @ts-expect-error - tree-sitter-python ships without bundled types
 import Python from "tree-sitter-python";
-// @ts-ignore
+// @ts-expect-error - tree-sitter-javascript ships without bundled types
 import JavaScript from "tree-sitter-javascript";
-// @ts-ignore
+// @ts-expect-error - tree-sitter-typescript ships without bundled types
 import TypeScript from "tree-sitter-typescript";
 
 export type LanguageKind =
