@@ -250,7 +250,7 @@ export default async function (pi: ExtensionAPI) {
 					? `# ${relPath}::__preamble__  lines 1-${lastLine} (before line ${cutoff})`
 					: `# ${relPath}::__preamble__  lines 1-${lastLine} (no class/function found — whole file)`;
 				dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
-				return { content: [{ type: "text", text: `${header}\n${slice.join("\n")}` }] };
+				return { content: [{ type: "text", text: `${preambleHeader}\n${slice.join("\n")}` }] };
 			}
 
 			// 5. Symbol body
