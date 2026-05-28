@@ -334,6 +334,25 @@ export async function mergeAndCleanup(handle: WorktreeHandle): Promise<WorktreeC
 					/* ignore pre-check failures — continue anyway */
 				}
 
+				// Before merging, detect tracked files with local modifications
+				// that would be overwritten. Stash them, merge, then restore.
+				let stashedFiles: string[] = [];
+				try {
+					const modStatus = (await git(parentRepoRoot, ["status", "--porcelain"]).trim()).split("\n");
+					const trackedMods = modStatus
+						.filter(l => l.trimStart().match(/^[^?][MADRCU!]/)) // tracked (not ??), modified/staged
+						.map(l => l.slice(3).trim());
+					if (trackedMods.length > 0) {
+						stashedFiles = [...trackedMods];
+						messages.push(
+							`Temporarily stashed ${trackedMods.length} tracked modification(s) that would conflict with merge.`,
+						);
+						await execGit(parentRepoRoot, ["stash", "push", "--include-untracked", "-m", "worktree-merge-stash"]);
+					}
+				} catch {
+					/* ignore pre-check failures — continue anyway */
+				}
+
 				try {
 					const r = await execGit(parentRepoRoot, [
 						"merge",
@@ -369,6 +388,22 @@ export async function mergeAndCleanup(handle: WorktreeHandle): Promise<WorktreeC
 						await fs.promises.rm(backupDir, { recursive: true, force: true });
 					} catch {
 						/* ignore */
+					}
+
+					// Restore stashed tracked modifications (may conflict — accept theirs
+					// so the merge result stands, but surface the conflict in the message).
+					if (stashedFiles.length > 0) {
+						const stashRes = await execGit(parentRepoRoot, ["stash", "pop", "stash@{0}"]);
+						if (stashRes.code === 0) {
+							messages.push(`Restored ${stashedFiles.length} tracked modification(s) after merge.`);
+						} else {
+							// Stash pop may conflict — leave changes in the working tree either way.
+							messages.push(
+								`Could not fully restore ${stashedFiles.length} tracked modification(s) after merge (possible conflict): ${stashRes.stderr.trim() || stashRes.stdout.trim()}`,
+							);
+							// Force-drop the stash so it doesn't linger.
+							await execGit(parentRepoRoot, ["stash", "drop", "stash@{0}"]).catch(() => {});
+						}
 					}
 				}
 			}
