@@ -18,10 +18,20 @@ import * as crypto from "node:crypto";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+function canonicalize(value: unknown): unknown {
+	if (value === null || typeof value !== "object") return value;
+	if (Array.isArray(value)) return value.map(canonicalize);
+	const out: Record<string, unknown> = {};
+	for (const key of Object.keys(value as object).sort()) {
+		out[key] = canonicalize((value as Record<string, unknown>)[key]);
+	}
+	return out;
+}
+
 function fingerprint(toolName: string, input: unknown): string {
 	let json: string;
 	try {
-		json = JSON.stringify(input, Object.keys((input as object) ?? {}).sort());
+		json = JSON.stringify(canonicalize(input));
 	} catch {
 		json = String(input);
 	}
@@ -32,6 +42,13 @@ export default function (pi: ExtensionAPI) {
 	let last: string | null = null;
 
 	pi.on("tool_call", async (event) => {
+		// If the input canonicalizes to nothing (non-enumerable shape, empty
+		// args), don't risk a false collision — treat it as never matching.
+		const canonical = JSON.stringify(canonicalize(event.input));
+		if (!canonical || canonical === "{}" || canonical === "null") {
+			last = null;
+			return;
+		}
 		const fp = fingerprint(event.toolName, event.input);
 		if (last === fp) {
 			// Reset so a third identical attempt does not stay permanently blocked;
