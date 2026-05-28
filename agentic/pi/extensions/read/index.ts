@@ -246,7 +246,7 @@ export default async function (pi: ExtensionAPI) {
 				const cutoff = firstDefRow?.line ?? null;
 				const lastLine = cutoff && cutoff > 1 ? cutoff - 1 : totalLines;
 				const slice = allLines.slice(0, lastLine);
-				const header = cutoff
+				const preambleHeader = cutoff
 					? `# ${relPath}::__preamble__  lines 1-${lastLine} (before line ${cutoff})`
 					: `# ${relPath}::__preamble__  lines 1-${lastLine} (no class/function found — whole file)`;
 				dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
@@ -268,16 +268,20 @@ export default async function (pi: ExtensionAPI) {
 					};
 				}
 				const slice = allLines.slice(sym.line_start - 1, sym.line_end);
-				const header = `# ${relPath}::${symbol}  lines ${sym.line_start}-${sym.line_end} (${sym.kind})`;
+				const symbolHeader = `# ${relPath}::${symbol}  lines ${sym.line_start}-${sym.line_end} (${sym.kind})`;
+				const meta: string[] = [];
+				if (sym.docFirstLine) meta.push(`Docstring: ${sym.docFirstLine}`);
+				const preamble = meta.length > 0 ? `${preambleHeader}\n${meta.join("\n")}\n` : `${preambleHeader}\n`;
+				const numbered = slice.map((line, i) => `  ${sym.line_start + i}: ${line}`).join("\n");
 				dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
-				return { content: [{ type: "text", text: `${header}\n${slice.join("\n")}` }] };
+				return { content: [{ type: "text", text: `${preamble}${numbered}` }] };
 			}
 
 			// 6. Small file → verbatim
 			if (totalLines <= SMALL_FILE_LINES) {
-				const header = `# ${relPath} (${totalLines} lines)`;
+				const smallFileHeader = `# ${relPath} (${totalLines} lines)`;
 				dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
-				return { content: [{ type: "text", text: `${header}\n${content}` }] };
+				return { content: [{ type: "text", text: `${smallFileHeader}\n${content}` }] };
 			}
 
 			// 7. Large file → outline from the index
@@ -286,7 +290,7 @@ export default async function (pi: ExtensionAPI) {
 				? { moduleDoc: stored.doc ?? undefined, entries: stored.entries }
 				: outline(absolutePath, content);
 			const view = collapsedView(result, { hidePrivate: true, maxLines: 200 });
-			const header = `# outline of ${relPath} (${totalLines} lines)`;
+			const outlineHeader = `# outline of ${relPath} (${totalLines} lines)`;
 			const footer =
 				`# read again with symbol="<name>" to see a function/class body, ` +
 				`symbol="__preamble__" for imports/constants, ` +
@@ -294,7 +298,7 @@ export default async function (pi: ExtensionAPI) {
 			dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
 			return {
 				content: [
-					{ type: "text", text: `${header}\n${view.join("\n")}\n${footer}` },
+					{ type: "text", text: `${outlineHeader}\n${view.join("\n")}\n${footer}` },
 				],
 			};
 		},
@@ -364,8 +368,12 @@ function readOutsideRepo(
 		}
 		const slice = allLines.slice(hit.line - 1, hit.lineEnd);
 		const header = `# ${absolutePath}::${symbol}  lines ${hit.line}-${hit.lineEnd} (${hit.kind})`;
+		const meta: string[] = [];
+		if (hit.docFirstLine) meta.push(`Docstring: ${hit.docFirstLine}`);
+		const preamble = meta.length > 0 ? `${header}\n${meta.join("\n")}\n` : `${header}\n`;
+		const numbered = slice.map((line, i) => `  ${hit.line + i}: ${line}`).join("\n");
 		dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
-		return { content: [{ type: "text", text: `${header}\n${slice.join("\n")}` }] };
+		return { content: [{ type: "text", text: `${preamble}${numbered}` }] };
 	}
 
 	if (totalLines <= SMALL_FILE_LINES) {
