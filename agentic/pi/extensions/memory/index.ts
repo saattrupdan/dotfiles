@@ -199,10 +199,13 @@ function evaluateTrigger(trigger: Trigger, context: NonNullable<SuggestContext>)
 			if (!trigger.tool) return false;
 			return (context.tool_calls ?? []).includes(trigger.tool);
 		case "pattern":
-			if (!trigger.pattern || !context.message) return false;
+			if (!trigger.pattern) return false;
+			// Check against message AND tool results (combined)
+			const checkText = [context.message, ...(context.tool_results ?? [])].join("\n");
+			if (!checkText) return false;
 			try {
 				const re = new RegExp(trigger.pattern);
-				return re.test(context.message);
+				return re.test(checkText);
 			} catch {
 				return false; // invalid regex = no match
 			}
@@ -422,6 +425,11 @@ const SuggestContext = Type.Optional(
 		message: Type.Optional(
 			Type.String({
 				description: "The user's message. Memories with `pattern` triggers are evaluated against this.",
+			}),
+		),
+		tool_results: Type.Optional(
+			Type.Array(Type.String(), {
+				description: "Tool output text from the current turn. Pattern triggers also evaluate against this combined text.",
 			}),
 		),
 	}),

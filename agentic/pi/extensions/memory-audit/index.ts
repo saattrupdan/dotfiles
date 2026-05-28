@@ -221,7 +221,21 @@ export default function (pi: ExtensionAPI) {
 	const MAX_INJECT = 5; // max memories to inject per message
 
 	// Background memory audit — fires after each turn
+	// Auto-inject relevant memories — fires after each assistant message
+	const injected = new Set<string>();
+
+	function injectAssistantMemories(message: string) {
+		if (!message || message.trim().length < 3) return;
+		const result = searchMemories(message, MAX_INJECT);
+		if (!result) return;
+		const key = result.trim().slice(0, 100);
+		if (injected.has(key)) return;
+		injected.add(key);
+		return { action: "transform" as const, text: result };
+	}
+
 	pi.on("turn_end", async (event, ctx) => {
+		// Background audit
 		if (!touchCooldown()) {
 			return;
 		}
@@ -231,6 +245,16 @@ export default function (pi: ExtensionAPI) {
 			`nohup bash -c '${AUDIT_SCRIPT}' </dev/null >/dev/null 2>&1 &`,
 			() => {},
 		);
+
+		// Memory injection — only for assistant messages,
+		// catches multi-turn assistant sequences before user boundary.
+		if (event.message?.role === "assistant") {
+			const content = typeof event.message.content === "string"
+				? event.message.content
+				: JSON.stringify(event.message.content);
+			return injectAssistantMemories(content);
+		}
+		return undefined;
 	});
 
 	// Auto-inject relevant memories — fires on each user message
