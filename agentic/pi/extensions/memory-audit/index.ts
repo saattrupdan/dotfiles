@@ -10,8 +10,10 @@
  *    without modifying the system prompt (preserving prefix caching).
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { writeFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
+import { writeFileSync, existsSync, readFileSync, readdirSync, mkdirSync } from "node:fs";
 import { join, basename } from "node:path";
+import { createHash } from "node:crypto";
+import { execSync } from "node:child_process";
 
 const PI = join(process.env.HOME ?? "/Users/dansmart", ".pi", "agent");
 const COOLDOWN_FILE = join(PI, "memories", ".audit-cooldown");
@@ -132,10 +134,10 @@ function listMemories(scope: "system" | "project", cwd: string): MemoryDoc[] {
 		? join(PI, "memories", "system")
 		: (() => {
 			try {
-				const root = childProcess.execSync("git rev-parse --show-toplevel", { cwd, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
-				return join(PI, "memories", "projects", crypto.createHash("sha1").update(root).digest("hex").slice(0, 10));
+				const root = execSync("git rev-parse --show-toplevel", { cwd, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+				return join(PI, "memories", "projects", createHash("sha1").update(root).digest("hex").slice(0, 10));
 			} catch {
-				return join(PI, "memories", "projects", "root-" + crypto.createHash("sha1").update(cwd).digest("hex").slice(0, 10));
+				return join(PI, "memories", "projects", "root-" + createHash("sha1").update(cwd).digest("hex").slice(0, 10));
 			}
 		})();
 
@@ -145,7 +147,7 @@ function listMemories(scope: "system" | "project", cwd: string): MemoryDoc[] {
 		if (!file.endsWith(".md") || file === "MEMORY.md") continue;
 		const filePath = join(dir, file);
 		try {
-			const raw = rf(filePath, "utf-8");
+			const raw = readFileSync(filePath, "utf-8");
 			const { meta, body } = parseFrontmatter(raw);
 			docs.push({
 				name: basename(file, ".md"),
@@ -222,7 +224,7 @@ function touchCooldown(): boolean {
 const INJECTED_DIR = join(PI, "memories", ".injected-slugs");
 
 function injectedFile(sessionId: string): string {
-	fs.mkdirSync(INJECTED_DIR, { recursive: true });
+	mkdirSync(INJECTED_DIR, { recursive: true });
 	return join(INJECTED_DIR, sessionId + ".json");
 }
 

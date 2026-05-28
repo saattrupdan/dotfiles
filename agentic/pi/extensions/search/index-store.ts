@@ -18,7 +18,7 @@ import { execSync } from "node:child_process";
 
 import Database from "better-sqlite3";
 
-type DatabaseInstance = InstanceType<typeof Database>;
+type DatabaseInstance = ReturnType<typeof Database>;
 import type { OutlineEntry, OutlineResult } from "../_outliner/outliner.js";
 
 export type OutlinerFn = (filePath: string, source: string) => OutlineResult;

@@ -10,7 +10,6 @@
  * imported via a relative path from sibling extensions.
  */
 
-// @ts-expect-error - tree-sitter ships without bundled types
 import type Parser from "tree-sitter";
 import { detectLanguage, makeParser } from "./languages.ts";
 import { fallbackOutline } from "./fallback.ts";

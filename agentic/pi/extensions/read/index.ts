@@ -218,7 +218,7 @@ export default async function (pi: ExtensionAPI) {
 
 			// 4. Open the index (no full build) and refresh just this file.
 			const { db, repoRoot } = openIndex(process.cwd());
-			let relPath = path.relative(repoRoot, absolutePath);
+			const relPath = path.relative(repoRoot, absolutePath);
 			if (relPath.startsWith("..")) {
 				// File lives outside the repo — fall back to verbatim/outline without the index.
 				return readOutsideRepo(absolutePath, symbol, outline, collapsedView, key, sha);
