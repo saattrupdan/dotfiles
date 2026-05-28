@@ -218,26 +218,17 @@ function touchCooldown(): boolean {
 // ---------------------------------------------------------------------------
 
 // Per-session dedup store — survives hot-reloads within a session.
-// Different conversations (different cwd) get separate dedup files.
+// Each conversation (session) gets its own dedup file.
 const INJECTED_DIR = join(PI, "memories", ".injected-slugs");
 
-function getProjectSlug(): string {
-	try {
-		const root = require("child_process").execSync("git rev-parse --show-toplevel", { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
-		return require("crypto").createHash("sha1").update(root).digest("hex").slice(0, 10);
-	} catch {
-		return require("crypto").createHash("sha1").update(process.cwd()).digest("hex").slice(0, 10);
-	}
-}
-
-function injectedFile(project: string): string {
+function injectedFile(sessionId: string): string {
 	require("fs").mkdirSync(INJECTED_DIR, { recursive: true });
-	return join(INJECTED_DIR, project + ".json");
+	return join(INJECTED_DIR, sessionId + ".json");
 }
 
-function loadInjectedSlugs(project: string): Set<string> {
+function loadInjectedSlugs(sessionId: string): Set<string> {
 	try {
-		const f = injectedFile(project);
+		const f = injectedFile(sessionId);
 		if (!require("fs").existsSync(f)) return new Set();
 		return new Set(JSON.parse(require("fs").readFileSync(f, "utf8")));
 	} catch {
@@ -245,9 +236,9 @@ function loadInjectedSlugs(project: string): Set<string> {
 	}
 }
 
-function saveInjectedSlugs(project: string, slugs: Set<string>) {
+function saveInjectedSlugs(sessionId: string, slugs: Set<string>) {
 	try {
-		writeFileSync(injectedFile(project), JSON.stringify([...slugs]));
+		writeFileSync(injectedFile(sessionId), JSON.stringify([...slugs]));
 	} catch { /* ignore */ }
 }
 
@@ -258,11 +249,10 @@ export default function (pi: ExtensionAPI) {
 	// Auto-inject relevant memories — fires after each assistant message
 	const injected = new Set<string>();
 
-	function injectAssistantMemories(message: string) {
+	function injectAssistantMemories(message: string, sessionId: string) {
 		if (!message || message.trim().length < 3) return;
 		const result = searchMemories(message, MAX_INJECT);
 		if (!result) return;
-		const project = getProjectSlug();
 		// Extract memory slugs from result to deduplicate
 		const slugs: string[] = [];
 		for (const line of result.trim().split("\n")) {
@@ -277,7 +267,7 @@ export default function (pi: ExtensionAPI) {
 				return undefined;
 			}
 		}
-		saveInjectedSlugs(project, injectedSlugs);
+		saveInjectedSlugs(sessionId, injectedSlugs);
 		return { action: "transform" as const, text: result };
 	}
 
@@ -293,20 +283,20 @@ export default function (pi: ExtensionAPI) {
 			() => {},
 		);
 
-		// Memory injection — only for assistant messages,
+		// Memory injection — only for assistant/tool messages,
 		// catches multi-turn assistant sequences before user boundary.
+		const sessionId = ctx.sessionManager?.sessionId ?? "unknown";
 		if (event.message?.role === "assistant") {
 			const content = typeof event.message.content === "string"
 				? event.message.content
 				: JSON.stringify(event.message.content);
-			return injectAssistantMemories(content);
+			return injectAssistantMemories(content, sessionId);
 		}
-		// Also inject on tool results to catch tool-output-triggered patterns
 		if (event.message?.role === "tool") {
 			const content = typeof event.message.content === "string"
 				? event.message.content
 				: JSON.stringify(event.message.content);
-			return injectAssistantMemories(content);
+			return injectAssistantMemories(content, sessionId);
 		}
 		return undefined;
 	});
@@ -323,7 +313,7 @@ export default function (pi: ExtensionAPI) {
 			return { action: "continue" };
 		}
 
-		const project = getProjectSlug();
+		const sessionId = ctx.sessionManager?.sessionId ?? "unknown";
 		// Deduplicate against already-injected slugs
 		const slugs: string[] = [];
 		for (const line of result.trim().split("\n")) {
@@ -337,7 +327,7 @@ export default function (pi: ExtensionAPI) {
 				return { action: "continue" };
 			}
 		}
-		saveInjectedSlugs(project, injectedSlugs);
+		saveInjectedSlugs(sessionId, injectedSlugs);
 
 		return {
 			action: "transform",
