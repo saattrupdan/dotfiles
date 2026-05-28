@@ -217,6 +217,27 @@ function touchCooldown(): boolean {
 // Main
 // ---------------------------------------------------------------------------
 
+// Persistent dedup store — survives hot-reloads.
+// Stores injected memory slugs (scope/name) per project.
+const INJECTED_FILE = join(PI, "memories", ".injected-slugs");
+
+function loadInjectedSlugs(): Set<string> {
+	try {
+		if (!existsSync(INJECTED_FILE)) return new Set();
+		return new Set(JSON.parse(readFileSync(INJECTED_FILE, "utf8")));
+	} catch {
+		return new Set();
+	}
+}
+
+function saveInjectedSlugs(slugs: Set<string>) {
+	try {
+		writeFileSync(INJECTED_FILE, JSON.stringify([...slugs]));
+	} catch { /* ignore */ }
+}
+
+const injectedSlugs = loadInjectedSlugs();
+
 export default function (pi: ExtensionAPI) {
 	const MAX_INJECT = 5; // max memories to inject per message
 
@@ -228,9 +249,21 @@ export default function (pi: ExtensionAPI) {
 		if (!message || message.trim().length < 3) return;
 		const result = searchMemories(message, MAX_INJECT);
 		if (!result) return;
-		const key = result.trim().slice(0, 100);
-		if (injected.has(key)) return;
-		injected.add(key);
+		// Extract memory slugs from result to deduplicate
+		const slugs: string[] = [];
+		for (const line of result.trim().split("\n")) {
+			const m = line.match(/`([^/]+/[^`]+)`/);
+			if (m) slugs.push(m[1]);
+		}
+		for (const slug of slugs) {
+			if (!injectedSlugs.has(slug)) {
+				injectedSlugs.add(slug);
+			} else {
+				// Already injected in this session
+				return undefined;
+			}
+		}
+		saveInjectedSlugs(injectedSlugs);
 		return { action: "transform" as const, text: result };
 	}
 
@@ -268,6 +301,21 @@ export default function (pi: ExtensionAPI) {
 		if (!result) {
 			return { action: "continue" };
 		}
+
+		// Deduplicate against already-injected slugs
+		const slugs: string[] = [];
+		for (const line of result.trim().split("\n")) {
+			const m = line.match(/`([^/]+/[^`]+)`/);
+			if (m) slugs.push(m[1]);
+		}
+		for (const slug of slugs) {
+			if (!injectedSlugs.has(slug)) {
+				injectedSlugs.add(slug);
+			} else {
+				return { action: "continue" };
+			}
+		}
+		saveInjectedSlugs(injectedSlugs);
 
 		return {
 			action: "transform",
