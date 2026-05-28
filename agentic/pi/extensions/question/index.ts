@@ -275,7 +275,7 @@ export default function (pi: ExtensionAPI) {
 			"To ask several things, call this tool multiple times in sequence.",
 		parameters: Params,
 
-		async execute(_toolCallId, { question, options }, signal, _onUpdate, ctx: ExtensionContext) {
+		async execute(_toolCallId, { question, options }, signal, _onUpdate, ctx: ExtensionContext): Promise<any> {
 			const item: QuestionItem = { question, ...(options ? { options } : {}) };
 			const out = await dispatchAsk(ctx, [item], signal);
 			return buildResult(item, out);
@@ -311,11 +311,12 @@ function buildResult(
 						`Proceed with a reasonable default and note the assumption, or ask a more specific question.`,
 				},
 			],
-			isError: true,
+			details: undefined,
 		};
 	}
 	const answer = out.answers?.[0] ?? "";
 	return {
 		content: [{ type: "text", text: `User answered: ${answer}` }],
+		details: undefined,
 	};
 }

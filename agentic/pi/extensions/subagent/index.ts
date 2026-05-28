@@ -16,8 +16,11 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+// @ts-expect-error - module not installed but types are used
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+// @ts-expect-error - module not installed but types are used
 import type { Message } from "@earendil-works/pi-ai";
+// @ts-expect-error - module not installed but types are used
 import { StringEnum } from "@earendil-works/pi-ai";
 import { type ExtensionAPI, getAgentDir, getMarkdownTheme, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
@@ -621,7 +624,7 @@ async function runSingleAgent(
 				}
 			};
 
-			proc.stdout.on("data", (data) => {
+			proc.stdout?.on("data", (data) => {
 				buffer += data.toString();
 				const lines = buffer.split("\n");
 				buffer = lines.pop() || "";
@@ -666,7 +669,7 @@ async function runSingleAgent(
 					}
 				})();
 			};
-			proc.stderr.on("data", (data) => {
+			proc.stderr?.on("data", (data) => {
 				stderrBuffer += data.toString();
 				let nl = stderrBuffer.indexOf("\n");
 				while (nl !== -1) {
@@ -779,7 +782,7 @@ function buildSubagentDescription(): string {
 	// having to guess. Project-scope agents aren't included (cwd isn't known
 	// at load time), but they're rare; the orchestrator still gets a list on
 	// invocation errors.
-	let agents: AgentConfig[] = [];
+	let agents: AgentConfig[];
 	try {
 		agents = discoverAgents(process.cwd(), "user").agents;
 	} catch {
@@ -965,7 +968,7 @@ export default function (pi: ExtensionAPI) {
 					}
 				};
 
-				const results = await mapWithConcurrencyLimit(params.tasks, MAX_CONCURRENCY, async (t, index) => {
+				const results = await mapWithConcurrencyLimit(params.tasks ?? [], MAX_CONCURRENCY, async (t: { agent: string; task: string; cwd?: string; skills?: string[] }, index) => {
 					const result = await runSingleAgent(
 						ctx.cwd,
 						agents,

@@ -13,7 +13,24 @@
 
 import * as childProcess from "node:child_process";
 
-import { binPath } from "@vscode/ripgrep";
+// Find ripgrep binary — shipped with VS Code or available via homebrew/npm.
+const RGP_PATHS = [
+	"/Applications/Visual Studio Code.app/Contents/Resources/app/node_modules/node_modules/@vscode/ripgrep/bin/rg",
+	"/Applications/Visual Studio Code.app/Contents/Resources/app/extensions/search-insights/node_modules/@vscode/ripgrep/bin/rg",
+	"/opt/homebrew/bin/rg",
+	"/usr/local/bin/rg",
+	"rg",
+];
+
+function findRipgrep(): string {
+	for (const p of RGP_PATHS) {
+		try {
+			require("child_process").execSync(`"${p}" --version`, { stdio: "ignore" });
+			return p;
+		} catch { /* try next */ }
+	}
+	return "rg"; // hope it's in PATH
+}
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
@@ -25,11 +42,11 @@ import { Type } from "typebox";
 
 let outlineModule: typeof import("../_outliner/outliner.js") | null = null;
 
-async function loadOutliner(): Promise<typeof import("../_outliner/outliner.js")> {
+async function loadOutliner(): Promise<typeof import("../_outliner/outliner.js") | null> {
 	if (outlineModule) return outlineModule;
 	const jiti = await import("jiti").then((m) => m.createJiti(import.meta.url, { moduleCache: false }));
-	// @ts-expect-error - jiti.import returns unknown
-	outlineModule = await jiti.import("../_outliner/outliner.js", { default: true });
+	// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+	outlineModule = await jiti.import("../_outliner/outliner.js", { default: true }) as typeof import("../_outliner/outliner.js") | null;
 	return outlineModule;
 }
 
@@ -63,7 +80,7 @@ function runRipgrep(repoRoot: string, query: string): RipgrepResult[] {
 	const results: RipgrepResult[] = [];
 
 	try {
-		const rgPath = binPath;
+		const rgPath = findRipgrep();
 		const proc = childProcess.spawnSync(
 			rgPath,
 			["--json", "-n", "--", query],
@@ -126,7 +143,7 @@ export default async function (pi: ExtensionAPI) {
 
 	// Load outliner eagerly
 	const outliner = await loadOutliner();
-	const { outline } = outliner;
+	const outline = outliner?.outline;
 
 	pi.registerTool({
 		name: "search",
@@ -142,6 +159,12 @@ export default async function (pi: ExtensionAPI) {
 			_onUpdate,
 			_ctx,
 		) {
+			if (!outline) {
+				return {
+					content: [{ type: "text", text: "Search index unavailable — outliner failed to load." }],
+					details: undefined,
+				};
+			}
 			const { db, repoId, repoRoot } = ensureFullIndex(process.cwd(), outline);
 			touchMeta(repoId);
 
@@ -208,7 +231,8 @@ export default async function (pi: ExtensionAPI) {
 			const MERGE_CAP = 20;
 
 			// Build def lines
-			const defLines: string[] = [];
+			interface DefHit { file: string; line: number; kind: string; name: string; lineKey: string; }
+		const defLines: DefHit[] = [];
 			const defMap = new Map<string, { kind: string; name: string }>();
 
 			for (const r of defResults) {
@@ -272,11 +296,12 @@ export default async function (pi: ExtensionAPI) {
 
 			return {
 				content: [{ type: "text", text: output.join("\n") }],
+				details: undefined,
 			};
 		},
 
 		renderCall(args, theme) {
-			const query = args?.query ?? args?.search_query ?? "...";
+			const query = args?.query ?? "...";
 			const kind = args?.kind;
 			return new Text(
 				`${theme.fg("toolTitle", theme.bold("search"))} ${theme.fg("accent", String(query))}${kind ? theme.fg("warning", ` [${kind}]`) : ""}`,

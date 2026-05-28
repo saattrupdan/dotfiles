@@ -202,6 +202,7 @@ export default function (pi: ExtensionAPI) {
 						{ type: "text", text: `No such path in tree: ${requested || "."} (relative to repo root ${root})` },
 					],
 					isError: true,
+					details: undefined,
 				};
 			}
 
@@ -215,6 +216,7 @@ export default function (pi: ExtensionAPI) {
 				: "# pass `path=<subdir>` to drill down, `include_files=true` to list files";
 			return {
 				content: [{ type: "text", text: `${header}\n${view.join("\n")}\n${footer}` }],
+				details: undefined,
 			};
 		},
 

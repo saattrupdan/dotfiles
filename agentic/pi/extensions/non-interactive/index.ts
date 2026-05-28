@@ -65,7 +65,7 @@ export default function (pi: ExtensionAPI) {
 				pi.sendMessage({
 					customType: "non-interactive:error",
 					content: "Usage: /non-interactive <prompt>",
-					display: "inline",
+					display: true,
 				});
 				return;
 			}

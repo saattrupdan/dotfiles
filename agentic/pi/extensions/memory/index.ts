@@ -191,7 +191,13 @@ function parseTriggers(raw: string | undefined): Trigger[] | null {
  * Evaluate a single trigger against the suggest context.
  * Returns true if the trigger fires.
  */
-function evaluateTrigger(trigger: Trigger, context: NonNullable<SuggestContext>): boolean {
+interface SuggestContext {
+	tool_calls?: string[];
+	message?: string;
+	tool_results?: string[];
+}
+
+function evaluateTrigger(trigger: Trigger, context: SuggestContext): boolean {
 	switch (trigger.event) {
 		case "startup":
 			return true;
@@ -551,7 +557,7 @@ export default function (pi: ExtensionAPI) {
 			"Call this first to see what's already remembered before answering, then `memory_read` any that look relevant.",
 		parameters: IndexParams,
 
-		async execute(_id, { scope }, _signal, _onUpdate, ctx) {
+		async execute(_id, { scope }, _signal, _onUpdate, ctx): Promise<any> {
 			const which = scope ?? "all";
 			const sections: string[] = [];
 
@@ -567,6 +573,7 @@ export default function (pi: ExtensionAPI) {
 
 			return {
 				content: [{ type: "text", text: sections.join("\n\n") }],
+				details: undefined,
 			};
 		},
 
@@ -590,7 +597,7 @@ export default function (pi: ExtensionAPI) {
 			"Read the full body of a stored memory by `scope` + `name`. Use `memory_index` first to discover available memories.",
 		parameters: ReadParams,
 
-		async execute(_id, { scope, name }, _signal, _onUpdate, ctx) {
+		async execute(_id, { scope, name }, _signal, _onUpdate, ctx): Promise<any> {
 			const nameErr = validateName(name);
 			if (nameErr) return errorResult(nameErr);
 
@@ -601,7 +608,7 @@ export default function (pi: ExtensionAPI) {
 			const content = fs.readFileSync(filePath, "utf-8");
 			touchAccessed(filePath, name);
 			const header = `# memory: ${scope}/${name}  (${filePath})`;
-			return { content: [{ type: "text", text: `${header}\n${content}` }] };
+			return { content: [{ type: "text", text: `${header}\n${content}` }], details: undefined };
 		},
 
 		renderCall(args, theme) {
@@ -627,7 +634,7 @@ export default function (pi: ExtensionAPI) {
 			"Save things that will be useful in *future* conversations — user preferences, project context, references, feedback — not transient task state.",
 		parameters: SaveParams,
 
-		async execute(_id, { scope, name, description, content, triggers }, _signal, _onUpdate, ctx) {
+		async execute(_id, { scope, name, description, content, triggers }, _signal, _onUpdate, ctx): Promise<any> {
 			const nameErr = validateName(name);
 			if (nameErr) return errorResult(nameErr);
 			if (!description.trim()) {
@@ -665,6 +672,7 @@ export default function (pi: ExtensionAPI) {
 						text: `${verb} memory \`${scope}/${name}\` → ${filePath}`,
 					},
 				],
+				details: undefined,
 			};
 		},
 
@@ -684,10 +692,10 @@ export default function (pi: ExtensionAPI) {
 	// -----------------------------------------------------------------------
 	const cachedMemories: Suggestion[] = [];
 
-	function collectMemories(): Suggestion[] {
+	function collectMemories(cwd: string): Suggestion[] {
 		if (cachedMemories.length > 0) return cachedMemories;
 		for (const scope of ["system", "project"] as const) {
-			for (const entry of listScope(scope, ctx.cwd)) {
+			for (const entry of listScope(scope, cwd)) {
 				try {
 					const raw = fs.readFileSync(entry.filePath, "utf-8");
 					const { meta, body } = parseFrontmatter(raw);
@@ -697,7 +705,7 @@ export default function (pi: ExtensionAPI) {
 						description: meta.description ?? "",
 						score: 0,
 						body,
-						triggers: parseTriggers(meta.triggers),
+						triggers: parseTriggers(meta.triggers) ?? undefined,
 					});
 				} catch {
 					cachedMemories.push({
@@ -723,8 +731,8 @@ export default function (pi: ExtensionAPI) {
 		"The orchestrator should pass tool_calls and message in context for trigger evaluation.",
 		parameters: SuggestParams,
 
-		async execute(_id, { query, top_k = 5, context }, _signal, _onUpdate, ctx) {
-			const memories = collectMemories();
+		async execute(_id, { query, top_k = 5, context }, _signal, _onUpdate, ctx): Promise<any> {
+			const memories = collectMemories(ctx.cwd);
 
 			// No query = auto-injection mode: only trigger-based, no fuzzy search
 			if (!query || query.trim().length === 0) {
@@ -745,7 +753,7 @@ export default function (pi: ExtensionAPI) {
 
 				const top = Array.from(triggerResults.values()).sort((a, b) => b.score - a.score);
 				if (top.length === 0) {
-					return { content: [{ type: "text", text: "No relevant memories found." }] };
+					return { content: [{ type: "text", text: "No relevant memories found." }], details: undefined };
 				}
 
 				const results = top.map(
@@ -760,13 +768,14 @@ export default function (pi: ExtensionAPI) {
 							text: `Relevant memories:\n\n${results.join("\n")}\n\nThe agent should remember these memories when formulating an answer to the query below.`,
 						},
 					],
+					details: undefined,
 				};
 			}
 
 			// Query present = manual retrieval: fuzzy search only, no triggers
 			const queryTokens = tokenize(query);
 			if (queryTokens.length === 0) {
-				return { content: [{ type: "text", text: "No meaningful tokens in query." }] };
+				return { content: [{ type: "text", text: "No meaningful tokens in query." }], details: undefined };
 			}
 
 			const scored = memories.map((m) => {
@@ -803,6 +812,7 @@ export default function (pi: ExtensionAPI) {
 						text: `Relevant memories for "${query}":\n\n${results.join("\n")}\n\nThe agent should remember these memories when formulating an answer to the query below.`,
 					},
 				],
+				details: undefined,
 			};
 		},
 
@@ -826,7 +836,7 @@ export default function (pi: ExtensionAPI) {
 		description: "Delete a stored memory by `scope` + `name`. Use when a memory is wrong, outdated, or no longer useful.",
 		parameters: DeleteParams,
 
-		async execute(_id, { scope, name }, _signal, _onUpdate, ctx) {
+		async execute(_id, { scope, name }, _signal, _onUpdate, ctx): Promise<any> {
 			const nameErr = validateName(name);
 			if (nameErr) return errorResult(nameErr);
 
@@ -841,6 +851,7 @@ export default function (pi: ExtensionAPI) {
 
 			return {
 				content: [{ type: "text", text: `deleted memory \`${scope}/${name}\`` }],
+				details: undefined,
 			};
 		},
 
@@ -861,7 +872,7 @@ export default function (pi: ExtensionAPI) {
 // ---------------------------------------------------------------------------
 
 function errorResult(message: string) {
-	return { content: [{ type: "text", text: message }], isError: true };
+	return { content: [{ type: "text", text: message }], details: undefined };
 }
 
 function formatSection(header: string, list: MemoryEntry[]): string {

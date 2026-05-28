@@ -256,18 +256,18 @@ export default function (pi: ExtensionAPI) {
 		// Extract memory slugs from result to deduplicate
 		const slugs: string[] = [];
 		for (const line of result.trim().split("\n")) {
-			const m = line.match(/`([^/]+/[^`]+)`/);
+			const m = line.match(/`([^`]+)`/);
 			if (m) slugs.push(m[1]);
 		}
 		for (const slug of slugs) {
-			if (!injectedSlugs.has(slug)) {
-				injectedSlugs.add(slug);
+			if (!injected.has(slug)) {
+				injected.add(slug);
 			} else {
 				// Already injected in this session
 				return undefined;
 			}
 		}
-		saveInjectedSlugs(sessionId, injectedSlugs);
+		saveInjectedSlugs(sessionId, injected);
 		return { action: "transform" as const, text: result };
 	}
 
@@ -285,18 +285,18 @@ export default function (pi: ExtensionAPI) {
 
 		// Memory injection — only for assistant/tool messages,
 		// catches multi-turn assistant sequences before user boundary.
-		const sessionId = ctx.sessionManager?.sessionId ?? "unknown";
+		const sessionId = ctx.sessionManager?.getSessionId() ?? "unknown";
 		if (event.message?.role === "assistant") {
 			const content = typeof event.message.content === "string"
 				? event.message.content
 				: JSON.stringify(event.message.content);
-			return injectAssistantMemories(content, sessionId);
+			injectAssistantMemories(content, sessionId);
 		}
-		if (event.message?.role === "tool") {
+		if (event.message?.role === "toolResult") {
 			const content = typeof event.message.content === "string"
 				? event.message.content
 				: JSON.stringify(event.message.content);
-			return injectAssistantMemories(content, sessionId);
+			injectAssistantMemories(content, sessionId);
 		}
 		return undefined;
 	});
@@ -313,21 +313,21 @@ export default function (pi: ExtensionAPI) {
 			return { action: "continue" };
 		}
 
-		const sessionId = ctx.sessionManager?.sessionId ?? "unknown";
+		const sessionId = ctx.sessionManager?.getSessionId() ?? "unknown";
 		// Deduplicate against already-injected slugs
 		const slugs: string[] = [];
 		for (const line of result.trim().split("\n")) {
-			const m = line.match(/`([^/]+/[^`]+)`/);
+			const m = line.match(/`([^`]+)`/);
 			if (m) slugs.push(m[1]);
 		}
 		for (const slug of slugs) {
-			if (!injectedSlugs.has(slug)) {
-				injectedSlugs.add(slug);
+			if (!injected.has(slug)) {
+				injected.add(slug);
 			} else {
 				return { action: "continue" };
 			}
 		}
-		saveInjectedSlugs(sessionId, injectedSlugs);
+		saveInjectedSlugs(sessionId, injected);
 
 		return {
 			action: "transform",

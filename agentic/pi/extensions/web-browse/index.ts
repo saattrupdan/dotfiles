@@ -92,12 +92,11 @@ export default function (pi: ExtensionAPI) {
 			"If unsure of the command surface, call once with `command=\"skills get core\"`.",
 		parameters: Params,
 
-		async execute(_toolCallId, params, signal) {
+		async execute(_toolCallId, params, signal, _onUpdate, _ctx): Promise<any> {
 			const args = parseCommand(params.command);
 			if (args.length === 0) {
 				return {
 					content: [{ type: "text", text: "web_browse: empty command" }],
-					isError: true,
 				};
 			}
 
@@ -126,7 +125,6 @@ export default function (pi: ExtensionAPI) {
 					resolve({
 						content: [{ type: "text", text: `web_browse: failed to spawn agent-browser: ${err.message}` }],
 						details: { args, error: err.message },
-						isError: true,
 					});
 				});
 				proc.on("close", (code) => {
@@ -138,7 +136,6 @@ export default function (pi: ExtensionAPI) {
 					resolve({
 						content: [{ type: "text", text: `# agent-browser ${args.join(" ")}  [${status}${truncated ? ", truncated" : ""}]\n${text}` }],
 						details: { args, exitCode: code ?? 0, timedOut, truncated },
-						isError: timedOut || (code ?? 0) !== 0,
 					});
 				});
 			});

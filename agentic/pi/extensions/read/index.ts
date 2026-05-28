@@ -35,11 +35,9 @@ async function loadModules() {
 	}
 	const jiti = await import("jiti").then((m) => m.createJiti(import.meta.url, { moduleCache: false }));
 	if (!outlineModule) {
-		// @ts-expect-error - jiti.import returns unknown
 		outlineModule = await jiti.import("../_outliner/outliner.js", { default: true });
 	}
 	if (!indexStoreModule) {
-		// @ts-expect-error - jiti.import returns unknown
 		indexStoreModule = await jiti.import("../search/index-store.js", { default: true });
 	}
 	return { outliner: outlineModule!, indexStore: indexStoreModule! };
@@ -92,7 +90,6 @@ function listDirectory(absolutePath: string) {
 	} catch (err) {
 		return {
 			content: [{ type: "text", text: `Could not read directory ${absolutePath}: ${(err as Error).message}` }],
-			isError: true,
 		};
 	}
 	const dirs: string[] = [];
@@ -166,12 +163,10 @@ export default async function (pi: ExtensionAPI) {
 								text: `SYSTEM.md is the child agent's system prompt. Here's a brief preview:\n\n${content}`,
 							},
 						],
-						isError: false,
 					};
 				} catch {
 					return {
 						content: [{ type: "text", text: "SYSTEM.md is the child agent's system prompt." }],
-						isError: false,
 					};
 				}
 			}
@@ -180,7 +175,6 @@ export default async function (pi: ExtensionAPI) {
 			if (!fs.existsSync(absolutePath)) {
 				return {
 					content: [{ type: "text", text: `File not found: ${absolutePath}` }],
-					isError: true,
 				};
 			}
 
@@ -197,7 +191,7 @@ export default async function (pi: ExtensionAPI) {
 			// 2. Image passthrough
 			if (isLikelyImage(absolutePath)) {
 				try {
-					const builtIn = await import("$PI/dist/core/tools/read.js");
+					const builtIn = await import("$PI/dist/core/tools/read.js" as any);
 					return builtIn.createReadTool().execute(absolutePath, undefined, undefined, _signal);
 				} catch {
 					return {
@@ -207,7 +201,6 @@ export default async function (pi: ExtensionAPI) {
 								text: `Binary file (${path.extname(absolutePath)}) — use the built-in image tool.`,
 							},
 						],
-						isError: false,
 					};
 				}
 			}
@@ -264,14 +257,11 @@ export default async function (pi: ExtensionAPI) {
 								text: `Symbol "${symbol}" not found in ${relPath}. Read the file without \`symbol\` to see the outline, or use \`search\` to locate it.`,
 							},
 						],
-						isError: true,
 					};
 				}
 				const slice = allLines.slice(sym.line_start - 1, sym.line_end);
 				const symbolHeader = `# ${relPath}::${symbol}  lines ${sym.line_start}-${sym.line_end} (${sym.kind})`;
-				const meta: string[] = [];
-				if (sym.docFirstLine) meta.push(`Docstring: ${sym.docFirstLine}`);
-				const symbolPreamble = meta.length > 0 ? `${symbolHeader}\n${meta.join("\n")}\n` : `${symbolHeader}\n`;
+				const symbolPreamble = `${symbolHeader}\n`;
 				const numbered = slice.map((line, i) => `  ${sym.line_start + i}: ${line}`).join("\n");
 				dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
 				return { content: [{ type: "text", text: `${symbolPreamble}${numbered}` }] };
@@ -304,7 +294,7 @@ export default async function (pi: ExtensionAPI) {
 		},
 
 		renderCall(args, theme) {
-			const rawPath = args?.path ?? args?.file_path;
+			const rawPath = args?.path;
 			const pathStr = rawPath ? String(rawPath) : "...";
 			const symbol = args?.symbol;
 			const suffix = symbol ? `::${String(symbol)}` : "";
@@ -363,7 +353,6 @@ function readOutsideRepo(
 		if (!hit) {
 			return {
 				content: [{ type: "text", text: `Symbol "${symbol}" not found in ${absolutePath}.` }],
-				isError: true,
 			};
 		}
 		const slice = allLines.slice(hit.line - 1, hit.lineEnd);

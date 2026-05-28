@@ -17,6 +17,8 @@ import * as path from "node:path";
 import { execSync } from "node:child_process";
 
 import type Database from "better-sqlite3";
+
+type DatabaseInstance = InstanceType<typeof Database>;
 import type { OutlineEntry, OutlineResult } from "../_outliner/outliner.js";
 
 export type OutlinerFn = (filePath: string, source: string) => OutlineResult;
@@ -134,7 +136,7 @@ export function readMeta(repoId: string): { root: string; created: string; last_
 /**
  * Open (or create) the index database and ensure schema exists.
  */
-export function openDb(repoId: string): Database.Database {
+export function openDb(repoId: string): DatabaseInstance {
 	const dbPath = getIndexDbPath(repoId);
 	fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 	const db = require("better-sqlite3")(dbPath);
@@ -181,7 +183,7 @@ export function openDb(repoId: string): Database.Database {
 /**
  * Full rebuild: delete all data and re-populate from scratch.
  */
-export function rebuildIndex(db: Database.Database, repoId: string, repoRoot: string): void {
+export function rebuildIndex(db: DatabaseInstance, repoId: string, repoRoot: string): void {
 	const stmt = db.prepare("DELETE FROM symbols");
 	stmt.run();
 	const stmt2 = db.prepare("DELETE FROM files");
@@ -193,7 +195,7 @@ export function rebuildIndex(db: Database.Database, repoId: string, repoRoot: st
  * Insert a file row into the index.
  */
 export function insertFile(
-	db: Database.Database,
+	db: DatabaseInstance,
 	relativePath: string,
 	lines: number,
 	size: number,
@@ -213,7 +215,7 @@ export function insertFile(
  * Insert a symbol row into the index.
  */
 export function insertSymbol(
-	db: Database.Database,
+	db: DatabaseInstance,
 	entry: OutlineEntry,
 	file: string,
 ): void {
@@ -237,7 +239,7 @@ export function insertSymbol(
  * Read the full outline (module doc + symbols ordered by line) for a file.
  */
 export function getFileOutline(
-	db: Database.Database,
+	db: DatabaseInstance,
 	file: string,
 ): { doc: string | null; entries: OutlineEntry[] } | null {
 	const fileStmt = db.prepare("SELECT doc FROM files WHERE path = ?");
@@ -276,7 +278,7 @@ export function getFileOutline(
  * Supports "Class.method" — splits on the last dot for parent disambiguation.
  */
 export function getSymbol(
-	db: Database.Database,
+	db: DatabaseInstance,
 	file: string,
 	dottedName: string,
 ): { line_start: number; line_end: number; kind: string; name: string; parent: string | null } | null {
@@ -322,7 +324,7 @@ export interface SymbolResult {
 	parent: string | null;
 }
 
-export function querySymbols(db: Database.Database, query: string): SymbolResult[] {
+export function querySymbols(db: DatabaseInstance, query: string): SymbolResult[] {
 	const stmt = db.prepare(
 		`SELECT name, kind, file, line_start, line_end, parent
 		 FROM symbols
@@ -340,7 +342,7 @@ export function querySymbols(db: Database.Database, query: string): SymbolResult
  * Query files by path substring (case-insensitive). Used to surface filename
  * matches alongside symbol/content hits.
  */
-export function queryFilesByName(db: Database.Database, query: string): { path: string; lines: number }[] {
+export function queryFilesByName(db: DatabaseInstance, query: string): { path: string; lines: number }[] {
 	const stmt = db.prepare(
 		`SELECT path, lines FROM files
 		 WHERE LOWER(path) LIKE LOWER(?)
@@ -350,7 +352,7 @@ export function queryFilesByName(db: Database.Database, query: string): { path: 
 	return stmt.all(`%${query}%`) as { path: string; lines: number }[];
 }
 
-export function queryExactSymbol(db: Database.Database, query: string): SymbolResult[] {
+export function queryExactSymbol(db: DatabaseInstance, query: string): SymbolResult[] {
 	const stmt = db.prepare(
 		`SELECT name, kind, file, line_start, line_end, parent
 		 FROM symbols
@@ -363,7 +365,7 @@ export function queryExactSymbol(db: Database.Database, query: string): SymbolRe
 /**
  * Remove files that no longer exist on disk.
  */
-export function removeMissingFiles(db: Database.Database, existingPaths: Set<string>): void {
+export function removeMissingFiles(db: DatabaseInstance, existingPaths: Set<string>): void {
 	const stmt = db.prepare("SELECT path FROM files");
 	const rows = stmt.all() as { path: string }[];
 	const toDelete = rows
@@ -388,7 +390,7 @@ export function removeMissingFiles(db: Database.Database, existingPaths: Set<str
  * Returns the set of existing file paths.
  */
 export function incrementalRefresh(
-	db: Database.Database,
+	db: DatabaseInstance,
 	repoRoot: string,
 	existingPaths: Set<string>,
 	updateFile: (relativePath: string, content: string) => void,
@@ -420,7 +422,8 @@ export function incrementalRefresh(
 	for (const relPath of toReparse) {
 		const fullPath = path.join(repoRoot, relPath);
 		try {
-			updateFile(relPath);
+			const content = fs.readFileSync(fullPath, "utf-8");
+			updateFile(relPath, content);
 		} catch {
 			// Silently skip
 		}
@@ -436,7 +439,7 @@ export function incrementalRefresh(
 // Shared bootstrap (used by both `search` and `read` extensions)
 // ---------------------------------------------------------------------------
 
-let cachedDb: Database.Database | null = null;
+let cachedDb: DatabaseInstance | null = null;
 let cachedRepoId: string | null = null;
 let cachedRepoRoot: string | null = null;
 
@@ -461,7 +464,7 @@ function detectLanguage(filePath: string): string {
  * Cheap enough to call on every tool invocation.
  */
 export function openIndex(cwd: string): {
-	db: Database.Database;
+	db: DatabaseInstance;
 	repoId: string;
 	repoRoot: string;
 } {
@@ -487,7 +490,7 @@ export function openIndex(cwd: string): {
  * lazily per file.
  */
 export function ensureFullIndex(cwd: string, outline: OutlinerFn): {
-	db: Database.Database;
+	db: DatabaseInstance;
 	repoId: string;
 	repoRoot: string;
 } {
@@ -504,7 +507,7 @@ export function ensureFullIndex(cwd: string, outline: OutlinerFn): {
 /**
  * Full build from scratch.
  */
-function buildIndex(db: Database.Database, repoRoot: string, outline: OutlinerFn): void {
+function buildIndex(db: DatabaseInstance, repoRoot: string, outline: OutlinerFn): void {
 	const files = listFiles(repoRoot);
 	for (const relPath of files) {
 		const fullPath = path.join(repoRoot, relPath);
@@ -522,7 +525,7 @@ function buildIndex(db: Database.Database, repoRoot: string, outline: OutlinerFn
  * Used both by full build and incremental refresh.
  */
 export function indexFile(
-	db: Database.Database,
+	db: DatabaseInstance,
 	repoRoot: string,
 	relPath: string,
 	content: string,
@@ -550,7 +553,7 @@ export function indexFile(
  * Refresh a single file in-place. Returns true if anything changed.
  */
 export function refreshFile(
-	db: Database.Database,
+	db: DatabaseInstance,
 	repoRoot: string,
 	relPath: string,
 	outline: OutlinerFn,

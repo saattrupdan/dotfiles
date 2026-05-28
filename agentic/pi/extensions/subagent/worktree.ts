@@ -310,9 +310,9 @@ export async function mergeAndCleanup(handle: WorktreeHandle): Promise<WorktreeC
 				// them, merge, then restore. See: builder merge exit 2 with
 				// "untracked working tree files would be overwritten by merge".
 				const backupDir = path.join(parentRepoRoot, ".pi", "temp", "untracked-backup");
-				let backedUpFiles: string[] = [];
+				const backedUpFiles: string[] = [];
 				try {
-					const statusLines = (await git(parentRepoRoot, ["status", "--porcelain"]).trim()).split("\n");
+					const statusLines = (await git(parentRepoRoot, ["status", "--porcelain"])).trim().split("\n");
 					const conflicts = statusLines
 						.filter(l => l.trimStart().startsWith("??")) // untracked
 						.map(l => l.slice(3).trim()); // path after "?? "
@@ -338,7 +338,7 @@ export async function mergeAndCleanup(handle: WorktreeHandle): Promise<WorktreeC
 				// that would be overwritten. Stash them, merge, then restore.
 				let stashedFiles: string[] = [];
 				try {
-					const modStatus = (await git(parentRepoRoot, ["status", "--porcelain"]).trim()).split("\n");
+					const modStatus = (await git(parentRepoRoot, ["status", "--porcelain"])).trim().split("\n");
 					const trackedMods = modStatus
 						.filter(l => l.trimStart().match(/^[^?][MADRCU!]/)) // tracked (not ??), modified/staged
 						.map(l => l.slice(3).trim());

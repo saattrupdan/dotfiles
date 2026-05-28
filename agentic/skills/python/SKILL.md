@@ -7,6 +7,12 @@ last-updated: 2026-05-09
 
 ## Python Conventions
 
+### Execution
+
+- **Always use `uv run`** to execute Python scripts and commands — never use
+  `.venv/bin/python`, `python -m`, or activate a virtual environment. E.g.:
+  `uv run script.py`, `uv run pytest`, `uv run ruff check`.
+
 ### Natural Language
 
 - Write in British English, never American English. This also holds for comments,
@@ -14,7 +20,7 @@ last-updated: 2026-05-09
 
 ### General Conventions
 
-- Use `uv run` for all script and command execution
+- Use `pyproject.toml`, not `requirements.txt` for dependency management
 - Use `pyproject.toml`, not `requirements.txt` for dependency management
 - Do not read entire files, find the relevant line(s) with command-line tools, and only
   read those lines

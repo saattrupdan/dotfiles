@@ -77,7 +77,7 @@ export default function (pi: ExtensionAPI) {
 			"Fetch an HTTP(S) URL and convert it to Markdown via docling. Handles HTML, PDF, DOCX, PPTX, images, and more. Returns the cached file path in the output text — use `read` on that path to get an outline and navigate sections. Output is hard-capped — pass `max_chars` to raise. For interactive/JS-heavy pages, use `web_browse` instead.",
 		parameters: Params,
 
-		async execute(_toolCallId, params, signal) {
+		async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
 			const max = Math.min(params.max_chars ?? DEFAULT_MAX_CHARS, HARD_MAX_CHARS);
 			ensureCacheDir();
 			const filePath = cachePath(params.url);
@@ -91,7 +91,6 @@ export default function (pi: ExtensionAPI) {
 					return {
 						content: [{ type: "text", text: `${header}\n\nPath: \`${filePath}\`\n\n${text}` }],
 						details: { url: params.url, path: filePath, cached: true, truncated },
-						isError: false,
 					};
 				}
 			} catch { /* cache miss, continue */ }
@@ -101,7 +100,7 @@ export default function (pi: ExtensionAPI) {
 				// PDF, DOCX, PPTX, images, etc. Always exports to Markdown.
 				const tmpDir = await mkdtemp(join(tmpdir(), "docling-"));
 				try {
-					const { stdout, stderr, status } = await runDocling(tmpDir, params.url, signal);
+					const { status } = await runDocling(tmpDir, params.url, signal);
 
 					// Read the output file: docling writes `file.md` for URLs,
 					// or `<basename>.md` for local files.
@@ -116,7 +115,7 @@ export default function (pi: ExtensionAPI) {
 					const header = `# ${params.url}  [${status === 0 ? "ok" : "error"}]`;
 					return {
 						content: [{ type: "text", text: `${header}\n\nPath: \`${filePath}\`\n\n${text}` }],
-						details: { url: params.url, path: filePath, truncated },
+						details: { url: params.url, path: filePath, cached: false, truncated },
 						isError: status !== 0,
 					};
 				} finally {
@@ -126,8 +125,7 @@ export default function (pi: ExtensionAPI) {
 				const msg = (err as Error).message || String(err);
 				return {
 					content: [{ type: "text", text: `web_fetch failed: ${msg}` }],
-					details: { url: params.url, error: msg },
-					isError: true,
+					details: { url: params.url, path: "", cached: false, truncated: false, error: msg },
 				};
 			}
 		},

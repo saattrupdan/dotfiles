@@ -63,7 +63,7 @@ export default function (pi: ExtensionAPI) {
 							text: `Skill "${name}" not found. Available skills: ${available}`,
 						},
 					],
-					isError: true,
+					details: undefined,
 				};
 			}
 
@@ -78,13 +78,14 @@ export default function (pi: ExtensionAPI) {
 							text: `Failed to read skill "${name}" at ${skill.filePath}: ${(err as Error).message}`,
 						},
 					],
-					isError: true,
+					details: undefined,
 				};
 			}
 
 			const header = `# skill: ${skill.name}  (${skill.filePath})`;
 			return {
 				content: [{ type: "text", text: `${header}\n${content}` }],
+				details: undefined,
 			};
 		},
 

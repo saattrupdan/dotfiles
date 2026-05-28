@@ -95,7 +95,7 @@ function parseDuckDuckGoHtml(html: string, max: number): SearchResult[] {
 	return results;
 }
 
-async function duckDuckGoSearch(query: string, max: number, signal: AbortSignal): Promise<SearchResult[]> {
+async function duckDuckGoSearch(query: string, max: number, signal?: AbortSignal): Promise<SearchResult[]> {
 	const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
 	const res = await fetch(url, {
 		method: "POST",
@@ -125,7 +125,7 @@ function formatResultsMarkdown(query: string, results: SearchResult[]): string {
 		if (r.snippet) lines.push(`   ${r.snippet}`);
 	});
 	lines.push("");
-	lines.push("Note: use the \`web_fetch\` tool to read any of these URLs.");
+	lines.push("Note: use the `web_fetch` tool to read any of these URLs.");
 	return lines.join("\n");
 }
 
@@ -137,7 +137,7 @@ export default function (pi: ExtensionAPI) {
 			"Search the web via DuckDuckGo and return the top results (title, URL, snippet). Use this to discover relevant pages, then fetch them with curl/wget through bash for the actual content.",
 		parameters: Params,
 
-		async execute(_toolCallId, params, signal) {
+		async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
 			const max = params.max_results ?? 10;
 			try {
 				const results = await duckDuckGoSearch(params.query, max, signal);
@@ -149,8 +149,7 @@ export default function (pi: ExtensionAPI) {
 				const msg = (err as Error).message || String(err);
 				return {
 					content: [{ type: "text", text: `Web search failed: ${msg}` }],
-					details: { query: params.query, error: msg },
-					isError: true,
+					details: { query: params.query, count: 0, results: [], error: msg },
 				};
 			}
 		},
