@@ -82,9 +82,12 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
+			// The full markdown goes in `content` so the *model* receives it.
+			// The chat view is kept to a one-line status via `renderResult`
+			// below — `details` carries the skill name for that render.
 			return {
-				content: [{ type: "text", text: `Skill "${skill.name}" loaded.` }],
-				details: { content },
+				content: [{ type: "text", text: content }],
+				details: { name: skill.name },
 			};
 		},
 
@@ -95,6 +98,14 @@ export default function (pi: ExtensionAPI) {
 				0,
 				0,
 			);
+		},
+
+		// The model gets the full SKILL.md via `content`, but the chat view
+		// should only show that the skill was loaded — never dump the markdown.
+		renderResult(result, _options, theme, _context) {
+			const details = result.details as { name?: string } | undefined;
+			const name = details?.name ?? "skill";
+			return new Text(theme.fg("success", `✓ loaded skill "${name}"`), 0, 0);
 		},
 	});
 }
