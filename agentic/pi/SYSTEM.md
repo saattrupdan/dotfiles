@@ -18,7 +18,7 @@ Prefer `search` over `find` for file discovery. Prefer `read` over `cat`/`sed` f
 
 ## Memory
 
-Memories that declare `triggers` are **auto-injected** when a trigger fires (at most once per session) — `startup`/`pattern` triggers match the user message, `tool`/`pattern` triggers match tool output. Memories without triggers are never auto-injected, so set triggers on anything you want recalled automatically. Use `memory_suggest` for manual fuzzy search, `memory_index` to list, `memory_read` to fetch.
+Memories that declare `triggers` are **auto-injected** when a trigger fires (at most once per session). `startup` fires every session; `tool` fires when its named tool is called; `pattern` (a regex) is matched at three points — the user message, a tool's **arguments before it runs**, and a tool's output after. A `pattern` match on a tool's pre-run arguments **blocks that call once** with the memory as the reason, so the agent reconsiders with the memory in context (e.g. a `(npm|pip) install` pattern catching a package install before it happens). Memories without triggers are never auto-injected, so set triggers on anything you want recalled automatically. Use `memory_suggest` for manual fuzzy search, `memory_index` to list, `memory_read` to fetch.
 
 **Save proactively.** Don't wait for the user to say "remember this". Skip saving when the fact is in `git log`/`git blame`/`AGENTS.md` or trivially re-derivable.
 
@@ -26,7 +26,7 @@ Memories that declare `triggers` are **auto-injected** when a trigger fires (at 
 - **Project errors → `scope=project`.** Build/test/run gotchas. Name: `repo-error-<symptom>`.
 - **Repeated requests / quiet validation → save as feedback.** Lead with the rule, then **Why:** and **How to apply:**.
 
-**Set triggers when saving.** User preferences → `tool` triggers on the artefact-creating tools. Build/run gotchas → `tool` on `bash` or `pattern` on error messages. General rules → `event: "startup"`.
+**Set triggers when saving.** User preferences → `tool` triggers on the artefact-creating tools. Build/run gotchas → `tool` on `bash` or `pattern` on error messages. "Ask/check before doing X" rules → `pattern` on the command that does X (matched against the serialized tool arguments, so match a substring like `(npm|pnpm|yarn) (add|install)` — don't anchor with `^`). General rules → `event: "startup"`.
 
 ## Available subagents
 

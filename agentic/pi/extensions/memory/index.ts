@@ -288,10 +288,15 @@ const ReadParams = Type.Object({
 const TriggerParam = Type.Object({
 	event: Type.Union(
 		[Type.Literal("startup"), Type.Literal("tool"), Type.Literal("pattern")],
-		{ description: "Trigger type: 'startup' (every turn), 'tool' (specific tool call), 'pattern' (regex match)." },
+		{ description: "Trigger type: 'startup' (every session), 'tool' (specific tool call), 'pattern' (regex match)." },
 	),
 	tool: Type.Optional(Type.String({ description: "Tool name to match (required when event is 'tool')." })),
-	pattern: Type.Optional(Type.String({ description: "Regex pattern to match against user message (required when event is 'pattern')." })),
+	pattern: Type.Optional(
+		Type.String({
+			description:
+				"Regex (required when event is 'pattern'). Matched against the user message, a tool's arguments *before* it runs (the serialized JSON, e.g. {\"command\":\"npm install foo\"}), and a tool's output after it runs. A pre-run match blocks that call once with the memory as the reason, nudging the agent to reconsider — so this is the trigger for 'before you do X, remember Y' rules (e.g. pattern '(npm|pip) install' for a package-permission rule). Note: match the substring; don't anchor with ^ since the JSON prefix precedes the argument value.",
+		}),
+	),
 });
 
 const SaveParams = Type.Object({
