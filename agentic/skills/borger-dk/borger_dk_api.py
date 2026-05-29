@@ -3,6 +3,7 @@
 
 Standard library only. See ./SKILL.md for endpoint specs.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -31,9 +32,7 @@ def main() -> None:
         p.add_argument(
             "--raw",
             action="store_true",
-            help=(
-                "print raw JSON response "
-                "(skip the human-readable formatter)"),
+            help=("print raw JSON response (skip the human-readable formatter)"),
         )
         return p
 
@@ -60,13 +59,11 @@ def main() -> None:
 
     _add(
         "portalid",
-        help="extract the current data-portal-id from "
-        "the home page",
+        help="extract the current data-portal-id from the home page",
     ).set_defaults(func=cmd_portalid)
     _add(
         "endpoints",
-        help="list /api/* paths referenced from the "
-        "home page",
+        help="list /api/* paths referenced from the home page",
     ).set_defaults(func=cmd_endpoints)
 
     p = _add(
@@ -104,20 +101,17 @@ def _request(
     elif method == "POST":
         data = b""
         h["Content-Length"] = "0"
-    req = urllib.request.Request(
-        url, data=data, method=method, headers=h)
+    req = urllib.request.Request(url, data=data, method=method, headers=h)
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             return r.status, r.read()
     except urllib.error.HTTPError as e:
         body_text = e.read() if e.fp else b""
-        sys.stderr.write(
-            f"HTTP {e.code} {e.reason} on "
-            f"{method} {path}\n")
+        sys.stderr.write(f"HTTP {e.code} {e.reason} on {method} {path}\n")
         if body_text:
             sys.stderr.write(
-                body_text.decode("utf-8", errors="replace")
-                .rstrip() + "\n")
+                body_text.decode("utf-8", errors="replace").rstrip() + "\n"
+            )
         sys.exit(2)
 
 
@@ -190,21 +184,16 @@ def cmd_popular(args: argparse.Namespace) -> None:
 
 def cmd_portalid(args: argparse.Namespace) -> None:
     html = _fetch_home_html()
-    m = re.search(
-        r'data-portal-id="([0-9a-fA-F-]{36})"', html)
+    m = re.search(r'data-portal-id="([0-9a-fA-F-]{36})"', html)
     if not m:
-        sys.stderr.write(
-            "data-portal-id not found in "
-            "home-page HTML\n")
+        sys.stderr.write("data-portal-id not found in home-page HTML\n")
         sys.exit(2)
     print(m.group(1))
 
 
 def cmd_endpoints(args: argparse.Namespace) -> None:
     html = _fetch_home_html()
-    paths = sorted(
-        set(re.findall(
-            r"/api/[A-Za-z0-9/_.{}-]+", html)))
+    paths = sorted(set(re.findall(r"/api/[A-Za-z0-9/_.{}-]+", html)))
     for p in paths:
         print(p)
 
@@ -219,10 +208,9 @@ def cmd_sitemap(args: argparse.Namespace) -> None:
     xml = raw.decode("utf-8", errors="replace")
     locs = re.findall(r"<loc>([^<]+)</loc>", xml)
     if args.limit:
-        locs = locs[:args.limit]
+        locs = locs[: args.limit]
     if not locs:
-        sys.stderr.write(
-            "No <loc> entries found in /sitemap.xml\n")
+        sys.stderr.write("No <loc> entries found in /sitemap.xml\n")
         sys.exit(2)
     for url in locs:
         print(url)

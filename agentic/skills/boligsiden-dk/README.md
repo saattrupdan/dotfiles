@@ -31,7 +31,7 @@ python3 boligsiden_dk_api.py municipalities
 
 ## Key facts
 
-- The website is behind Cloudflare — **always prefer the REST API** for programmatic access.
-- The API is **fully anonymous** — no authentication, no API key needed.
+- The website and REST API are both behind **Cloudflare Turnstile** — unauthenticated script access returns 403 or an HTML challenge page.
+- No API key is needed, but Cloudflare blocks non-browser requests as of May 2026.
 - All responses are in **HAL format** with `_links.self.href` on each resource.
 - Pagination uses `_page` and `_limit` query parameters.

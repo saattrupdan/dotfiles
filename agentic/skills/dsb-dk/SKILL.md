@@ -28,7 +28,7 @@ The homepage form accepts:
 
 | Field | Description |
 |---|---|
-| **Fra / Til** | From/to stations — autocomplete via `/api/stations/getstationlist?q=` |
+| **Fra / Til** | From/to stations — autocomplete via `/api/stations/getstationlist` (returns all stations; client filters) |
 | **Via** | Optional intermediate stop |
 | **Udrejse / Ankomst** | Date and time |
 | **Antal rejsende** | Adults, Children 0-11, Children 12-15, Seniors 67+, Youth 16-25 |
@@ -101,10 +101,10 @@ The only useful internal API endpoint.
 
 **URL**: `https://www.dsb.dk/api/stations/getstationlist`
 **Method**: GET
-**Params**: `q` — optional filter string (case-insensitive)
+**Params**: none (server ignores `q`; the helper script filters client-side)
 **Auth**: None
 
-Returns JSON array of station objects with fields: `stationName` (Danish name), `stationUrl` (detail page URL), `stationLatitude`, `stationLongitude`, `tags` (facility tags). Returns ~320 stations total; use `?q=` to filter. Danish letters preserved as UTF-8.
+Returns JSON array of station objects with fields: `stationName` (Danish name), `stationUrl` (detail page URL), `stationLatitude`, `stationLongitude`, `tags` (facility tags). Always returns all ~320 stations; pass `-q` to the helper script to filter client-side (case-insensitive substring match). Danish letters preserved as UTF-8.
 
 ## Common tasks
 
@@ -120,7 +120,7 @@ Returns JSON array of station objects with fields: `stationName` (Danish name), 
 - **No ticket booking API** — purchases require the website or mobile app.
 - **No seat availability API** — selection happens on the result page.
 - **No personal data API** — account data is session-bound to Gigya.
-- **Station list API returns all ~320 stations** — use `?q=` to filter.
+- **Station list API always returns all ~320 stations** — server ignores `?q=`; use `-q` with the helper script for client-side filtering.
 - **No journey search API** — search form requires JavaScript.
 - **No Cludo search API** — site search is client-side only.
 
@@ -135,7 +135,7 @@ python3 dsb_dk_api.py stations -q aarhus --raw           # raw JSON
 python3 dsb_dk_api.py station-detail /trafikinformation/stationer/kobenhavn-h/
 python3 dsb_dk_api.py traffic-info                      # traffic info page
 python3 dsb_dk_api.py prices-zones                      # prices/zones page
-python3 dsb_dk_api.py sitemap [--prefix /trafik/] [--limit N]
+python3 dsb_dk_api.py sitemap [--prefix /trafikinformation/] [--limit N]
 ```
 
 Each subcommand exits non-zero on HTTP error and writes the response body to stderr.

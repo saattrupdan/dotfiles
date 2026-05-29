@@ -3,6 +3,7 @@
 
 Standard library only. See ./SKILL.md for endpoint specs.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -46,9 +47,7 @@ def main() -> None:
         p.add_argument(
             "--raw",
             action="store_true",
-            help=(
-                "print raw JSON response "
-                "(skip the human-readable formatter)"),
+            help=("print raw JSON response (skip the human-readable formatter)"),
         )
         return p
 
@@ -113,8 +112,7 @@ def main() -> None:
     p.add_argument(
         "--shard",
         required=True,
-        help="sitemap shard name. Known: "
-        + ", ".join(KNOWN_SHARDS),
+        help="sitemap shard name. Known: " + ", ".join(KNOWN_SHARDS),
     )
     p.set_defaults(func=cmd_urls)
 
@@ -141,20 +139,16 @@ def _request(
         # Content-Length: 0.
         data = b""
         headers["Content-Length"] = "0"
-    req = urllib.request.Request(
-        url, data=data, method=method, headers=headers)
+    req = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(
-            req, timeout=30,
+            req,
+            timeout=30,
         ) as r:
             raw = r.read()
     except urllib.error.HTTPError as e:
-        body_text = (
-            e.read().decode("utf-8", errors="replace")
-            if e.fp else "")
-        sys.stderr.write(
-            f"HTTP {e.code} {e.reason} on "
-            f"{method} {path}\n")
+        body_text = e.read().decode("utf-8", errors="replace") if e.fp else ""
+        sys.stderr.write(f"HTTP {e.code} {e.reason} on {method} {path}\n")
         if body_text:
             sys.stderr.write(body_text.rstrip() + "\n")
         sys.exit(2)
@@ -168,15 +162,12 @@ def _request(
 def _check_envelope(obj: t.Any) -> None:
     """Detect the standard sundhed.dk error envelope and exit."""
     if isinstance(obj, dict) and "ResponseStatus" in obj:
-        sys.stderr.write(
-            json.dumps(obj, ensure_ascii=False, indent=2)
-            + "\n")
+        sys.stderr.write(json.dumps(obj, ensure_ascii=False, indent=2) + "\n")
         sys.exit(2)
 
 
 def _emit_json(obj: t.Any) -> None:
-    print(
-        json.dumps(obj, ensure_ascii=False, indent=2))
+    print(json.dumps(obj, ensure_ascii=False, indent=2))
 
 
 def cmd_version(args: argparse.Namespace) -> None:
@@ -199,7 +190,8 @@ def cmd_keepalive(args: argparse.Namespace) -> None:
             _request(
                 "/api/keepalive/renew",
                 method="POST",
-            ))
+            )
+        )
 
 
 def cmd_settings(args: argparse.Namespace) -> None:
@@ -209,32 +201,25 @@ def cmd_settings(args: argparse.Namespace) -> None:
         _emit_json(data)
         return
     for entry in data.get("AppSettings", []):
-        print(
-            f"{entry.get('Key')}="
-            f"{entry.get('Value', '')}")
+        print(f"{entry.get('Key')}={entry.get('Value', '')}")
 
 
 def cmd_setting(args: argparse.Namespace) -> None:
     data = _request(
-        f"/api/core/appsetting/"
-        f"{urllib.parse.quote(args.key, safe='')}",
+        f"/api/core/appsetting/{urllib.parse.quote(args.key, safe='')}",
     )
     _check_envelope(data)
     _emit_json(data)
 
 
 def cmd_menu(args: argparse.Namespace) -> None:
-    qs = urllib.parse.urlencode(
-        {"section": args.section})
+    qs = urllib.parse.urlencode({"section": args.section})
     if args.kind == "top":
-        data = _request(
-            f"/api/navigationtopmenu/?{qs}")
+        data = _request(f"/api/navigationtopmenu/?{qs}")
     elif args.kind == "footer":
-        data = _request(
-            f"/api/navigationfootermenu/?{qs}")
+        data = _request(f"/api/navigationfootermenu/?{qs}")
     else:
-        data = _request(
-            f"/api/navigationiconmenu/?{qs}")
+        data = _request(f"/api/navigationiconmenu/?{qs}")
     _check_envelope(data)
     if args.raw:
         _emit_json(data)
@@ -242,8 +227,7 @@ def cmd_menu(args: argparse.Namespace) -> None:
 
     def _line(item: dict) -> str:
         url = item.get("PortalUrl", "")
-        title = html.unescape(
-            item.get("NavigationTitle", ""))
+        title = html.unescape(item.get("NavigationTitle", ""))
         return f"{url}\t{title}"
 
     if args.kind == "top":
@@ -258,34 +242,26 @@ def cmd_menu(args: argparse.Namespace) -> None:
         for v in items:
             print(_line(v))
     elif args.kind == "footer":
-        for block in data.get(
-            "FooterMenuItems", []):
+        for block in data.get("FooterMenuItems", []):
             for item in block.get("SubItems", []):
                 print(_line(item))
     else:  # icon
         section_key = (
             "BorgerMenuItemBlocks"
             if args.section == "borger"
-            else "FagPersonMenuItemBlocks")
+            else "FagPersonMenuItemBlocks"
+        )
         for block in data.get(section_key, []):
-            header = block.get(
-                "HeaderMenuItem") or {}
-            title = html.unescape(
-                header.get("NavigationTitle", ""))
-            print(
-                f"# {title.upper()}\t"
-                f"{header.get('PortalUrl','')}")
-            for item in block.get(
-                "MenuItems", []):
+            header = block.get("HeaderMenuItem") or {}
+            title = html.unescape(header.get("NavigationTitle", ""))
+            print(f"# {title.upper()}\t{header.get('PortalUrl', '')}")
+            for item in block.get("MenuItems", []):
                 print(_line(item))
 
 
 def cmd_filters(args: argparse.Namespace) -> None:
-    qs = urllib.parse.urlencode(
-        {"section": args.section})
-    data = _request(
-        f"/api/search/"
-        f"searchadditionalfilters?{qs}")
+    qs = urllib.parse.urlencode({"section": args.section})
+    data = _request(f"/api/search/searchadditionalfilters?{qs}")
     _check_envelope(data)
     if args.raw:
         _emit_json(data)
@@ -294,8 +270,7 @@ def cmd_filters(args: argparse.Namespace) -> None:
     for k, v in data.get("Regions", {}).items():
         print(f"{k}\t{v}")
     print("\n# Municipalities")
-    for k, v in data.get(
-        "Municipalities", {}).items():
+    for k, v in data.get("Municipalities", {}).items():
         print(f"{k}\t{v}")
 
 
@@ -306,9 +281,7 @@ def cmd_orgtypes(args: argparse.Namespace) -> None:
         _emit_json(data)
         return
     for o in data.get("OrganisationTypes", []):
-        print(
-            f"{o.get('Id'):>3}  "
-            f"{o.get('SoegningOrganisationType')}")
+        print(f"{o.get('Id'):>3}  {o.get('SoegningOrganisationType')}")
 
 
 def cmd_pagetheme(args: argparse.Namespace) -> None:
@@ -325,12 +298,8 @@ def cmd_alerts(args: argparse.Namespace) -> None:
         _emit_json(data)
         return
     for a in data.get("AlertBanners", []):
-        text = html.unescape(
-            a.get("Text", "")).strip()
-        print(
-            f"{a.get('Id')}  "
-            f"{a.get('RootPage')}\n"
-            f"  {text}\n")
+        text = html.unescape(a.get("Text", "")).strip()
+        print(f"{a.get('Id')}  {a.get('RootPage')}\n  {text}\n")
 
 
 def cmd_plugins(args: argparse.Namespace) -> None:
@@ -343,7 +312,8 @@ def cmd_plugins(args: argparse.Namespace) -> None:
         print(
             f"{p.get('ApplicationId'):>4}  "
             f"{p.get('ApplicationName')}\t"
-            f"{p.get('JsPath','')}")
+            f"{p.get('JsPath', '')}"
+        )
 
 
 def cmd_autocomplete(args: argparse.Namespace) -> None:
@@ -356,8 +326,7 @@ def cmd_autocomplete(args: argparse.Namespace) -> None:
     if args.raw:
         _emit_json(data)
         return
-    for word in data.get(
-        "AutoCompleteResult", []):
+    for word in data.get("AutoCompleteResult", []):
         print(word)
 
 
@@ -374,9 +343,8 @@ def cmd_sitemap(args: argparse.Namespace) -> None:
 def cmd_urls(args: argparse.Namespace) -> None:
     if args.shard not in KNOWN_SHARDS:
         sys.stderr.write(
-            f"Unknown shard: {args.shard!r}\n"
-            f"Known shards: "
-            f"{', '.join(KNOWN_SHARDS)}\n")
+            f"Unknown shard: {args.shard!r}\nKnown shards: {', '.join(KNOWN_SHARDS)}\n"
+        )
         sys.exit(2)
     url = f"{BASE}/sitemap-{args.shard}.xml"
     req = urllib.request.Request(
@@ -385,22 +353,21 @@ def cmd_urls(args: argparse.Namespace) -> None:
     )
     try:
         with urllib.request.urlopen(
-            req, timeout=30,
+            req,
+            timeout=30,
         ) as r:
-            xml = r.read().decode(
-                "utf-8", errors="replace")
+            xml = r.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as e:
-        sys.stderr.write(
-            f"HTTP {e.code} {e.reason} on {url}\n")
+        sys.stderr.write(f"HTTP {e.code} {e.reason} on {url}\n")
         sys.exit(2)
     matches = list(
         re.finditer(
             r"<loc>([^<]+)</loc>",
             xml,
-        ))
+        )
+    )
     if not matches:
-        sys.stderr.write(
-            f"No <loc> entries found in {url}\n")
+        sys.stderr.write(f"No <loc> entries found in {url}\n")
         sys.exit(2)
     for m in matches:
         print(m.group(1))

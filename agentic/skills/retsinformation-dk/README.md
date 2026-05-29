@@ -33,14 +33,15 @@ python3 retsinformation_dk_api.py ressort
 # CLI: ELI routing table
 python3 retsinformation_dk_api.py eli-routing
 
-# CLI: document by ID
-python3 retsinformation_dk_api.py document 19890001
+# CLI: document by ELI path (POST)
+python3 retsinformation_dk_api.py document eli/lta/2026/480
+python3 retsinformation_dk_api.py document eli/accn/A20240001
 
-# CLI: document metadata
-python3 retsinformation_dk_api.py document 19890001 --metadata
+# CLI: document metadata (requires numeric internal ID from document response)
+python3 retsinformation_dk_api.py document 256418 --metadata
 
-# CLI: document timeline
-python3 retsinformation_dk_api.py document 19890001 --timeline
+# CLI: document timeline (requires numeric internal ID from document response)
+python3 retsinformation_dk_api.py document 256418 --timeline
 
 # CLI: ELI authority values
 python3 retsinformation_dk_api.py authority-lists type_document

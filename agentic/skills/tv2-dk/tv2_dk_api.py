@@ -6,6 +6,7 @@ See ./SKILL.md for full endpoint specifications.
 
 Standard library only.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -27,8 +28,7 @@ DEFAULT_HEADERS: dict[str, str] = {
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description=__doc__.strip())
+    parser = argparse.ArgumentParser(description=__doc__.strip())
     sub = parser.add_subparsers(
         dest="cmd",
         required=True,
@@ -40,8 +40,7 @@ def main() -> None:
     )
     p.add_argument(
         "deck_type",
-        help="deck type (e.g. "
-        "'cross_promo_site', 'play_deck')",
+        help="deck type (e.g. 'cross_promo_site', 'play_deck')",
     )
     p.add_argument(
         "--site",
@@ -50,8 +49,7 @@ def main() -> None:
     )
     p.add_argument(
         "--section",
-        help="section identifier "
-        "(for cross_promo_site)",
+        help="section identifier (for cross_promo_site)",
     )
     p.add_argument(
         "--title",
@@ -68,9 +66,7 @@ def main() -> None:
     p.add_argument(
         "--raw",
         action="store_true",
-        help=(
-            "print raw response (JSON structure "
-            "with head/body)"),
+        help=("print raw response (JSON structure with head/body)"),
     )
     p.set_defaults(func=cmd_deck)
 
@@ -92,20 +88,18 @@ def main() -> None:
     p.add_argument(
         "path",
         help="article path without leading slash "
-        "(e.g. '2026-05-08-navn-pa-artikel')",
+        "(e.g. 'udland/2026-05-08-navn-pa-artikel')",
     )
     p.set_defaults(func=cmd_article)
 
     p = sub.add_parser(
         "video-info",
-        help="extract Brightcove player config from "
-        "a page",
+        help="extract Brightcove player config from a page",
     )
     p.add_argument(
         "--url",
         default="https://play.tv2.dk/",
-        help="page to inspect "
-        "(default: https://play.tv2.dk/)",
+        help="page to inspect (default: https://play.tv2.dk/)",
     )
     p.set_defaults(func=cmd_video_info)
 
@@ -123,28 +117,25 @@ def _request(
     if headers:
         h.update(headers)
     data = body if body is not None else None
-    req = urllib.request.Request(
-        url, data=data, method=method, headers=h)
+    req = urllib.request.Request(url, data=data, method=method, headers=h)
     try:
         with urllib.request.urlopen(
-            req, timeout=15,
+            req,
+            timeout=15,
         ) as r:
             return r.status, r.read()
     except urllib.error.HTTPError as e:
         body_text = e.read() if e.fp else b""
-        sys.stderr.write(
-            f"HTTP {e.code} {e.reason} on "
-            f"{method} {url}\n")
+        sys.stderr.write(f"HTTP {e.code} {e.reason} on {method} {url}\n")
         if body_text:
             sys.stderr.write(
-                body_text.decode("utf-8", errors="replace")
-                .rstrip() + "\n")
+                body_text.decode("utf-8", errors="replace").rstrip() + "\n"
+            )
         sys.exit(2)
 
 
 def _emit_json(obj: t.Any) -> None:
-    print(
-        json.dumps(obj, ensure_ascii=False, indent=2))
+    print(json.dumps(obj, ensure_ascii=False, indent=2))
 
 
 def _parse_teasers(html: str) -> list[dict[str, str]]:
@@ -172,17 +163,16 @@ def _parse_teasers(html: str) -> list[dict[str, str]]:
 
         # Extract headline
         heading_m = re.search(
-            r'<h[2-6][^>]*>(.*?)</h[2-6]>',
+            r"<h[2-6][^>]*>(.*?)</h[2-6]>",
             block,
             re.DOTALL,
         )
         if heading_m and not teaser.get("title"):
-            teaser["title"] = (
-                re.sub(
-                    r'<[^>]+>',
-                    '',
-                    heading_m.group(1),
-                ).strip())
+            teaser["title"] = re.sub(
+                r"<[^>]+>",
+                "",
+                heading_m.group(1),
+            ).strip()
 
         # Extract category label
         label_m = re.search(
@@ -191,26 +181,24 @@ def _parse_teasers(html: str) -> list[dict[str, str]]:
             block,
         )
         if label_m:
-            teaser["category"] = (
-                re.sub(
-                    r'<[^>]+>',
-                    '',
-                    label_m.group(1),
-                ).strip())
+            teaser["category"] = re.sub(
+                r"<[^>]+>",
+                "",
+                label_m.group(1),
+            ).strip()
 
         # Extract timestamp/tagline
         tagline_m = re.search(
             r'<span class="tc_teaser__tagline__text">'
-            r'(.*?)</span>',
+            r"(.*?)</span>",
             block,
         )
         if tagline_m:
-            teaser["timestamp"] = (
-                re.sub(
-                    r'<[^>]+>',
-                    '',
-                    tagline_m.group(1),
-                ).strip())
+            teaser["timestamp"] = re.sub(
+                r"<[^>]+>",
+                "",
+                tagline_m.group(1),
+            ).strip()
 
         # Extract image URL (use the largest
         # reasonable size)
@@ -237,19 +225,14 @@ def cmd_deck(args: argparse.Namespace) -> None:
     if hasattr(args, "title") and args.title:
         params.append(f"title={args.title}")
     if hasattr(args, "title_link") and args.title_link:
-        params.append(
-            f"titleLink={args.title_link}")
+        params.append(f"titleLink={args.title_link}")
     if hasattr(args, "cta_url") and args.cta_url:
-        params.append(
-            f"ctaButtonUrl={args.cta_url}")
+        params.append(f"ctaButtonUrl={args.cta_url}")
 
-    url = (
-        f"{BASE_DECKS}/deck/{args.deck_type}?"
-        f"{'&'.join(params)}")
+    url = f"{BASE_DECKS}/deck/{args.deck_type}?{'&'.join(params)}"
     status, raw = _request(url)
 
-    response_text = raw.decode(
-        "utf-8", errors="replace")
+    response_text = raw.decode("utf-8", errors="replace")
 
     # Try to parse as JSON-like structure
     try:
@@ -265,26 +248,26 @@ def cmd_deck(args: argparse.Namespace) -> None:
     teasers = _parse_teasers(html_body)
 
     if args.raw:
-        if 'parsed' in dir():
+        if "parsed" in dir():
             _emit_json(parsed)
         else:
             print(response_text)
         return
 
-    for t in teasers:
-        category = t.get("category", "")
-        ts = t.get("timestamp", "")
+    for teaser in teasers:
+        category = teaser.get("category", "")
+        ts = teaser.get("timestamp", "")
         parts: list[str] = []
         if category:
             parts.append(f"[{category}]")
         if ts:
             parts.append(ts)
         meta = " ".join(parts)
-        print(f"{t['title']}")
+        print(f"{teaser['title']}")
         if meta:
             print(f"  {meta}")
-        if t.get("url"):
-            print(f"  {t['url']}")
+        if teaser.get("url"):
+            print(f"  {teaser['url']}")
         print()
 
 
@@ -297,7 +280,7 @@ def cmd_deck_ids(args: argparse.Namespace) -> None:
     # Look for deck API calls in inline JS
     deck_refs: set[str] = set()
     for m in re.finditer(
-        r'decks\.services\.tv2\.dk/deck/(\w+)',
+        r"decks\.services\.tv2\.dk/deck/(\w+)",
         html,
     ):
         deck_refs.add(m.group(1))
@@ -307,8 +290,8 @@ def cmd_deck_ids(args: argparse.Namespace) -> None:
             print(d)
     else:
         sys.stderr.write(
-            "No deck references found. Try --url "
-            "to specify a different page.\n")
+            "No deck references found. Try --url to specify a different page.\n"
+        )
         sys.exit(2)
 
 
@@ -324,17 +307,19 @@ def cmd_article(args: argparse.Namespace) -> None:
 
     # Extract headline
     headline_m = re.search(
-        r'<h1[^>]*>(.*?)</h1>',
+        r"<h1[^>]*>(.*?)</h1>",
         html,
         re.DOTALL | re.IGNORECASE,
     )
     headline = (
         re.sub(
-            r'<[^>]+>',
-            '',
+            r"<[^>]+>",
+            "",
             headline_m.group(1),
         ).strip()
-        if headline_m else "(no headline)")
+        if headline_m
+        else "(no headline)"
+    )
 
     # Extract article body
     body_m = re.search(
@@ -345,13 +330,13 @@ def cmd_article(args: argparse.Namespace) -> None:
     )
     if body_m:
         body_text = re.sub(
-            r'<[^>]+>',
-            '\n',
+            r"<[^>]+>",
+            "\n",
             body_m.group(1),
         )
         body_text = re.sub(
-            r'\n\s*\n',
-            '\n\n',
+            r"\n\s*\n",
+            "\n\n",
             body_text,
         ).strip()
         print(headline)
@@ -362,9 +347,7 @@ def cmd_article(args: argparse.Namespace) -> None:
         print(headline)
         print("=" * len(headline))
         print()
-        print(
-            "(Could not extract article body - "
-            "content may be JS-rendered)")
+        print("(Could not extract article body - content may be JS-rendered)")
 
 
 def cmd_video_info(args: argparse.Namespace) -> None:
@@ -376,8 +359,8 @@ def cmd_video_info(args: argparse.Namespace) -> None:
     # Look for Brightcove config in
     # window.tv2.brightcove
     bc_match = re.search(
-        r'window\.tv2\.brightcove\s*=\s*'
-        r'({.*?});',
+        r"window\.tv2\.brightcove\s*=\s*"
+        r"({.*?});",
         html,
         re.DOTALL,
     )
@@ -385,11 +368,7 @@ def cmd_video_info(args: argparse.Namespace) -> None:
         try:
             config = json.loads(bc_match.group(1))
             # Only show non-sensitive keys
-            safe_config = {
-                k: v
-                for k, v in config.items()
-                if k != 'reelsPolicyKey'
-            }
+            safe_config = {k: v for k, v in config.items() if k != "reelsPolicyKey"}
             _emit_json(safe_config)
         except json.JSONDecodeError:
             print(bc_match.group(1))
@@ -406,9 +385,7 @@ def cmd_video_info(args: argparse.Namespace) -> None:
         print(f"  {iframe_match.group(1)}")
         return
 
-    sys.stderr.write(
-        "No Brightcove player config or iframe "
-        "found.\n")
+    sys.stderr.write("No Brightcove player config or iframe found.\n")
     sys.exit(2)
 
 

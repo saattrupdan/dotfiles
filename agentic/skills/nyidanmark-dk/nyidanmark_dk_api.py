@@ -6,13 +6,12 @@ Wraps the verified internal endpoints:
     - site search
   - GET  /api/news/getTags
     - news category taxonomy
-  - POST /api/news/getNews
+  - GET  /api/news/getNews?newsTypeTag=<tag>
     - news articles (optional tag filter)
-  - GET  /api/apiCookie/setCookiesConsent
-    - cookie consent
 
 Standard library only. See ./SKILL.md for the underlying spec.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -80,8 +79,7 @@ def main() -> None:
 
     p = sub.add_parser(
         "endpoints",
-        help="list all /api/* paths referenced on the "
-        "home page",
+        help="list all /api/* paths referenced on the home page",
     )
     p.set_defaults(func=cmd_endpoints)
 
@@ -102,44 +100,40 @@ def _request(
     }
     if headers:
         h.update(headers)
-    req = urllib.request.Request(
-        url, data=body, method=method, headers=h)
+    req = urllib.request.Request(url, data=body, method=method, headers=h)
     try:
         with urllib.request.urlopen(
-            req, timeout=timeout,
+            req,
+            timeout=timeout,
         ) as r:
             return r.status, r.read()
     except urllib.error.HTTPError as e:
         body_text = e.read() if e.fp else b""
-        sys.stderr.write(
-            f"HTTP {e.code} {e.reason} on "
-            f"{method} {url}\n")
+        sys.stderr.write(f"HTTP {e.code} {e.reason} on {method} {url}\n")
         if body_text:
             sys.stderr.write(
-                body_text.decode("utf-8", errors="replace")
-                .rstrip() + "\n")
+                body_text.decode("utf-8", errors="replace").rstrip() + "\n"
+            )
         sys.exit(2)
 
 
 def _emit(obj: t.Any) -> None:
     if isinstance(obj, (dict, list)):
-        print(
-            json.dumps(obj, ensure_ascii=False, indent=2))
+        print(json.dumps(obj, ensure_ascii=False, indent=2))
     else:
         print(obj)
 
 
 def cmd_search(args: argparse.Namespace) -> None:
-    params = urllib.parse.urlencode({
-        "query": args.query,
-        "page": args.page,
-    })
-    url = (
-        f"{BASE}/api/search/"
-        f"getsearchresults?{params}")
+    params = urllib.parse.urlencode(
+        {
+            "query": args.query,
+            "page": args.page,
+        }
+    )
+    url = f"{BASE}/api/search/getsearchresults?{params}"
     _, raw = _request(url)
-    data = json.loads(
-        raw.decode("utf-8", errors="replace"))
+    data = json.loads(raw.decode("utf-8", errors="replace"))
     if args.raw:
         _emit(data)
         return
@@ -162,11 +156,9 @@ def cmd_search(args: argparse.Namespace) -> None:
 def cmd_news_tags(args: argparse.Namespace) -> None:
     url = f"{BASE}/api/news/getTags"
     _, raw = _request(url)
-    data = json.loads(
-        raw.decode("utf-8", errors="replace"))
+    data = json.loads(raw.decode("utf-8", errors="replace"))
     # result field is a JSON-encoded string - parse twice
-    inner = json.loads(
-        data.get("result", "[]"))
+    inner = json.loads(data.get("result", "[]"))
     if args.raw:
         _emit(inner)
         return
@@ -185,34 +177,28 @@ def cmd_news_tags(args: argparse.Namespace) -> None:
 
 
 def cmd_news(args: argparse.Namespace) -> None:
-    body: dict[str, str] = (
-        {"newsTypeTag": args.tag}
-        if args.tag else {})
+    params = urllib.parse.urlencode({"newsTypeTag": args.tag}) if args.tag else ""
     url = f"{BASE}/api/news/getNews"
-    headers: dict[str, str] = {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
-    _, raw = _request(
-        url,
-        method="POST",
-        body=json.dumps(body).encode("utf-8"),
-        headers=headers,
-    )
-    data = json.loads(
-        raw.decode("utf-8", errors="replace"))
+    if params:
+        url = f"{url}?{params}"
+    _, raw = _request(url)
+    data = json.loads(raw.decode("utf-8", errors="replace"))
+    # newsArticles field is a JSON-encoded string - parse twice
+    articles_raw = data.get("newsArticles", "[]")
+    if isinstance(articles_raw, str):
+        articles = json.loads(articles_raw)
+    else:
+        articles = articles_raw or []
     if args.raw:
-        _emit(data)
+        _emit(articles)
         return
-    articles = data.get("newsArticles", []) or []
     if not articles:
-        sys.stderr.write(
-            "No news articles found\n")
+        sys.stderr.write("No news articles found\n")
         sys.exit(2)
     for a in articles:
-        title = a.get("Title", "")
-        link = a.get("Link", "")
-        date = a.get("Date", "")
+        title = a.get("ArticleTitle", "")
+        link = a.get("Url", "")
+        date = a.get("PublishingDateTime", "")
         print(f"{title}")
         if link:
             print(f"  {link}")
@@ -231,9 +217,10 @@ def cmd_endpoints(args: argparse.Namespace) -> None:
     html = raw.decode("utf-8", errors="replace")
     apis.update(
         re.findall(
-            r'/api/[a-zA-Z0-9/_.-]+',
+            r"/api/[a-zA-Z0-9/_.-]+",
             html,
-        ))
+        )
+    )
     # Also scan the main JS bundle (contains
     # form/sbs API paths)
     # Remove Accept header to avoid 406 on .js files
@@ -243,18 +230,19 @@ def cmd_endpoints(args: argparse.Namespace) -> None:
         headers=h,
     )
     with urllib.request.urlopen(
-        req, timeout=30.0,
+        req,
+        timeout=30.0,
     ) as r:
         js = r.read().decode("utf-8", errors="replace")
     apis.update(
         re.findall(
-            r'/api/[a-zA-Z0-9/_.-]+',
+            r"/api/[a-zA-Z0-9/_.-]+",
             js,
-        ))
+        )
+    )
     apis = sorted(apis)
     if not apis:
-        sys.stderr.write(
-            "No /api/* paths found\n")
+        sys.stderr.write("No /api/* paths found\n")
         sys.exit(2)
     for a in apis:
         print(a)

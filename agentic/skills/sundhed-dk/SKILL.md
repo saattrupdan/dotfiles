@@ -138,6 +138,9 @@ Profile, consent declarations.
 
 ## Verified anonymous endpoints
 
+### `GET /api/version`
+Site version info. Keys: `ShowVersion` (bool), `Version` (string). Typically `ShowVersion: false` in production.
+
 ### `GET /api/login/isloggedin`
 ```json
 {"IsLoggedIn":false,"DisplayName":"","RoleName":"","ConsentSigned":false,"Cpr":"","IsDelegated":false,"IsCitizen":false,"IsSosi":false,"Version":1}

@@ -68,8 +68,8 @@ open https://sport.tv2.dk/livescore-og-resultater
 ### Article URL pattern
 
 ```
-https://nyheder.tv2.dk/YYYY/MM/DD/slug-here
-https://sport.tv2.dk/YYYY/MM/DD/slug-here
+https://nyheder.tv2.dk/[section/]YYYY-MM-DD-slug-here
+https://sport.tv2.dk/[section/]YYYY-MM-DD-slug-here
 ```
 
 ### Services

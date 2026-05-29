@@ -99,7 +99,7 @@ last-updated: 2026-05-09
 ### Code Structure and Multiple Files
 <https://sqlmodel.tiangolo.com/tutorial/code-structure>
 
-### FastAPI and Pydantic - Intro¶
+### FastAPI and Pydantic - Intro
 <https://sqlmodel.tiangolo.com/tutorial/fastapi>
 
 #### Simple Hero API with FastAPI

@@ -62,36 +62,34 @@ Undocumented but functional, called from `/js/bundle.js`.
 Autocomplete suggestions from the search box.
 
 ```
-GET /api/search/GetTypeAhead?searchTerm=<query>&lang=<da|en>
+GET /api/search/GetTypeAhead?searchTerm=<query>&pageId=<int>&lang=<da|en>
 ```
 
-Returns JSON with a `results` array. Each item has `title`, `url`, `description`, `type`.
+`pageId` is required; use `15719` (the site-wide search page). Returns a JSON array of suggestion strings.
 
 ```bash
-curl 'https://www.frederiksberg.dk/api/search/GetTypeAhead?searchTerm=pas&lang=da'
+curl 'https://www.frederiksberg.dk/api/search/GetTypeAhead?searchTerm=pas&pageId=15719&lang=da'
 ```
 
-### Top questions — `POST /api/search/GetTopQuestions`
+### Top questions — `GET /api/search/GetTopQuestions`
 
 Editorially-curated FAQs shown on the search page.
 
 ```
-POST /api/search/GetTopQuestions
-Content-Type: application/json
-Body: {}
+GET /api/search/GetTopQuestions?pageId=<int>&lang=<da|en>
 ```
 
-Returns JSON with a `questions` array (`question` field, optional `url`).
+`pageId` is required; use `15719`. Returns JSON with a `questions` array. Each item has `text` and `query` fields.
 
 ### Agenda surface — `GET /surface/AgendaSurface/GetAgendaList`
 
-Municipal council meeting agenda items.
+Municipal council meeting agenda items (widget-driven).
 
 ```
-GET /surface/AgendaSurface/GetAgendaList?pageId=<int>&pageUrl=<url>&folderId=<int>&elementId=<int>&pageSize=<int>&pageNumber=<int>
+GET /surface/AgendaSurface/GetAgendaList?folderId=<int>&pageUrl=<url>&elementId=<int>
 ```
 
-Required: `pageId` (from `<meta name="pageId">`), `pageUrl`, `folderId`, `elementId`. Returns JSON with an `items` array (`title`, `date`, `description`, links).
+Required: `folderId` (from `data-listid` on the `.js-accordion-item-agenda` element), `pageUrl`, `elementId`. Returns an **HTML fragment** (not JSON), suitable for embedding in the page accordion.
 
 ## Common citizen tasks
 
@@ -125,10 +123,10 @@ Required: `pageId` (from `<meta name="pageId">`), `pageUrl`, `folderId`, `elemen
 ```bash
 python3 frederiksberg_dk_api.py typeahead pas --lang da               # typeahead search
 python3 frederiksberg_dk_api.py top-questions                         # FAQ questions
-python3 frederiksberg_dk_api.py agenda --page-id 11076 --page-url / --folder-id 0 --element-id 0
+python3 frederiksberg_dk_api.py agenda --page-url / --folder-id 0 --element-id 0
                                                                        # meeting agenda
 python3 frederiksberg_dk_api.py sitemap --section borgerservice       # list URLs
-python3 frederiksberg_dk_api.py article /borgerservice/pas --raw     # page metadata
+python3 frederiksberg_dk_api.py article /borgerservice/pas --raw      # page metadata
 ```
 
 Each subcommand exits non-zero on HTTP error and writes the error body to stderr.

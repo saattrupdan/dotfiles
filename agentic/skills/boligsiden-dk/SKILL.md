@@ -1,12 +1,12 @@
 ---
 name: boligsiden-dk
 description: Denmark's largest property-listing aggregator. Covers the public HAL REST API, image CDN, URL conventions, and the Python CLI helper. Use when searching Danish properties, extracting listing details, or browsing by municipality/zip code.
-last-updated: 2026-05-09
+last-updated: 2026-05-29
 ---
 
 # boligsiden.dk — Danish property-listing aggregator
 
-`https://www.boligsiden.dk/` aggregates listings from dozens of real estate agencies. The front-end is behind **Cloudflare Turnstile** — `WebFetch`-style scrapers receive a JS challenge page. **Always prefer the REST API over scraping.**
+`https://www.boligsiden.dk/` aggregates listings from dozens of real estate agencies. Both the front-end and the REST API are behind **Cloudflare Turnstile** — unauthenticated script access receives a JS challenge (403) or an HTML redirect. The helper script handles this gracefully (exits 2 with a descriptive error) but cannot bypass it.
 
 Default page language is Danish; respond in Danish unless the user signals otherwise.
 
@@ -30,7 +30,7 @@ Base URL: `https://www.boligsiden.dk/api/`
 
 ### Authentication
 
-None required. All endpoints are anonymous.
+No API key is required. However, as of May 2026 all endpoints are behind **Cloudflare Turnstile** and return 403 to unauthenticated non-browser clients.
 
 ### Conventions
 

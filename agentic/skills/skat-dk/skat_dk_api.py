@@ -8,6 +8,7 @@ Wraps the three useful surfaces:
 
 Standard library only. See ./SKILL.md for the underlying spec.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -29,35 +30,45 @@ UA = "Mozilla/5.0 (skat-dk-api-cli)"
 # Source: chunk 4981-..., switch on theme name. Default is "da" if
 # language unmapped.
 ENGINES: dict[str, dict[str, str]] = {
-    "SKAT":          {
-        "da": "13369", "en": "13460",
-        "de": "13213", "default": "13514",
+    "SKAT": {
+        "da": "13369",
+        "en": "13460",
+        "de": "13213",
+        "default": "13514",
     },
-    "TOLDST":        {
-        "da": "13130", "en": "13212",
-        "de": "13213", "default": "13130",
+    "TOLDST": {
+        "da": "13130",
+        "en": "13212",
+        "de": "13213",
+        "default": "13130",
     },
-    "MOTORST":       {
-        "da": "13214", "en": "13215",
-        "de": "13502", "default": "13214",
+    "MOTORST": {
+        "da": "13214",
+        "en": "13215",
+        "de": "13502",
+        "default": "13214",
     },
-    "VURDST":        {
-        "da": "13217", "en": "13218",
-        "de": "13219", "default": "13217",
+    "VURDST": {
+        "da": "13217",
+        "en": "13218",
+        "de": "13219",
+        "default": "13217",
     },
-    "GAELDST":       {
-        "da": "13220", "en": "13221",
-        "de": "13222", "default": "13220",
+    "GAELDST": {
+        "da": "13220",
+        "en": "13221",
+        "de": "13222",
+        "default": "13220",
     },
-    "SANST":         {"da": "13224"},
-    "SKM":           {"da": "13225"},
-    "SKTST":         {"da": "13226"},
-    "SKTFV":         {"da": "13227"},
-    "ADST":          {"da": "13228"},
-    "UFST":          {"da": "13230"},
-    "WEBGUIDE":      {"da": "13230"},
-    "ITTI":          {"da": "13459"},
-    "ZISE":          {"da": "14353"},
+    "SANST": {"da": "13224"},
+    "SKM": {"da": "13225"},
+    "SKTST": {"da": "13226"},
+    "SKTFV": {"da": "13227"},
+    "ADST": {"da": "13228"},
+    "UFST": {"da": "13230"},
+    "WEBGUIDE": {"da": "13230"},
+    "ITTI": {"da": "13459"},
+    "ZISE": {"da": "14353"},
     "LOTTERIREGLER": {"da": "14828"},
 }
 
@@ -74,30 +85,26 @@ def main() -> None:
 
     p = sub.add_parser(
         "page",
-        help="fetch a page's JSON model from "
-        "/_next/data/",
+        help="fetch a page's JSON model from /_next/data/",
     )
     p.add_argument(
         "path",
-        help='page path minus locale, e.g. '
-        '"borger/fradrag" or "individuals"',
+        help='page path minus locale, e.g. "borger/fradrag" or "individuals"',
     )
     p.add_argument(
         "--locale",
         default="da-dk",
-        help="da-dk | en-us | de-de | uk | pl | ro | "
-        "lt | kl  (default: da-dk)",
+        help="da-dk | en-us | de-de | uk | pl | ro | lt | kl  (default: da-dk)",
     )
     p.add_argument(
         "--build-id",
-        help="override the buildId "
-        "(default: auto-detect)",
+        help="override the buildId (default: auto-detect)",
     )
     p.add_argument(
         "--field",
         help=(
-            'dotted path into the JSON, e.g. '
-            '"pageProps.content.page.childPages[].url"'),
+            'dotted path into the JSON, e.g. "pageProps.content.page.childPages[].url"'
+        ),
     )
     p.set_defaults(func=cmd_page)
 
@@ -175,9 +182,7 @@ def main() -> None:
     )
     p.add_argument(
         "--prefix",
-        help=(
-            'filter to URLs whose path starts with '
-            'this, e.g. "/borger/"'),
+        help=('filter to URLs whose path starts with this, e.g. "/borger/"'),
     )
     p.add_argument(
         "--limit",
@@ -203,29 +208,26 @@ def _request(
     }
     if headers:
         h.update(headers)
-    req = urllib.request.Request(
-        url, data=body, method=method, headers=h)
+    req = urllib.request.Request(url, data=body, method=method, headers=h)
     try:
         with urllib.request.urlopen(
-            req, timeout=timeout,
+            req,
+            timeout=timeout,
         ) as r:
             return r.status, r.read()
     except urllib.error.HTTPError as e:
         body_text = e.read() if e.fp else b""
-        sys.stderr.write(
-            f"HTTP {e.code} {e.reason} on "
-            f"{method} {url}\n")
+        sys.stderr.write(f"HTTP {e.code} {e.reason} on {method} {url}\n")
         if body_text:
             sys.stderr.write(
-                body_text.decode("utf-8", errors="replace")
-                .rstrip() + "\n")
+                body_text.decode("utf-8", errors="replace").rstrip() + "\n"
+            )
         sys.exit(2)
 
 
 def _emit(obj: t.Any) -> None:
     if isinstance(obj, (dict, list)):
-        print(
-            json.dumps(obj, ensure_ascii=False, indent=2))
+        print(json.dumps(obj, ensure_ascii=False, indent=2))
     else:
         print(obj)
 
@@ -239,18 +241,16 @@ def _fetch_buildid(
             headers={"Accept": "text/html"},
         )
         html = raw.decode("utf-8", errors="replace")
-    m = re.search(
-        r'"buildId":"([^"]+)"', html)
+    m = re.search(r'"buildId":"([^"]+)"', html)
     if not m:
-        sys.stderr.write(
-            "buildId not found in home-page HTML\n")
+        sys.stderr.write("buildId not found in home-page HTML\n")
         sys.exit(2)
     return m.group(1)
 
 
 def _extract(obj: t.Any, expr: str) -> list[t.Any]:
     tokens = re.findall(
-        r'[A-Za-z0-9_]+|\[\]|\[\d+\]',
+        r"[A-Za-z0-9_]+|\[\]|\[\d+\]",
         expr,
     )
     cur: list[t.Any] = [obj]
@@ -260,12 +260,10 @@ def _extract(obj: t.Any, expr: str) -> list[t.Any]:
             for v in cur:
                 if isinstance(v, list):
                     nxt.extend(v)
-        elif (tok.startswith("[")
-              and tok.endswith("]")):
+        elif tok.startswith("[") and tok.endswith("]"):
             i = int(tok[1:-1])
             for v in cur:
-                if isinstance(v, list) and (
-                    -len(v) <= i < len(v)):
+                if isinstance(v, list) and (-len(v) <= i < len(v)):
                     nxt.append(v[i])
         else:
             for v in cur:
@@ -278,16 +276,10 @@ def _extract(obj: t.Any, expr: str) -> list[t.Any]:
 def _engine_for(site: str, lang: str) -> str:
     site = site.upper()
     if site not in ENGINES:
-        sys.stderr.write(
-            f"Unknown site/theme {site!r}; "
-            f"known: {sorted(ENGINES)}\n")
+        sys.stderr.write(f"Unknown site/theme {site!r}; known: {sorted(ENGINES)}\n")
         sys.exit(2)
     e = ENGINES[site]
-    return (
-        e.get(lang)
-        or e.get("default")
-        or e.get("da")
-        or next(iter(e.values())))
+    return e.get(lang) or e.get("default") or e.get("da") or next(iter(e.values()))
 
 
 def _sitekey(
@@ -295,11 +287,8 @@ def _sitekey(
     engine_id: str,
     site_key: str = "SearchKey",
 ) -> str:
-    raw = (
-        f"{customer_id}:{engine_id}:{site_key}"
-        .encode("utf-8"))
-    return "SiteKey " + base64.b64encode(
-        raw).decode("ascii")
+    raw = f"{customer_id}:{engine_id}:{site_key}".encode("utf-8")
+    return "SiteKey " + base64.b64encode(raw).decode("ascii")
 
 
 def cmd_buildid(args: argparse.Namespace) -> None:
@@ -311,19 +300,14 @@ def cmd_page(args: argparse.Namespace) -> None:
     path = args.path.strip("/")
     locale = args.locale.lower()
     if path:
-        url = (
-            f"{BASE}/_next/data/"
-            f"{build}/{locale}/{path}.json")
+        url = f"{BASE}/_next/data/{build}/{locale}/{path}.json"
     else:
-        url = (
-            f"{BASE}/_next/data/"
-            f"{build}/{locale}.json")
+        url = f"{BASE}/_next/data/{build}/{locale}.json"
     _, raw = _request(
         url,
         headers={"Accept": "application/json"},
     )
-    data = json.loads(
-        raw.decode("utf-8", errors="replace"))
+    data = json.loads(raw.decode("utf-8", errors="replace"))
     if args.field:
         # Tiny dotted-path / [] extractor:
         # foo.bar[0].baz   |   foo.bar[].baz
@@ -335,8 +319,7 @@ def cmd_page(args: argparse.Namespace) -> None:
 
 
 def cmd_search(args: argparse.Namespace) -> None:
-    engine = args.engine or _engine_for(
-        args.site, args.lang)
+    engine = args.engine or _engine_for(args.site, args.lang)
     body: dict[str, t.Any] = {
         "query": args.query,
         "page": args.page,
@@ -344,13 +327,9 @@ def cmd_search(args: argparse.Namespace) -> None:
     }
     if args.facets:
         body["facets"] = args.facets.split(",")
-    url = (
-        f"{CLUDO_API}/"
-        f"{CLUDO_CUSTOMER}/"
-        f"{engine}/search")
+    url = f"{CLUDO_API}/{CLUDO_CUSTOMER}/{engine}/search"
     headers: dict[str, str] = {
-        "Authorization": _sitekey(
-            CLUDO_CUSTOMER, engine),
+        "Authorization": _sitekey(CLUDO_CUSTOMER, engine),
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
@@ -360,56 +339,44 @@ def cmd_search(args: argparse.Namespace) -> None:
         body=json.dumps(body).encode("utf-8"),
         headers=headers,
     )
-    data = json.loads(
-        raw.decode("utf-8", errors="replace"))
+    data = json.loads(raw.decode("utf-8", errors="replace"))
     if args.raw:
         _emit(data)
         return
     docs = data.get("TypedDocuments", []) or []
     for d in docs:
         f = d.get("Fields", {}) or {}
-        title = (
-            (f.get("Title", {}) or {})
-            .get("Value", ""))
-        u = (
-            (f.get("Url", {}) or {})
-            .get("Value", ""))
-        desc = (
-            (f.get("Description", {}) or {})
-            .get("Value", ""))
+        title = (f.get("Title", {}) or {}).get("Value", "")
+        u = (f.get("Url", {}) or {}).get("Value", "")
+        desc = (f.get("Description", {}) or {}).get("Value", "")
         print(f"{u}\n  {title}")
         if desc and args.verbose:
             print(f"  {desc[:200]}")
-    total = (
-        data.get("TotalDocument",
-                 data.get("TotalDocuments")))
+    total = data.get("TotalDocument", data.get("TotalDocuments"))
     print(f"# total: {total}", file=sys.stderr)
 
 
 def cmd_settings(args: argparse.Namespace) -> None:
-    url = (
-        f"{CLUDO_API}/"
-        f"{CLUDO_CUSTOMER}/"
-        f"{args.engine}/websites/publicsettings")
+    url = f"{CLUDO_API}/{CLUDO_CUSTOMER}/{args.engine}/websites/publicsettings"
     _, raw = _request(
         url,
         headers={"Accept": "application/json"},
     )
-    _emit(json.loads(
-        raw.decode("utf-8", errors="replace")))
+    _emit(json.loads(raw.decode("utf-8", errors="replace")))
 
 
 def cmd_engines(args: argparse.Namespace) -> None:
     if args.raw:
-        _emit({
-            "customerId": CLUDO_CUSTOMER,
-            "engines": ENGINES,
-        })
+        _emit(
+            {
+                "customerId": CLUDO_CUSTOMER,
+                "engines": ENGINES,
+            }
+        )
         return
     print(f"customerId: {CLUDO_CUSTOMER}")
     for site, langs in ENGINES.items():
-        kv = ", ".join(
-            f"{k}={v}" for k, v in langs.items())
+        kv = ", ".join(f"{k}={v}" for k, v in langs.items())
         print(f"  {site:14s} {kv}")
 
 
@@ -419,19 +386,15 @@ def cmd_sitemap(args: argparse.Namespace) -> None:
         headers={"Accept": "*/*"},
     )
     xml = raw.decode("utf-8", errors="replace")
-    locs = re.findall(
-        r"<loc>([^<]+)</loc>", xml)
+    locs = re.findall(r"<loc>([^<]+)</loc>", xml)
     if args.prefix:
         locs = [
-            u
-            for u in locs
-            if urllib.parse.urlparse(u).path.startswith(
-                args.prefix)]
+            u for u in locs if urllib.parse.urlparse(u).path.startswith(args.prefix)
+        ]
     if args.limit:
-        locs = locs[:args.limit]
+        locs = locs[: args.limit]
     if not locs:
-        sys.stderr.write(
-            "No <loc> entries matched\n")
+        sys.stderr.write("No <loc> entries matched\n")
         sys.exit(2)
     for u in locs:
         print(u)

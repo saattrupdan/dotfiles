@@ -47,9 +47,9 @@ All endpoints return JSON, are anonymous, and use `GET`. Base URL: `https://www.
 
 ### Document endpoints
 
-- **`/api/document/{id}`** — Document details by numeric ID. Response: `[{}]` (fields: `id`, `accessionNumber`, `title`, `documentTypeId`, `shortName`, `documentHtml`/`documentDan`). For HTML content, use the ELI URL with `/html` suffix instead.
-- **`/api/document/metadata/{id}`** — Structured metadata for a document.
-- **`/api/document/{id}/timeline`** — Legislative history/timeline. Response: `[...]`.
+- **`POST /api/document/{eli_path}`** — Document details by ELI path (e.g. `eli/lta/2026/480`, `eli/accn/A20240001`). Body: `{"isRawHtml": false}`. Response: `[{}]` (fields: `id`, `accessionNumber`, `title`, `documentTypeId`, `shortName`, `documentHtml`, `ressort`, `metadata`). The `id` field is an internal numeric ID used for timeline/metadata lookups.
+- **`/api/document/metadata/{id}`** — Structured metadata for a document (GET, uses internal numeric `id`).
+- **`/api/document/{id}/timeline`** — Legislative history/timeline (GET, uses internal numeric `id`). Response: `[...]`.
 - **`/api/document/documentLinks/{id}/references/{showRelated}`** — References (changes, commenced by, etc.).
 - **`/api/document/documentLinks/{id}/{group}`** — Grouped document links.
 

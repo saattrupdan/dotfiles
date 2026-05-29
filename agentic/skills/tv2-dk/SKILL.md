@@ -21,8 +21,8 @@ Denmark's largest commercial broadcaster and news portal. Five subdomains cover 
 
 ## Article URLs
 
-Pattern: `https://{nyheder|sport}.tv2.dk/YYYY-MM-DD-slug`
-Example: `https://nyheder.tv2.dk/2026-05-08-navn-pa-artikel`
+Pattern: `https://{nyheder|sport}.tv2.dk/[section/]YYYY-MM-DD-slug`
+Example: `https://nyheder.tv2.dk/udland/2026-05-08-navn-pa-artikel`
 Dates use hyphens; slugs are Danish headlines with special chars removed.
 
 Short-form videos (reels) are at `https://tv2.dk/nyheder/reels` and `https://tv2.dk/sport/reels`.

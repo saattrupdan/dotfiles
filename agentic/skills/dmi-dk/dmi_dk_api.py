@@ -49,6 +49,11 @@ UV_DESCRIPTIONS: list[tuple[int, str]] = [
     (10, "Ekstrem — undgå ophold i solen"),
 ]
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(message)s",
+    stream=sys.stdout,
+)
 logger = logging.getLogger(__name__)
 
 JsonValue = dict | list | str | int | float | bool | None
@@ -290,7 +295,7 @@ def cmd_forecast(args: argparse.Namespace) -> None:
         "Danmark": "Danmark",
         "Gronland": "Gr\u00f8nland",
     }
-    region: str = region_map.get(key=args.region, default=args.region) or "Danmark"
+    region: str = region_map.get(args.region, args.region) or "Danmark"
     days: str = args.days or "DK/land"
     path: str = f"/json/{region}/{days}"
     data: JsonValue = _request_json(path=path)
@@ -330,17 +335,17 @@ def cmd_waters(args: argparse.Namespace) -> None:
     path: str = f"/waters/{args.term}"
     data: JsonValue = _request_json(path=path)
     if data is None:
-        logger.error(f"No data from {path}")
-        sys.exit(2)
-    if isinstance(data, list):
+        logger.info(f"No stations found for '{args.term}'")
+        return
+    if args.raw:
+        _emit_json(obj=data)
+    elif isinstance(data, list):
         for item in data:
             name: str = item.get("name", "")
             lat: str = item.get("latitude", "")
             lon: str = item.get("longitude", "")
             country: str = item.get("country", "")
             logger.info(f"{name} ({country}) lat={lat} lon={lon}")
-    elif args.raw:
-        _emit_json(obj=data)
     else:
         _emit_text(text=str(data))
 
@@ -388,7 +393,7 @@ def cmd_images(args: argparse.Namespace) -> None:
         "precipitation": "/image/png/Nedb\u00f8r",
         "wind": "/image/png/Vind",
         "temperature": "/image/png/Temperatur",
-        "waves": "/image/png/B\u00f8leh\u00f8jde",
+        "waves": "/image/png/B\u00f8lgeh\u00f8jde",
         "ice": "/image/png/Iskoncentration",
     }
     if args.type_:
@@ -421,10 +426,7 @@ def cmd_endpoints(args: argparse.Namespace) -> None:
         paths: list[str] = sorted(
             set(
                 re.findall(
-                    (
-                        r"""["'](/dmidk_byvejrWS/rest/'
-                    r'[A-Za-z0-9/_.{}\-]+)"""
-                    ),
+                    r"""["'](/dmidk_byvejrWS/rest/[A-Za-z0-9/_.{}\-]+)""",
                     text,
                 )
             )
@@ -862,12 +864,9 @@ def _print_header(
             f"{last_update[12:14]}"
         )
     if sunrise or sunset:
-        logger.info(
-            f"Solopgang: "
-            f"{sunrise[:2]}:{sunrise[2:]}  "
-            f"Solnedgang: "
-            f"{sunset[:2]}:{sunset[2:]}"
-        )
+        sr = sunrise.zfill(4) if sunrise else ""
+        ss = sunset.zfill(4) if sunset else ""
+        logger.info(f"Solopgang: {sr[:2]}:{sr[2:]}  Solnedgang: {ss[:2]}:{ss[2:]}")
     logger.info("")
 
 
@@ -1212,7 +1211,7 @@ def _request_with_referer(url: str) -> JsonValue | None:
         headers=h,
     )
     try:
-        with urllib.request.urlopen(request=req, timeout=30) as r:
+        with urllib.request.urlopen(req, timeout=30) as r:
             text: str = r.read().decode(encoding="utf-8", errors="replace")
             if not text.strip():
                 return None
@@ -1248,7 +1247,7 @@ def _geo_locate() -> str | None:
             url=("https://ip-api.com/json/?fields=query,city,countryCode"),
             headers=h,
         )
-        with urllib.request.urlopen(request=req, timeout=5) as r:
+        with urllib.request.urlopen(req, timeout=5) as r:
             data: dict = json.loads(s=r.read().decode("utf-8"))
         city: str = data.get("city", "")
         cc: str = data.get("countryCode", "")
@@ -1264,7 +1263,7 @@ def _geo_locate() -> str | None:
             url="https://ipinfo.io/json",
             headers=h,
         )
-        with urllib.request.urlopen(request=req, timeout=5) as r:
+        with urllib.request.urlopen(req, timeout=5) as r:
             data: dict = json.loads(s=r.read().decode("utf-8"))
         city = data.get("city", "")
         loc: str = data.get("loc", "")
@@ -1337,7 +1336,7 @@ def _request(
         data=body,
     )
     try:
-        with urllib.request.urlopen(request=req, timeout=30) as r:
+        with urllib.request.urlopen(req, timeout=30) as r:
             return r.status, r.read()
     except urllib.error.HTTPError as e:
         err_body: bytes = e.read() if e.fp else b""
@@ -1406,9 +1405,6 @@ def _normalize_danish(text: str) -> str:
     """
     lower: str = text.lower()
     for ascii_form, danish_char in {
-        "\u00e5": "\u00e5",
-        "\u00f8": "\u00f8",
-        "\u00e6": "\u00e6",
         "aa": "\u00e5",
         "oe": "\u00f8",
         "ae": "\u00e6",

@@ -11,13 +11,13 @@ Reference for building FastAPI apps following established conventions.
 ## Quick Start
 
 ```bash
-# Create a new FastAPI project
-uv init myproject
+# Create a new FastAPI project (src layout)
+uv init --lib myproject
 cd myproject
 uv add fastapi uvicorn[standard]
 
 # Run the development server
-uv run uvicorn src.main:app --reload
+uv run uvicorn myproject.main:app --reload
 ```
 
 ## Project Structure

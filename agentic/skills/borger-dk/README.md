@@ -4,7 +4,7 @@ Reference for navigating borger.dk — the official Danish public-sector portal 
 
 ## Requirements
 
-- No CLI script — this is a site-navigation skill
+- Python 3 (stdlib only) for `borger_dk_api.py`
 - Internet access to `www.borger.dk`
 - MitID for logged-in personal pages
 
@@ -15,10 +15,16 @@ Reference for navigating borger.dk — the official Danish public-sector portal 
 open https://www.borger.dk/
 
 # Look up a topic in a life-domain section
-open https://www.borger.dk/familie-og-boern/foedsoejfoerstoerelse
+open https://www.borger.dk/familie-og-boern/barsel-oversigt
 
 # See your personal overview (requires MitID login)
 open https://www.borger.dk/mitoverblik
+
+# Search autocomplete via CLI
+python3 borger_dk_api.py search pas
+python3 borger_dk_api.py popular              # popular terms
+python3 borger_dk_api.py portalid             # current data-portal-id
+python3 borger_dk_api.py sitemap --limit 20   # first 20 sitemap URLs
 ```
 
 ## Navigation Reference

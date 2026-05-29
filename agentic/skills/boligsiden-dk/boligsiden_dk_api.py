@@ -3,6 +3,7 @@
 
 Standard library only. See ./SKILL.md for the full API specification.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -168,20 +169,17 @@ def _request(
     }
     if headers:
         h.update(headers)
-    req = urllib.request.Request(
-        url, data=body, method=method, headers=h)
+    req = urllib.request.Request(url, data=body, method=method, headers=h)
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             return r.status, r.read()
     except urllib.error.HTTPError as e:
         body_text = e.read() if e.fp else b""
-        sys.stderr.write(
-            f"HTTP {e.code} {e.reason} on "
-            f"{method} {url}\n")
+        sys.stderr.write(f"HTTP {e.code} {e.reason} on {method} {url}\n")
         if body_text:
             sys.stderr.write(
-                body_text.decode("utf-8", errors="replace")
-                .rstrip() + "\n")
+                body_text.decode("utf-8", errors="replace").rstrip() + "\n"
+            )
         sys.exit(2)
 
 
@@ -190,9 +188,17 @@ def _get(
     params: dict[str, str] | None = None,
 ) -> t.Any:
     _, raw = _request(path, method="GET", params=params)
-    return json.loads(
-        raw.decode("utf-8", errors="replace"),
-    )
+    text = raw.decode("utf-8", errors="replace")
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        sys.stderr.write(
+            "Could not parse API response as JSON "
+            "(the server may be returning a Cloudflare "
+            "challenge page).\n"
+        )
+        sys.stderr.write(text[:500] + "\n")
+        sys.exit(2)
 
 
 def _emit(obj: t.Any, raw: bool = False) -> None:
@@ -200,19 +206,6 @@ def _emit(obj: t.Any, raw: bool = False) -> None:
         print(json.dumps(obj, ensure_ascii=False, indent=2))
     else:
         print(json.dumps(obj, ensure_ascii=False))
-
-
-def _check_errors(resp: t.Any) -> t.Any:
-    if isinstance(resp, dict) and "errors" in resp:
-        sys.stderr.write("API errors:\n")
-        json.dump(
-            resp["errors"],
-            sys.stderr,
-            ensure_ascii=False,
-            indent=2,
-        )
-        sys.stderr.write("\n")
-    return resp
 
 
 def cmd_cases(args: argparse.Namespace) -> None:
@@ -242,10 +235,12 @@ def cmd_cases(args: argparse.Namespace) -> None:
         params["zipCode"] = args.zip_code
     if args.city:
         city_lower = (
-            args.city.lower().strip()
+            args.city.lower()
+            .strip()
             .replace("ø", "o")
             .replace("å", "a")
-            .replace("æ", "ae"))
+            .replace("æ", "ae")
+        )
         # Direct zip code input
         if city_lower.isdigit():
             params["zipCode"] = city_lower
@@ -296,7 +291,8 @@ def cmd_cases(args: argparse.Namespace) -> None:
                 sys.stderr.write(
                     f"City {args.city!r} not in built-in "
                     "map. Use --municipality-code or "
-                    "--zip-code for precise filtering.\n")
+                    "--zip-code for precise filtering.\n"
+                )
 
     resp = _get("/cases", params)
     if args.raw:
@@ -309,15 +305,12 @@ def cmd_cases(args: argparse.Namespace) -> None:
         f"# {page.get('totalElements', '?')} total, "
         f"page "
         f"{page.get('number', '?')}"
-        f"/{page.get('totalPages', '?')}")
-    cases = (
-        resp.get("_embedded", {})
-        .get("cases", []))
+        f"/{page.get('totalPages', '?')}"
+    )
+    cases = resp.get("_embedded", {}).get("cases", [])
     for case in cases:
         addr = case.get("address", {})
-        title = case.get(
-            "descriptionTitle",
-            "Uden titel")
+        title = case.get("descriptionTitle", "Uden titel")
         price = case.get("priceCash", 0)
         area = case.get("housingArea", "?")
         rooms = case.get("numberOfRooms", "?")
@@ -331,7 +324,8 @@ def cmd_cases(args: argparse.Namespace) -> None:
             f"{rooms} værelser\t"
             f"{area} m²\t"
             f"{price:,.0f} kr\t"
-            f"{title}")
+            f"{title}"
+        )
 
 
 def cmd_address(args: argparse.Namespace) -> None:
@@ -343,9 +337,7 @@ def cmd_address(args: argparse.Namespace) -> None:
         _emit(resp, raw=True)
         return
 
-    addresses = (
-        resp.get("_embedded", {})
-        .get("addresses", []))
+    addresses = resp.get("_embedded", {}).get("addresses", [])
     for addr in addresses:
         road = addr.get("roadName", "")
         number = addr.get("houseNumber", "")
@@ -353,9 +345,8 @@ def cmd_address(args: argparse.Namespace) -> None:
         zip_c = addr.get("zipCode", "")
         city = addr.get("cityName", "")
         print(
-            f"{road} {number}{letter}\t"
-            f"{zip_c} {city}\t"
-            f"{addr.get('addressType', '?')}")
+            f"{road} {number}{letter}\t{zip_c} {city}\t{addr.get('addressType', '?')}"
+        )
 
 
 def cmd_realtor(args: argparse.Namespace) -> None:
@@ -367,23 +358,14 @@ def cmd_realtor(args: argparse.Namespace) -> None:
         _emit(resp, raw=True)
         return
 
-    realtors = (
-        resp.get("_embedded", {})
-        .get("realtors", []))
+    realtors = resp.get("_embedded", {}).get("realtors", [])
     for r in realtors:
         name = r.get("name", "")
         url = r.get("url", "")
         rating = r.get("rating", {})
-        seller_score = (
-            rating.get("seller", {})
-            .get("score", "?"))
-        buyer_score = (
-            rating.get("buyer", {})
-            .get("score", "?"))
-        print(
-            f"{name}\t{url}\t"
-            f"seller:{seller_score}\t"
-            f"buyer:{buyer_score}")
+        seller_score = rating.get("seller", {}).get("score", "?")
+        buyer_score = rating.get("buyer", {}).get("score", "?")
+        print(f"{name}\t{url}\tseller:{seller_score}\tbuyer:{buyer_score}")
 
 
 def cmd_municipalities(
@@ -394,9 +376,7 @@ def cmd_municipalities(
         _emit(resp, raw=True)
         return
 
-    items = (
-        resp.get("_embedded", {})
-        .get("municipalities", []))
+    items = resp.get("_embedded", {}).get("municipalities", [])
     for m in items:
         name = m.get("name", "")
         code = m.get("municipalityCode", "")
@@ -408,15 +388,24 @@ def cmd_raw(args: argparse.Namespace) -> None:
     with open(args.file, "r", encoding="utf-8") as f:
         query = f.read()
     _, raw = _request(
-        "/cases",
+        f"/{args.endpoint}",
         method="POST",
         body=query.encode("utf-8"),
         headers={
             "Content-Type": "application/json",
         },
     )
-    data = json.loads(
-        raw.decode("utf-8", errors="replace"))
+    text = raw.decode("utf-8", errors="replace")
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        sys.stderr.write(
+            "Could not parse API response as JSON "
+            "(the server may be returning a Cloudflare "
+            "challenge page).\n"
+        )
+        sys.stderr.write(text[:500] + "\n")
+        sys.exit(2)
     _emit(data, raw=True)
 
 

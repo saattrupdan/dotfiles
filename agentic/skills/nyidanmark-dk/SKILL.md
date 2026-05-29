@@ -85,23 +85,21 @@ GET /api/search/getsearchresults?query=visum&page=1
 
 Fields: `Title` (headline), `Text` (lead excerpt), `ResultType` (`"Components"` for pages, `"News Article"` for news), `ResultDate` (ISO-8601), `Score` (relevance), `Link` (relative URL). Pagination: `page` (1-indexed), ~200 results per page.
 
-### `POST /api/news/getNews` — news articles
+### `GET /api/news/getNews?newsTypeTag=<tag>` — news articles
 
-Optional JSON body with `newsTypeTag` to filter.
+Optional `newsTypeTag` query parameter to filter. Omitting it returns an empty array.
 
-```json
-{"newsTypeTag": "Arbejde"}
+```
+GET /api/news/getNews?newsTypeTag=Arbejde
 ```
 
-**Response**:
+**Response** (`application/json`):
 ```json
 {
-  "newsArticles": [
-    { "Title": "...", "Text": "...", "Link": "/da/Nyheder/2026/04/...", "Date": "2026-04-23T..." }
-  ]
+  "newsArticles": "[{\"ArticleTitle\":\"...\",\"Url\":\"/da/Nyheder/2026/04/...\",\"PublishingDateTime\":\"2026-04-23T14:08:41\",...}]"
 }
 ```
-Empty body `{}` returns an empty array. Use `/api/news/getTags` to discover tags.
+The `newsArticles` field is a JSON-encoded string — parse twice (same pattern as `getTags`). Article fields: `ArticleTitle`, `Url`, `PublishingDateTime`, `PublishingDate`, `Maintag`, `SubTags`. Use `/api/news/getTags` to discover valid tag names.
 
 ### `GET /api/news/getTags` — news tag taxonomy
 

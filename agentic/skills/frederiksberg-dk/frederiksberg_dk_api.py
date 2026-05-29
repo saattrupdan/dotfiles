@@ -3,6 +3,7 @@
 
 Standard library only. See ./SKILL.md for the full spec.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -46,44 +47,33 @@ def main() -> None:
         "top-questions",
         help="get top FAQ questions",
     )
+    p.add_argument(
+        "--lang",
+        default="da",
+        help="da | en  (default: da)",
+    )
     p.add_argument("--raw", action="store_true")
     p.set_defaults(func=cmd_top_questions)
 
     p = sub.add_parser(
         "agenda",
-        help="fetch meeting agenda items",
-    )
-    p.add_argument(
-        "--page-id",
-        required=True,
-        help="pageId from meta tag",
+        help="fetch meeting agenda items (returns HTML fragment)",
     )
     p.add_argument(
         "--page-url",
         required=True,
-        help="page URL slug",
+        help="page URL slug, e.g. /",
     )
     p.add_argument(
         "--folder-id",
         required=True,
-        help="FolderId",
+        help="folderId (data-listid on the accordion element)",
     )
     p.add_argument(
         "--element-id",
         required=True,
         help="elementId",
     )
-    p.add_argument(
-        "--page-size",
-        type=int,
-        default=5,
-    )
-    p.add_argument(
-        "--page-number",
-        type=int,
-        default=1,
-    )
-    p.add_argument("--raw", action="store_true")
     p.set_defaults(func=cmd_agenda)
 
     p = sub.add_parser(
@@ -128,20 +118,17 @@ def _request(
     }
     if headers:
         h.update(headers)
-    req = urllib.request.Request(
-        url, data=body, method=method, headers=h)
+    req = urllib.request.Request(url, data=body, method=method, headers=h)
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             return r.status, r.read()
     except urllib.error.HTTPError as e:
         body_text = e.read() if e.fp else b""
-        sys.stderr.write(
-            f"HTTP {e.code} {e.reason} on "
-            f"{method} {path}\n")
+        sys.stderr.write(f"HTTP {e.code} {e.reason} on {method} {path}\n")
         if body_text:
             sys.stderr.write(
-                body_text.decode("utf-8", errors="replace")
-                .rstrip() + "\n")
+                body_text.decode("utf-8", errors="replace").rstrip() + "\n"
+            )
         sys.exit(2)
 
 
@@ -150,79 +137,71 @@ def _emit(obj: t.Any) -> None:
 
 
 def cmd_typeahead(args: argparse.Namespace) -> None:
+    # pageId is required by the API; 15719 is the site-wide search page
     url = (
         f"{BASE}/api/search/GetTypeAhead?"
         f"searchTerm={urllib.request.quote(args.term)}"
-        f"&lang={args.lang}")
+        f"&pageId=15719"
+        f"&lang={args.lang}"
+    )
     _, raw = _request(url)
-    data = json.loads(
-        raw.decode("utf-8", errors="replace"))
+    data = json.loads(raw.decode("utf-8", errors="replace"))
     if args.raw:
         _emit(data)
         return
-    results = (
-        data.get("results", data.get("items", []))
-        if isinstance(data, dict) else [])
-    for item in results[:args.limit]:
-        title = item.get(
-            "title", item.get("name", ""))
-        url = item.get(
-            "url", item.get("link", ""))
-        print(f"{url}\n  {title}")
+    # Response is a plain array of suggestion strings
+    items: list[str] = (
+        data
+        if isinstance(data, list)
+        else data.get("results", data.get("items", []))
+        if isinstance(data, dict)
+        else []
+    )
+    for item in items[: args.limit]:
+        if isinstance(item, str):
+            print(item)
+        else:
+            title = item.get("title", item.get("name", ""))
+            link = item.get("url", item.get("link", ""))
+            print(f"{link}\n  {title}")
 
 
 def cmd_top_questions(
     args: argparse.Namespace,
 ) -> None:
-    url = f"{BASE}/api/search/GetTopQuestions"
-    data_json = json.dumps({}).encode("utf-8")
-    _, raw = _request(
-        url,
-        method="POST",
-        body=data_json,
-        headers={
-            "Content-Type": "application/json",
-            "Content-Length": str(len(data_json)),
-        },
-    )
-    data = json.loads(
-        raw.decode("utf-8", errors="replace"))
+    # GET endpoint; pageId 15719 is the site-wide search page
+    url = f"{BASE}/api/search/GetTopQuestions?pageId=15719&lang={args.lang}"
+    _, raw = _request(url)
+    data = json.loads(raw.decode("utf-8", errors="replace"))
     if args.raw:
         _emit(data)
         return
     questions = (
-        data.get("questions", data.get("items", []))
-        if isinstance(data, dict) else [])
+        data.get("questions", data.get("items", [])) if isinstance(data, dict) else []
+    )
     for q in questions:
-        print(
-            q.get("question",
-                  q.get("title", str(q))))
+        # Response uses "text" field (not "question")
+        print(q.get("text", q.get("question", q.get("title", str(q)))))
 
 
 def cmd_agenda(args: argparse.Namespace) -> None:
+    # Returns an HTML fragment, not JSON.
+    # folderId comes from data-listid on the .js-accordion-item-agenda element.
     url = (
         f"{BASE}/surface/AgendaSurface/GetAgendaList?"
-        f"pageId={args.page_id}"
-        f"&pageSize={args.page_size}"
-        f"&pageNumber={args.page_number}"
+        f"folderId={urllib.request.quote(str(args.folder_id))}"
         f"&pageUrl={urllib.request.quote(args.page_url)}"
-        f"&folderId={args.folder_id}"
-        f"&elementId={args.element_id}")
+        f"&elementId={urllib.request.quote(str(args.element_id))}"
+    )
     _, raw = _request(url)
-    data = json.loads(
-        raw.decode("utf-8", errors="replace"))
-    if args.raw:
-        _emit(data)
-        return
-    items = (
-        data.get("items", [])
-        if isinstance(data, dict) else [])
-    for item in items:
-        title = item.get(
-            "title", item.get("name", ""))
-        date = item.get(
-            "date", item.get("startDate", ""))
-        print(f"{date}\t{title}")
+    html = raw.decode("utf-8", errors="replace")
+    # Extract links from the HTML fragment
+    links = re.findall(r'href="([^"]+)"[^>]*>([^<]+)<', html)
+    if links:
+        for href, text in links:
+            print(f"{href}\t{text.strip()}")
+    else:
+        print(html)
 
 
 def cmd_sitemap(args: argparse.Namespace) -> None:
@@ -231,15 +210,9 @@ def cmd_sitemap(args: argparse.Namespace) -> None:
     locs = re.findall(r"<loc>([^<]+)</loc>", xml)
     if args.section:
         prefix = "/" + args.section.lstrip("/")
-        locs = [
-            u
-            for u in locs
-            if ("/"
-                + u.split("/", 3)[-1]
-                .startswith(prefix))
-        ]
+        locs = [u for u in locs if ("/" + u.split("/", 3)[-1]).startswith(prefix)]
     if args.limit:
-        locs = locs[:args.limit]
+        locs = locs[: args.limit]
     for u in locs:
         print(u)
 
@@ -256,25 +229,23 @@ def cmd_article(args: argparse.Namespace) -> None:
     ):
         metas[m.group(1)] = m.group(2)
     # Extract title
-    title_m = re.search(
-        r'<title>([^<]*)</title>', html)
-    title = (
-        title_m.group(1) if title_m else "")
+    title_m = re.search(r"<title>([^<]*)</title>", html)
+    title = title_m.group(1) if title_m else ""
     # Extract main content (first <main> block)
     main_m = re.search(
-        r'<main[^>]*>(.*?)</main>',
+        r"<main[^>]*>(.*?)</main>",
         html,
         re.DOTALL,
     )
-    content = (
-        main_m.group(1) or ""
-        if main_m else "")
+    content = main_m.group(1) or "" if main_m else ""
     if args.raw:
-        _emit({
-            "title": title,
-            "meta": metas,
-            "content_length": len(content),
-        })
+        _emit(
+            {
+                "title": title,
+                "meta": metas,
+                "content_length": len(content),
+            }
+        )
     else:
         print(f"Title: {title}")
         for k, v in metas.items():

@@ -112,9 +112,9 @@ def process_items(items: list[Item], log: bool = False) -> list[Result]:
 
     Args:
         items:
-            List of items to process.
+          List of items to process.
         log (optional):
-            Whether to log progress. Defaults to False.
+          Whether to log progress. Defaults to False.
 
     Returns:
         List of processed results.

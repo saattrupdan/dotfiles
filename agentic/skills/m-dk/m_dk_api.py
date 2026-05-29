@@ -3,6 +3,7 @@
 
 Standard library only. See ./SKILL.md for full API specification.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -10,6 +11,7 @@ import json
 import sys
 import typing as t
 import urllib.error
+import urllib.parse
 import urllib.request
 
 BASE = "https://m.ankiro.dk/Rest/Metro-Live/Search"
@@ -54,8 +56,7 @@ def main() -> None:
 
     p = sub.add_parser(
         "facets",
-        help="Show available facet definitions and "
-        "counts",
+        help="Show available facet definitions and counts",
     )
     p.add_argument(
         "query",
@@ -74,8 +75,7 @@ def main() -> None:
 
 
 def _get(params: dict[str, str]) -> tuple[int, bytes]:
-    qs = "&".join(
-        f"{k}={v}" for k, v in params.items())
+    qs = urllib.parse.urlencode(params)
     url = f"{BASE}?{qs}"
     req = urllib.request.Request(
         url,
@@ -83,23 +83,20 @@ def _get(params: dict[str, str]) -> tuple[int, bytes]:
     )
     try:
         with urllib.request.urlopen(
-            req, timeout=30,
+            req,
+            timeout=30,
         ) as r:
             return r.status, r.read()
     except urllib.error.HTTPError as e:
         body = e.read() if e.fp else b""
-        sys.stderr.write(
-            f"HTTP {e.code} {e.reason} on {url}\n")
+        sys.stderr.write(f"HTTP {e.code} {e.reason} on {url}\n")
         if body:
-            sys.stderr.write(
-                body.decode("utf-8", errors="replace")
-                .rstrip() + "\n")
+            sys.stderr.write(body.decode("utf-8", errors="replace").rstrip() + "\n")
         sys.exit(2)
 
 
 def _emit_json(obj: t.Any) -> None:
-    print(
-        json.dumps(obj, ensure_ascii=False, indent=2))
+    print(json.dumps(obj, ensure_ascii=False, indent=2))
 
 
 def cmd_search(args: argparse.Namespace) -> None:
@@ -112,7 +109,7 @@ def cmd_search(args: argparse.Namespace) -> None:
         params["startIndex"] = str(args.start)
     if args.max:
         params["maxResults"] = str(args.max)
-    status, raw = _get(params)
+    _, raw = _get(params)
     data = json.loads(raw.decode("utf-8"))
     if args.raw:
         _emit_json(data)
@@ -120,9 +117,7 @@ def cmd_search(args: argparse.Namespace) -> None:
     total = data.get("TotalResults", 0)
     docs = data.get("Documents", [])
     if not docs:
-        print(
-            f"No results for '{args.query}' "
-            f"(total: {total})")
+        print(f"No results for '{args.query}' (total: {total})")
         return
     print(f"Total results: {total}")
     for i, doc in enumerate(docs, 1):
@@ -149,9 +144,7 @@ def cmd_search(args: argparse.Namespace) -> None:
             meta.append(page_type)
         if culture:
             meta.append(culture)
-        meta_str = (
-            f" [{', '.join(meta)}]"
-            if meta else "")
+        meta_str = f" [{', '.join(meta)}]" if meta else ""
         print(f"  {i}. {title}{meta_str}")
         print(f"     {uri}")
 
@@ -163,7 +156,7 @@ def cmd_facets(args: argparse.Namespace) -> None:
     }
     if args.max:
         params["maxResults"] = str(args.max)
-    status, raw = _get(params)
+    _, raw = _get(params)
     data = json.loads(raw.decode("utf-8"))
     defs = [
         {
@@ -171,15 +164,15 @@ def cmd_facets(args: argparse.Namespace) -> None:
             "name": p["Name"],
             "type": p.get("Type"),
         }
-        for p in data.get(
-            "Decorations", {})
-        .get("Properties", [])
+        for p in data.get("Decorations", {}).get("Properties", [])
     ]
-    _emit_json({
-        "total": data.get("TotalResults", 0),
-        "facets": data.get("Facets", []),
-        "property_definitions": defs,
-    })
+    _emit_json(
+        {
+            "total": data.get("TotalResults", 0),
+            "facets": data.get("Facets", []),
+            "property_definitions": defs,
+        }
+    )
 
 
 if __name__ == "__main__":

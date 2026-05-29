@@ -25,8 +25,8 @@ open https://www.dr.dk/lyd
 # Search
 open https://www.dr.dk/soeg?query=topic
 
-# CLI: front page content groups
-python3 dr_dk_api.py frontpage --limit 10 --per-item 5
+# CLI: latest news from /nyheder
+python3 dr_dk_api.py frontpage --limit 10
 
 # CLI: article data
 python3 dr_dk_api.py article nyheder/indland/example
@@ -78,7 +78,7 @@ python3 dr_dk_api.py tvguide --limit 20
 
 ### Key data source: `__NEXT_DATA__`
 
-Every page embeds structured JSON in `<script id="__NEXT_DATA__">`. Parse this for reliable data: article body, author, publication date, URN, HLS stream URLs, front-page content groups.
+News section pages (`/nyheder`, `/nyheder/indland`, article pages, etc.) embed structured JSON in `<script id="__NEXT_DATA__">`. Parse this for reliable data: article body, author, publication date, URN, HLS stream URLs, and news article lists (`site.publications[]`). The home page (`/`) uses Next.js App Router and does not contain `__NEXT_DATA__` — use `/nyheder` instead.
 
 ### Internal APIs
 

@@ -89,7 +89,7 @@ gh repo create NAME --public [--clone] [--description "desc"] [--template tpl]
 gh repo clone owner/repo [-- --depth 1]
 gh repo fork owner/repo
 
-gh repo edit NAME --add-label archived
+gh repo edit NAME --add-topic mytopic
 gh repo rename NAME new-name
 gh repo sync / archive / delete / view --web
 gh repo list --limit 50
@@ -102,7 +102,7 @@ gh repo license list / view MIT
 
 ```bash
 gh run list [--workflow ci.yml]
-gh run view 123 --log / watch 123 / cancel 123 / delete 123 / download 123 / rerun 123 --failed-jobs
+gh run view 123 --log / watch 123 / cancel 123 / delete 123 / download 123 / rerun 123 --failed
 gh workflow list / enable NAME / disable NAME / run NAME.yml
 gh run watch --fail-fast
 ```
@@ -111,7 +111,7 @@ gh run watch --fail-fast
 
 ```bash
 gh gist create script.py -d "desc"
-gh gist list / view abc / edit abc --title T --replace f.py / rename abc new / delete abc / clone abc
+gh gist list / view abc / edit abc --desc "new desc" --add newfile.py / rename abc new / delete abc / clone abc
 ```
 
 ## API

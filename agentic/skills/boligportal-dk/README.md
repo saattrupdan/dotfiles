@@ -82,14 +82,14 @@ Hub pages paginate with `?offset=<N>` (18 items per page). No page numbers.
 
 All endpoints are **POST-only** at `https://www.boligportal.dk/api/`. No auth for search:
 
-| Endpoint | Purpose |
-|---|---|
-| `POST /api/listing/listings/` | Search listings (filter by city, type, price, area) |
-| `POST /api/search/map` | Map-view listings with lat/lng |
-| `POST /api/search/promoted-ads` | Sponsored listings |
-| `POST /api/listing/favorites/` | Favorites (requires login) |
-| `POST /api/listing/top-favorite-ads/` | Most-favorited listings (anonymous) |
-| `POST /api/login` | Authenticate |
+| Endpoint | Auth | Purpose |
+|---|---|---|
+| `POST /api/listing/listings/` | Session-bound | Search listings (filter by city, type, price, area) |
+| `POST /api/search/map` | Unavailable | Map-view listings with lat/lng (HTTP 500 as of 2026-05) |
+| `POST /api/search/promoted-ads` | Anonymous | Sponsored listings |
+| `POST /api/listing/favorites/` | Session-bound | Favorites CRUD |
+| `POST /api/listing/top-favorite-ads/` | Session-bound | Most-favorited listings (as of 2026-05) |
+| `POST /api/login` | — | Authenticate |
 
 ## CLI Reference
 

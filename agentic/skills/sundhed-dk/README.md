@@ -72,6 +72,7 @@ Root: `/borger/min-side/`
 
 | Endpoint | Purpose |
 |---|---|
+| `GET /api/version` | Site version info |
 | `GET /api/login/isloggedin` | Login state JSON |
 | `GET /api/keepalive/timeleft` / `POST /api/keepalive/renew` | Session lifetime |
 | `GET /api/core/startupsettings` | Site config |

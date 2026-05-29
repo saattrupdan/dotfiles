@@ -5,6 +5,7 @@ Standard library only. Reads credentials from env vars DATACVR_USER /
 DATACVR_PASS (free creds via cvrselvbetjening@erst.dk). See ./SKILL.md
 for the full schema cribsheet.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -32,15 +33,13 @@ def main() -> None:
         p.add_argument(
             "--raw",
             action="store_true",
-            help="print full JSON response "
-            "(skip the formatter)",
+            help="print full JSON response (skip the formatter)",
         )
         return p
 
     p = _add(
         "virksomhed",
-        help="company by CVR number "
-        "(Vrvirksomhed.cvrNummer)",
+        help="company by CVR number (Vrvirksomhed.cvrNummer)",
     )
     p.add_argument(
         "cvr",
@@ -51,7 +50,8 @@ def main() -> None:
         help=(
             "dot-path under virksomhedMetadata (or "
             "Vrvirksomhed) to extract, e.g. "
-            "'nyesteNavn.navn'"),
+            "'nyesteNavn.navn'"
+        ),
     )
     p.set_defaults(func=cmd_virksomhed)
 
@@ -74,8 +74,7 @@ def main() -> None:
 
     p = _add(
         "search",
-        help="company name search (match on "
-        "nyesteNavn.navn)",
+        help="company name search (match on nyesteNavn.navn)",
     )
     p.add_argument("name")
     p.add_argument(
@@ -87,31 +86,25 @@ def main() -> None:
 
     p = _add(
         "raw",
-        help="POST a raw ES query body to "
-        "<index>/<type>/_search",
+        help="POST a raw ES query body to <index>/<type>/_search",
     )
     p.add_argument(
         "index",
-        help="cvr-permanent, "
-        "registreringstekster, ...",
+        help="cvr-permanent, registreringstekster, ...",
     )
     p.add_argument(
         "type",
-        help="virksomhed, "
-        "produktionsenhed, deltager, "
-        "registreringstekst, ...",
+        help="virksomhed, produktionsenhed, deltager, registreringstekst, ...",
     )
     p.add_argument(
         "body_file",
-        help="path to JSON file with the "
-        "query body",
+        help="path to JSON file with the query body",
     )
     p.set_defaults(func=cmd_raw)
 
     p = _add(
         "count",
-        help="document count for an index/type "
-        "via match_all",
+        help="document count for an index/type via match_all",
     )
     p.add_argument("index")
     p.add_argument("type")
@@ -128,10 +121,10 @@ def _auth_header() -> dict[str, str]:
         sys.stderr.write(
             "Set DATACVR_USER and DATACVR_PASS "
             "(request free credentials at "
-            "cvrselvbetjening@erst.dk).\n")
+            "cvrselvbetjening@erst.dk).\n"
+        )
         sys.exit(2)
-    token = base64.b64encode(
-        f"{user}:{pw}".encode("utf-8")).decode("ascii")
+    token = base64.b64encode(f"{user}:{pw}".encode("utf-8")).decode("ascii")
     return {"Authorization": f"Basic {token}"}
 
 
@@ -144,27 +137,21 @@ def _post(path: str, body: dict) -> t.Any:
         "Accept": "application/json",
     }
     headers.update(_auth_header())
-    req = urllib.request.Request(
-        url, data=data, method="POST", headers=headers)
+    req = urllib.request.Request(url, data=data, method="POST", headers=headers)
     try:
         with urllib.request.urlopen(
-            req, timeout=60,
+            req,
+            timeout=60,
         ) as r:
-            return json.loads(
-                r.read().decode("utf-8", errors="replace"))
+            return json.loads(r.read().decode("utf-8", errors="replace"))
     except urllib.error.HTTPError as e:
-        sys.stderr.write(
-            f"HTTP {e.code} {e.reason} on "
-            f"POST {path}\n")
-        sys.stderr.write(
-            (e.read() or b"").decode(
-                "utf-8", errors="replace") + "\n")
+        sys.stderr.write(f"HTTP {e.code} {e.reason} on POST {path}\n")
+        sys.stderr.write((e.read() or b"").decode("utf-8", errors="replace") + "\n")
         sys.exit(2)
 
 
 def _emit(obj: t.Any) -> None:
-    print(
-        json.dumps(obj, ensure_ascii=False, indent=2))
+    print(json.dumps(obj, ensure_ascii=False, indent=2))
 
 
 def _dot_get(obj: t.Any, path: str) -> t.Any:
@@ -187,8 +174,7 @@ def _dot_get(obj: t.Any, path: str) -> t.Any:
 def _first_source(
     resp: dict,
 ) -> dict | None:
-    hits = (
-        (resp.get("hits") or {}).get("hits") or [])
+    hits = (resp.get("hits") or {}).get("hits") or []
     if not hits:
         return None
     return hits[0].get("_source")
@@ -196,14 +182,13 @@ def _first_source(
 
 # --- subcommands ---------------------------------------------------------
 
+
 def cmd_virksomhed(
     args: argparse.Namespace,
 ) -> None:
     body = {
         "query": {
-            "term": {
-                "Vrvirksomhed.cvrNummer": int(
-                    args.cvr)},
+            "term": {"Vrvirksomhed.cvrNummer": int(args.cvr)},
         },
         "size": 1,
     }
@@ -213,13 +198,11 @@ def cmd_virksomhed(
     )
     src = _first_source(resp)
     if src is None:
-        sys.stderr.write(
-            f"No company with CVR={args.cvr}\n")
+        sys.stderr.write(f"No company with CVR={args.cvr}\n")
         sys.exit(1)
     if args.field:
         v = _dot_get(
-            src.get("Vrvirksomhed", {})
-            .get("virksomhedMetadata", {}),
+            src.get("Vrvirksomhed", {}).get("virksomhedMetadata", {}),
             args.field,
         )
         if v is None:
@@ -227,8 +210,7 @@ def cmd_virksomhed(
                 src.get("Vrvirksomhed", {}),
                 args.field,
             )
-        _emit(
-            v if v is not None else None)
+        _emit(v if v is not None else None)
         return
     _emit(src)
 
@@ -236,9 +218,7 @@ def cmd_virksomhed(
 def cmd_p_enhed(args: argparse.Namespace) -> None:
     body = {
         "query": {
-            "term": {
-                "VrproduktionsEnhed.pNummer": int(
-                    args.pnr)},
+            "term": {"VrproduktionsEnhed.pNummer": int(args.pnr)},
         },
         "size": 1,
     }
@@ -248,8 +228,7 @@ def cmd_p_enhed(args: argparse.Namespace) -> None:
     )
     src = _first_source(resp)
     if src is None:
-        sys.stderr.write(
-            f"No P-unit with pNummer={args.pnr}\n")
+        sys.stderr.write(f"No P-unit with pNummer={args.pnr}\n")
         sys.exit(1)
     _emit(src)
 
@@ -258,9 +237,7 @@ def cmd_deltager(args: argparse.Namespace) -> None:
     # `deltager` is searched by enhedsNummer.
     body = {
         "query": {
-            "term": {
-                "Vrdeltagerperson.enhedsNummer": int(
-                    args.enheds)},
+            "term": {"Vrdeltagerperson.enhedsNummer": int(args.enheds)},
         },
         "size": 1,
     }
@@ -270,9 +247,7 @@ def cmd_deltager(args: argparse.Namespace) -> None:
     )
     src = _first_source(resp)
     if src is None:
-        sys.stderr.write(
-            f"No participant with "
-            f"enhedsNummer={args.enheds}\n")
+        sys.stderr.write(f"No participant with enhedsNummer={args.enheds}\n")
         sys.exit(1)
     _emit(src)
 
@@ -280,19 +255,14 @@ def cmd_deltager(args: argparse.Namespace) -> None:
 def cmd_search(args: argparse.Namespace) -> None:
     body = {
         "query": {
-            "match": {
-                "Vrvirksomhed.virksomhedMetadata"
-                ".nyesteNavn.navn": args.name},
+            "match": {"Vrvirksomhed.virksomhedMetadata.nyesteNavn.navn": args.name},
         },
         "size": args.limit,
         "_source": [
             "Vrvirksomhed.cvrNummer",
-            "Vrvirksomhed.virksomhedMetadata"
-            ".nyesteNavn",
-            "Vrvirksomhed.virksomhedMetadata"
-            ".nyesteBeliggenhedsadresse",
-            "Vrvirksomhed.virksomhedMetadata"
-            ".nyesteVirksomhedsform",
+            "Vrvirksomhed.virksomhedMetadata.nyesteNavn",
+            "Vrvirksomhed.virksomhedMetadata.nyesteBeliggenhedsadresse",
+            "Vrvirksomhed.virksomhedMetadata.nyesteVirksomhedsform",
         ],
     }
     resp = _post(
@@ -302,39 +272,25 @@ def cmd_search(args: argparse.Namespace) -> None:
     if args.raw:
         _emit(resp)
         return
-    hits = (
-        (resp.get("hits") or {}).get("hits") or [])
-    total = (
-        (resp.get("hits") or {}).get("total"))
+    hits = (resp.get("hits") or {}).get("hits") or []
+    total = (resp.get("hits") or {}).get("total")
     if isinstance(total, dict):
         total = total.get("value")
-    print(
-        f"# {total} hits for {args.name!r}")
+    print(f"# {total} hits for {args.name!r}")
     for h in hits:
-        src = h.get("_source", {}).get(
-            "Vrvirksomhed", {})
-        meta = (
-            src.get("virksomhedMetadata", {})
-            or {})
-        navn = (
-            (meta.get("nyesteNavn") or {})
-            .get("navn", ""))
+        src = h.get("_source", {}).get("Vrvirksomhed", {})
+        meta = src.get("virksomhedMetadata", {}) or {}
+        navn = (meta.get("nyesteNavn") or {}).get("navn", "")
         cvr = src.get("cvrNummer", "")
-        adr = (
-            meta.get(
-                "nyesteBeliggenhedsadresse") or {})
+        adr = meta.get("nyesteBeliggenhedsadresse") or {}
         addr = (
-            f"{adr.get('vejnavn','')} "
-            f"{adr.get('husnummerFra','')}, "
-            f"{adr.get('postnummer','')} "
-            f"{adr.get('postdistrikt','')}"
+            f"{adr.get('vejnavn', '')} "
+            f"{adr.get('husnummerFra', '')}, "
+            f"{adr.get('postnummer', '')} "
+            f"{adr.get('postdistrikt', '')}"
         ).strip(", ")
-        form = (
-            (meta.get(
-                "nyesteVirksomhedsform") or {})
-            .get("kortBeskrivelse", ""))
-        print(
-            f"{cvr}\t{form}\t{navn}\t{addr}")
+        form = (meta.get("nyesteVirksomhedsform") or {}).get("kortBeskrivelse", "")
+        print(f"{cvr}\t{form}\t{navn}\t{addr}")
 
 
 def cmd_raw(args: argparse.Namespace) -> None:
@@ -355,12 +311,10 @@ def cmd_count(args: argparse.Namespace) -> None:
         f"/{args.index}/{args.type}/_search",
         body,
     )
-    total = (
-        (resp.get("hits") or {}).get("total"))
+    total = (resp.get("hits") or {}).get("total")
     if isinstance(total, dict):
         total = total.get("value")
-    print(
-        total if total is not None else "?")
+    print(total if total is not None else "?")
 
 
 if __name__ == "__main__":

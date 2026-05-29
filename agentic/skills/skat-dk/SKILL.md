@@ -83,7 +83,7 @@ HTML page `/soeg` (and language mirrors) renders empty until the client-side **C
 
 ## skat.dk internal APIs
 
-Stack: Next.js front-end at `skat.dk` (build ID `R063-487778`, rotates on every deploy), Umbraco Headless CMS (server-side only, not publicly reachable), Cludo search (third-party), NextAuth.js (narrow internal flows only), TastSelv portal (separate ASPX-style app, out of scope). No documented OpenAPI; treat everything as undocumented and subject to change. Key limitation: no personal-data API, no server-side search query, language coverage is uneven.
+Stack: Next.js front-end at `skat.dk` (build ID `R064.2-497822`, rotates on every deploy), Umbraco Headless CMS (server-side only, not publicly reachable), Cludo search (third-party), NextAuth.js (narrow internal flows only), TastSelv portal (separate ASPX-style app, out of scope). No documented OpenAPI; treat everything as undocumented and subject to change. Key limitation: no personal-data API, no server-side search query, language coverage is uneven.
 
 ### 1. Next.js data endpoint — `/_next/data/<buildId>/<locale>/<path>.json`
 
@@ -117,7 +117,7 @@ Editorial body copy lives inside the block grid (`properties.pageSection.items[*
 
 Example:
 ```bash
-curl -s 'https://skat.dk/_next/data/R063-487778/da-dk/borger/fradrag.json' \
+curl -s 'https://skat.dk/_next/data/R064.2-497822/da-dk/borger/fradrag.json' \
   | jq '.pageProps.content.page.childPages[].url'
 ```
 

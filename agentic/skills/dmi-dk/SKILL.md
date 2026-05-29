@@ -73,13 +73,13 @@ Accepts ASCII approximations — `aa` → `å`, `oe` → `ø`, `ae` → `æ` are
 ```
 Vejrprognose for København (DK)
 Opdateret: 2026-05-09 17:37:36
-Solopgang: 51:0  Solnedgang: 21:02
+Solopgang: 05:10  Solnedgang: 21:02
 
-Uge     Dato   Min   Max   Nedbør       Vind   UV
+ Uge     Dato   Min   Max   Nedbør       Vind   UV
 ----------------------------------------------------
-lør    09-05    11    15      0.0 2.6 m/s Syd  4.4
-søn    10-05     9    15     2.32 2.2 m/s SØ  4.5
-man    11-05     9    12     2.53 1.8 m/s Øst  4.0
+ lør    09-05    11    15      0.0 2.6 m/s Syd  4.4
+ søn    10-05     9    15     2.32 2.2 m/s SØ  4.5
+ man    11-05     9    12     2.53 1.8 m/s Øst  4.0
 ```
 
 Or with `--tomorrow`:
@@ -87,7 +87,7 @@ Or with `--tomorrow`:
 ```
 Vejrprognose for København (DK)
 Opdateret: 2026-05-09 17:37:36
-Solopgang: 51:0  Solnedgang: 21:02
+Solopgang: 05:10  Solnedgang: 21:02
 
 I morgen (søn 10-05):
   Temperatur: 9–15 °C  Nedbør: 2.32 mm  Vind: 2.2 m/s SØ  UV: 4.5 (Moderat — beskyttelse anbefales)

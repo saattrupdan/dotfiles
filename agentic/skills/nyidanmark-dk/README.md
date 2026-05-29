@@ -65,7 +65,7 @@ Examples:
 | Endpoint | Purpose |
 |---|---|
 | `GET /api/search/getsearchresults?query=<q>&page=<n>` | Site search (JSON) |
-| `POST /api/news/getNews` with `{"newsTypeTag": "Arbejde"}` | News articles by tag |
+| `GET /api/news/getNews?newsTypeTag=<tag>` | News articles by tag (omit param → empty array) |
 | `GET /api/news/getTags` | News tag taxonomy |
 
 ## Troubleshooting

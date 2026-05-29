@@ -3,6 +3,7 @@
 
 Standard library only. See ./SKILL.md for the full spec.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -95,22 +96,20 @@ def _request(
     }
     if headers:
         h.update(headers)
-    req = urllib.request.Request(
-        url, data=body, method=method, headers=h)
+    req = urllib.request.Request(url, data=body, method=method, headers=h)
     try:
         with urllib.request.urlopen(
-            req, timeout=timeout,
+            req,
+            timeout=timeout,
         ) as r:
             return r.status, r.read()
     except urllib.error.HTTPError as e:
         body_text = e.read() if e.fp else b""
-        sys.stderr.write(
-            f"HTTP {e.code} {e.reason} on "
-            f"{method} {path}\n")
+        sys.stderr.write(f"HTTP {e.code} {e.reason} on {method} {path}\n")
         if body_text:
             sys.stderr.write(
-                body_text.decode("utf-8", errors="replace")
-                .rstrip() + "\n")
+                body_text.decode("utf-8", errors="replace").rstrip() + "\n"
+            )
         sys.exit(2)
 
 
@@ -121,22 +120,26 @@ def _emit(obj: t.Any) -> None:
         print(obj)
 
 
+def _normalize(s: str) -> str:
+    """Fold Danish letters to ASCII for fuzzy matching."""
+    return s.lower().replace("æ", "ae").replace("ø", "o").replace("å", "aa")
+
+
 def cmd_stations(args: argparse.Namespace) -> None:
     q = args.query or ""
-    url = f"{BASE}/api/stations/getstationlist"
+    _, raw = _request(f"{BASE}/api/stations/getstationlist")
+    data = json.loads(raw.decode("utf-8", errors="replace"))
     if q:
-        url += f"?q={urllib.parse.quote(q)}"
-    _, raw = _request(url)
-    data = json.loads(
-        raw.decode("utf-8", errors="replace"))
+        q_norm = _normalize(q)
+        data = [s for s in data if q_norm in _normalize(s.get("stationName", ""))]
     if args.raw:
         _emit(data)
         return
     for s in data:
         name = s.get("stationName", "")
-        url = s.get("stationUrl", "")
+        station_url = s.get("stationUrl", "")
         tags = ", ".join(s.get("tags", []))
-        print(f"{name}\t{url}\t[{tags}]")
+        print(f"{name}\t{station_url}\t[{tags}]")
 
 
 def cmd_station_detail(
@@ -173,13 +176,10 @@ def cmd_sitemap(args: argparse.Namespace) -> None:
     locs = re.findall(r"<loc>([^<]+)</loc>", xml)
     if args.prefix:
         locs = [
-            u
-            for u in locs
-            if urllib.parse.urlparse(u).path.startswith(
-                args.prefix)
+            u for u in locs if urllib.parse.urlparse(u).path.startswith(args.prefix)
         ]
     if args.limit:
-        locs = locs[:args.limit]
+        locs = locs[: args.limit]
     if not locs:
         sys.stderr.write("No <loc> entries matched\n")
         sys.exit(2)

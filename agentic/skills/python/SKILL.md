@@ -21,7 +21,6 @@ last-updated: 2026-05-09
 ### General Conventions
 
 - Use `pyproject.toml`, not `requirements.txt` for dependency management
-- Use `pyproject.toml`, not `requirements.txt` for dependency management
 - Do not read entire files, find the relevant line(s) with command-line tools, and only
   read those lines
 
@@ -98,7 +97,7 @@ last-updated: 2026-05-09
 - For `Iterable`, `Generator` and `Callable`, use these from the `collections.abc`
   module, not from `typing`. Import this as `import collections.abc as c` and refer to
   the types as `c.Iterable`, `c.Generator` and `c.Callable`, etc.
-- Do not use the `Any` type. You can often use`t.TypeVar` instead, but always give
+- Do not use the `Any` type. You can often use `t.TypeVar` instead, but always give
   such type variables meaningful names, and not just single letter names like `T`. If
   it's a dictionary, you can use `t.TypedDict` instead.
 - Use the `None` return type for functions that do not return anything. Never use the

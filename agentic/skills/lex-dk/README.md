@@ -4,7 +4,7 @@ Reference for navigating lex.dk — Denmark's national encyclopedia ("Danmarks N
 
 ## Requirements
 
-- No CLI script — this is a site-navigation skill
+- Python 3 (stdlib only) for `lex_dk_api.py`; no third-party packages required
 - Internet access to `lex.dk` and its subdomains
 - Reading licence compliance (see `/.licenses/restricted`)
 
@@ -22,6 +22,11 @@ open https://lex.dk/.taxonomy/1648
 
 # Browse alphabetically
 open https://lex.dk/.alfabetisk/M/1
+
+# Use the helper script (see SKILL.md for all subcommands)
+python3 lex_dk_api.py status
+python3 lex_dk_api.py autocomplete Marie
+python3 lex_dk_api.py article Marie_Curie
 ```
 
 ## Navigation Reference

@@ -35,7 +35,7 @@ python3 dsb_dk_api.py stations -q aarhus --raw
 python3 dsb_dk_api.py traffic-info
 
 # CLI: enumerate sitemap
-python3 dsb_dk_api.py sitemap --prefix /trafik/ --limit 20
+python3 dsb_dk_api.py sitemap --prefix /trafikinformation/ --limit 20
 ```
 
 ## Navigation Reference
@@ -69,12 +69,12 @@ python3 dsb_dk_api.py sitemap --prefix /trafik/ --limit 20
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /api/stations/getstationlist?q=<query>` | Station list (returns ~320 stations) |
+| `GET /api/stations/getstationlist` | Station list (always returns all ~320 stations; server ignores `?q=`) |
 | Sitemap | `/sitemap.xml` (~1200 URLs) |
 
 ## Troubleshooting
 
 - **No ticket booking API** — all purchases go through the interactive website or DSB app.
 - **No seat availability API** — seat selection happens on the journey result page.
-- **Station list returns ALL stations** — always use `?q=` to filter.
+- **Station list returns ALL stations** — server ignores `?q=`; use `-q` with the helper script for client-side filtering.
 - **No journey search API** — the search form requires JavaScript for autocomplete.

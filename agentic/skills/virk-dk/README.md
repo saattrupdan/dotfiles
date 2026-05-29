@@ -4,10 +4,11 @@ Reference for navigating virk.dk — the official Danish public-sector portal fo
 
 ## Requirements
 
-- No CLI script — this is a site-navigation skill
 - Internet access to `virk.dk`
 - MitID Erhverv for logged-in personal pages
-- (Optional) Python 3.10+ for `virk_dk_api.py` — the GraphQL API helper (included in this folder)
+- Python 3.10+ for the included CLI helpers:
+  - `virk_dk_api.py` — anonymous GraphQL gateway (standard library only)
+  - `datacvr_api.py` — CVR Elasticsearch API (requires `DATACVR_USER` / `DATACVR_PASS` env vars; free creds via `cvrselvbetjening@erst.dk`)
 
 ## Quick Start
 
@@ -65,6 +66,37 @@ python3 virk_dk_api.py sitemap --prefix /emner/ --limit 100
 ```
 
 All commands accept `--raw` to print the unmodified JSON response. See `SKILL.md` for the full schema cribsheet and verified query examples.
+
+## CVR API
+
+The folder includes `datacvr_api.py`, a CLI for the CVR distribution Elasticsearch endpoint at `http://distribution.virk.dk`. Requires `DATACVR_USER` and `DATACVR_PASS` env vars (free credentials via `cvrselvbetjening@erst.dk`). Standard library only.
+
+> **Note**: the distribution endpoint retires end of 2026. New integrations should target [Datafordeler](https://datafordeler.dk/dataoversigt/det-centrale-virksomhedsregister-cvr/).
+
+```bash
+# Company by CVR number
+python3 datacvr_api.py virksomhed 10103940
+
+# Extract a specific metadata field
+python3 datacvr_api.py virksomhed 10103940 --field nyesteNavn.navn
+
+# Production unit by P-number
+python3 datacvr_api.py p-enhed 1003393495
+
+# Participant by enhedsNummer
+python3 datacvr_api.py deltager 4000004072
+
+# Free-text company name search
+python3 datacvr_api.py search "carlsberg" --limit 10
+
+# Raw Elasticsearch query from a JSON file
+python3 datacvr_api.py raw cvr-permanent virksomhed query.json
+
+# Document count for an index/type
+python3 datacvr_api.py count cvr-permanent virksomhed
+```
+
+All commands accept `--raw` to print the full JSON response.
 
 ## Navigation Reference
 

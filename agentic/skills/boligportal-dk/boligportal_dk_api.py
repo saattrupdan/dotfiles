@@ -3,6 +3,7 @@
 
 Standard library only. See ./SKILL.md for the full API specification.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -15,6 +16,18 @@ import urllib.request
 BASE = "https://www.boligportal.dk"
 API = f"{BASE}/api"
 UA = "Mozilla/5.0 (boligportal-dk-api-cli)"
+
+
+class _NoRedirectHandler(urllib.request.HTTPErrorProcessor):
+    """Prevent urllib from silently following 3xx redirects."""
+
+    def http_response(self, request: urllib.request.Request, response: t.Any) -> t.Any:
+        return response
+
+    https_response = http_response
+
+
+_opener = urllib.request.build_opener(_NoRedirectHandler)
 
 
 def _request(
@@ -31,34 +44,51 @@ def _request(
     }
     if headers:
         h.update(headers)
-    req = urllib.request.Request(
-        url, data=body, method=method, headers=h)
+    req = urllib.request.Request(url, data=body, method=method, headers=h)
     try:
-        with urllib.request.urlopen(
-            req, timeout=timeout,
-        ) as r:
-            return r.status, r.read()
+        with _opener.open(req, timeout=timeout) as r:
+            status: int = r.status
+            raw: bytes = r.read()
+            if status in (301, 302, 303, 307, 308):
+                location = r.headers.get("location", "")
+                if "/login" in location:
+                    sys.stderr.write(
+                        f"HTTP {status} — endpoint requires authentication "
+                        f"({method} {path} → {location})\n"
+                    )
+                    sys.exit(2)
+                sys.stderr.write(
+                    f"HTTP {status} redirect to {location} on {method} {path}\n"
+                )
+                sys.exit(2)
+            return status, raw
     except urllib.error.HTTPError as e:
         body_text = e.read() if e.fp else b""
-        sys.stderr.write(
-            f"HTTP {e.code} {e.reason} on "
-            f"{method} {path}\n")
+        sys.stderr.write(f"HTTP {e.code} {e.reason} on {method} {path}\n")
         if body_text:
             sys.stderr.write(
-                body_text.decode("utf-8", errors="replace")
-                .rstrip() + "\n")
+                body_text.decode("utf-8", errors="replace").rstrip() + "\n"
+            )
         sys.exit(2)
 
 
 def _post(endpoint: str, body: dict) -> t.Any:
     payload = json.dumps(body).encode("utf-8")
-    _, raw = _request(
+    status, raw = _request(
         f"{API}/{endpoint}",
         method="POST",
         body=payload,
         headers={"Content-Type": "application/json"},
     )
-    return json.loads(raw.decode("utf-8", errors="replace"))
+    text = raw.decode("utf-8", errors="replace")
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        sys.stderr.write(
+            f"HTTP {status} — non-JSON response from POST {endpoint} "
+            f"(endpoint may be unavailable or require authentication)\n"
+        )
+        sys.exit(2)
 
 
 def _emit(obj: t.Any, raw: bool = False) -> None:
@@ -180,10 +210,10 @@ def cmd_promoted(args: argparse.Namespace) -> None:
         _emit(resp, raw=True)
         return
 
-    for item in resp.get("items", []):
+    for item in resp.get("ads", []):
         id_ = item.get("id", "")
         title = item.get("title", "")
-        price = item.get("price", "")
+        price = item.get("monthly_rent", "")
         city = item.get("city", "")
         url = item.get("url", "")
         print(f"{id_}\t{title}\t{price}\t{city}\t{url}")

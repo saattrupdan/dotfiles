@@ -51,9 +51,9 @@ python3 frederiksberg_dk_api.py article /borgerservice/pas --raw
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /api/search/GetTypeAhead?searchTerm=<q>&lang=da` | Autocomplete suggestions |
-| `POST /api/search/GetTopQuestions` | Editorial FAQ questions |
-| `GET /surface/AgendaSurface/GetAgendaList?pageId=<id>&pageUrl=<url>&folderId=<id>&elementId=<id>` | Council meeting agendas |
+| `GET /api/search/GetTypeAhead?searchTerm=<q>&pageId=15719&lang=da` | Autocomplete suggestions (returns array of strings) |
+| `GET /api/search/GetTopQuestions?pageId=15719&lang=da` | Editorial FAQ questions (`text` field per item) |
+| `GET /surface/AgendaSurface/GetAgendaList?folderId=<id>&pageUrl=<url>&elementId=<id>` | Council meeting agendas (HTML fragment) |
 | Sitemap | `/sitemap.xml` (~720 URLs) |
 
 ## Troubleshooting

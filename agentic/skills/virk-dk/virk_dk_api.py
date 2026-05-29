@@ -3,6 +3,7 @@
 
 Standard library only. See ./SKILL.md for the schema cribsheet.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -11,7 +12,6 @@ import re
 import sys
 import typing as t
 import urllib.error
-import urllib.parse
 import urllib.request
 
 BASE = "https://virk.dk"
@@ -105,8 +105,7 @@ def main() -> None:
 
     p = _add(
         "ministerier",
-        help="ministry -> agency tree (backs "
-        "/nye-regler/)",
+        help="ministry -> agency tree (backs /nye-regler/)",
     )
     p.set_defaults(func=cmd_ministerier)
 
@@ -169,22 +168,20 @@ def _request(
     }
     if headers:
         h.update(headers)
-    req = urllib.request.Request(
-        url, data=body, method=method, headers=h)
+    req = urllib.request.Request(url, data=body, method=method, headers=h)
     try:
         with urllib.request.urlopen(
-            req, timeout=30,
+            req,
+            timeout=30,
         ) as r:
             return r.status, r.read()
     except urllib.error.HTTPError as e:
         body_text = e.read() if e.fp else b""
-        sys.stderr.write(
-            f"HTTP {e.code} {e.reason} on "
-            f"{method} {path}\n")
+        sys.stderr.write(f"HTTP {e.code} {e.reason} on {method} {path}\n")
         if body_text:
             sys.stderr.write(
-                body_text.decode("utf-8", errors="replace")
-                .rstrip() + "\n")
+                body_text.decode("utf-8", errors="replace").rstrip() + "\n"
+            )
         sys.exit(2)
 
 
@@ -192,10 +189,12 @@ def gql(
     query: str,
     variables: dict | None = None,
 ) -> t.Any:
-    body = json.dumps({
-        "query": query,
-        "variables": variables or {},
-    }).encode("utf-8")
+    body = json.dumps(
+        {
+            "query": query,
+            "variables": variables or {},
+        }
+    ).encode("utf-8")
     _, raw = _request(
         GQL,
         method="POST",
@@ -208,18 +207,18 @@ def gql(
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        sys.stderr.write(
-            "Non-JSON response from /graphql:\n"
-            + text + "\n")
+        sys.stderr.write("Non-JSON response from /graphql:\n" + text + "\n")
         sys.exit(2)
 
 
 def emit(obj: t.Any, raw: bool = False) -> None:
-    print(json.dumps(
-        obj,
-        ensure_ascii=False,
-        indent=2 if raw else None,
-    ))
+    print(
+        json.dumps(
+            obj,
+            ensure_ascii=False,
+            indent=2 if raw else None,
+        )
+    )
 
 
 def _check_errors(resp: t.Any) -> t.Any:
@@ -237,23 +236,18 @@ def _check_errors(resp: t.Any) -> t.Any:
 
 # --- subcommands ---------------------------------------------------------
 
+
 def cmd_query(args: argparse.Namespace) -> None:
-    variables: dict[str, t.Any] = (
-        json.loads(args.variables)
-        if args.variables else {})
-    resp = _check_errors(
-        gql(args.query, variables))
+    variables: dict[str, t.Any] = json.loads(args.variables) if args.variables else {}
+    resp = _check_errors(gql(args.query, variables))
     emit(resp, raw=True)
 
 
 def cmd_raw(args: argparse.Namespace) -> None:
     with open(args.file, "r", encoding="utf-8") as f:
         query = f.read()
-    variables: dict[str, t.Any] = (
-        json.loads(args.variables)
-        if args.variables else {})
-    resp = _check_errors(
-        gql(query, variables))
+    variables: dict[str, t.Any] = json.loads(args.variables) if args.variables else {}
+    resp = _check_errors(gql(query, variables))
     emit(resp, raw=True)
 
 
@@ -267,19 +261,13 @@ def cmd_article(args: argparse.Namespace) -> None:
         }
       }
     }"""
-    resp = _check_errors(
-        gql(q, {"slug": args.slug}))
+    resp = _check_errors(gql(q, {"slug": args.slug}))
     if args.raw:
         emit(resp, raw=True)
         return
-    items = (
-        resp.get("data", {})
-        .get("artikelCollection", {})
-        .get("items", []))
+    items = resp.get("data", {}).get("artikelCollection", {}).get("items", [])
     if not items:
-        sys.stderr.write(
-            f"No artikel with "
-            f"slug={args.slug!r}\n")
+        sys.stderr.write(f"No artikel with slug={args.slug!r}\n")
         sys.exit(1)
     emit(items[0], raw=True)
 
@@ -295,21 +283,14 @@ def cmd_search_articles(
         items { sys { id } slug overskrift alternativBeskrivelse tags }
       }
     }"""
-    resp = _check_errors(
-        gql(q, {"q": args.text, "limit": args.limit}))
+    resp = _check_errors(gql(q, {"q": args.text, "limit": args.limit}))
     if args.raw:
         emit(resp, raw=True)
         return
-    coll = (
-        resp.get("data", {})
-        .get("artikelCollection") or {})
-    print(
-        f"# {coll.get('total', 0)} hits for "
-        f"{args.text!r}")
+    coll = resp.get("data", {}).get("artikelCollection") or {}
+    print(f"# {coll.get('total', 0)} hits for {args.text!r}")
     for it in coll.get("items", []) or []:
-        print(
-            f"{it['slug']}\t"
-            f"{it.get('overskrift') or ''}")
+        print(f"{it['slug']}\t{it.get('overskrift') or ''}")
 
 
 def cmd_ordninger(args: argparse.Namespace) -> None:
@@ -319,18 +300,12 @@ def cmd_ordninger(args: argparse.Namespace) -> None:
         items { sys { id } slug overordnetTitel alternativTitel alternativBeskrivelse }
       }
     }"""
-    resp = _check_errors(
-        gql(q, {"limit": args.limit}))
+    resp = _check_errors(gql(q, {"limit": args.limit}))
     if args.raw:
         emit(resp, raw=True)
         return
-    for it in (
-        resp.get("data", {})
-        .get("ordningCollection", {})
-        .get("items", []) or []):
-        print(
-            f"{it['slug']}\t"
-            f"{it.get('overordnetTitel') or ''}")
+    for it in resp.get("data", {}).get("ordningCollection", {}).get("items", []) or []:
+        print(f"{it['slug']}\t{it.get('overordnetTitel') or ''}")
 
 
 def cmd_myndigheder(args: argparse.Namespace) -> None:
@@ -348,8 +323,7 @@ def cmd_myndigheder(args: argparse.Namespace) -> None:
     try:
         resp = gql(
             q,
-            {"limit": args.limit,
-             "where": where or None},
+            {"limit": args.limit, "where": where or None},
         )
     except SystemExit:
         raise
@@ -363,50 +337,41 @@ def cmd_myndigheder(args: argparse.Namespace) -> None:
               }
             }""",
                 {"limit": args.limit},
-            ))
-    items = (
-        resp.get("data", {})
-        .get("myndighedCollection", {})
-        .get("items", []) or [])
+            )
+        )
+    items = resp.get("data", {}).get("myndighedCollection", {}).get("items", []) or []
     if args.type:
-        items = [
-            m for m in items
-            if m.get("type") == args.type]
+        items = [m for m in items if m.get("type") == args.type]
     if args.raw:
-        emit({
-            "data": {
-                "myndighedCollection": {
-                    "items": items},
+        emit(
+            {
+                "data": {
+                    "myndighedCollection": {"items": items},
+                },
             },
-        }, raw=True)
+            raw=True,
+        )
         return
     for m in items:
-        print(
-            f"{m.get('forkortelse','')}\t"
-            f"{m.get('type','')}\t"
-            f"{m.get('cvr','')}")
+        print(f"{m.get('forkortelse', '')}\t{m.get('type', '')}\t{m.get('cvr', '')}")
 
 
 def cmd_ministerier(args: argparse.Namespace) -> None:
     q = (
         "query { ministeriumCollection { "
         "items { navn cvr myndigheder { navn "
-        "cvr } } } }")
+        "cvr } } } }"
+    )
     resp = _check_errors(gql(q))
     if args.raw:
         emit(resp, raw=True)
         return
     for m in (
-        resp.get("data", {})
-        .get("ministeriumCollection", {})
-        .get("items", []) or []):
-        print(
-            f"{m.get('navn','')}\t"
-            f"cvr={m.get('cvr','')}")
-        for c in (m.get("myndigheder") or []):
-            print(
-                f"  - {c.get('navn','')}\t"
-                f"cvr={c.get('cvr','')}")
+        resp.get("data", {}).get("ministeriumCollection", {}).get("items", []) or []
+    ):
+        print(f"{m.get('navn', '')}\tcvr={m.get('cvr', '')}")
+        for c in m.get("myndigheder") or []:
+            print(f"  - {c.get('navn', '')}\tcvr={c.get('cvr', '')}")
 
 
 def cmd_mv_services(args: argparse.Namespace) -> None:
@@ -415,14 +380,13 @@ def cmd_mv_services(args: argparse.Namespace) -> None:
     if args.raw:
         emit(resp, raw=True)
         return
-    for s in (
-        resp.get("data", {})
-        .get("mvServices", []) or []):
+    for s in resp.get("data", {}).get("mvServices", []) or []:
         print(
-            f"{s.get('navn','')}\t"
+            f"{s.get('navn', '')}\t"
             f"alive={s.get('alive')}\t"
             f"active={s.get('active')}\t"
-            f"metode={s.get('metode','')}")
+            f"metode={s.get('metode', '')}"
+        )
 
 
 def cmd_ressourceset(args: argparse.Namespace) -> None:
@@ -432,26 +396,26 @@ def cmd_ressourceset(args: argparse.Namespace) -> None:
       }
     }"""
     resp = _check_errors(
-        gql(q, {
-            "slug": args.slug,
-            "locale": args.locale,
-        }))
+        gql(
+            q,
+            {
+                "slug": args.slug,
+                "locale": args.locale,
+            },
+        )
+    )
     if args.raw:
         emit(resp, raw=True)
         return
-    items = (
-        ((resp.get("data", {}) or {})
-         .get("ressourceSetCollection", {})
-         .get("items", []) or []))
+    items = (resp.get("data", {}) or {}).get("ressourceSetCollection", {}).get(
+        "items", []
+    ) or []
     if not items:
         sys.stderr.write(
-            f"No ressourceSet with "
-            f"slug={args.slug!r} "
-            f"locale={args.locale!r}\n")
+            f"No ressourceSet with slug={args.slug!r} locale={args.locale!r}\n"
+        )
         sys.exit(1)
-    for kv in (
-        (items[0].get("ressourcerCollection", {})
-         or {}).get("items", []) or []):
+    for kv in (items[0].get("ressourcerCollection", {}) or {}).get("items", []) or []:
         print(f"{kv['key']}\t{kv['value']}")
 
 
@@ -459,21 +423,15 @@ def cmd_redirect(args: argparse.Namespace) -> None:
     q = """query($q: String!, $realm: String!) {
       redirectQuery(query: $q, realm: $realm) { redirectUrl httpStatus }
     }"""
-    resp = _check_errors(
-        gql(q, {"q": args.url, "realm": args.realm}))
-    r = ((resp.get("data", {}) or {})
-         .get("redirectQuery") or {})
+    resp = _check_errors(gql(q, {"q": args.url, "realm": args.realm}))
+    r = (resp.get("data", {}) or {}).get("redirectQuery") or {}
     if args.raw:
         emit(resp, raw=True)
         return
     if r.get("httpStatus", -1) <= 0:
-        sys.stderr.write(
-            f"No redirect for {args.url!r} in "
-            f"realm {args.realm!r}\n")
+        sys.stderr.write(f"No redirect for {args.url!r} in realm {args.realm!r}\n")
         sys.exit(1)
-    print(
-        f"{r.get('httpStatus')} "
-        f"{r.get('redirectUrl')}")
+    print(f"{r.get('httpStatus')} {r.get('redirectUrl')}")
 
 
 def cmd_sitemap(args: argparse.Namespace) -> None:
@@ -482,19 +440,15 @@ def cmd_sitemap(args: argparse.Namespace) -> None:
         headers={"Accept": "*/*"},
     )
     xml = raw.decode("utf-8", errors="replace")
-    locs = re.findall(
-        r"<loc>([^<]+)</loc>", xml)
+    locs = re.findall(r"<loc>([^<]+)</loc>", xml)
     if args.prefix:
         locs = [
-            u
-            for u in locs
-            if (u.startswith(BASE + args.prefix)
-                or args.prefix in u)]
+            u for u in locs if (u.startswith(BASE + args.prefix) or args.prefix in u)
+        ]
     if args.limit:
-        locs = locs[:args.limit]
+        locs = locs[: args.limit]
     if not locs:
-        sys.stderr.write(
-            "No <loc> entries matched.\n")
+        sys.stderr.write("No <loc> entries matched.\n")
         sys.exit(1)
     for u in locs:
         print(u)

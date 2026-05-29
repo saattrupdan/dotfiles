@@ -32,17 +32,17 @@ Denmark's public-service broadcaster. Content is free, no login needed for brows
 
 ### Article anatomy
 
-Each article page embeds JSON in `<script id="__NEXT_DATA__">`. Key fields:
+Each article page embeds JSON in `<script id="__NEXT_DATA__">`. Key fields under `viewProps.article`:
 
-- **Title** — `<h1>` headline
+- **Title** — `article.title` (also `<h1>` headline)
 - **Summary** — `article.summary`
 - **Body** — `article.body[]` components (`ParagraphComponent`, `HeadingComponent`, `ImageComponent`, `Link`). Prose: `body[].body[].text` where `type == "Text"`.
-- **Authors** — `contributions[].agent.name` + `.email`
+- **Authors** — `article.contributions[].agent.name` + `.email`
 - **Date** — `article.startDate` (ISO 8601)
 - **Section** — `article.site.title` + `.url`
 - **URN** — `article.urn` (stable identifier)
 - **Media** — `article.head[]` where `type == "MediaComponent"`; `resource.urn` + `resource.hlsStream.streamEncrypted` for video
-- **Glossary** — `viewProps.glossary[]`
+- **Glossary** — `article.glossary[]`
 
 ### Liveblogs
 
@@ -77,26 +77,28 @@ Available only in Denmark, Greenland, Faroe Islands. EU travelers can authentica
 
 Root: `https://www.dr.dk/lyd`. Programs: `/lyd/programmer/<slug>`. Categories include "Populære" (`/lyd/tema/populaere`).
 
-## Front page — Hydra framework
+## Hydra framework — `__NEXT_DATA__`
 
-Every page embeds structured JSON in `<script id="__NEXT_DATA__" type="application/json">`. Primary data source.
+News section pages (`/nyheder`, `/nyheder/indland`, article pages, etc.) embed structured JSON in `<script id="__NEXT_DATA__" type="application/json">`. This is the primary data source.
 
 `__NEXT_DATA__.props.pageProps.viewProps` contains:
-- `frontpage.groups[]` — content groups (cards, carousels, video players)
-- `frontpage.emergencyMessages[]` — emergency alerts (rare)
-- `article` — full article data (on article pages)
-- `contributions[]` — authors
-- `glossary[]` — dictionary definitions
+
+**On `/nyheder` (news front page)**:
+- `site.publications[]` — latest articles; each has a `content` object with `title`, `urlPathId`, `urn`, `format`, `startDate`, `contributions[]`
+- `emergencyMessages[]` — emergency alerts (rare)
 - `env` — environment variables (API base paths, widget IDs)
 
-Each group has `type` (`FrontPageArticle`, `FrontPageGroup`, `FrontPageWidgetCell`), `title`, and `items[]` with `title`, `url`, `article.urn`, `article.format`, `article.startDate`, `article.head[]`.
+**On article pages**:
+- `article` — full article data (`title`, `urn`, `urlPathId`, `format`, `startDate`, `site`, `body[]`, `head[]`, `contributions[]`, `glossary[]`)
+
+Note: the home page (`https://www.dr.dk/`) has migrated to Next.js App Router and no longer contains `__NEXT_DATA__`. Use `/nyheder` as the news entry point.
 
 **Article formats**: `StandardArticleFormat` (regular), `LiveArticleFormat` (liveblog), `OverviewArticleFormat` (multi-part), `ReelsFormat` (short vertical video).
 
 ## Common tasks — recipes
 
 - **Read article**: Fetch `/nyheder/<section>/<slug>`. Parse `__NEXT_DATA__`. Extract prose from `article.body[].body[].text` where `type == "Text"`.
-- **Browse front page**: Fetch `/`. Parse `frontpage.groups`.
+- **Browse news front page**: Fetch `/nyheder`. Parse `site.publications[].content` for article list.
 - **Watch DRTV episode**: `/drtv/episode/<slug>_<id>`. HLS URL in `hlsStream.streamEncrypted`.
 - **Watch live TV**: `/drtv/kanal/<channel-id>` (e.g. `dr1_20875`).
 - **Weather**: `/nyheder/vejret` · **Traffic**: `/trafik` · **TV guide**: `/drtv/tv-guide`
@@ -167,14 +169,14 @@ Returns title, author, thumbnail for a DR page URL.
 `dr_dk_api.py` (in this folder) wraps verified endpoints. Standard library only.
 
 ```bash
-python3 dr_dk_api.py frontpage                           # Front-page content groups
-python3 dr_dk_api.py frontpage --limit 10 --per-item 5   # More groups/items
-python3 dr_dk_api.py frontpage --urn                     # Include article URNs
-python3 dr_dk_api.py frontpage --raw                     # Raw JSON output
+python3 dr_dk_api.py frontpage                   # Latest news articles from /nyheder
+python3 dr_dk_api.py frontpage --limit 10        # More articles
+python3 dr_dk_api.py frontpage --urn             # Include article URNs
+python3 dr_dk_api.py frontpage --raw             # Raw JSON output
 python3 dr_dk_api.py article nyheder/indland/example     # Extract article data
 python3 dr_dk_api.py image "urn:dr:od3:clippublication:..." <uuid>  # Download thumbnail
-python3 dr_dk_api.py sitemap                             # List sitemap files
-python3 dr_dk_api.py tvguide --limit 20                  # First 20 TV guide URLs
+python3 dr_dk_api.py sitemap                     # List sitemap files
+python3 dr_dk_api.py tvguide --limit 20          # First 20 TV guide URLs
 ```
 
 Errors (HTTP 4xx/5xx, JSON parse failure) go to stderr and exit non-zero.

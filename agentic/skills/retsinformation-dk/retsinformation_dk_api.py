@@ -21,6 +21,7 @@ Wraps the verified anonymous endpoints:
 
 Standard library only. See ./SKILL.md for the underlying spec.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -54,8 +55,7 @@ def main() -> None:
 
     p = _add(
         "law-registers",
-        help="law register tree (filter by "
-        "ministry/topic)",
+        help="law register tree (filter by ministry/topic)",
     )
     p.set_defaults(func=cmd_law_registers)
 
@@ -67,15 +67,13 @@ def main() -> None:
 
     p = _add(
         "case-statuses",
-        help="parliamentary case statuses "
-        "(Afvist, Vedtaget, ...)",
+        help="parliamentary case statuses (Afvist, Vedtaget, ...)",
     )
     p.set_defaults(func=cmd_case_statuses)
 
     p = _add(
         "doc-types",
-        help="document type filter (Regler, "
-        "Afgørelser)",
+        help="document type filter (Regler, Afgørelser)",
     )
     p.set_defaults(func=cmd_doc_types)
 
@@ -113,23 +111,20 @@ def main() -> None:
 
     p = _add(
         "eli-routing",
-        help="ELI URL routing table (param key -> "
-        "documentTypeId)",
+        help="ELI URL routing table (param key -> documentTypeId)",
     )
     p.set_defaults(func=cmd_eli_routing)
 
     p = _add(
         "authority-lists",
-        help="ELI authority values (passed_by, "
-        "type_document, ...)",
+        help="ELI authority values (passed_by, type_document, ...)",
     )
     p.add_argument(
         "authority",
         nargs="?",
         help=(
-            "specific authority to show (e.g. "
-            "passed_by, type_document, "
-            "relevant_for)"),
+            "specific authority to show (e.g. passed_by, type_document, relevant_for)"
+        ),
     )
     p.set_defaults(func=cmd_authority_lists)
 
@@ -141,30 +136,32 @@ def main() -> None:
 
     p = _add(
         "metadata-types",
-        help="ELI ontology metadata property "
-        "definitions",
+        help="ELI ontology metadata property definitions",
     )
     p.set_defaults(func=cmd_metadata_types)
 
     p = _add(
         "document",
-        help="fetch document by numeric ID",
+        help="fetch document by ELI path or numeric ID",
     )
     p.add_argument(
         "id",
-        help="numeric document ID",
+        help=(
+            "ELI path (e.g. eli/lta/2026/480, "
+            "eli/accn/A20240001) for document "
+            "details; numeric internal ID for "
+            "--timeline / --metadata"
+        ),
     )
     p.add_argument(
         "--timeline",
         action="store_true",
-        help="fetch document timeline/history "
-        "instead of details",
+        help="fetch document timeline/history (requires numeric internal ID)",
     )
     p.add_argument(
         "--metadata",
         action="store_true",
-        help="fetch document metadata instead "
-        "of details",
+        help="fetch document metadata (requires numeric internal ID)",
     )
     p.set_defaults(func=cmd_document)
 
@@ -197,6 +194,7 @@ def _request(
     url: str,
     method: str = "GET",
     headers: dict[str, str] | None = None,
+    body: bytes | None = None,
     timeout: float = 30.0,
 ) -> tuple[int, bytes]:
     h: dict[str, str] = {
@@ -205,28 +203,26 @@ def _request(
     }
     if headers:
         h.update(headers)
-    req = urllib.request.Request(
-        url, method=method, headers=h)
+    req = urllib.request.Request(url, method=method, headers=h, data=body)
     try:
         with urllib.request.urlopen(
-            req, timeout=timeout,
+            req,
+            timeout=timeout,
         ) as r:
             return r.status, r.read()
     except urllib.error.HTTPError as e:
         body_text = e.read() if e.fp else b""
-        sys.stderr.write(
-            f"HTTP {e.code} {e.reason} on {url}\n")
+        sys.stderr.write(f"HTTP {e.code} {e.reason} on {url}\n")
         if body_text:
             sys.stderr.write(
-                body_text.decode("utf-8", errors="replace")
-                .rstrip() + "\n")
+                body_text.decode("utf-8", errors="replace").rstrip() + "\n"
+            )
         sys.exit(2)
 
 
 def _emit(obj: t.Any) -> None:
     if isinstance(obj, (dict, list)):
-        print(
-            json.dumps(obj, ensure_ascii=False, indent=2))
+        print(json.dumps(obj, ensure_ascii=False, indent=2))
     else:
         print(obj)
 
@@ -239,104 +235,89 @@ def _emit_raw(text: bytes) -> None:
 def cmd_law_registers(
     args: argparse.Namespace,
 ) -> None:
-    _, raw = _request(
-        f"{BASE}/api/extremesearch/GetLawRegisters")
-    _emit(json.loads(
-        raw.decode("utf-8", errors="replace")))
+    _, raw = _request(f"{BASE}/api/extremesearch/GetLawRegisters")
+    _emit(json.loads(raw.decode("utf-8", errors="replace")))
 
 
 def cmd_fob_tags(args: argparse.Namespace) -> None:
-    _, raw = _request(
-        f"{BASE}/api/extremesearch/GetFobTags")
-    _emit(json.loads(
-        raw.decode("utf-8", errors="replace")))
+    _, raw = _request(f"{BASE}/api/extremesearch/GetFobTags")
+    _emit(json.loads(raw.decode("utf-8", errors="replace")))
 
 
 def cmd_case_statuses(
     args: argparse.Namespace,
 ) -> None:
-    _, raw = _request(
-        f"{BASE}/api/extremesearch/"
-        f"getcasehistorystatus")
-    _emit(json.loads(
-        raw.decode("utf-8", errors="replace")))
+    _, raw = _request(f"{BASE}/api/extremesearch/getcasehistorystatus")
+    _emit(json.loads(raw.decode("utf-8", errors="replace")))
 
 
 def cmd_doc_types(args: argparse.Namespace) -> None:
-    _, raw = _request(
-        f"{BASE}/api/documentClassificationfilter")
-    _emit(json.loads(
-        raw.decode("utf-8", errors="replace")))
+    _, raw = _request(f"{BASE}/api/documentClassificationfilter")
+    _emit(json.loads(raw.decode("utf-8", errors="replace")))
 
 
 def cmd_law_registry(args: argparse.Namespace) -> None:
     _, raw = _request(f"{BASE}/api/lawregistry")
-    data = json.loads(
-        raw.decode("utf-8", errors="replace"))
+    data = json.loads(raw.decode("utf-8", errors="replace"))
     if args.sort:
         data = sorted(
             data,
             key=lambda x: x.get("label", ""),
         )
     if args.filter:
-        data = [
-            x
-            for x in data
-            if args.filter.lower()
-            in x.get("label", "").lower()]
+        data = [x for x in data if args.filter.lower() in x.get("label", "").lower()]
     if args.limit:
-        data = data[:args.limit]
+        data = data[: args.limit]
     if not args.raw:
         for item in data:
             print(
-                f"{item.get('key', '')}\t"
-                f"{item.get('id', '')}\t"
-                f"{item.get('label', '')}")
+                f"{item.get('key', '')}\t{item.get('id', '')}\t{item.get('label', '')}"
+            )
         return
     _emit(data)
 
 
 def cmd_ressort(args: argparse.Namespace) -> None:
     _, raw = _request(f"{BASE}/api/ressort")
-    _emit(json.loads(
-        raw.decode("utf-8", errors="replace")))
+    _emit(json.loads(raw.decode("utf-8", errors="replace")))
 
 
 def cmd_fob_ressort(args: argparse.Namespace) -> None:
     _, raw = _request(f"{BASE}/api/ressort/fob")
-    _emit(json.loads(
-        raw.decode("utf-8", errors="replace")))
+    _emit(json.loads(raw.decode("utf-8", errors="replace")))
 
 
 def cmd_eli_routing(args: argparse.Namespace) -> None:
-    _, raw = _request(
-        f"{BASE}/api/eli/routing-data")
-    data = json.loads(
-        raw.decode("utf-8", errors="replace"))
-    if not args.raw:
-        for key, entries in data.items():
-            print(f"\n[{key}]")
-            for e in entries:
-                print(
-                    f"  {e['documentTypeId']:>5d}  "
-                    f"{e['urlParamKeys']}")
+    _, raw = _request(f"{BASE}/api/eli/routing-data")
+    data = json.loads(raw.decode("utf-8", errors="replace"))
+    if args.raw:
+        _emit(data)
         return
-    _emit(data)
+    doc_map = data.get("docTypeUrlParameterMap", {})
+    for key, entries in doc_map.items():
+        if not key:
+            continue
+        for e in entries:
+            print(f"  {e['documentTypeId']:>5d}  {key}  {e['urlParamKeys']}")
+    pub_map = data.get("publicationMediaUrlParameterMap", {})
+    if pub_map:
+        print("\n[publicationMediaUrlParameterMap]")
+        for key, val in pub_map.items():
+            print(f"  {val:>3d}  {key}")
 
 
 def cmd_authority_lists(
     args: argparse.Namespace,
 ) -> None:
-    _, raw = _request(
-        f"{BASE}/api/eli/named-authority-lists")
-    data = json.loads(
-        raw.decode("utf-8", errors="replace"))
+    _, raw = _request(f"{BASE}/api/eli/named-authority-lists")
+    data = json.loads(raw.decode("utf-8", errors="replace"))
     if args.authority:
         if args.authority not in data:
             sys.stderr.write(
                 f"Authority {args.authority!r} "
                 f"not found. Known: "
-                f"{sorted(data.keys())}\n")
+                f"{sorted(data.keys())}\n"
+            )
             sys.exit(2)
         _emit(data[args.authority])
     else:
@@ -345,64 +326,59 @@ def cmd_authority_lists(
         else:
             for key in sorted(data.keys()):
                 val = data[key]
-                codes = [
-                    v["authorityCode"]
-                    for v in val.get("values", [])]
-                suffix = (
-                    "..." if len(codes) > 10 else "")
+                codes = [v["authorityCode"] for v in val.get("values", [])]
+                suffix = "..." if len(codes) > 10 else ""
                 print(
                     f"{key:25s}  "
                     f"{len(codes):>3d} values: "
                     f"{', '.join(codes[:10])}"
-                    f"{suffix}")
+                    f"{suffix}"
+                )
 
 
 def cmd_uri_templates(
     args: argparse.Namespace,
 ) -> None:
-    _, raw = _request(
-        f"{BASE}/api/eli/documentation/"
-        f"uri-templates")
-    _emit(json.loads(
-        raw.decode("utf-8", errors="replace")))
+    _, raw = _request(f"{BASE}/api/eli/documentation/uri-templates")
+    _emit(json.loads(raw.decode("utf-8", errors="replace")))
 
 
 def cmd_metadata_types(
     args: argparse.Namespace,
 ) -> None:
-    _, raw = _request(
-        f"{BASE}/api/eli/documentation/"
-        f"metadata-types")
-    _emit(json.loads(
-        raw.decode("utf-8", errors="replace")))
+    _, raw = _request(f"{BASE}/api/eli/documentation/metadata-types")
+    _emit(json.loads(raw.decode("utf-8", errors="replace")))
 
 
 def cmd_document(args: argparse.Namespace) -> None:
     doc_id = args.id
     if args.timeline:
-        _, raw = _request(
-            f"{BASE}/api/document/"
-            f"{doc_id}/timeline")
-        _emit(json.loads(
-            raw.decode("utf-8", errors="replace")))
+        # GET /api/document/{numeric_id}/timeline
+        _, raw = _request(f"{BASE}/api/document/{doc_id}/timeline")
+        _emit(json.loads(raw.decode("utf-8", errors="replace")))
     elif args.metadata:
-        _, raw = _request(
-            f"{BASE}/api/document/metadata/"
-            f"{doc_id}")
-        _emit(json.loads(
-            raw.decode("utf-8", errors="replace")))
+        # GET /api/document/metadata/{numeric_id}
+        _, raw = _request(f"{BASE}/api/document/metadata/{doc_id}")
+        _emit(json.loads(raw.decode("utf-8", errors="replace")))
     else:
+        # POST /api/document/{eli_path} with JSON body
+        body = json.dumps(
+            {"isRawHtml": False},
+        ).encode("utf-8")
         _, raw = _request(
-            f"{BASE}/api/document/{doc_id}")
-        _emit(json.loads(
-            raw.decode("utf-8", errors="replace")))
+            f"{BASE}/api/document/{doc_id}",
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+            },
+            body=body,
+        )
+        _emit(json.loads(raw.decode("utf-8", errors="replace")))
 
 
 def cmd_maintenance(args: argparse.Namespace) -> None:
-    _, raw = _request(
-        f"{BASE}/api/maintenance/messages")
-    data = json.loads(
-        raw.decode("utf-8", errors="replace"))
+    _, raw = _request(f"{BASE}/api/maintenance/messages")
+    data = json.loads(raw.decode("utf-8", errors="replace"))
     if data:
         _emit(data)
     else:
@@ -419,18 +395,13 @@ def cmd_sitemap(args: argparse.Namespace) -> None:
     if args.raw:
         _emit_raw(raw)
         return
-    locs = re.findall(
-        r"<loc>([^<]+)</loc>", xml)
+    locs = re.findall(r"<loc>([^<]+)</loc>", xml)
     if args.filter:
-        locs = [
-            u
-            for u in locs
-            if args.filter.lower() in u.lower()]
+        locs = [u for u in locs if args.filter.lower() in u.lower()]
     if args.limit:
-        locs = locs[:args.limit]
+        locs = locs[: args.limit]
     if not locs:
-        sys.stderr.write(
-            "No <loc> entries found\n")
+        sys.stderr.write("No <loc> entries found\n")
         sys.exit(2)
     for url in locs:
         print(url)
