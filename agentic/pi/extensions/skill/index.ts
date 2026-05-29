@@ -84,7 +84,7 @@ export default function (pi: ExtensionAPI) {
 
 			return {
 				content: [{ type: "text", text: `Skill "${skill.name}" loaded.` }],
-				details: undefined,
+				details: { content },
 			};
 		},
 
