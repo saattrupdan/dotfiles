@@ -73,12 +73,14 @@ export interface Trigger {
 
 /**
  * Context a trigger is evaluated against. Each auto-injection hook fills in the
- * fields it has: `input` provides `message`; `tool_result` provides
- * `tool_calls` + `tool_results`.
+ * fields it has: `input` provides `message`; `tool_call` provides `tool_calls`
+ * + `tool_input` (the serialized arguments, before execution); `tool_result`
+ * provides `tool_calls` + `tool_results` (the output, after execution).
  */
 export interface TriggerContext {
 	tool_calls?: string[];
 	message?: string;
+	tool_input?: string;
 	tool_results?: string[];
 }
 
@@ -123,8 +125,10 @@ export function parseTriggers(raw: string | undefined): Trigger[] | null {
  *
  *   • startup — always fires (deduped to once per session by the caller).
  *   • tool    — fires when `context.tool_calls` includes the named tool.
- *   • pattern — regex-tests the combined message + tool-output text, so it can
- *               match on tool result content as well as the user message.
+ *   • pattern — regex-tests the combined message + tool-input + tool-output
+ *               text, so it can match on a tool's pre-execution arguments (e.g.
+ *               a `npm install` command) as well as the user message and a
+ *               tool's output.
  */
 export function evaluateTrigger(trigger: Trigger, context: TriggerContext): boolean {
 	switch (trigger.event) {
@@ -135,7 +139,7 @@ export function evaluateTrigger(trigger: Trigger, context: TriggerContext): bool
 			return (context.tool_calls ?? []).includes(trigger.tool);
 		case "pattern": {
 			if (!trigger.pattern) return false;
-			const checkText = [context.message, ...(context.tool_results ?? [])]
+			const checkText = [context.message, context.tool_input, ...(context.tool_results ?? [])]
 				.filter((t): t is string => Boolean(t))
 				.join("\n");
 			if (!checkText) return false;

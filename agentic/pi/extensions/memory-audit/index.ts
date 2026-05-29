@@ -8,6 +8,10 @@
  *    frontmatter are injected into the conversation when a trigger fires —
  *      • `input`       evaluates startup + pattern triggers against the user
  *                      message and prepends the matched memories to it;
+ *      • `tool_call`   evaluates pattern triggers against the tool's arguments
+ *                      *before* it runs and, on a match, blocks the call with
+ *                      the matched memories as the reason — a one-time nudge
+ *                      that lets the LLM reconsider with the memory in context;
  *      • `tool_result` evaluates tool + pattern triggers against the tool name
  *                      and its output, appending matched memories to the result.
  *    A memory is injected at most once per session (deduped via a per-session
@@ -134,6 +138,7 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	const INPUT_EVENTS = new Set<Trigger["event"]>(["startup", "pattern"]);
+	const TOOL_CALL_EVENTS = new Set<Trigger["event"]>(["pattern"]);
 	const TOOL_EVENTS = new Set<Trigger["event"]>(["tool", "pattern"]);
 
 	// Background memory audit — fires after each turn.
@@ -155,6 +160,24 @@ export default function (pi: ExtensionAPI) {
 			return { action: "continue" };
 		}
 		return { action: "transform", text: `${block}\n\n---\n${query}` };
+	});
+
+	// Nudge on tool call: pattern triggers (matched against the tool's serialized
+	// arguments) fire *before* the tool runs. There is no append-and-continue at
+	// this point, so a match blocks the call once with the memory as the reason;
+	// the LLM then reconsiders with the memory in context. Per-session dedup means
+	// it fires at most once, after which the same call proceeds untouched. Only
+	// `pattern` is wired here — a bare `tool` trigger would block the first use of
+	// that tool every session, which is noise.
+	pi.on("tool_call", async (event, ctx) => {
+		const block = collect(
+			ctx,
+			{ tool_calls: [event.toolName], tool_input: JSON.stringify(event.input ?? {}) },
+			TOOL_CALL_EVENTS,
+		);
+		if (!block) return undefined;
+
+		return { block: true, reason: block };
 	});
 
 	// Auto-inject on tool output: tool + pattern triggers (matched against the
