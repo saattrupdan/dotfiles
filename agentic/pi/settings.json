@@ -1,7 +1,7 @@
 {
   "lastChangelogVersion": "0.77.0",
   "defaultProvider": "sparkie",
-  "defaultModel": "unsloth/Qwen3.6-35B-A3B-NVFP4",
+  "defaultModel": "AEON-7/Qwen3.6-35B-A3B-heretic-NVFP4",
   "defaultThinkingLevel": "medium",
   "hideThinkingBlock": true,
   "quietStartup": true,

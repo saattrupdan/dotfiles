@@ -17,11 +17,9 @@
       "apiKey": "sparkie",
       "models": [
         {
-          "id": "unsloth/Qwen3.6-35B-A3B-NVFP4",
+          "id": "AEON-7/Qwen3.6-35B-A3B-heretic-NVFP4",
           "contextWindow": 262144,
-          "compat": {
-            "thinking_token_budget": 2048
-          }
+          "thinkingTokenBudget": 2048
         }
       ]
     }
