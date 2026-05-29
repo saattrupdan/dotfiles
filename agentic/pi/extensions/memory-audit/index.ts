@@ -76,12 +76,13 @@ function memKey(m: MemoryDoc): string {
 // ---------------------------------------------------------------------------
 
 function formatMemories(mems: MemoryDoc[]): string {
-	const blocks = mems.map((m) => {
-		const head = `## \`${m.scope}/${m.name}\`${m.description ? ` — ${m.description}` : ""}`;
-		const body = m.body.trim();
-		return body ? `${head}\n${body}` : head;
-	});
-	return `Relevant memories (auto-injected — apply these when responding):\n\n${blocks.join("\n\n")}`;
+	const lines = mems.map(
+		(m) => `- \`${m.scope}/${m.name}\`${m.description ? ` — ${m.description}` : ""}`,
+	);
+	return (
+		`Relevant memories (auto-injected). Only the name + description are shown — ` +
+		`call \`memory_read\` for the full body of any you need to act on:\n\n${lines.join("\n")}`
+	);
 }
 
 export default function (pi: ExtensionAPI) {

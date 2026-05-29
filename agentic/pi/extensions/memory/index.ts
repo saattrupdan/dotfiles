@@ -76,6 +76,11 @@ const SLUG_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const MAX_ENTRIES_PER_SCOPE = 50;
 const MAX_BYTES_PER_SCOPE = 256 * 1024;
 
+// A description is an index line, not the memory itself — it must stay a single
+// short sentence so future-you can scan the index cheaply. The full detail lives
+// in the body (fetched via `memory_read`). ~120 chars ≈ one short sentence.
+const MAX_DESCRIPTION_CHARS = 120;
+
 function systemDir(): string {
 	return path.join(MEMORY_ROOT, "system");
 }
@@ -306,7 +311,7 @@ const SaveParams = Type.Object({
 	}),
 	description: Type.String({
 		description:
-			"Brief summary (a short phrase, ideally under ~80 chars) shown by `memory_index` so future-you can decide whether to read the full body. Keep it tight — the full detail belongs in `content`.",
+			"One short sentence (max 120 chars, hard limit) shown by `memory_index` and on auto-injection so future-you can decide whether to read the full body. It's only an index line — the full detail belongs in `content`, not here.",
 	}),
 	content: Type.String({
 		description:
@@ -540,8 +545,15 @@ export default function (pi: ExtensionAPI) {
 		async execute(_id, { scope, name, description, content, triggers }, _signal, _onUpdate, ctx): Promise<any> {
 			const nameErr = validateName(name);
 			if (nameErr) return errorResult(nameErr);
-			if (!description.trim()) {
+			const desc = description.trim();
+			if (!desc) {
 				return errorResult("`description` must be non-empty — it's what `memory_index` shows.");
+			}
+			if (desc.length > MAX_DESCRIPTION_CHARS) {
+				return errorResult(
+					`\`description\` is ${desc.length} chars; keep it to one short sentence ` +
+						`(max ${MAX_DESCRIPTION_CHARS}). It's only an index line — put the detail in \`content\`.`,
+				);
 			}
 
 			const dir = scopeDir(scope, ctx.cwd);
