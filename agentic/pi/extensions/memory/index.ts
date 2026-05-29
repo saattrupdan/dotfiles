@@ -78,8 +78,8 @@ const MAX_BYTES_PER_SCOPE = 256 * 1024;
 
 // A description is an index line, not the memory itself — it must stay a single
 // short sentence so future-you can scan the index cheaply. The full detail lives
-// in the body (fetched via `memory_read`). ~120 chars ≈ one short sentence.
-const MAX_DESCRIPTION_CHARS = 120;
+// in the body (fetched via `memory_read`). ~50 chars ≈ one short sentence.
+const MAX_DESCRIPTION_CHARS = 50;
 
 function systemDir(): string {
 	return path.join(MEMORY_ROOT, "system");
@@ -311,7 +311,7 @@ const SaveParams = Type.Object({
 	}),
 	description: Type.String({
 		description:
-			"One short sentence (max 120 chars, hard limit) shown by `memory_index` and on auto-injection so future-you can decide whether to read the full body. It's only an index line — the full detail belongs in `content`, not here.",
+			"One short sentence (max 50 chars, hard limit) shown by `memory_index` and on auto-injection so future-you can decide whether to read the full body. It's only an index line — the full detail belongs in `content`, not here.",
 	}),
 	content: Type.String({
 		description:
