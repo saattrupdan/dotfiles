@@ -82,9 +82,8 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
-			const header = `# skill: ${skill.name}  (${skill.filePath})`;
 			return {
-				content: [{ type: "text", text: `${header}\n${content}` }],
+				content: [{ type: "text", text: `Skill "${skill.name}" loaded.` }],
 				details: undefined,
 			};
 		},
