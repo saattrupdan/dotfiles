@@ -18,7 +18,7 @@ Prefer `search` over `find` for file discovery. Prefer `read` over `cat`/`sed` f
 
 ## Memory
 
-Relevant memories are **auto-injected** on each turn. Use `memory_suggest` for manual fuzzy search, `memory_index` to list, `memory_read` to fetch.
+Memories that declare `triggers` are **auto-injected** when a trigger fires (at most once per session) — `startup`/`pattern` triggers match the user message, `tool`/`pattern` triggers match tool output. Memories without triggers are never auto-injected, so set triggers on anything you want recalled automatically. Use `memory_suggest` for manual fuzzy search, `memory_index` to list, `memory_read` to fetch.
 
 **Save proactively.** Don't wait for the user to say "remember this". Skip saving when the fact is in `git log`/`git blame`/`AGENTS.md` or trivially re-derivable.
 

@@ -56,6 +56,13 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
+import {
+	type Trigger,
+	evaluateTrigger,
+	parseFrontmatter,
+	parseTriggers,
+} from "../_memory/triggers.ts";
+
 // ---------------------------------------------------------------------------
 // Paths
 // ---------------------------------------------------------------------------
@@ -107,120 +114,9 @@ function memoryPath(scope: "system" | "project", name: string, cwd: string): str
 }
 
 // ---------------------------------------------------------------------------
-// Frontmatter helpers (tiny YAML-ish parser — name + description only)
+// Frontmatter helpers — `parseFrontmatter` is shared with `memory-audit` (see
+// ../_memory/triggers.ts) so trigger parsing can't drift between read & inject.
 // ---------------------------------------------------------------------------
-
-interface Frontmatter {
-	name?: string;
-	description?: string;
-	created_at?: string;
-	accessed_at?: string;
-	triggers?: string;
-}
-
-function parseFrontmatter(content: string): { meta: Frontmatter; body: string } {
-	if (!content.startsWith("---\n")) {
-		return { meta: {}, body: content };
-	}
-	const end = content.indexOf("\n---\n", 4);
-	if (end === -1) {
-		return { meta: {}, body: content };
-	}
-	const block = content.slice(4, end);
-	const body = content.slice(end + 5);
-	const meta: Frontmatter = {};
-	for (const line of block.split("\n")) {
-		const m = line.match(/^(name|description|created_at|accessed_at|triggers):\s*(.*)$/);
-		if (m) {
-			let value = m[2].trim();
-			if (
-				(value.startsWith('"') && value.endsWith('"')) ||
-				(value.startsWith("'") && value.endsWith("'"))
-			) {
-				value = value.slice(1, -1);
-			}
-			(meta as Record<string, string>)[m[1]] = value;
-		}
-	}
-	return { meta, body };
-}
-
-/**
- * Parse the `triggers` field from a memory's frontmatter.
- *
- * Triggers are specified as a YAML-style list:
- *   triggers: - event: startup
- *             - event: tool
- *               tool: edit
- *             - event: pattern
- *               pattern: /commit/
- *
- * Returns null if no triggers are defined (memory is never auto-injected).
- */
-interface Trigger {
-	event: "startup" | "tool" | "pattern";
-	tool?: string;
-	pattern?: string;
-}
-
-function parseTriggers(raw: string | undefined): Trigger[] | null {
-	if (!raw) return null;
-	const lines = raw.split("\n").map(l => l.trim()).filter(l => l.length > 0);
-	const triggers: Trigger[] = [];
-	let current: Trigger = { event: "startup" };
-	let inTrigger = false;
-
-	for (const line of lines) {
-		if (line.startsWith("- event:")) {
-			if (inTrigger) triggers.push(current);
-			current = { event: line.replace(/^\s*-\s*event:\s*/, "").trim() as Trigger["event"] };
-			inTrigger = true;
-		} else if (inTrigger && line.includes(":")) {
-			const idx = line.indexOf(":");
-			const key = line.slice(0, idx).trim();
-			const val = line.slice(idx + 1).trim();
-			if (key === "tool") current.tool = val;
-			else if (key === "pattern") current.pattern = val;
-		}
-	}
-	if (inTrigger) triggers.push(current);
-	return triggers.length > 0 ? triggers : null;
-}
-
-/**
- * Evaluate a single trigger against the suggest context.
- * Returns true if the trigger fires.
- */
-interface SuggestContext {
-	tool_calls?: string[];
-	message?: string;
-	tool_results?: string[];
-}
-
-function evaluateTrigger(trigger: Trigger, context: SuggestContext): boolean {
-	switch (trigger.event) {
-		case "startup":
-			return true;
-		case "tool":
-			if (!trigger.tool) return false;
-			return (context.tool_calls ?? []).includes(trigger.tool);
-		case "pattern": {
-			if (!trigger.pattern) return false;
-			// Check against message AND tool results (combined)
-			const checkText = [context.message, ...(context.tool_results ?? [])].join("\n");
-			if (!checkText) return false;
-			try {
-				const re = new RegExp(trigger.pattern);
-				return re.test(checkText);
-			} catch {
-				return false; // invalid regex = no match
-			}
-			break;
-		}
-		default:
-			return false;
-	}
-}
 
 function escapeYaml(value: string): string {
 	const needsQuoting = /[:#\n"']/.test(value);

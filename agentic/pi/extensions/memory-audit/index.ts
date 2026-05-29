@@ -1,199 +1,35 @@
 /**
  * Memory audit extension — two responsibilities:
  *
- * 1. Background memory audit (turn_end): spawns the memory-audit script
- *    to process new conversation lines and save memories.
+ * 1. Background memory audit (turn_end): spawns the memory-audit script to
+ *    process new conversation lines and save memories. Throttled by a cooldown.
  *
- * 2. Auto-inject relevant memories (input): on each user message, performs
- *    fuzzy keyword search across all memories and prepends the top-k results
- *    to the user message. This injects memories into the conversation context
- *    without modifying the system prompt (preserving prefix caching).
+ * 2. Trigger-based auto-injection: memories that declare `triggers:` in their
+ *    frontmatter are injected into the conversation when a trigger fires —
+ *      • `input`       evaluates startup + pattern triggers against the user
+ *                      message and prepends the matched memories to it;
+ *      • `tool_result` evaluates tool + pattern triggers against the tool name
+ *                      and its output, appending matched memories to the result.
+ *    A memory is injected at most once per session (deduped via a per-session
+ *    file so it survives extension hot-reloads). Memories without triggers are
+ *    never auto-injected.
  */
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { writeFileSync, existsSync, readFileSync, readdirSync, mkdirSync } from "node:fs";
-import { join, basename } from "node:path";
-import { createHash } from "node:crypto";
-import { execSync } from "node:child_process";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { writeFileSync, existsSync, readFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+
+import {
+	type MemoryDoc,
+	type Trigger,
+	type TriggerContext,
+	evaluateTrigger,
+	loadTriggeredMemories,
+} from "../_memory/triggers.ts";
 
 const PI = join(process.env.HOME ?? "/Users/dansmart", ".pi", "agent");
 const COOLDOWN_FILE = join(PI, "memories", ".audit-cooldown");
 const AUDIT_SCRIPT = join(PI, "bin", "memory-audit");
 const COOLDOWN_SEC = 300; // 5 minutes
-
-// ---------------------------------------------------------------------------
-// Fuzzy keyword search (same logic as memory_suggest tool, duplicated for
-// self-contained injection at the input event).
-// ---------------------------------------------------------------------------
-
-const STOP_WORDS = new Set([
-	"a","an","the","and","or","but","in","on","at","to","for",
-	"of","with","by","from","is","it","this","that","these","those",
-	"was","were","been","be","have","has","had","do","does","did",
-	"will","would","could","should","may","might","can","shall",
-	"not","no","nor","if","then","than","too","very","just",
-	"about","above","after","again","all","am","any","are",
-	"as","because","before","between","both","during","each",
-	"few","further","got","here","how","i","into","its","let",
-	"more","most","much","my","new","now","off","once","only",
-	"our","out","over","own","same","she","so","some","still",
-	"such","take","them","there","they","through","under",
-	"up","us","use","used","using","what","when","where",
-	"which","who","whom","why","you","your",
-]);
-
-function tokenize(text: string): string[] {
-	return text
-		.toLowerCase()
-		.replace(/[^a-z0-9\-_]/g, " ")
-		.split(/\s+/)
-		.filter((w) => w.length > 1 && !STOP_WORDS.has(w));
-}
-
-function levenshtein(a: string, b: string): number {
-	const m = a.length;
-	const n = b.length;
-	if (m === 0) return n;
-	if (n === 0) return m;
-	const dp: number[][] = Array.from({ length: m + 1 }, (_, i) =>
-		Array.from({ length: n + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)),
-	);
-	for (let i = 1; i <= m; i++) {
-		for (let j = 1; j <= n; j++) {
-			dp[i][j] = Math.min(
-				dp[i - 1][j] + 1,
-				dp[i][j - 1] + 1,
-				dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
-			);
-		}
-	}
-	return dp[m][n];
-}
-
-function fuzzyScore(queryTokens: string[], memoryTokens: string[]): number {
-	if (queryTokens.length === 0) return 0;
-	let score = 0;
-	let exactMatches = 0;
-	for (const qt of queryTokens) {
-		let bestExact = 0;
-		let bestFuzzy = 0;
-		for (const mt of memoryTokens) {
-			if (qt === mt) {
-				bestExact = Math.max(bestExact, 1);
-			} else {
-				const dist = levenshtein(qt, mt);
-				const maxLen = Math.max(qt.length, mt.length);
-				const sim = maxLen === 0 ? 0 : 1 - dist / maxLen;
-				if (sim > 0.7) {
-					bestFuzzy = Math.max(bestFuzzy, sim * 0.5);
-				}
-			}
-		}
-		if (bestExact > 0) {
-			exactMatches++;
-			score += bestExact;
-		} else if (bestFuzzy > 0) {
-			score += bestFuzzy;
-		}
-	}
-	if (exactMatches > 0) {
-		score *= (1 + exactMatches * 0.3);
-	}
-	return score;
-}
-
-interface MemoryDoc {
-	name: string;
-	description: string;
-	body: string;
-	scope: "system" | "project";
-	filePath: string;
-}
-
-function parseFrontmatter(content: string): { meta: { name?: string; description?: string }; body: string } {
-	if (!content.startsWith("---\n")) {
-		return { meta: {}, body: content };
-	}
-	const end = content.indexOf("\n---\n", 4);
-	if (end === -1) {
-		return { meta: {}, body: content };
-	}
-	const block = content.slice(4, end);
-	const body = content.slice(end + 5);
-	const meta: Record<string, string> = {};
-	for (const line of block.split("\n")) {
-		const m = line.match(/^(name|description):\s*(.*)$/);
-		if (m) {
-			meta[m[1]] = m[2].trim();
-		}
-	}
-	return { meta: { name: meta.name, description: meta.description ?? "" }, body };
-}
-
-function listMemories(scope: "system" | "project", cwd: string): MemoryDoc[] {
-	const dir = scope === "system"
-		? join(PI, "memories", "system")
-		: (() => {
-			try {
-				const root = execSync("git rev-parse --show-toplevel", { cwd, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
-				return join(PI, "memories", "projects", createHash("sha1").update(root).digest("hex").slice(0, 10));
-			} catch {
-				return join(PI, "memories", "projects", "root-" + createHash("sha1").update(cwd).digest("hex").slice(0, 10));
-			}
-		})();
-
-	if (!existsSync(dir)) return [];
-	const docs: MemoryDoc[] = [];
-	for (const file of readdirSync(dir)) {
-		if (!file.endsWith(".md") || file === "MEMORY.md") continue;
-		const filePath = join(dir, file);
-		try {
-			const raw = readFileSync(filePath, "utf-8");
-			const { meta, body } = parseFrontmatter(raw);
-			docs.push({
-				name: basename(file, ".md"),
-				description: meta.description ?? "",
-				body,
-				scope,
-				filePath,
-			});
-		} catch {
-			docs.push({ name: basename(file, ".md"), description: "", body: "", scope, filePath });
-		}
-	}
-	return docs;
-}
-
-function searchMemories(query: string, topK: number): string {
-	const allDocs = [
-		...listMemories("system", process.cwd()),
-		...listMemories("project", process.cwd()),
-	];
-	const queryTokens = tokenize(query);
-	if (queryTokens.length === 0) return "";
-
-	const scored = allDocs.map((doc) => {
-		const nameTokens = tokenize(doc.name);
-		const descTokens = tokenize(doc.description);
-		const bodyTokens = tokenize(doc.body);
-		const nameScore = fuzzyScore(queryTokens, nameTokens) * 3;
-		const descScore = fuzzyScore(queryTokens, descTokens) * 1.5;
-		const bodyScore = fuzzyScore(queryTokens, bodyTokens);
-		return { ...doc, score: nameScore + descScore + bodyScore };
-	});
-
-	const top = scored
-		.filter((m) => m.score > 0)
-		.sort((a, b) => b.score - a.score)
-		.slice(0, topK);
-
-	if (top.length === 0) return "";
-
-	const lines = top.map(
-		(m) => `- \`${m.scope}/${m.name}\` (${m.score.toFixed(2)}) — ${m.description}${m.body ? "\n" + m.body.trim().split("\n").slice(0, 2).map(l => "  " + l).join("\n") : ""}`,
-	);
-
-	return `Relevant memories:\n\n${lines.join("\n")}\n`;
-}
 
 // ---------------------------------------------------------------------------
 // Background memory audit (turn_end)
@@ -216,11 +52,10 @@ function touchCooldown(): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Main
+// Per-session dedup store — "at most once per session" for each memory.
+// Persisted to disk so it survives extension hot-reloads within a session.
 // ---------------------------------------------------------------------------
 
-// Per-session dedup store — survives hot-reloads within a session.
-// Each conversation (session) gets its own dedup file.
 const INJECTED_DIR = join(PI, "memories", ".injected-slugs");
 
 function injectedFile(sessionId: string): string {
@@ -228,102 +63,116 @@ function injectedFile(sessionId: string): string {
 	return join(INJECTED_DIR, sessionId + ".json");
 }
 
-function saveInjectedSlugs(sessionId: string, slugs: Set<string>) {
-	try {
-		writeFileSync(injectedFile(sessionId), JSON.stringify([...slugs]));
-	} catch { /* ignore */ }
+function memKey(m: MemoryDoc): string {
+	return `${m.scope}/${m.name}`;
+}
+
+// ---------------------------------------------------------------------------
+// Injection formatting
+// ---------------------------------------------------------------------------
+
+function formatMemories(mems: MemoryDoc[]): string {
+	const blocks = mems.map((m) => {
+		const head = `## \`${m.scope}/${m.name}\`${m.description ? ` — ${m.description}` : ""}`;
+		const body = m.body.trim();
+		return body ? `${head}\n${body}` : head;
+	});
+	return `Relevant memories (auto-injected — apply these when responding):\n\n${blocks.join("\n\n")}`;
 }
 
 export default function (pi: ExtensionAPI) {
-	const MAX_INJECT = 5; // max memories to inject per message
-
-	// Background memory audit — fires after each turn
-	// Auto-inject relevant memories — fires after each assistant message
+	// In-memory mirror of the current session's injected set.
 	const injected = new Set<string>();
+	let loadedSession: string | null = null;
 
-	function injectAssistantMemories(message: string, sessionId: string) {
-		if (!message || message.trim().length < 3) return;
-		const result = searchMemories(message, MAX_INJECT);
-		if (!result) return;
-		// Extract memory slugs from result to deduplicate
-		const slugs: string[] = [];
-		for (const line of result.trim().split("\n")) {
-			const m = line.match(/`([^`]+)`/);
-			if (m) slugs.push(m[1]);
+	function ensureLoaded(sessionId: string): void {
+		if (loadedSession === sessionId) return;
+		loadedSession = sessionId;
+		injected.clear();
+		try {
+			const arr = JSON.parse(readFileSync(injectedFile(sessionId), "utf8")) as string[];
+			for (const s of arr) injected.add(s);
+		} catch {
+			// No prior file for this session — start empty.
 		}
-		for (const slug of slugs) {
-			if (!injected.has(slug)) {
-				injected.add(slug);
-			} else {
-				// Already injected in this session
-				return undefined;
-			}
-		}
-		saveInjectedSlugs(sessionId, injected);
-		return { action: "transform" as const, text: result };
 	}
 
-	pi.on("turn_end", async (event, ctx) => {
-		// Background audit
-		if (!touchCooldown()) {
-			return;
+	function persist(sessionId: string): void {
+		try {
+			writeFileSync(injectedFile(sessionId), JSON.stringify([...injected]));
+		} catch {
+			// Best-effort; dedup degrades to in-memory only.
 		}
+	}
 
-		const { exec } = await import("node:child_process");
-		exec(
-			`nohup bash -c '${AUDIT_SCRIPT}' </dev/null >/dev/null 2>&1 &`,
-			() => {},
-		);
-
-		// Memory injection — only for assistant/tool messages,
-		// catches multi-turn assistant sequences before user boundary.
+	/**
+	 * Find not-yet-injected memories whose triggers fire for `context`, limited
+	 * to the given trigger event kinds. Marks them injected and returns the
+	 * formatted block, or null when nothing fires.
+	 */
+	function collect(
+		ctx: ExtensionContext,
+		context: TriggerContext,
+		allowed: ReadonlySet<Trigger["event"]>,
+	): string | null {
 		const sessionId = ctx.sessionManager?.getSessionId() ?? "unknown";
-		if (event.message?.role === "assistant") {
-			const content = typeof event.message.content === "string"
-				? event.message.content
-				: JSON.stringify(event.message.content);
-			injectAssistantMemories(content, sessionId);
+		ensureLoaded(sessionId);
+
+		const fired: MemoryDoc[] = [];
+		for (const m of loadTriggeredMemories(ctx.cwd)) {
+			const key = memKey(m);
+			if (injected.has(key)) continue;
+			if (m.triggers.some((t) => allowed.has(t.event) && evaluateTrigger(t, context))) {
+				fired.push(m);
+			}
 		}
-		if (event.message?.role === "toolResult") {
-			const content = typeof event.message.content === "string"
-				? event.message.content
-				: JSON.stringify(event.message.content);
-			injectAssistantMemories(content, sessionId);
-		}
-		return undefined;
+		if (fired.length === 0) return null;
+
+		for (const m of fired) injected.add(memKey(m));
+		persist(sessionId);
+		return formatMemories(fired);
+	}
+
+	const INPUT_EVENTS = new Set<Trigger["event"]>(["startup", "pattern"]);
+	const TOOL_EVENTS = new Set<Trigger["event"]>(["tool", "pattern"]);
+
+	// Background memory audit — fires after each turn.
+	pi.on("turn_end", async () => {
+		if (!touchCooldown()) return;
+		const { exec } = await import("node:child_process");
+		exec(`nohup bash -c '${AUDIT_SCRIPT}' </dev/null >/dev/null 2>&1 &`, () => {});
 	});
 
-	// Auto-inject relevant memories — fires on each user message
+	// Auto-inject on user input: startup + pattern triggers (matched against the
+	// message text). Prepended so the memories precede the user's request.
 	pi.on("input", async (event, ctx) => {
 		const query = event.text;
 		if (!query || query.trim().length < 3) {
 			return { action: "continue" };
 		}
-
-		const result = searchMemories(query, MAX_INJECT);
-		if (!result) {
+		const block = collect(ctx, { message: query }, INPUT_EVENTS);
+		if (!block) {
 			return { action: "continue" };
 		}
+		return { action: "transform", text: `${block}\n\n---\n${query}` };
+	});
 
-		const sessionId = ctx.sessionManager?.getSessionId() ?? "unknown";
-		// Deduplicate against already-injected slugs
-		const slugs: string[] = [];
-		for (const line of result.trim().split("\n")) {
-			const m = line.match(/`([^`]+)`/);
-			if (m) slugs.push(m[1]);
-		}
-		for (const slug of slugs) {
-			if (!injected.has(slug)) {
-				injected.add(slug);
-			} else {
-				return { action: "continue" };
-			}
-		}
-		saveInjectedSlugs(sessionId, injected);
+	// Auto-inject on tool output: tool + pattern triggers (matched against the
+	// tool name and its textual output). Appended to the tool result content so
+	// pattern triggers can fire on what a tool actually produced.
+	pi.on("tool_result", async (event, ctx) => {
+		const output = event.content
+			.filter((c): c is { type: "text"; text: string } => c.type === "text")
+			.map((c) => c.text)
+			.join("\n");
 
-		return {
-			action: "transform",
-			text: `${result}\n\n---\n${query}`,
-		};
+		const block = collect(
+			ctx,
+			{ tool_calls: [event.toolName], tool_results: output ? [output] : [] },
+			TOOL_EVENTS,
+		);
+		if (!block) return undefined;
+
+		return { content: [...event.content, { type: "text" as const, text: `\n\n${block}` }] };
 	});
 }

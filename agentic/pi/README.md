@@ -158,9 +158,10 @@ Five tools:
   top-k results sorted by relevance score. Scores name (×3) > description (×1.5)
   > body (×1), with a bonus for near-matches via Levenshtein distance.
 
-Memory files use frontmatter with `name`, `description`, `created_at`, and
-`accessed_at` fields. `accessed_at` is bumped on every `memory_read`; `memory_save`
-runs an LRU sweep so a scope never exceeds ~50 files or 256 KB.
+Memory files use frontmatter with `name`, `description`, `created_at`,
+`accessed_at`, and optional `triggers` fields. `accessed_at` is bumped on every
+`memory_read`; `memory_save` runs an LRU sweep so a scope never exceeds ~50 files
+or 256 KB.
 
 ### `memory-audit`
 
@@ -170,14 +171,31 @@ Dual-purpose extension:
    scans new conversation lines since the last audit and saves anything worth
    remembering as a memory. Cooldown: 5 minutes between runs.
 
-2. **Auto-injection** (fires on `input`): on each user message, performs fuzzy
-   keyword search across all memories and prepends the top-5 results to the user
-   message. This injects memories into the conversation context without modifying
-   the system prompt (preserving prefix caching).
+2. **Trigger-based auto-injection**: only memories that declare `triggers:` in
+   their frontmatter are auto-injected, and each at most once per session
+   (deduped via a per-session file under `.injected-slugs/`). Two hooks evaluate
+   triggers:
+   - **`input`** — `startup` and `pattern` triggers are matched against the user
+     message; matched memories are prepended to it.
+   - **`tool_result`** — `tool` and `pattern` triggers are matched against the
+     tool name and its textual output; matched memories are appended to the
+     result. This is what lets a `pattern` trigger fire on what a tool produced.
 
-Both use the same fuzzy keyword search logic: tokenize query and memory text
-(lowercase, strip stop words, split on non-alphanumeric), score by token overlap
-with Levenshtein bonus for near-matches.
+   Injection happens without touching the system prompt, preserving prefix
+   caching. Memories with no triggers are never auto-injected — they stay
+   reachable only via `memory_index` / `memory_read` / `memory_suggest`.
+
+Trigger parsing, evaluation, and memory loading live in the shared
+[`_memory/triggers.ts`](extensions/_memory/triggers.ts) module, used by both the
+`memory` tools and this extension so the two can't drift.
+
+Trigger kinds:
+
+| `event`   | Fires when                                              | Extra field |
+|-----------|---------------------------------------------------------|-------------|
+| `startup` | the first user message of a session (then deduped)      | —           |
+| `tool`    | a tool with the matching name produces a result         | `tool`      |
+| `pattern` | the regex matches the user message **or** a tool output | `pattern`   |
 
 ### `_outliner` (library, not a tool)
 
