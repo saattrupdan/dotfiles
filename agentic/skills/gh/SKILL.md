@@ -164,3 +164,4 @@ gh completion -s bash | zsh | fish | powershell
 - `--web` opens the GitHub page in browser.
 - Project board membership needs `project` scope (`gh auth refresh -s project`).
 - Draft PRs show `[WIP]` in listings.
+- **Copilot reviews:** `state: COMMENTED` means *changes requested*, not approval. Always inspect inline comments on Copilot-reviewed PRs.
