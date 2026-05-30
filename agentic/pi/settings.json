@@ -3,7 +3,10 @@
   "defaultProvider": "sparkie",
   "defaultModel": "AEON-7/Qwen3.6-35B-A3B-heretic-NVFP4",
   "defaultThinkingLevel": "medium",
-  "hideThinkingBlock": true,
+  "hideThinkingBlock": false,
   "quietStartup": true,
-  "theme": "gruvbox"
+  "theme": "gruvbox",
+  "terminal": {
+    "clearOnShrink": true
+  }
 }
