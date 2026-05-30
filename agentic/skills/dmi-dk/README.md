@@ -24,51 +24,53 @@ open https://www.dmi.dk/radar
 open https://www.dmi.dk/nyheder/
 ```
 
-### CLI Script
+### CLI
 
-The `dmi_dk_api.py` script provides convenient one-liners for common tasks:
+The `dmi` CLI provides convenient one-liners for common tasks. Install it
+editable with pipx (`pipx install -e <path-to-dmi-dk-skill>`), then run it from
+anywhere:
 
 ```bash
 # Search for a city
-python3 dmi_dk_api.py city-search København
+dmi city-search København
 
 # Get a city's weather forecast (search + forecast in one command)
-python3 dmi_dk_api.py forecast-city København
+dmi forecast-city København
 
 # Get just the city ID
-python3 dmi_dk_api.py city-search København --id-only
+dmi city-search København --id-only
 
 # Show daily aggregates instead of hourly
-python3 dmi_dk_api.py forecast-city København --daily
+dmi forecast-city København --daily
 
 # Limit to N hours
-python3 dmi_dk_api.py forecast-city København --hours 24
+dmi forecast-city København --hours 24
 
 # Raw JSON output
-python3 dmi_dk_api.py city-search København --raw
-python3 dmi_dk_api.py city-forecast 2618425 --raw
+dmi city-search København --raw
+dmi city-forecast 2618425 --raw
 ```
 
 The script also supports the existing commands:
 ```bash
 # National weather forecast
-python3 dmi_dk_api.py forecast
+dmi forecast
 
 # Sea area forecast
-python3 dmi_dk_api.py sea --area Danmark
+dmi sea --area Danmark
 
 # Search weather stations
-python3 dmi_dk_api.py waters "København"
+dmi waters "København"
 
 # Water level stations
-python3 dmi_dk_api.py waterlevels
+dmi waterlevels
 
 # Weather images
-python3 dmi_dk_api.py images
-python3 dmi_dk_api.py images --type radar
+dmi images
+dmi images --type radar
 
 # Shore station text forecast
-python3 dmi_dk_api.py texts <gid>
+dmi texts <gid>
 ```
 
 ## Navigation Reference
