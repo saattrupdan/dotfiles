@@ -25,10 +25,23 @@ Verify the CLI is installed:
 which dmi
 ```
 
-If missing, install it editable with pipx (from the skill directory):
+If missing, install it editable with pipx (from the skill directory). First
+make sure pipx itself is available, then install:
 
 ```bash
+# Ensure pipx is installed
+which pipx || python3 -m pip install --user pipx
+python3 -m pipx ensurepath
+
+# Install the dmi CLI
 pipx install -e <path-to-dmi-dk-skill>
+```
+
+After installing, confirm `dmi` is on the PATH (you may need to restart the
+shell so `pipx ensurepath` takes effect):
+
+```bash
+which dmi
 ```
 
 Pure Python standard library — no extra dependencies.
