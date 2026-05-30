@@ -1,6 +1,6 @@
 ---
 name: linkedin
-description: Draft, post, schedule, and review Dan's LinkedIn posts (handle saattrupdan) via the `linkedin` CLI, which drives the real LinkedIn web UI with agent-browser. Use when the user wants to write/post/schedule a LinkedIn post, save or view a draft, list scheduled posts, or fetch their recent posts with engagement stats. Also use whenever drafting LinkedIn content, to match Dan's voice and formatting.
+description: Draft, post, and review Dan's LinkedIn posts (handle saattrupdan) via the `linkedin` CLI, which drives the real LinkedIn web UI with agent-browser. Use when the user wants to write/post a LinkedIn post, save or view a draft, or fetch their recent posts with engagement stats. Also use whenever drafting LinkedIn content, to match Dan's voice and formatting.
 last-updated: 2026-05-30
 allowed-tools: Bash(linkedin:*), Bash(agent-browser:*)
 ---
@@ -67,8 +67,10 @@ linkedin login
 | `linkedin post "<text>" [--yes]` | Publish now (dry run unless `--yes`) | ✅ fill; publish via `--yes` |
 | `linkedin draft "<text>"` | Save the text as a draft | ✅ |
 | `linkedin drafts` | Show the current draft | ✅ |
-| `linkedin schedule "<text>" --at "YYYY-MM-DD HH:MM" [--yes]` | Schedule a post (stops at review unless `--yes`) | ⚠️ best-effort |
-| `linkedin scheduled` | List scheduled posts | ✅ (empty case) |
+
+> Scheduling is intentionally **not** supported: LinkedIn's schedule dialog
+> (date field + calendar + time picker) was too brittle to automate reliably.
+> Schedule manually in the browser when needed.
 
 ### Fetching posts
 
@@ -83,16 +85,15 @@ linkedin posts --json          # machine-readable
 thoughts. Use `--include-reposts` to include them; reposts-with-commentary are
 always included and tagged `[repost +commentary]`.
 
-### Posting / drafting / scheduling
+### Posting / drafting
 
-- `post` and `schedule` are **dry-run by default** — they fill the composer and
-  show you the content but do nothing irreversible. Add `--yes` to actually
-  publish / schedule. Always show Dan the composed text and get the OK first.
-- Opening the composer **auto-loads the most recent draft**; the CLI clears it
-  before typing, so `post`/`draft` always reflect exactly the text you passed.
-- `schedule`'s date/time picker is locale-dependent; the CLI fills it
-  best-effort and stops at the review step unless `--yes`. Verify the time
-  shown before confirming.
+- `post` is **dry-run by default** — it fills the composer and shows you the
+  content but does nothing irreversible. Add `--yes` to actually publish.
+  Always show Dan the composed text and get the OK first.
+- Opening the composer **auto-loads the most recent draft**. To avoid mangling
+  an existing draft, `post`/`draft` refuse to type over a non-empty composer —
+  review it with `linkedin drafts` and discard it in the browser first if
+  needed.
 
 ## Writing in Dan's voice
 

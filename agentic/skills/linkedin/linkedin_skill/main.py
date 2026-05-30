@@ -437,7 +437,6 @@ def cmd_posts(args: argparse.Namespace) -> int:
 EDITOR_NAMES = ("text editor for creating content", "editor", "what do you want to talk about")
 SHARE_TRIGGER = ("start a post", "opret et opslag", "start indl\u00e6g")
 BTN_POST = ("post", "opsl\u00e5", "del")
-BTN_SCHEDULE = ("schedule post", "schedule", "planl\u00e6g")
 BTN_CLOSE = ("close", "dismiss", "luk")
 BTN_SAVE_DRAFT = ("save as draft", "gem som kladde")
 BTN_DISCARD = ("discard", "kass\u00e9r", "slet")
@@ -539,16 +538,21 @@ def editor_ref() -> str:
 
 
 def type_into_editor(text: str) -> None:
-    # NB: do not press Escape afterwards -- in this composer Escape closes the
-    # whole modal (discarding content), it does not just dismiss autocomplete.
+    # Keystroke-free by design: we never send key chords. Synthetic Cmd/Ctrl
+    # combinations (e.g. select-all) can leak to the OS, so we avoid `press`
+    # entirely and rely on click + fill (in-page CDP events).
+    #
+    # The composer auto-loads any saved draft. Rather than clobbering or merging
+    # it (which previously required a select-all keystroke), refuse to type over
+    # existing content and tell the user to deal with the draft first.
     ref = editor_ref()
+    if read_editor().strip():
+        raise BrowserError(
+            "the composer already contains text (an auto-loaded draft). Review it "
+            "with `linkedin drafts`, then discard that draft in the browser before "
+            "posting/scheduling fresh text."
+        )
     ab("click", f"@{ref}")
-    # Explicitly clear first: LinkedIn may auto-restore prior unsaved content,
-    # and `fill` does not reliably clear a contenteditable. Select-all + delete
-    # (try both Meta and Control so it works regardless of platform).
-    for combo in ("Meta+a", "Control+a"):
-        ab("press", combo, check=False)
-    ab("press", "Backspace", check=False)
     ab("fill", f"@{ref}", text)
 
 
@@ -594,60 +598,6 @@ def cmd_draft(args):
     return 0
 
 
-def parse_when(when: str) -> tuple[str, str]:
-    """Parse 'YYYY-MM-DD HH:MM' into LinkedIn's (MM/DD/YYYY, 'H:MM AM/PM')."""
-    import datetime
-
-    when = when.strip().replace("T", " ")
-    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
-        try:
-            dt = datetime.datetime.strptime(when, fmt)
-            break
-        except ValueError:
-            dt = None
-    if dt is None:
-        raise BrowserError(
-            f"could not parse --at {when!r}; use 'YYYY-MM-DD HH:MM' (e.g. 2026-06-02 09:00)"
-        )
-    date_str = dt.strftime("%m/%d/%Y")
-    hour12 = dt.hour % 12 or 12
-    time_str = f"{hour12}:{dt.minute:02d} {'AM' if dt.hour < 12 else 'PM'}"
-    return date_str, time_str
-
-
-def cmd_schedule(args):
-    ensure_logged_in()
-    date_str, time_str = parse_when(args.at)
-    open_composer()
-    type_into_editor(args.text)
-    logger.info("Scheduling content:\n---\n%s\n---", read_editor().strip())
-    click_node(BTN_SCHEDULE, role="button")
-    ab("wait", "1500", check=False)
-    # Fill the date and time fields (best effort -- the picker varies by locale).
-    dn = find_node(("Date",), role="textbox")
-    if dn:
-        ab("fill", f"@{dn['ref']}", date_str)
-    tn = find_node(("Time",), role="combobox")
-    if tn:
-        ab("fill", f"@{tn['ref']}", time_str, check=False)
-        ab("press", "Enter", check=False)
-    logger.info("Set date=%s time=%s", date_str, time_str)
-    click_node(("Next",), role="button", required=False)
-    ab("wait", "1200", check=False)
-    if not args.yes:
-        logger.info(
-            "Review step reached but NOT scheduled (dry run). Verify the date/time "
-            "in the browser and re-run with --yes to confirm scheduling."
-        )
-        return 0
-    # Final confirm: the primary button now reads "Schedule".
-    if not click_node(("Schedule",), role="button", exact=True, required=False):
-        click_node(BTN_SCHEDULE, role="button")
-    ab("wait", "2500", check=False)
-    logger.info("✓ Scheduled for %s %s (verify with `linkedin scheduled`).", date_str, time_str)
-    return 0
-
-
 # --------------------------------------------------------------------------- #
 # View drafts / scheduled
 # --------------------------------------------------------------------------- #
@@ -663,41 +613,6 @@ def cmd_drafts(args):
         logger.info("No draft found.")
     # Leave the draft intact (re-save on close rather than discard).
     close_composer(save_draft=True)
-    return 0
-
-
-def cmd_scheduled(args):
-    ensure_logged_in()
-    open_composer()
-    click_node(BTN_SCHEDULE, role="button")
-    ab("wait", "1500", check=False)
-    click_node(("view all scheduled", "scheduled posts", "planlagte opslag"), required=False)
-    ab("wait", "1500", check=False)
-    # If the composer held content, leaving it prompts "save as draft?" -- keep
-    # the draft so we don't lose it, which also lets the scheduled view open.
-    click_node(BTN_SAVE_DRAFT, role="button", required=False)
-    ab("wait", "--load", "networkidle", check=False)
-
-    full = ab("snapshot", check=False).splitlines()
-    if find_node(("no scheduled posts", "ingen planlagte"), nodes=parse_nodes(full)):
-        logger.info("No scheduled posts.")
-        return 0
-    # Best effort: print the text content of the "Scheduled posts" dialog.
-    inside, shown = False, False
-    for line in full:
-        low = line.lower()
-        if 'dialog "scheduled posts"' in low or 'heading "scheduled posts"' in low:
-            inside = True
-            continue
-        if inside:
-            mt = re.search(r'StaticText "([^"]+)"', line)
-            if mt:
-                logger.info("  %s", mt.group(1))
-                shown = True
-            elif 'dialog "' in low and "scheduled" not in low:
-                break
-    if not shown:
-        logger.info("Scheduled posts dialog opened but no entries were parsed.")
     return 0
 
 
@@ -730,17 +645,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("text", help="the full post text")
     sp.set_defaults(func=cmd_draft)
 
-    sp = sub.add_parser("schedule", help="schedule a post for a future date/time")
-    sp.add_argument("text", help="the full post text")
-    sp.add_argument("--at", required=True, help="target date/time, e.g. '2026-06-02 09:00'")
-    sp.add_argument("--yes", action="store_true", help="confirm scheduling (otherwise stops at the review step)")
-    sp.set_defaults(func=cmd_schedule)
-
     sp = sub.add_parser("drafts", help="view saved drafts")
     sp.set_defaults(func=cmd_drafts)
-
-    sp = sub.add_parser("scheduled", help="view scheduled posts")
-    sp.set_defaults(func=cmd_scheduled)
 
     return p
 
