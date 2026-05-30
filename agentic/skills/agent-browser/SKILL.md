@@ -54,3 +54,7 @@ installed version.
 ## Observability Dashboard
 
 The dashboard runs independently of browser sessions on port 4848 and can also be opened through a proxied or forwarded URL such as `https://dashboard.agent-browser.localhost`. Agents should stay on the dashboard origin: session tabs, status, and stream traffic are proxied internally, so session ports do not need to be exposed.
+
+## Gotcha: `wait` takes milliseconds
+
+`agent-browser wait N` expects **just a number** — no unit suffix. The number is interpreted as **milliseconds**, not seconds. So `wait 10` waits 10 ms, `wait 10000` waits 10 s. This is unlike `sleep 10s` or `timeout 10s` which accept suffixes.
