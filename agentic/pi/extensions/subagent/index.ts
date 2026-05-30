@@ -1094,6 +1094,18 @@ export default function (pi: ExtensionAPI) {
 				return new Text(text?.type === "text" ? text.text : "(no output)", 0, 0);
 			}
 
+			// Once every subagent has finished, the collapsed view just reports
+			// completion — same minimal style as the `skill` tool, never dumping
+			// the (truncated) transcript. The full output is still available via
+			// Ctrl+O (expanded), and progress keeps streaming while running.
+			const anyRunning = details.results.some((r) => r.exitCode === -1);
+			if (!anyRunning && !expanded) {
+				const anyFailed = details.results.some((r) => isFailedResult(r));
+				if (anyFailed)
+					return new Text(theme.fg("error", "✗ done with errors (Ctrl+O to expand)"), 0, 0);
+				return new Text(theme.fg("success", "✓ All done"), 0, 0);
+			}
+
 			const mdTheme = getMarkdownTheme();
 
 			// Strip blank/whitespace-only text items, and collapse internal blank
