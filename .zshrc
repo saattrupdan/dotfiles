@@ -91,10 +91,7 @@ complete -F _ssh_complete ssh
 # Docker autocompletion
 fpath=(/Users/dansmart/.docker/completions $fpath)
 
-# Initialise the completion system — but ONLY if zsh-autocomplete hasn't already
-# taken it over (it replaces `compdef` with its own queue function). This is what
-# lets the zsh-autocomplete block above be deleted without breaking completion:
-# with the plugin present, the plugin runs compinit; without it, we do.
+# Initialise the completion system — but ONLY if a plugin hasn't already taken it over
 if [[ $functions[compdef] != *_autocomplete__compdef* ]]; then
   autoload -Uz compinit
   compinit
