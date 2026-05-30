@@ -40,7 +40,7 @@ When the user asks for a deck:
 
    Skip if the user has already clearly indicated.
 6. **Copy the template** to the target location as `deck.html` (default `./deck.html` in the user's cwd unless they specify). Use `cp template/deck.html <target>/deck.html` — the template's `<style>` and `<script>` blocks must remain intact.
-7. **Edit the ⚙️ DECK SETTINGS block** at the top of `<body>` to set `colourScheme` (`"standard"` or `"alexandra-institute"`), `presentationTitle`, `speakerName`, `speakerTitle`, `presentationDate`, `contactUrl`, `speakerEmail`, and `darkLogo`/`whiteLogo` (set both to empty strings to hide the logo). Anything else is left as default.
+7. **Edit the ⚙️ DECK SETTINGS block** at the top of `<body>` to set `colourScheme` (`"standard"` or `"alexandra-institute"`), `presentationTitle`, `speakerName`, `speakerTitle`, `presentationDate`, `contactUrl`, `speakerEmail`, `language` (the two-letter ISO 639-1 code the slides are written in, e.g. `"da"` or `"en"` — sets `<html lang>` so browsers offer to translate the deck for other-language visitors), and `darkLogo`/`whiteLogo` (set both to empty strings to hide the logo). Anything else is left as default.
 8. **Edit the slides** inside `<div class="deck">`. The `<style>` and `<script>` blocks live at the **bottom** of the file so the slide content is front-and-centre when you open `deck.html`. Each slide is delimited by a clear `<!-- ===== Slide NN: NAME ===== -->` marker. Replace the placeholder `<section class="slide">` blocks with real content using the component patterns. First slide must keep `class="slide active"`.
 9. **Iterate small.** One coherent change per turn. Show the user, get feedback.
 

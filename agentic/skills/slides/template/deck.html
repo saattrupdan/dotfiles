@@ -32,6 +32,13 @@
   // Speaker email — shown beside the contact link on the Thanks slide.
   const speakerEmail = "dan.smart@alexandra.dk";
 
+  // Deck language — must be a two-letter ISO 639-1 code such as 'da' or
+  // 'en'. Sets <html lang> so browsers (Firefox/Chrome/Safari) correctly
+  // detect the content language and offer to translate it for visitors
+  // who read another language. Set this to the language the slides are
+  // actually written in.
+  const language = "en";
+
   // Colour scheme — "standard" (warm cream + burnt orange, Inter +
   // Fraunces) or "alexandra-institute" (Alexandra brand palette,
   // Montserrat + Playfair Display, "Alexandra Institute" appended to
@@ -2347,6 +2354,9 @@
   const progress = document.getElementById('progress');
   const deckLogo = document.querySelector('.deck-logo');
   let current = 0;
+
+  // Set the document language so browsers can detect it and offer translation.
+  if (language) document.documentElement.lang = language;
 
   // Apply colour scheme. Add more `else if` branches here when new schemes ship.
   if (colourScheme === 'alexandra-institute') document.body.classList.add('alexandra');
