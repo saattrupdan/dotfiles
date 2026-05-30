@@ -2386,6 +2386,14 @@
     const val = hrefValues[el.dataset.fillHref];
     if (val) el.href = val;
   });
+
+  // Mark identifiers that should never be machine-translated (proper nouns,
+  // email addresses, URLs). The browser's built-in translation otherwise
+  // garbles them (e.g. "alexandra.dk" → "alelandra.dk").
+  document.querySelectorAll(
+    '[data-fill="speaker"], [data-fill="email"], [data-fill="contact-label"], .affiliation'
+  ).forEach(el => el.setAttribute('translate', 'no'));
+
   if (presentationTitle) document.title = presentationTitle;
 
   function updateLogo(i) {
