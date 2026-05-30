@@ -79,9 +79,15 @@ function formatMemories(mems: MemoryDoc[]): string {
 	const lines = mems.map(
 		(m) => `- \`${m.scope}/${m.name}\`${m.description ? ` — ${m.description}` : ""}`,
 	);
+	const plural = mems.length > 1;
 	return (
-		`Relevant memories (auto-injected). Only the name + description are shown — ` +
-		`call \`memory_read\` for the full body of any you need to act on:\n\n${lines.join("\n")}`
+		`Relevant ${plural ? "memories" : "memory"} found for this request (auto-injected). ` +
+		`${plural ? "These capture" : "This captures"} prior context, user preferences, and gotchas ` +
+		`that apply to what you're doing right now and reflect how the user expects you to work.\n\n` +
+		`Before you respond, call \`memory_read\` on ${plural ? "each one" : "it"} below to load the ` +
+		`full body, then actually apply what you learn — let it shape your answer, your plan, and the ` +
+		`commands you run. Only the name + description are shown here, which is not enough to act on:\n\n` +
+		`${lines.join("\n")}`
 	);
 }
 
