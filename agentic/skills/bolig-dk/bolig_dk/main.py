@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import typing as t
 import urllib.error
@@ -29,6 +30,20 @@ RENT_API = f"{RENT_BASE}/api"
 BUY_API = "https://www.boligsiden.dk/api"
 
 UA = "Mozilla/5.0 (bolig-dk-api-cli)"
+# boligportal's HTML pages gate non-browser User-Agents, so the hub/detail
+# scraper (used for keyword/body search) presents a realistic browser UA.
+BROWSER_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
+
+# boligportal property type -> URL category slug for hub pages.
+RENT_CATEGORY_PATH: dict[str, str] = {
+    "apartment": "lejligheder",
+    "room": "værelser",
+    "house": "huse",
+    "townhouse": "rækkehuse",
+}
 
 # Danish city -> zip code, used to translate a free-text --city for the
 # boligsiden /cases endpoint (which filters by zipCode, not city name).
@@ -71,6 +86,29 @@ def _emit(obj: t.Any, raw: bool = False) -> None:
         print(json.dumps(obj, ensure_ascii=False, indent=2))
     else:
         print(json.dumps(obj, ensure_ascii=False))
+
+
+def _num(val: t.Any) -> float | None:
+    """Coerce a value like ``"8300.0"`` to a float, or None if not numeric."""
+    if val is None or val == "":
+        return None
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return None
+
+
+def _matches(text: str, keywords: list[str], mode: str) -> bool:
+    """Test whether ``text`` contains the keywords (case-insensitive).
+
+    Args:
+        text: Haystack to search.
+        keywords: Terms to look for.
+        mode: ``"all"`` requires every keyword, ``"any"`` requires one.
+    """
+    low = text.lower()
+    hits = [k.lower() in low for k in keywords]
+    return all(hits) if mode == "all" else any(hits)
 
 
 # ---------------------------------------------------------------------------
@@ -182,24 +220,169 @@ def _rent_filter(args: argparse.Namespace) -> dict[str, t.Any]:
     return filt
 
 
-def cmd_rent_search(args: argparse.Namespace) -> None:
-    """Search rental listings by filter criteria (session-bound endpoint)."""
-    resp = _rent_post(
-        "listing/listings/",
-        {"page": args.page, "pageSize": args.limit, "filter": _rent_filter(args)},
+def _rent_get_html(url: str) -> str:
+    """GET an HTML page from boligportal with a browser User-Agent."""
+    req = urllib.request.Request(
+        url, headers={"User-Agent": BROWSER_UA, "Accept": "text/html"}
     )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        sys.stderr.write(f"HTTP {e.code} {e.reason} on GET {url}\n")
+        sys.exit(2)
+
+
+def _app_json(html: str) -> dict | None:
+    """Extract the embedded ``application/json`` app-state blob from a page.
+
+    boligportal renders each page's data into a single ``<script
+    type="application/json">`` tag (SearchResultApp on hub pages, AdDetailApp
+    on listing pages). Returns the parsed object or None if absent/unparseable.
+    """
+    m = re.search(
+        r'<script[^>]*type="application/json"[^>]*>(.*?)</script>', html, re.S
+    )
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(1))
+    except json.JSONDecodeError:
+        return None
+
+
+def _rent_hub_url(args: argparse.Namespace, offset: int) -> str:
+    """Build a boligportal hub (search-results) URL from search args.
+
+    Category and city live in the path; only ``min_size_m2`` and
+    ``max_monthly_rent`` are honoured server-side (the rest are filtered
+    client-side from the result rows). Student housing uses a dedicated path.
+    """
+    if args.city:
+        city_slug = urllib.parse.quote(
+            urllib.parse.unquote(args.city), safe=""
+        )
+    else:
+        city_slug = ""
+
+    if args.type == "student":
+        if not city_slug:
+            sys.stderr.write("student housing search requires --city\n")
+            sys.exit(2)
+        base = f"{RENT_BASE}/studieboliger-{city_slug}/c/"
+    else:
+        category = RENT_CATEGORY_PATH.get(args.type, "lejeboliger")
+        base = f"{RENT_BASE}/{category}/"
+        if city_slug:
+            base += f"{city_slug}/"
+
+    params: dict[str, str] = {}
+    if args.min_area:
+        params["min_size_m2"] = str(args.min_area)
+    if args.max_price:
+        params["max_monthly_rent"] = str(args.max_price)
+    if args.new_build:
+        params["newbuild"] = "1"
+    if offset:
+        params["offset"] = str(offset)
+    if params:
+        base += "?" + urllib.parse.urlencode(params)
+    return base
+
+
+def _rent_passes(item: dict, args: argparse.Namespace) -> bool:
+    """Apply the client-side rent filters not supported by the hub URL."""
+    rent = _num(item.get("monthly_rent"))
+    size = _num(item.get("size_m2"))
+    rooms = _num(item.get("rooms"))
+    if args.min_price and rent is not None and rent < float(args.min_price):
+        return False
+    if args.max_area and size is not None and size > float(args.max_area):
+        return False
+    if args.min_rooms and rooms is not None and rooms < float(args.min_rooms):
+        return False
+    if args.max_rooms and rooms is not None and rooms > float(args.max_rooms):
+        return False
+    return True
+
+
+def _rent_print_item(item: dict) -> None:
+    """Print one rental result row as tab-separated fields."""
+    print(
+        f"{item.get('id', '')}\t{item.get('title', '')}\t"
+        f"{_num(item.get('rooms')) or item.get('rooms', '')} vær\t"
+        f"{_num(item.get('size_m2')) or item.get('size_m2', '')} m²\t"
+        f"{_num(item.get('monthly_rent')) or item.get('monthly_rent', '')} kr\t"
+        f"{item.get('city', '')}\t{RENT_BASE}{item.get('url', '')}"
+    )
+
+
+def cmd_rent_search(args: argparse.Namespace) -> None:
+    """Search rentals via the anonymous hub pages, with optional body search.
+
+    Enumerates listings from the public search-results pages (no login
+    required, unlike the JSON listings endpoint). With ``--keyword``, fetches
+    each candidate's detail page and keeps only listings whose description body
+    or title contains the term(s); detail fetches are capped by ``--max-scan``.
+    """
+    results: list[dict] = []
+    scanned = 0
+    offset = max(args.page, 0) * 18
+
+    while len(results) < args.limit:
+        app = _app_json(_rent_get_html(_rent_hub_url(args, offset)))
+        page_props = (app or {}).get("props", {}).get("page_props", {})
+        rows: list[dict] = page_props.get("results", [])
+        if not rows:
+            break
+
+        for item in rows:
+            if not _rent_passes(item, args):
+                continue
+            if args.keyword:
+                if scanned >= args.max_scan:
+                    break
+                scanned += 1
+                detail = _app_json(
+                    _rent_get_html(RENT_BASE + item.get("url", ""))
+                )
+                ad = (detail or {}).get("props", {}).get("page_props", {}).get(
+                    "ad", {}
+                )
+                haystack = " ".join(
+                    [
+                        ad.get("description") or "",
+                        ad.get("title") or "",
+                        item.get("title") or "",
+                    ]
+                )
+                if not _matches(haystack, args.keyword, args.match):
+                    continue
+                item["_description"] = ad.get("description", "")
+            results.append(item)
+            if len(results) >= args.limit:
+                break
+
+        if args.keyword and scanned >= args.max_scan:
+            break
+        if not page_props.get("next_page_url"):
+            break
+        offset += 18
+
     if args.raw:
-        _emit(resp, raw=True)
+        _emit(results, raw=True)
         return
 
-    print(f"# {resp.get('total', '?')} total")
-    for item in resp.get("items", []):
+    if args.keyword:
         print(
-            f"{item.get('id', '')}\t{item.get('title', '')}\t"
-            f"{item.get('price', '')}\t{item.get('area', '')}\t"
-            f"{item.get('rooms', '')}\t{item.get('city', '')}\t"
-            f"{item.get('url', '')}\t({item.get('isNew', False)})"
+            f"# {len(results)} match(es) for "
+            f"{args.match}({', '.join(args.keyword)}) "
+            f"after scanning {scanned} listing(s)"
         )
+    else:
+        print(f"# {len(results)} listing(s)")
+    for item in results:
+        _rent_print_item(item)
 
 
 def cmd_rent_map(args: argparse.Namespace) -> None:
@@ -366,6 +549,20 @@ def cmd_buy_cases(args: argparse.Namespace) -> None:
                     "--municipality-code or --zip-code for precise filtering.\n"
                 )
 
+    if args.keyword:
+        cases, scanned = _buy_cases_by_keyword(args, params)
+        if args.raw:
+            _emit(cases, raw=True)
+            return
+        print(
+            f"# {len(cases)} match(es) for "
+            f"{args.match}({', '.join(args.keyword)}) "
+            f"after scanning {scanned} listing(s)"
+        )
+        for case in cases:
+            _buy_print_case(case)
+        return
+
     resp = _buy_get("/cases", params)
     if args.raw:
         _emit(resp, raw=True)
@@ -377,17 +574,65 @@ def cmd_buy_cases(args: argparse.Namespace) -> None:
         f"page {page.get('number', '?')}/{page.get('totalPages', '?')}"
     )
     for case in resp.get("_embedded", {}).get("cases", []):
-        addr = case.get("address", {})
-        price = case.get("priceCash", 0)
-        print(
-            f"{case.get('slugAddress', '')}\t"
-            f"{addr.get('addressType', '?')}\t"
-            f"{addr.get('cityName', '?')} {addr.get('zipCode', '?')}\t"
-            f"{case.get('numberOfRooms', '?')} værelser\t"
-            f"{case.get('housingArea', '?')} m²\t"
-            f"{price:,.0f} kr\t"
-            f"{case.get('descriptionTitle', 'Uden titel')}"
-        )
+        _buy_print_case(case)
+
+
+def _buy_cases_by_keyword(
+    args: argparse.Namespace, params: dict[str, str]
+) -> tuple[list[dict], int]:
+    """Page through ``/cases`` keeping those whose description matches keywords.
+
+    boligsiden embeds ``descriptionTitle``/``descriptionBody`` on each case, so
+    the body search is a client-side filter. Pages are fetched (50 at a time)
+    until ``--limit`` matches are collected or ``--max-scan`` cases are seen.
+
+    Returns ``(matches, scanned_count)``.
+    """
+    matches: list[dict] = []
+    scanned = 0
+    page = args.page
+    params = {**params, "_limit": "50"}
+
+    while len(matches) < args.limit and scanned < args.max_scan:
+        params["_page"] = str(page)
+        resp = _buy_get("/cases", params)
+        cases = resp.get("_embedded", {}).get("cases", [])
+        if not cases:
+            break
+        for case in cases:
+            scanned += 1
+            haystack = " ".join(
+                [
+                    case.get("descriptionTitle") or "",
+                    case.get("descriptionBody") or "",
+                ]
+            )
+            if _matches(haystack, args.keyword, args.match):
+                matches.append(case)
+                if len(matches) >= args.limit:
+                    break
+            if scanned >= args.max_scan:
+                break
+        page_info = resp.get("page", {})
+        if page >= page_info.get("totalPages", page):
+            break
+        page += 1
+    return matches, scanned
+
+
+def _buy_print_case(case: dict) -> None:
+    """Print one for-sale case as tab-separated fields."""
+    addr = case.get("address", {})
+    price = case.get("priceCash", 0)
+    print(
+        f"{case.get('slugAddress', '')}\t"
+        f"{addr.get('addressType', '?')}\t"
+        f"{addr.get('cityName', '?')} {addr.get('zipCode', '?')}\t"
+        f"{case.get('numberOfRooms', '?')} værelser\t"
+        f"{case.get('housingArea', '?')} m²\t"
+        f"{price:,.0f} kr\t"
+        f"{case.get('descriptionTitle', 'Uden titel')}"
+    )
 
 
 def cmd_buy_address(args: argparse.Namespace) -> None:
@@ -506,6 +751,37 @@ def _add_rent_filters(p: argparse.ArgumentParser) -> None:
     p.add_argument("--raw", action="store_true", help="print raw JSON")
 
 
+def _add_keyword_opts(p: argparse.ArgumentParser, default_scan: int) -> None:
+    """Add body-keyword search options to a search parser.
+
+    Args:
+        p: Parser to extend.
+        default_scan: Default ``--max-scan`` cap (listings inspected).
+    """
+    p.add_argument(
+        "-k",
+        "--keyword",
+        action="append",
+        metavar="TERM",
+        help="keyword to match in the listing description body "
+        "(repeatable; e.g. -k badekar -k altan)",
+    )
+    p.add_argument(
+        "--match",
+        choices=["all", "any"],
+        default="all",
+        help="require all keywords (default) or any of them",
+    )
+    p.add_argument(
+        "--max-scan",
+        dest="max_scan",
+        type=int,
+        default=default_scan,
+        help=f"max listings to inspect when keyword-searching "
+        f"(default {default_scan})",
+    )
+
+
 def _build_rent_parser(sub: t.Any) -> None:
     """Register the ``rent`` (boligportal.dk) command group."""
     rent = sub.add_parser(
@@ -513,8 +789,12 @@ def _build_rent_parser(sub: t.Any) -> None:
     )
     rsub = rent.add_subparsers(dest="cmd", required=True)
 
-    p = rsub.add_parser("search", help="search rentals by filter criteria")
+    p = rsub.add_parser(
+        "search",
+        help="search rentals (anonymous); -k matches the description body",
+    )
     _add_rent_filters(p)
+    _add_keyword_opts(p, default_scan=100)
     p.set_defaults(func=cmd_rent_search)
 
     p = rsub.add_parser("map", help="map-view rentals with lat/lng")
@@ -577,6 +857,7 @@ def _build_buy_parser(sub: t.Any) -> None:
         "--type", help="property type (villa, lejlighed, rækkehus, etc.)"
     )
     _add_buy_common(p)
+    _add_keyword_opts(p, default_scan=200)
     p.set_defaults(func=cmd_buy_cases)
 
     p = bsub.add_parser("address", help="look up an address")
