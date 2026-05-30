@@ -1095,19 +1095,24 @@ export default function (pi: ExtensionAPI) {
 			return new Text(text, 0, 0);
 		},
 
-		renderResult(result, { expanded }, theme, _context) {
+		renderResult(result, { expanded, isPartial }, theme, _context) {
 			const details = result.details as SubagentDetails | undefined;
 			if (!details || details.results.length === 0) {
 				const text = result.content[0];
 				return new Text(text?.type === "text" ? text.text : "(no output)", 0, 0);
 			}
 
-			// Once every subagent has finished, the collapsed view just reports
-			// completion — same minimal style as the `skill` tool, never dumping
-			// the (truncated) transcript. The full output is still available via
-			// Ctrl+O (expanded), and progress keeps streaming while running.
-			const anyRunning = details.results.some((r) => r.exitCode === -1);
-			if (!anyRunning && !expanded) {
+			// While the tool is still running (isPartial) we fall through to the
+			// live progress view below. Once it's fully finished the collapsed
+			// view just reports completion — same minimal style as the `skill`
+			// tool, never dumping the (truncated) transcript; full output is still
+			// available via Ctrl+O (expanded). We key off `isPartial` rather than
+			// a result's exitCode because only parallel tasks use -1 as a running
+			// placeholder — single/chain results start at exitCode 0, so exitCode
+			// is not a reliable "still running" signal. `isPartial` is also what
+			// renderCall uses to hide the task preview, so both flip together on
+			// the final frame.
+			if (!isPartial && !expanded) {
 				const anyFailed = details.results.some((r) => isFailedResult(r));
 				if (anyFailed)
 					return new Text(theme.fg("error", "✗ done with errors (Ctrl+O to expand)"), 0, 0);
