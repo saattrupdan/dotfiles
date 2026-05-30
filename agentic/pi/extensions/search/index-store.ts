@@ -14,11 +14,67 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 
 import Database from "better-sqlite3";
 
 type DatabaseInstance = ReturnType<typeof Database>;
+
+// ---------------------------------------------------------------------------
+// Auto-rebuild better-sqlite3 on NODE_MODULE_VERSION mismatch
+// ---------------------------------------------------------------------------
+
+const EXTENSIONS_DIR = path.join(__dirname);
+const BETTER_SQLITE3_PATH = path.join(
+	EXTENSIONS_DIR,
+	"node_modules/better-sqlite3/build/Release/better_sqlite3.node",
+);
+
+/**
+ * Check whether the better-sqlite3 native .node file exists and is compatible.
+ * Runs `nm` to inspect the exported NODE_MODULE_VERSION symbol.
+ */
+function isBetterSqlite3Compatible(): boolean {
+	try {
+		if (!fs.existsSync(BETTER_SQLITE3_PATH)) return false;
+		const { stdout } = spawnSync("nm", ["-g", BETTER_SQLITE3_PATH], {
+			encoding: "utf-8",
+		});
+		// The symbol looks like _NODE_MODULE_VERSION_xxx; extract the hex
+		const m = stdout.match(/_NODE_MODULE_VERSION_([0-9a-fA-F]+)/);
+		if (!m) return false;
+		const compiledVersion = parseInt(m[1], 16);
+		// Current Node.js version (process.versions.modules is set at startup)
+		const currentVersion = parseInt(process.versions.modules, 10);
+		return compiledVersion === currentVersion;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Rebuild better-sqlite3 from source in the extensions directory.
+ */
+function rebuildBetterSqlite3(): void {
+	try {
+		// Remove the old .node file so it gets recreated
+		try {
+			fs.unlinkSync(BETTER_SQLITE3_PATH);
+		} catch {
+			// ignore — it might be in use or not exist yet
+		}
+		spawnSync("npm", ["rebuild", "better-sqlite3"], {
+			cwd: EXTENSIONS_DIR,
+			stdio: "inherit",
+			shell: false,
+		});
+	} catch (err) {
+		// Non-fatal — the caller will retry and may succeed anyway
+		console.error("Warning: better-sqlite3 rebuild failed:", err);
+	}
+}
+
+let _rebuildAttempted = false;
 import type { OutlineEntry, OutlineResult } from "../_outliner/outliner.js";
 
 export type OutlinerFn = (filePath: string, source: string) => OutlineResult;
@@ -139,6 +195,13 @@ export function readMeta(repoId: string): { root: string; created: string; last_
 export function openDb(repoId: string): DatabaseInstance {
 	const dbPath = getIndexDbPath(repoId);
 	fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+
+	// Auto-rebuild better-sqlite3 if the native module is version-mismatched
+	if (!_rebuildAttempted && !isBetterSqlite3Compatible()) {
+		rebuildBetterSqlite3();
+		_rebuildAttempted = true;
+	}
+
 	const db = Database(dbPath);
 
 	const currentVersion = (db.pragma("user_version", { simple: true }) as number) ?? 0;

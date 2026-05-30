@@ -5,6 +5,7 @@
 	"description": "Hard-capped read tool with outline, dedupe cache, binary detection, and docling-backed document/URL reading.",
 	"type": "module",
 	"dependencies": {
+		"better-sqlite3": "^12.10.0",
 		"tree-sitter": "^0.21.1",
 		"tree-sitter-javascript": "^0.21.4",
 		"tree-sitter-python": "^0.21.0",
