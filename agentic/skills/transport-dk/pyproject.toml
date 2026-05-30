@@ -1,0 +1,12 @@
+[project]
+name = "transport-dk"
+version = "1.0.0"
+description = "CLI for Danish public transport — routes, departures, disruptions, tickets, Q&A (Rejseplanen, DSB, Metro, Movia)"
+requires-python = ">=3.12"
+
+[project.scripts]
+transport = "transport_dk.main:main"
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"

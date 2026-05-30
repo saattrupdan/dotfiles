@@ -1,0 +1,12 @@
+[project]
+name = "media-dk"
+version = "1.0.0"
+description = "CLI for Danish broadcast media — latest news and content search across dr.dk (DR) and tv2.dk (TV 2)"
+requires-python = ">=3.12"
+
+[project.scripts]
+media = "media_dk.main:main"
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"

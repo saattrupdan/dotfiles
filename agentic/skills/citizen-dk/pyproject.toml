@@ -1,0 +1,12 @@
+[project]
+name = "citizen-dk"
+version = "1.0.0"
+description = "CLI to search Danish citizen/public-service portals (borger.dk, nyidanmark.dk, frederiksberg.dk, kk.dk, kommune.dk)"
+requires-python = ">=3.12"
+
+[project.scripts]
+citizen = "citizen_dk.main:main"
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
