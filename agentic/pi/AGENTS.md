@@ -16,12 +16,11 @@ agentic/pi/
 │   ├── explorer.md    # Read-only codebase + web navigation
 │   └── reviewer.md    # Audit recent commits, verdict Pass/Needs changes/Block
 ├── extensions/        # Tool plugins (TypeScript)
-│   ├── read/          # Index-backed file reader (outline + symbol modes)
+│   ├── read/          # Index-backed reader (files, docs, URLs; outline + symbol modes)
 │   ├── search/        # Repo-wide search + outline index
 │   ├── code-tree/     # Structural project tree navigation
 │   ├── subagent/      # Delegation: single / parallel / chain modes
 │   ├── skill/         # Load named skill SKILL.md verbatim
-│   ├── web-fetch/     # Fetch a single URL
 │   ├── web-browse/    # Headless browser interaction
 │   ├── web-search/    # Web search (DuckDuckGo)
 │   ├── memory/        # Memory CRUD (index, read, save, delete, suggest)
@@ -44,7 +43,7 @@ agentic/pi/
 |------------|------|----------|-------|
 | `planner`  | Turns requests into ordered, parallel-friendly plans. Read-only. | No | `read`, `memory_*`, `question` |
 | `builder`  | Implements one scoped code change. Commits before exiting. | **Yes** | `search`, `read`, `write`, `edit`, `bash`, `memory_*`, `question` |
-| `explorer` | Read-only navigation of local codebase and the web. | No | `code_tree`, `search`, `read`, `web_fetch`, `web_browse`, `web_search`, `memory_*`, `question` |
+| `explorer` | Read-only navigation of local codebase and the web. | No | `code_tree`, `search`, `read`, `web_browse`, `web_search`, `memory_*`, `question` |
 | `reviewer` | Audits recent commits, produces verdict. | No | `read`, `search`, `bash`, `memory_*`, `question` |
 
 Only the **orchestrator** (you) may call `subagent`. Subagents may not delegate further.
@@ -54,7 +53,7 @@ Only the **orchestrator** (you) may call `subagent`. Subagents may not delegate 
 Each subdirectory in `extensions/` is a TypeScript plugin registering tools. The orchestrator uses `subagent` to invoke them.
 
 **Critical extensions:**
-- **`read`** — Custom file reader backed by SQLite outline index. Three modes: verbatim (≤100 lines), outline (>100 lines, no pagination), or `symbol=` for a single symbol's body. `SYSTEM.md` is intercepted and returned as a 300-char preview. Images pass through to the image reader.
+- **`read`** — Custom reader backed by SQLite outline index. Three modes: verbatim (≤100 lines), outline (>100 lines, no pagination), or `symbol=` for a single symbol's body. Also reads documents (PDF, DOCX, XLSX, PPTX) and http(s) URLs by converting them to Markdown via the `docling` CLI (cached on disk), then rendering them like any Markdown file. `SYSTEM.md` is intercepted and returned as a 300-char preview. Images pass through to the image reader.
 - **`skill`** — Loads a named skill's `SKILL.md` verbatim (no outlining, no truncation). Use this for skill content; `read` will truncate.
 - **`subagent`** — Delegation tool. Three call modes: `single`, `parallel` (up to 8 tasks, 4 concurrent), `chain` (sequential with `{previous}` substitution). No CLI flags — JSON params only.
 - **`_outliner`** — Shared library (underscore prefix = not loaded as extension). Tree-sitter-based structural outliner for Python, TS/JS/Vue/Markdown.

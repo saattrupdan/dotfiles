@@ -126,11 +126,6 @@ function formatToolCall(
 			if (depth !== undefined) text += themeFg("dim", ` depth=${depth}`);
 			return text;
 		}
-		case "web_fetch": {
-			const url = (args.url || "...") as string;
-			const preview = url.length > 80 ? `${url.slice(0, 80)}...` : url;
-			return themeFg("muted", "web_fetch ") + themeFg("accent", preview);
-		}
 		case "web_search": {
 			const query = (args.query || "") as string;
 			const preview = query.length > 80 ? `${query.slice(0, 80)}...` : query;

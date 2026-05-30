@@ -9,6 +9,11 @@ Outline mode shows nested structure with line numbers so you can pick a
 symbol and follow up with `read path symbol="<name>"` to get just that
 section. Where useful, symbol-body calls are shown beneath each outline.
 
+Documents (PDF, DOCX, XLSX, PPTX) and http(s) URLs are converted to Markdown
+via the `docling` CLI and then rendered exactly like any Markdown file — so
+the same outline + `symbol="<heading>"` flow works on them. See the
+**Documents** and **URLs** sections at the bottom.
+
 ## Python
 
 ```
@@ -63,45 +68,34 @@ section. Where useful, symbol-body calls are shown beneath each outline.
 
 ```
 > read agentic/pi/README.md
-# outline of agentic/pi/README.md (149 lines)
+# outline of agentic/pi/README.md (219 lines)
     1  # pi
    18    ## Extensions
    29      ### `read`
-   49      ### `skill`
-   63      ### `search`
-   73      ### `code-tree`
-   82      ### `web-fetch`
-   91      ### `web-search`
+   60      ### `skill`
+   73      ### `search`
+   83      ### `code-tree`
+   92      ### `web-search`
    99      ### `web-browse`
   107      ### `subagent`
-  124      ### `no-repeat`
-  133      ### `_outliner` (library, not a tool)
+  127      ### `no-repeat`
+  136      ### `memory`
+  168      ### `memory-audit`
+  202      ### `_outliner` (library, not a tool)
 # read again with symbol="<name>" to see a function/class body, symbol="__preamble__" for imports/constants, or use `search` to locate something specific.
 ```
 
 ```
-> read agentic/pi/README.md symbol="Extensions.`read`"
-# agentic/pi/README.md::Extensions.`read`  lines 28-46 (heading)
-### `read`
+> read agentic/pi/README.md symbol="Extensions.`code-tree`"
+# agentic/pi/README.md::Extensions.`code-tree`  lines 83-91 (heading)
+### `code-tree`
 
-Index-backed file reader with no pagination. Three modes:
-
-1. Small file, no symbol → returned verbatim.
-2. Large file, no symbol → outline (module doc + one line per symbol with
-   signature and doc-first-line).
-3. `symbol` set → body of that symbol via `line_start..line_end` from the
-   shared index. Supports `Class.method`.
-
-Outline + symbol ranges come from the SQLite index in
-`~/.pi/index/<repo-id>/index.db` (shared with `search`). The target file is
-incrementally refreshed on every call so edits are picked up without a full
-rebuild. Includes a per-session dedupe cache and a MIME sniff that surfaces
-images as image content rather than raw bytes.
-
-See [`extensions/read/EXAMPLES.md`](extensions/read/EXAMPLES.md) for sample
-outputs across all supported file types — Python, TypeScript, Lua, Rust, Go,
-Shell, SQL, CSS, HTML, Markdown, JSON, JSONL, CSV, YAML, and TOML.
-
+Directory tree of the repo (or a subdirectory). Token-efficient defaults:
+directories only, depth-limited (default 2, max 6), with recursive file
+counts per directory. The agent probes deeper by passing `path` and/or
+`depth` explicitly. Uses `git ls-files` as the source of truth so
+`.gitignore` is honoured automatically; falls back to a filesystem walk
+outside a git repo.
 ```
 ## Lua
 
@@ -396,3 +390,45 @@ readme = "README.md"
 
 ```
 
+## Documents (PDF / DOCX / XLSX / PPTX)
+
+Documents are converted to Markdown via `docling` (cached on disk by content
+hash), then rendered like any Markdown file. A large report shows an outline;
+`symbol="<heading>"` returns just that section.
+
+```
+> read reports/annual.docx
+# annual.docx — DOCX converted to Markdown via docling
+# outline of annual.docx (247 lines)
+    1  # Annual Report 2026
+    3    ## Revenue
+   65    ## Expenses
+  130    ## Outlook
+# read again with symbol="<name>" to see a function/class body, symbol="__preamble__" for imports/constants, or use `search` to locate something specific.
+```
+
+```
+> read reports/annual.docx symbol="Expenses"
+# annual.docx — DOCX converted to Markdown via docling
+# annual.docx::Expenses  lines 65-129 (heading)
+## Expenses
+...section body...
+```
+
+## URLs
+
+An http(s) URL is downloaded and converted to Markdown via `docling`. The
+parsed Markdown is cached, so re-reading the same URL reuses the previous
+download instead of fetching again. For interactive/JS-heavy pages use
+`web_browse` instead.
+
+```
+> read https://example.com
+# https://example.com — fetched and converted to Markdown via docling
+# https://example.com (5 lines)
+# Example Domain
+
+This domain is for use in documentation examples without needing permission. Avoid use in operations.
+
+[Learn more](https://iana.org/domains/example)
+```

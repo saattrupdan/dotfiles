@@ -2,7 +2,7 @@
 	"name": "read",
 	"private": true,
 	"version": "0.1.0",
-	"description": "Hard-capped read tool with outline, dedupe cache, and binary detection.",
+	"description": "Hard-capped read tool with outline, dedupe cache, binary detection, and docling-backed document/URL reading.",
 	"type": "module",
 	"dependencies": {
 		"tree-sitter": "^0.21.1",

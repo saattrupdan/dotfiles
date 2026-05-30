@@ -88,7 +88,7 @@ export default function (pi: ExtensionAPI) {
 		description:
 			"Drive a real browser via the `agent-browser` CLI. Pass a single command string per call. " +
 			"Session state (open page, cookies, refs) is preserved across consecutive calls. " +
-			"Use for interactive flows (login, JS-rendered pages, clicking, typing); for static pages prefer `web_fetch`. " +
+			"Use for interactive flows (login, JS-rendered pages, clicking, typing); for static pages prefer `read` (which fetches and converts URLs). " +
 			"If unsure of the command surface, call once with `command=\"skills get core\"`.",
 		parameters: Params,
 

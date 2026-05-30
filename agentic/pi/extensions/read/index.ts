@@ -12,10 +12,20 @@
  * `~/.pi/index/<repo-id>/index.db`, which is also used by the `search`
  * extension. The index is incrementally refreshed for the target file on
  * every call, so edits are picked up without a full rebuild.
+ *
+ * Beyond plain-text source, `read` also handles:
+ *   • Documents (PDF, DOCX, XLSX, PPTX) → converted to Markdown via the
+ *     `docling` CLI, then rendered through the same outline/symbol pipeline.
+ *   • URLs (http/https) → downloaded and converted to Markdown via docling,
+ *     so a single tool reads local files, documents, and web pages alike.
+ * Both conversions are cached on disk keyed by content/URL so repeat reads
+ * skip docling entirely.
  */
 
+import { spawn } from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -80,6 +90,92 @@ function sha256(filePath: string): string {
 	return crypto.createHash("sha256").update(buf).digest("hex");
 }
 
+function sha256String(s: string): string {
+	return crypto.createHash("sha256").update(s).digest("hex");
+}
+
+// ---------------------------------------------------------------------------
+// docling conversion (documents + URLs → Markdown)
+//
+// Documents and web pages are converted to Markdown by the `docling` CLI and
+// the result is cached on disk keyed by content sha / URL hash, so repeat
+// reads skip docling. The cached Markdown is then rendered through the same
+// outline/symbol pipeline as any other Markdown file.
+// ---------------------------------------------------------------------------
+
+const DOCUMENT_EXTENSIONS = new Set([".pdf", ".docx", ".xlsx", ".pptx"]);
+const URL_RE = /^https?:\/\//i;
+
+const DOC_CACHE_DIR = path.join(os.tmpdir(), "pi-read-doc-cache");
+
+function docCachePath(key: string): string {
+	return path.join(DOC_CACHE_DIR, `${key}.md`);
+}
+
+/** Run `docling --to md` on a source (local path or URL) into `outputDir`. */
+function runDocling(outputDir: string, source: string, signal?: AbortSignal): Promise<{ status: number; stderr: string }> {
+	return new Promise((resolve, reject) => {
+		const proc = spawn("docling", ["--to", "md", "--device", "auto", "--output", outputDir, source], {
+			stdio: ["ignore", "ignore", "pipe"],
+		});
+		const err: Buffer[] = [];
+		proc.stderr.on("data", (d: Buffer) => err.push(d));
+		proc.on("close", (code) => resolve({ status: code ?? 1, stderr: Buffer.concat(err).toString() }));
+		proc.on("error", (e) => reject(e));
+		if (signal) signal.addEventListener("abort", () => proc.kill());
+	});
+}
+
+/** docling writes exactly one `.md` file per source; find it regardless of name. */
+function findMarkdown(dir: string): string | null {
+	let files: string[];
+	try {
+		files = fs.readdirSync(dir).filter((f) => f.toLowerCase().endsWith(".md"));
+	} catch {
+		return null;
+	}
+	return files.length > 0 ? path.join(dir, files[0]!) : null;
+}
+
+/**
+ * Convert a document/URL to Markdown via docling, caching the result on disk
+ * keyed by `cacheKey`. Returns the Markdown text. Throws on conversion failure.
+ */
+async function convertToMarkdown(source: string, cacheKey: string, signal?: AbortSignal): Promise<string> {
+	try {
+		fs.mkdirSync(DOC_CACHE_DIR, { recursive: true });
+	} catch {
+		/* ignore */
+	}
+
+	// Cache hit → reuse the previously parsed Markdown.
+	const cacheFile = docCachePath(cacheKey);
+	try {
+		const cached = fs.readFileSync(cacheFile, "utf-8");
+		if (cached.length > 0) return cached;
+	} catch {
+		/* cache miss, continue */
+	}
+
+	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "docling-"));
+	try {
+		const { status, stderr } = await runDocling(tmpDir, source, signal);
+		const mdFile = findMarkdown(tmpDir);
+		const body = mdFile ? fs.readFileSync(mdFile, "utf-8") : "";
+		if (!body) {
+			throw new Error(`docling produced no output (exit ${status})${stderr ? `: ${stderr.trim().slice(0, 300)}` : ""}`);
+		}
+		fs.writeFileSync(cacheFile, body, "utf-8");
+		return body;
+	} finally {
+		try {
+			fs.rmSync(tmpDir, { recursive: true, force: true });
+		} catch {
+			/* ignore */
+		}
+	}
+}
+
 const SMALL_FILE_LINES = 100;
 const DIR_ENTRY_LIMIT = 200;
 
@@ -140,16 +236,38 @@ export default async function (pi: ExtensionAPI) {
 		name: "read",
 		label: "read",
 		description:
-			"Read a file or list a directory. Modes:\n" +
+			"Read a file, document, web page, or list a directory. The `path` may be a local path or an http(s) URL.\n" +
 			"  • Path is a directory → truncated listing of entries (dirs first, then files).\n" +
+			"  • Document (PDF, DOCX, XLSX, PPTX) or URL → converted to Markdown via docling, then rendered exactly like any Markdown file (outline for large ones; read a section with symbol=\"<heading>\"). Conversions are cached, so re-reading the same document/URL is cheap.\n" +
 			"  • No symbol, small file → verbatim contents.\n" +
 			"  • No symbol, large file → outline (module doc, classes/functions with signatures, type hints, and doc-first-line). Use the outline to pick a symbol.\n" +
 			"  • symbol set → body of that symbol only (supports 'Class.method').\n" +
 			"  • symbol=\"__preamble__\" → everything before the first class/function (imports, constants, module setup).\n" +
-			"There is no pagination — you cannot walk a file via offset/limit. If the outline is not enough, use the `search` tool to locate what you need, then read the symbol.",
+			"There is no pagination — you cannot walk a file via offset/limit. If the outline is not enough, use the `search` tool to locate what you need, then read the symbol. For interactive/JS-heavy pages, use `web_browse` instead.",
 		parameters: Params,
 
-		async execute(_toolCallId, { path: filePath, symbol }, _signal, _onUpdate, _ctx) {
+		async execute(_toolCallId, { path: filePath, symbol }, signal, _onUpdate, _ctx) {
+			// 0a. URL → download + convert to Markdown via docling, then render.
+			if (URL_RE.test(filePath)) {
+				const sha = sha256String(filePath);
+				const key = cacheKey(sha, filePath, symbol);
+				const cached = dedupeCache.get(key);
+				if (cached && cached.sha === sha) {
+					return {
+						content: [{ type: "text", text: `unchanged since call #${cached.callIndex}` }],
+						details: { dedupe: true, callIndex: cached.callIndex },
+					};
+				}
+				let markdown: string;
+				try {
+					markdown = await convertToMarkdown(filePath, sha, signal);
+				} catch (err) {
+					return { content: [{ type: "text", text: `Could not fetch ${filePath} via docling: ${(err as Error).message}` }] };
+				}
+				const banner = `# ${filePath} — fetched and converted to Markdown via docling`;
+				return withBanner(renderContent(filePath, "page.md", markdown, symbol, outline, collapsedView, key, sha), banner);
+			}
+
 			const absolutePath = path.resolve(filePath);
 
 			// 0. SYSTEM.md interception
@@ -192,7 +310,7 @@ export default async function (pi: ExtensionAPI) {
 			if (isLikelyImage(absolutePath)) {
 				try {
 					const builtIn = await import("$PI/dist/core/tools/read.js" as any);
-					return builtIn.createReadTool().execute(absolutePath, undefined, undefined, _signal);
+					return builtIn.createReadTool().execute(absolutePath, undefined, undefined, signal);
 				} catch {
 					return {
 						content: [
@@ -214,6 +332,21 @@ export default async function (pi: ExtensionAPI) {
 					content: [{ type: "text", text: `unchanged since call #${cached.callIndex}` }],
 					details: { dedupe: true, callIndex: cached.callIndex },
 				};
+			}
+
+			// 3b. Documents (PDF/DOCX/XLSX/PPTX) → convert to Markdown via docling
+			// (cached by content sha), then render like any other Markdown file.
+			const ext = path.extname(absolutePath).toLowerCase();
+			if (DOCUMENT_EXTENSIONS.has(ext)) {
+				let markdown: string;
+				try {
+					markdown = await convertToMarkdown(absolutePath, sha, signal);
+				} catch (err) {
+					return { content: [{ type: "text", text: `Could not convert ${path.basename(absolutePath)} via docling: ${(err as Error).message}` }] };
+				}
+				const displayPath = path.basename(absolutePath);
+				const banner = `# ${displayPath} — ${ext.slice(1).toUpperCase()} converted to Markdown via docling`;
+				return withBanner(renderContent(displayPath, `${displayPath}.md`, markdown, symbol, outline, collapsedView, key, sha), banner);
 			}
 
 			// 4. Open the index (no full build) and refresh just this file.
@@ -308,36 +441,51 @@ export default async function (pi: ExtensionAPI) {
 }
 
 // ---------------------------------------------------------------------------
-// Fallback for files outside the indexed repo
+// Index-free rendering (files outside the repo, converted documents, URLs)
 // ---------------------------------------------------------------------------
 
-function readOutsideRepo(
-	absolutePath: string,
+/** Prepend a one-line banner to a tool result's first text block. */
+function withBanner(result: { content: { type: string; text: string }[] }, banner: string) {
+	const first = result.content[0];
+	if (first && first.type === "text") first.text = `${banner}\n${first.text}`;
+	return result;
+}
+
+/**
+ * Render content (verbatim / outline / symbol body) without the SQLite index.
+ *
+ * `displayPath` is shown in headers; `outlinePath` is used purely for the
+ * outliner's language detection (e.g. pass a `.md` path so converted documents
+ * and web pages are outlined by their Markdown headings).
+ */
+function renderContent(
+	displayPath: string,
+	outlinePath: string,
+	content: string,
 	symbol: string | undefined,
 	outline: (typeof import("../_outliner/outliner.js"))["outline"],
 	collapsedView: (typeof import("../_outliner/outliner.js"))["collapsedView"],
 	key: string,
 	sha: string,
 ) {
-	const content = fs.readFileSync(absolutePath, "utf-8");
 	const allLines = content.split("\n");
 	const totalLines = allLines.length;
 
 	if (symbol === "__preamble__") {
-		const result = outline(absolutePath, content);
+		const result = outline(outlinePath, content);
 		const firstDef = result.entries.find((e) => e.kind === "class" || e.kind === "function" || e.kind === "heading" || e.kind === "block");
 		const cutoff = firstDef?.line ?? null;
 		const lastLine = cutoff && cutoff > 1 ? cutoff - 1 : totalLines;
 		const slice = allLines.slice(0, lastLine);
 		const header = cutoff
-			? `# ${absolutePath}::__preamble__  lines 1-${lastLine} (before line ${cutoff})`
-			: `# ${absolutePath}::__preamble__  lines 1-${lastLine} (no class/function found — whole file)`;
+			? `# ${displayPath}::__preamble__  lines 1-${lastLine} (before line ${cutoff})`
+			: `# ${displayPath}::__preamble__  lines 1-${lastLine} (no class/function found — whole file)`;
 		dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
 		return { content: [{ type: "text", text: `${header}\n${slice.join("\n")}` }] };
 	}
 
 	if (symbol) {
-		const result = outline(absolutePath, content);
+		const result = outline(outlinePath, content);
 		// Exact match first (handles dotted entry names like TOML sections).
 		let hit = result.entries.find((e) => e.name === symbol);
 		if (!hit) {
@@ -352,11 +500,11 @@ function readOutsideRepo(
 		}
 		if (!hit) {
 			return {
-				content: [{ type: "text", text: `Symbol "${symbol}" not found in ${absolutePath}.` }],
+				content: [{ type: "text", text: `Symbol "${symbol}" not found in ${displayPath}.` }],
 			};
 		}
 		const slice = allLines.slice(hit.line - 1, hit.lineEnd);
-		const header = `# ${absolutePath}::${symbol}  lines ${hit.line}-${hit.lineEnd} (${hit.kind})`;
+		const header = `# ${displayPath}::${symbol}  lines ${hit.line}-${hit.lineEnd} (${hit.kind})`;
 		const meta: string[] = [];
 		if (hit.docFirstLine) meta.push(`Docstring: ${hit.docFirstLine}`);
 		const preamble = meta.length > 0 ? `${header}\n${meta.join("\n")}\n` : `${header}\n`;
@@ -368,16 +516,29 @@ function readOutsideRepo(
 	if (totalLines <= SMALL_FILE_LINES) {
 		dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
 		return {
-			content: [{ type: "text", text: `# ${absolutePath} (${totalLines} lines)\n${content}` }],
+			content: [{ type: "text", text: `# ${displayPath} (${totalLines} lines)\n${content}` }],
 		};
 	}
 
-	const result = outline(absolutePath, content);
+	const result = outline(outlinePath, content);
 	const view = collapsedView(result, { hidePrivate: true, maxLines: 200 });
 	dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
 	return {
 		content: [
-			{ type: "text", text: `# outline of ${absolutePath} (${totalLines} lines)\n${view.join("\n")}` },
+			{ type: "text", text: `# outline of ${displayPath} (${totalLines} lines)\n${view.join("\n")}` },
 		],
 	};
+}
+
+/** Read a file living outside the indexed repo, then render it index-free. */
+function readOutsideRepo(
+	absolutePath: string,
+	symbol: string | undefined,
+	outline: (typeof import("../_outliner/outliner.js"))["outline"],
+	collapsedView: (typeof import("../_outliner/outliner.js"))["collapsedView"],
+	key: string,
+	sha: string,
+) {
+	const content = fs.readFileSync(absolutePath, "utf-8");
+	return renderContent(absolutePath, absolutePath, content, symbol, outline, collapsedView, key, sha);
 }

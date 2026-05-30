@@ -21,14 +21,15 @@ Each subdirectory under `extensions/` is a self-contained pi extension. They
 fall into three categories:
 
 - **Tools the agent calls** — `read`, `skill`, `search`, `code-tree`,
-  `web-fetch`, `web-search`, `web-browse`, `subagent`, `memory_index`,
+  `web-search`, `web-browse`, `subagent`, `memory_index`,
   `memory_read`, `memory_save`, `memory_delete`, `memory_suggest`.
 - **Behavioural guardrails** (no tools registered) — `no-repeat`, `memory-audit`.
 - **Shared internal library** — `_outliner` (consumed by `read` and `search`).
 
 ### `read`
 
-Index-backed file reader with no pagination. Three modes:
+Index-backed reader with no pagination. Reads source files, documents, and
+web pages. Three modes:
 
 1. Small file, no symbol → returned verbatim.
 2. Large file, no symbol → outline (module doc + one line per symbol with
@@ -42,9 +43,19 @@ incrementally refreshed on every call so edits are picked up without a full
 rebuild. Includes a per-session dedupe cache and a MIME sniff that surfaces
 images as image content rather than raw bytes.
 
+**Documents and URLs.** When `path` is a document (PDF, DOCX, XLSX, PPTX) or
+an http(s) URL, `read` converts it to Markdown via the `docling` CLI and then
+renders it through the same outline/symbol pipeline — so a large PDF shows an
+outline, and `symbol="<heading>"` returns just that section. Conversions are
+cached on disk (keyed by file content / URL), so re-reading the same document
+or page skips docling entirely and reuses the previously parsed Markdown. This
+subsumes the old `web-fetch` tool: to read a web page, just `read` its URL.
+For interactive or JS-heavy pages, use `web-browse` instead.
+
 See [`extensions/read/EXAMPLES.md`](extensions/read/EXAMPLES.md) for sample
 outputs across all supported file types — Python, TypeScript, Lua, Rust, Go,
-Shell, SQL, CSS, HTML, Markdown, JSON, JSONL, CSV, YAML, and TOML.
+Shell, SQL, CSS, HTML, Markdown, JSON, JSONL, CSV, YAML, TOML — plus documents
+and URLs.
 
 ### `skill`
 
@@ -77,15 +88,6 @@ counts per directory. The agent probes deeper by passing `path` and/or
 `depth` explicitly. Uses `git ls-files` as the source of truth so
 `.gitignore` is honoured automatically; falls back to a filesystem walk
 outside a git repo.
-
-### `web-fetch`
-
-Fetches an HTTP(S) URL and collapses it into the smallest useful text form.
-HTML is stripped to readable text (scripts, styles, nav boilerplate, SVG,
-head, comments removed), entities decoded, whitespace collapsed. Non-HTML
-responses (JSON, plain text) are returned as-is. Hard cap on output size;
-`max_chars` overrides up to 100k. A `raw: true` flag returns the
-unprocessed body.
 
 ### `web-search`
 
