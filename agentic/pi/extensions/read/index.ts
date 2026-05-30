@@ -412,6 +412,11 @@ export default async function (pi: ExtensionAPI) {
 			const result = stored
 				? { moduleDoc: stored.doc ?? undefined, entries: stored.entries }
 				: outline(absolutePath, content);
+			// Nothing to navigate → return the whole file rather than an empty outline.
+			if (result.entries.length === 0) {
+				dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
+				return { content: [{ type: "text", text: `# ${relPath} (${totalLines} lines, no sections — full contents)\n${content}` }] };
+			}
 			const view = collapsedView(result, { hidePrivate: true, maxLines: 200 });
 			const outlineHeader = `# outline of ${relPath} (${totalLines} lines)`;
 			const footer =
@@ -521,6 +526,15 @@ function renderContent(
 	}
 
 	const result = outline(outlinePath, content);
+	// No structure to navigate (e.g. a heading-less document or a flat
+	// Markdown file) → there's nothing to pick a symbol from, so just return
+	// the whole thing verbatim rather than an empty outline.
+	if (result.entries.length === 0) {
+		dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
+		return {
+			content: [{ type: "text", text: `# ${displayPath} (${totalLines} lines, no sections — full contents)\n${content}` }],
+		};
+	}
 	const view = collapsedView(result, { hidePrivate: true, maxLines: 200 });
 	dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
 	return {
