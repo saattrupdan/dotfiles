@@ -2,15 +2,21 @@
 # Load external ZSH plugins
 #=====================================
 
-# Initialise Zsh function path and completion system
-fpath+=~/.zfunc; autoload -Uz compinit; compinit
+# Add custom functions to the function path. NB: we deliberately do NOT run
+# `compinit` here. zsh-autocomplete (sourced below) manages compinit itself,
+# and calling it ourselves makes the plugin throw away its completion cache and
+# rebuild it on every new shell — which is what makes new tabs hang. Completion
+# is initialised further down, guarded so it still works without the plugin.
+fpath+=~/.zfunc
 
 # Download Znap, if it's not there yet.
 [[ -r ~/znap-plugins/znap/znap.zsh ]] ||
   git clone --depth 1 -- https://github.com/marlonrichert/zsh-snap.git ~/znap-plugins/znap
 source ~/znap-plugins/znap/znap.zsh  # Start Znap
 
-# Autocomplete plugin
+# Autocomplete plugin. This block owns the completion system while present, and
+# is safe to delete wholesale: the guarded `compinit` lower down takes over
+# automatically if it's gone, so no other edits are needed.
 [[ -r ~/znap-plugins/marlonrichert/zsh-autocomplete ]] ||
   znap clone marlonrichert/zsh-autocomplete
 znap source zsh-autocomplete
@@ -84,8 +90,15 @@ complete -F _ssh_complete ssh
 
 # Docker autocompletion
 fpath=(/Users/dansmart/.docker/completions $fpath)
-autoload -Uz compinit
-compinit
+
+# Initialise the completion system — but ONLY if zsh-autocomplete hasn't already
+# taken it over (it replaces `compdef` with its own queue function). This is what
+# lets the zsh-autocomplete block above be deleted without breaking completion:
+# with the plugin present, the plugin runs compinit; without it, we do.
+if [[ $functions[compdef] != *_autocomplete__compdef* ]]; then
+  autoload -Uz compinit
+  compinit
+fi
 
 # Bun autocompletion
 [ -s "/Users/dansmart/.bun/_bun" ] && source "/Users/dansmart/.bun/_bun"

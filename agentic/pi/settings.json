@@ -1,9 +1,9 @@
 {
-  "lastChangelogVersion": "0.77.0",
-  "defaultProvider": "sparkie",
-  "defaultModel": "AEON-7/Qwen3.6-35B-A3B-heretic-NVFP4",
+  "lastChangelogVersion": "0.78.0",
+  "defaultProvider": "llamacpp",
+  "defaultModel": "qwen3.6-35B-A3B",
   "defaultThinkingLevel": "medium",
-  "hideThinkingBlock": true,
+  "hideThinkingBlock": false,
   "quietStartup": true,
   "theme": "gruvbox"
 }
