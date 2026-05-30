@@ -2,11 +2,11 @@
 # Load external ZSH plugins
 #=====================================
 
-# Add custom functions to the function path. NB: we deliberately do NOT run
-# `compinit` here. zsh-autocomplete (sourced below) manages compinit itself,
-# and calling it ourselves makes the plugin throw away its completion cache and
-# rebuild it on every new shell — which is what makes new tabs hang. Completion
-# is initialised further down, guarded so it still works without the plugin.
+# Add custom functions to the function path. NB: we deliberately do NOT run `compinit`
+# here. Some plugins manage compinit itself, and calling it ourselves makes the plugin
+# throw away its completion cache and rebuild it on every new shell — which is what
+# makes new tabs hang. Completion is initialised further down, guarded so it still works
+# without the plugin.
 fpath+=~/.zfunc
 
 # Download Znap, if it's not there yet.
@@ -14,9 +14,9 @@ fpath+=~/.zfunc
   git clone --depth 1 -- https://github.com/marlonrichert/zsh-snap.git ~/znap-plugins/znap
 source ~/znap-plugins/znap/znap.zsh  # Start Znap
 
-# Autocomplete plugin. This block owns the completion system while present, and
-# is safe to delete wholesale: the guarded `compinit` lower down takes over
-# automatically if it's gone, so no other edits are needed.
+# Autocomplete plugin. This block owns the completion system while present, and is safe
+# to delete wholesale: the guarded `compinit` lower down takes over automatically if
+# it's gone, so no other edits are needed.
 [[ -r ~/znap-plugins/marlonrichert/zsh-autocomplete ]] ||
   znap clone marlonrichert/zsh-autocomplete
 znap source zsh-autocomplete
@@ -61,10 +61,9 @@ zstyle ':vcs_info:*' enable git
 precmd_vcs_info() { vcs_info }
 precmd_functions+=( precmd_vcs_info )
 
-# Set prompt to be "[current_branch] [parent_path/current_path]$"
-# Here %b is the current branch name, and %F{xxx} ... %f colours the text
-# colour xxx, where 170 is the colour "orchid" and 154 the colour
-# "GreenYellow". See all colours available here:
+# Set prompt to be "[current_branch] [parent_path/current_path]$". Here %b is the
+# current branch name, and %F{xxx} ... %f colours the text colour xxx, where 170 is the
+# colour "orchid" and 154 the colour "GreenYellow". See all colours available here:
 # https://jonasjacek.github.io/colors/
 zstyle ':vcs_info:git:*' formats '%F{170}[%b]%f '
 PROMPT=\$vcs_info_msg_0_
@@ -131,10 +130,10 @@ export OPENBLAS="$(brew --prefix openblas)"
 # Enable MPS fallback
 export PYTORCH_ENABLE_MPS_FALLBACK="1"
 
-# NVM directory — lazy-loaded. Sourcing nvm.sh eagerly adds ~600ms to every
-# new shell (it dominates startup). Instead we define lightweight shims for
-# nvm/node/npm/npx; the first time you run one, it sources the real nvm,
-# removes the shims, and re-runs your command. Startup stays snappy.
+# NVM directory — lazy-loaded. Sourcing nvm.sh eagerly adds ~600ms to every new shell
+# (it dominates startup). Instead we define lightweight shims for nvm/node/npm/npx; the
+# first time you run one, it sources the real nvm, removes the shims, and re-runs your
+# command. Startup stays snappy.
 export NVM_DIR="$HOME/.config/nvm"
 _load_nvm() {
   unset -f nvm node npm npx
