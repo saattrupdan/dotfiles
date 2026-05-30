@@ -23,6 +23,19 @@ UA = "Mozilla/5.0 (dmi-dk-api-cli)"
 
 WEEKDAYS_DK = ["man", "tir", "ons", "tor", "fre", "lør", "søn"]
 
+# Country codes whose IP-detected location we trust for auto-forecast.
+NORDIC_COUNTRIES: tuple[str, ...] = ("DK", "NO", "SE", "FI")
+
+# English exonyms mapped to the Danish names used by the DMI city index.
+# IP geolocation (ipinfo.io / ip-api.com) reports English city names such as
+# "Copenhagen", but DMI's Solr index stores the Danish spelling
+# ("København"), so a raw "copenhagen" query only matches a US town of the
+# same name. Translate the common exonyms before searching.
+CITY_EXONYMS: dict[str, str] = {
+    "copenhagen": "københavn",
+    "elsinore": "helsingør",
+}
+
 # Wind direction abbreviations (DMI style) -> full names in Danish
 WIND_DIR_MAP: dict[str, str] = {
     "N": "Nord",
@@ -573,17 +586,22 @@ def cmd_forecast_city(args: argparse.Namespace) -> None:
     their IP address. Falls back to K\u00f8benhavn.
     """
     city: str | None = args.city if args.city else None
+    detected_cc: str | None = None
 
     if not city:
-        detected: str | None = _geo_locate()
+        detected: tuple[str, str] | None = _geo_locate()
         if detected:
-            city = detected
-            logger.info(f"(Detected location from IP: {city})")
+            city, detected_cc = detected
+            logger.info(f"(Detected location from IP: {city}, {detected_cc})")
         else:
             city = "k\u00f8benhavn"
             logger.info("(Could not detect location, defaulting to K\u00f8benhavn)")
 
-    url: str = _city_solr_url(city=city, rows=1)
+    # When the city was auto-detected, fetch several candidates so we can
+    # prefer one in the detected country -- this avoids matching a foreign
+    # namesake (e.g. a US "Copenhagen") for a Danish IP.
+    rows: int = 10 if detected_cc else 1
+    url: str = _city_solr_url(city=city, rows=rows)
     search_data: JsonValue = _request_with_referer(url=url)
     if search_data is None:
         logger.error(f"No data from city search for '{city}'")
@@ -593,6 +611,14 @@ def cmd_forecast_city(args: argparse.Namespace) -> None:
     if not docs:
         logger.error(f"No cities found matching '{city}'")
         sys.exit(2)
+
+    if detected_cc:
+        match: dict | None = next(
+            (d for d in docs if d.get("country") == detected_cc),
+            None,
+        )
+        if match is not None:
+            docs = [match]
 
     city_id: str = docs[0]["id"]
     # Inline _city_name_from_doc logic
@@ -1229,16 +1255,16 @@ def _request_with_referer(url: str) -> JsonValue | None:
         return None
 
 
-def _geo_locate() -> str | None:
-    """Determine user's city from their IP address.
+def _geo_locate() -> tuple[str, str] | None:
+    """Determine the user's city and country from their IP address.
 
-    Prefers ip-api.com (has a country code field) over
-    ipinfo.io. Only returns a city from a Nordic country
-    (DK, NO, SE, FI). Falls back to None if detection
-    fails entirely.
+    Tries ip-api.com first (has a ``countryCode`` field), then ipinfo.io
+    (has a ``country`` field). Only returns a location in a Nordic country
+    (DK, NO, SE, FI); returns None if detection fails or the IP is outside
+    that set.
 
     Returns:
-        Lowercase city name or None.
+        Tuple of (lowercase_city, country_code) or None.
     """
     # --- ip-api.com: has countryCode field ---
     try:
@@ -1251,12 +1277,12 @@ def _geo_locate() -> str | None:
             data: dict = json.loads(s=r.read().decode("utf-8"))
         city: str = data.get("city", "")
         cc: str = data.get("countryCode", "")
-        if city and cc in ("DK", "NO", "SE", "FI"):
-            return city.lower()
+        if city and cc in NORDIC_COUNTRIES:
+            return city.lower(), cc
     except Exception:  # noqa: BLE001
         pass
 
-    # --- ipinfo.io: uses lat/lon coordinates ---
+    # --- ipinfo.io: has a country field ---
     try:
         h: dict[str, str] = {"User-Agent": UA}
         req: urllib.request.Request = urllib.request.Request(
@@ -1266,18 +1292,9 @@ def _geo_locate() -> str | None:
         with urllib.request.urlopen(req, timeout=5) as r:
             data: dict = json.loads(s=r.read().decode("utf-8"))
         city = data.get("city", "")
-        loc: str = data.get("loc", "")
-        if city and loc:
-            parts: list[str] = loc.split(",")
-            if len(parts) >= 2:
-                try:
-                    lat_f: float = float(parts[0])
-                    lon_f: float = float(parts[1])
-                    # Denmark roughly 54-58N, 8-15E
-                    if 54 <= lat_f <= 58 and 8 <= lon_f <= 15:
-                        return city.lower()
-                except ValueError:
-                    pass
+        cc = data.get("country", "")
+        if city and cc in NORDIC_COUNTRIES:
+            return city.lower(), cc
     except Exception:  # noqa: BLE001
         pass
 
@@ -1403,7 +1420,10 @@ def _normalize_danish(text: str) -> str:
     Returns:
         Normalised lowercase string.
     """
-    lower: str = text.lower()
+    lower: str = text.lower().strip()
+    # Translate English exonyms (e.g. "copenhagen" -> "k\u00f8benhavn") so the
+    # query matches DMI's Danish-spelled index instead of a foreign city.
+    lower = CITY_EXONYMS.get(lower, lower)
     for ascii_form, danish_char in {
         "aa": "\u00e5",
         "oe": "\u00f8",

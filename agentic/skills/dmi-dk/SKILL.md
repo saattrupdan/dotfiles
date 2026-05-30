@@ -222,5 +222,8 @@ dmi images --type radar
 
 - Pure Python standard library — no extra dependencies.
 - City names are normalised automatically: `aa` → `å`, `oe` → `ø`, `ae` → `æ`.
+- English exonyms are translated to the Danish names DMI indexes (e.g.
+  `Copenhagen` → `København`), and IP auto-detection prefers a city in the
+  detected country so a foreign namesake is never picked.
 - Formatted output rounds all decimals to at most 2 places.
 - `--today`/`--tomorrow` show a compact single-line format.
