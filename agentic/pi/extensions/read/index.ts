@@ -179,6 +179,14 @@ async function convertToMarkdown(source: string, cacheKey: string, signal?: Abor
 const SMALL_FILE_LINES = 100;
 const DIR_ENTRY_LIMIT = 200;
 
+// Footer appended to every outline. This outline IS the whole-file view, so
+// the footer steers the model to drill in (rather than re-read the path, which
+// just returns the same outline and trips the `no-repeat` guard).
+const OUTLINE_FOOTER =
+	`# This outline is the whole-file view — reading this path again returns the same outline. ` +
+	`To see content, read again with symbol="<name>" for a function/class/section body (names above), ` +
+	`symbol="__preamble__" for imports/constants, or use \`search\` to locate something specific.`;
+
 function listDirectory(absolutePath: string) {
 	let entries: fs.Dirent[];
 	try {
@@ -419,10 +427,7 @@ export default async function (pi: ExtensionAPI) {
 			}
 			const view = collapsedView(result, { hidePrivate: true, maxLines: 200 });
 			const outlineHeader = `# outline of ${relPath} (${totalLines} lines)`;
-			const footer =
-				`# read again with symbol="<name>" to see a function/class body, ` +
-				`symbol="__preamble__" for imports/constants, ` +
-				`or use \`search\` to locate something specific.`;
+			const footer = OUTLINE_FOOTER;
 			dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
 			return {
 				content: [
@@ -539,7 +544,7 @@ function renderContent(
 	dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
 	return {
 		content: [
-			{ type: "text", text: `# outline of ${displayPath} (${totalLines} lines)\n${view.join("\n")}` },
+			{ type: "text", text: `# outline of ${displayPath} (${totalLines} lines)\n${view.join("\n")}\n${OUTLINE_FOOTER}` },
 		],
 	};
 }

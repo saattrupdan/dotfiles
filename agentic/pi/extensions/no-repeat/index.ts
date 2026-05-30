@@ -2,9 +2,11 @@
  * Block consecutive duplicate tool calls.
  *
  * If the agent calls the same tool with the same arguments twice in a row,
- * the second call is blocked with a short nudge telling it to do something
- * different. This catches the common "loop forever on the same failing call"
- * failure mode and saves tokens.
+ * the second call is blocked with a nudge. For most tools the nudge just says
+ * "do something different"; for `read` it hands back the exact next move (see
+ * `blockReason`), because a blocked re-read is the moment agents otherwise give
+ * up and reach for `cat`. This catches the common "loop forever on the same
+ * failing call" failure mode and saves tokens.
  *
  * Runs in both the orchestrator and subagent processes (per-process state,
  * which is what we want — each subagent has its own loop).
@@ -38,6 +40,39 @@ function fingerprint(toolName: string, input: unknown): string {
 	return `${toolName}\0${crypto.createHash("sha1").update(json).digest("hex")}`;
 }
 
+/**
+ * The nudge shown when an identical call is blocked. For `read` this is the
+ * single biggest frustration point: an agent reads a large file, gets an
+ * outline, and immediately re-reads the same path hoping for more — only to be
+ * blocked. A generic "do something different" message sends them to `cat`,
+ * which defeats the whole point. So for `read` we hand back the exact next
+ * move instead.
+ */
+function blockReason(toolName: string, input: unknown): string {
+	if (toolName === "read") {
+		const symbol = (input as { symbol?: unknown } | null)?.symbol;
+		if (!symbol) {
+			return (
+				"Re-reading the same path won't show more — the outline you already have IS the whole-file view. " +
+				"To see actual content, drill in instead of re-reading:\n" +
+				'  • `read` with symbol="<name>" → the body of a function/class/section (names are in the outline)\n' +
+				'  • `read` with symbol="__preamble__" → imports/constants before the first definition\n' +
+				"  • `search` → locate a specific string or symbol if it isn't in the outline\n" +
+				"Don't fall back to `cat`/`sed` — they dump the whole file and waste context; the outline + symbol reads exist precisely to avoid that."
+			);
+		}
+		return (
+			`You already have the body of \`${String(symbol)}\` above. To get more, ` +
+			'pick a different symbol from the outline, `read` symbol="__preamble__" for imports/constants, ' +
+			"or use `search` to find what you need."
+		);
+	}
+	return (
+		`You just called \`${toolName}\` with identical arguments. ` +
+		"Try something different: change the arguments, use a different tool, or report what you have found so far."
+	);
+}
+
 export default function (pi: ExtensionAPI) {
 	let last: string | null = null;
 
@@ -56,9 +91,7 @@ export default function (pi: ExtensionAPI) {
 			last = null;
 			return {
 				block: true,
-				reason:
-					`You just called \`${event.toolName}\` with identical arguments. ` +
-					`Try something different: change the arguments, use a different tool, or report what you have found so far.`,
+				reason: blockReason(event.toolName, event.input),
 			};
 		}
 		last = fp;
