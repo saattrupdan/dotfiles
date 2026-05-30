@@ -23,14 +23,10 @@ UA = "Mozilla/5.0 (dmi-dk-api-cli)"
 
 WEEKDAYS_DK = ["man", "tir", "ons", "tor", "fre", "lør", "søn"]
 
-# Country codes whose IP-detected location we trust for auto-forecast.
-NORDIC_COUNTRIES: tuple[str, ...] = ("DK", "NO", "SE", "FI")
-
 # English exonyms mapped to the Danish names used by the DMI city index.
-# IP geolocation (ipinfo.io / ip-api.com) reports English city names such as
-# "Copenhagen", but DMI's Solr index stores the Danish spelling
-# ("København"), so a raw "copenhagen" query only matches a US town of the
-# same name. Translate the common exonyms before searching.
+# DMI's Solr index stores Danish spellings ("København"), while users and IP
+# geolocation often supply the English name ("Copenhagen") -- which would
+# otherwise match a foreign namesake. Applied only for Danish locations.
 CITY_EXONYMS: dict[str, str] = {
     "copenhagen": "københavn",
     "elsinore": "helsingør",
@@ -482,7 +478,7 @@ def cmd_texts(args: argparse.Namespace) -> None:
 
 def cmd_city_search(args: argparse.Namespace) -> None:
     """Search for a city by name."""
-    city: str = args.city
+    city: str = _resolve_exonym(city=args.city)
     url: str = _city_solr_url(city=city, rows=10)
     data: JsonValue = _request_with_referer(url=url)
     if data is None:
@@ -596,6 +592,14 @@ def cmd_forecast_city(args: argparse.Namespace) -> None:
         else:
             city = "k\u00f8benhavn"
             logger.info("(Could not detect location, defaulting to K\u00f8benhavn)")
+
+    # DMI indexes Danish cities under their Danish names, so translate a known
+    # English exonym (Copenhagen -> K\u00f8benhavn). For an explicitly typed city we
+    # always translate (this is a Danish-centric service); for an auto-detected
+    # location we only translate when it is in Denmark, so a non-DK namesake
+    # (e.g. Copenhagen, US) keeps its reported name.
+    if args.city or detected_cc == "DK":
+        city = _resolve_exonym(city=city)
 
     # When the city was auto-detected, fetch several candidates so we can
     # prefer one in the detected country -- this avoids matching a foreign
@@ -1255,46 +1259,55 @@ def _request_with_referer(url: str) -> JsonValue | None:
         return None
 
 
+def _geo_json(url: str) -> dict:
+    """Fetch and parse JSON from an IP-geolocation endpoint.
+
+    Args:
+        url:
+            Endpoint URL to GET.
+
+    Returns:
+        Parsed JSON object.
+    """
+    req: urllib.request.Request = urllib.request.Request(
+        url=url,
+        headers={"User-Agent": UA},
+    )
+    with urllib.request.urlopen(req, timeout=5) as r:
+        return json.loads(s=r.read().decode("utf-8"))
+
+
 def _geo_locate() -> tuple[str, str] | None:
     """Determine the user's city and country from their IP address.
 
-    Tries ip-api.com first (has a ``countryCode`` field), then ipinfo.io
-    (has a ``country`` field). Only returns a location in a Nordic country
-    (DK, NO, SE, FI); returns None if detection fails or the IP is outside
-    that set.
+    Queries ipinfo.io first (accurate city, ~50k requests/month over HTTPS,
+    no API key), then falls back to ipwho.is (no key, generous free tier).
+    Both report the country, which the caller uses to disambiguate cities
+    that share a name across countries. Works for any country, not just the
+    Nordics.
 
     Returns:
-        Tuple of (lowercase_city, country_code) or None.
+        Tuple of (lowercase_city, ISO country code) or None if both
+        services fail.
     """
-    # --- ip-api.com: has countryCode field ---
+    # --- ipinfo.io: accurate city + `country`, generous keyless tier ---
     try:
-        h: dict[str, str] = {"User-Agent": UA}
-        req: urllib.request.Request = urllib.request.Request(
-            url=("https://ip-api.com/json/?fields=query,city,countryCode"),
-            headers=h,
-        )
-        with urllib.request.urlopen(req, timeout=5) as r:
-            data: dict = json.loads(s=r.read().decode("utf-8"))
+        data: dict = _geo_json(url="https://ipinfo.io/json")
         city: str = data.get("city", "")
-        cc: str = data.get("countryCode", "")
-        if city and cc in NORDIC_COUNTRIES:
+        cc: str = data.get("country", "")
+        if city and cc:
             return city.lower(), cc
     except Exception:  # noqa: BLE001
         pass
 
-    # --- ipinfo.io: has a country field ---
+    # --- ipwho.is: keyless, unlimited free tier, `country_code` field ---
     try:
-        h: dict[str, str] = {"User-Agent": UA}
-        req: urllib.request.Request = urllib.request.Request(
-            url="https://ipinfo.io/json",
-            headers=h,
-        )
-        with urllib.request.urlopen(req, timeout=5) as r:
-            data: dict = json.loads(s=r.read().decode("utf-8"))
-        city = data.get("city", "")
-        cc = data.get("country", "")
-        if city and cc in NORDIC_COUNTRIES:
-            return city.lower(), cc
+        data = _geo_json(url="https://ipwho.is/")
+        if data.get("success"):
+            city = data.get("city", "")
+            cc = data.get("country_code", "")
+            if city and cc:
+                return city.lower(), cc
     except Exception:  # noqa: BLE001
         pass
 
@@ -1420,10 +1433,7 @@ def _normalize_danish(text: str) -> str:
     Returns:
         Normalised lowercase string.
     """
-    lower: str = text.lower().strip()
-    # Translate English exonyms (e.g. "copenhagen" -> "k\u00f8benhavn") so the
-    # query matches DMI's Danish-spelled index instead of a foreign city.
-    lower = CITY_EXONYMS.get(lower, lower)
+    lower: str = text.lower()
     for ascii_form, danish_char in {
         "aa": "\u00e5",
         "oe": "\u00f8",
@@ -1431,6 +1441,23 @@ def _normalize_danish(text: str) -> str:
     }.items():
         lower = lower.replace(ascii_form, danish_char)
     return lower
+
+
+def _resolve_exonym(city: str) -> str:
+    """Translate an English exonym to the Danish name DMI indexes.
+
+    DMI stores Danish city names (e.g. "K\u00f8benhavn"), so an English exonym
+    like "Copenhagen" is mapped to its Danish form before searching. Names
+    not in the map are returned unchanged.
+
+    Args:
+        city:
+            City name as supplied by the user or IP geolocation.
+
+    Returns:
+        The Danish name if the input is a known exonym, else the input.
+    """
+    return CITY_EXONYMS.get(city.lower().strip(), city)
 
 
 def _build_city_query(city: str) -> str:

@@ -52,7 +52,7 @@ Pure Python standard library — no extra dependencies.
 
 When the user asks about the weather, **always use `forecast-city`**. This command handles everything: city lookup, forecast fetching, and pretty-printed output. **Do NOT use `forecast` (national forecast) or `city-forecast` (requires a city ID) for weather questions.**
 
-The `city` argument is **optional**. If the user does not name a city, run the command with **no city argument**. The script will auto-detect the user's city from their IP address (ip-api.com / ipinfo.io), trusting only Nordic countries (DK, NO, SE, FI). If detection fails, it falls back to København.
+The `city` argument is **optional**. If the user does not name a city, run the command with **no city argument**. The CLI auto-detects the user's city and country from their IP address (ipinfo.io, falling back to ipwho.is) and fetches that city's forecast — anywhere in the world, not just Denmark. If detection fails, it falls back to København.
 
 ### The default command (user didn't specify a city)
 
@@ -223,7 +223,8 @@ dmi images --type radar
 - Pure Python standard library — no extra dependencies.
 - City names are normalised automatically: `aa` → `å`, `oe` → `ø`, `ae` → `æ`.
 - English exonyms are translated to the Danish names DMI indexes (e.g.
-  `Copenhagen` → `København`), and IP auto-detection prefers a city in the
-  detected country so a foreign namesake is never picked.
+  `Copenhagen` → `København`) for Danish locations, and IP auto-detection
+  picks the city in the detected country so a foreign namesake (e.g. a US
+  town called Copenhagen) is never used.
 - Formatted output rounds all decimals to at most 2 places.
 - `--today`/`--tomorrow` show a compact single-line format.
