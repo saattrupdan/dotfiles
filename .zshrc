@@ -134,10 +134,20 @@ export OPENBLAS="$(brew --prefix openblas)"
 # Enable MPS fallback
 export PYTORCH_ENABLE_MPS_FALLBACK="1"
 
-# NVM directory
+# NVM directory — lazy-loaded. Sourcing nvm.sh eagerly adds ~600ms to every
+# new shell (it dominates startup). Instead we define lightweight shims for
+# nvm/node/npm/npx; the first time you run one, it sources the real nvm,
+# removes the shims, and re-runs your command. Startup stays snappy.
 export NVM_DIR="$HOME/.config/nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
-[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
+_load_nvm() {
+  unset -f nvm node npm npx
+  [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
+  [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
+}
+for _cmd in nvm node npm npx; do
+  eval "${_cmd}() { _load_nvm; ${_cmd} \"\$@\"; }"
+done
+unset _cmd
 
 
 #=======================
