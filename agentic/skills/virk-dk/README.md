@@ -6,9 +6,15 @@ Reference for navigating virk.dk — the official Danish public-sector portal fo
 
 - Internet access to `virk.dk`
 - MitID Erhverv for logged-in personal pages
-- Python 3.10+ for the included CLI helpers:
-  - `virk_dk_api.py` — anonymous GraphQL gateway (standard library only)
-  - `datacvr_api.py` — CVR Elasticsearch API (requires `DATACVR_USER` / `DATACVR_PASS` env vars; free creds via `cvrselvbetjening@erst.dk`)
+- Python 3.12+ and the `virk` CLI (standard library only), with two subcommand groups:
+  - `virk web ...` — anonymous virk.dk editorial content + GraphQL gateway
+  - `virk cvr ...` — CVR Elasticsearch distribution API (requires `DATACVR_USER` / `DATACVR_PASS` env vars; free creds via `cvrselvbetjening@erst.dk`)
+
+Install the CLI editable with pipx from this skill directory:
+
+```bash
+pipx install -e .
+```
 
 ## Quick Start
 
@@ -29,71 +35,71 @@ open https://virk.dk/nye-regler/
 open https://virk.dk/mit-virk/
 ```
 
-## GraphQL API
+## GraphQL API — `virk web`
 
-The folder includes `virk_dk_api.py`, a CLI for virk.dk's anonymous GraphQL gateway at `https://virk.dk/graphql`. Standard library only.
+`virk web ...` drives virk.dk's anonymous GraphQL gateway at `https://virk.dk/graphql`. Standard library only.
 
 ```bash
 # Run an arbitrary GraphQL query
-python3 virk_dk_api.py query 'query{ ordningCollection(limit:5){ total items{slug overordnetTitel} } }'
+virk web query 'query{ ordningCollection(limit:5){ total items{slug overordnetTitel} } }'
 
 # Fetch an article by slug
-python3 virk_dk_api.py article start-virksomhed
+virk web article start-virksomhed
 
 # Search articles by title (case-insensitive)
-python3 virk_dk_api.py search-articles "virksomhedsregistret" --limit 10
+virk web search-articles "virksomhedsregistret" --limit 10
 
 # List all ordninger
-python3 virk_dk_api.py ordninger --limit 20
+virk web ordninger --limit 20
 
 # List agencies (myndigheder)
-python3 virk_dk_api.py myndigheder --type stat --limit 50
+virk web myndigheder --type stat --limit 50
 
 # Ministry → agency tree
-python3 virk_dk_api.py ministerier
+virk web ministerier
 
 # Mit Virk backend service status
-python3 virk_dk_api.py mv-services
+virk web mv-services
 
 # i18n string bundle
-python3 virk_dk_api.py ressourceset <slug> --locale da
+virk web ressourceset <slug> --locale da
 
 # Resolve a vanity URL
-python3 virk_dk_api.py redirect /mit-virk/
+virk web redirect /mit-virk/
 
 # List URLs from the sitemap
-python3 virk_dk_api.py sitemap --prefix /emner/ --limit 100
+virk web sitemap --prefix /emner/ --limit 100
 ```
 
 All commands accept `--raw` to print the unmodified JSON response. See `SKILL.md` for the full schema cribsheet and verified query examples.
 
-## CVR API
+## CVR API — `virk cvr`
 
-The folder includes `datacvr_api.py`, a CLI for the CVR distribution Elasticsearch endpoint at `http://distribution.virk.dk`. Requires `DATACVR_USER` and `DATACVR_PASS` env vars (free credentials via `cvrselvbetjening@erst.dk`). Standard library only.
+`virk cvr ...` drives the CVR distribution Elasticsearch endpoint at `http://distribution.virk.dk`. Requires `DATACVR_USER` and `DATACVR_PASS` env vars (free credentials via `cvrselvbetjening@erst.dk`). Standard library only.
 
 > **Note**: the distribution endpoint retires end of 2026. New integrations should target [Datafordeler](https://datafordeler.dk/dataoversigt/det-centrale-virksomhedsregister-cvr/).
 
 ```bash
 # Company by CVR number
-python3 datacvr_api.py virksomhed 10103940
+virk cvr virksomhed 10103940
 
 # Extract a specific metadata field
-python3 datacvr_api.py virksomhed 10103940 --field nyesteNavn.navn
+virk cvr virksomhed 10103940 --field nyesteNavn.navn
 
 # Production unit by P-number
-python3 datacvr_api.py p-enhed 1003393495
+virk cvr p-enhed 1003393495
 
 # Participant by enhedsNummer
-python3 datacvr_api.py deltager 4000004072
+virk cvr deltager 4000004072
 
 # Free-text company name search
-python3 datacvr_api.py search "carlsberg" --limit 10
+virk cvr search "carlsberg" --limit 10
 
 # Raw Elasticsearch query from a JSON file
-python3 datacvr_api.py raw cvr-permanent virksomhed query.json
+virk cvr raw cvr-permanent virksomhed query.json
 
 # Document count for an index/type
-python3 datacvr_api.py count cvr-permanent virksomhed
+virk cvr count cvr-permanent virksomhed
 ```
 
 All commands accept `--raw` to print the full JSON response.
@@ -172,6 +178,6 @@ All commands accept `--raw` to print the full JSON response.
 ## Troubleshooting
 
 - **No personal-data API** — Mit Virk data is session-bound to MitID Erhverv. There is no service-account path.
-- **Search returns no results** — `/search/` is SSR-rendered HTML only; there is no JSON autocomplete. Use the included `virk_dk_api.py` for programmatic GraphQL queries.
+- **Search returns no results** — `/search/` is SSR-rendered HTML only; there is no JSON autocomplete. Use `virk web` for programmatic GraphQL queries.
 - **English mirror missing content** — `businessindenmark.virk.dk` is curated; many specialist articles only exist in Danish.
 - **Self-service form doesn't load** — Launcher pages on virk.dk are stubs; the actual filing happens in the agency's own application with its own auth.

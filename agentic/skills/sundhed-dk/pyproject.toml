@@ -1,0 +1,12 @@
+[project]
+name = "sundhed-dk"
+version = "1.0.0"
+description = "CLI for sundhed.dk — Danish national e-health portal (anonymous JSON endpoints)"
+requires-python = ">=3.12"
+
+[project.scripts]
+sundhed = "sundhed_dk.main:main"
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"

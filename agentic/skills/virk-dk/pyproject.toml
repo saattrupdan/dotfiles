@@ -1,0 +1,12 @@
+[project]
+name = "virk-dk"
+version = "1.0.0"
+description = "CLI for virk.dk — Danish business portal (editorial/GraphQL) + CVR distribution API"
+requires-python = ">=3.12"
+
+[project.scripts]
+virk = "virk_dk.main:main"
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"

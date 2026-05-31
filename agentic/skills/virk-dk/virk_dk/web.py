@@ -19,15 +19,16 @@ GQL = BASE + "/graphql"
 UA = "Mozilla/5.0 (virk-dk-api-cli)"
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    sub = parser.add_subparsers(dest="cmd", required=True)
+def add_group(sub: t.Any) -> None:
+    """Register the ``web`` (virk.dk editorial + GraphQL) command group."""
+    g = sub.add_parser("web", help="virk.dk editorial content + GraphQL")
+    gsub = g.add_subparsers(dest="cmd", required=True)
 
     def _add(
         name: str,
         **kwargs: t.Any,
     ) -> argparse.ArgumentParser:
-        p = sub.add_parser(name, **kwargs)
+        p = gsub.add_parser(name, **kwargs)
         p.add_argument(
             "--raw",
             action="store_true",
@@ -150,9 +151,6 @@ def main() -> None:
         help="path prefix to filter (e.g. /emner/)",
     )
     p.set_defaults(func=cmd_sitemap)
-
-    args = parser.parse_args()
-    args.func(args)
 
 
 def _request(
@@ -452,7 +450,3 @@ def cmd_sitemap(args: argparse.Namespace) -> None:
         sys.exit(1)
     for u in locs:
         print(u)
-
-
-if __name__ == "__main__":
-    main()

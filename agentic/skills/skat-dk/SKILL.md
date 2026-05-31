@@ -166,24 +166,72 @@ Single XML file. Each `<url>` entry has `<loc>`, `<lastmod>`, and `<xhtml:link r
 - `vent.skat.dk/?c=skat&e=prod…&t=…` — login-queue redirector, useful as link target only.
 - NextAuth.js `/api/auth/*` — narrow internal flows (eKontakt chat, restskat agreements); not a generic citizen-auth path.
 
-## Helper script
+## CLI
 
-`skat_dk_api.py` wraps Next.js data, Cludo search, and sitemap. Standard library only.
+The `skat` CLI wraps Next.js data, Cludo search, and sitemap. It can be run from
+anywhere, with no need to point at the skill directory:
 
-| Command | Description |
-|---|---|
-| `page borger/fradrag` | Full page JSON (Danish) |
-| `page individuals --locale en-us` | English mirror page |
-| `page borger --field 'pageProps.content.page.childPages[].url'` | Extract path from JSON |
-| `search fradrag` | Cludo search, da |
-| `search "tax deduction" --lang en` | Cludo search, en |
-| `search vurdering --site VURDST` | Search a sister site |
-| `engines` | Print customerId/engineId map |
-| `buildid` | Current Next.js buildId |
-| `sitemap [--prefix /borger/] [--limit N]` | URLs from /sitemap.xml |
-| `settings 13369` | Cludo publicsettings for an engine |
+```bash
+skat <subcommand> [options]
+```
 
-Each subcommand exits non-zero on HTTP error.
+### Prerequisites
+
+Verify the CLI is installed:
+
+```bash
+which skat
+```
+
+If missing, install it editable with pipx (from the skill directory). First make sure pipx itself is available, then install:
+
+```bash
+# Ensure pipx is installed
+which pipx || python3 -m pip install --user pipx
+python3 -m pipx ensurepath
+
+# Install the skat CLI
+pipx install -e <path-to-skat-dk-skill>
+```
+
+After installing, confirm `skat` is on the PATH (you may need to restart the shell so `pipx ensurepath` takes effect):
+
+```bash
+which skat
+```
+
+Pure Python standard library — no extra dependencies. Each subcommand exits
+non-zero on HTTP error; `search` and `engines` support `--raw` for the
+unformatted JSON response.
+
+### Subcommands
+
+```bash
+# Current Next.js buildId
+skat buildid
+
+# Full page JSON model from /_next/data/ (Danish default)
+skat page borger/fradrag
+skat page individuals --locale en-us            # English mirror
+skat page borger --field 'pageProps.content.page.childPages[].url'  # dotted extract
+
+# Cludo search across a skat.dk-family site
+skat search fradrag                             # SKAT / da (default)
+skat search "tax deduction" --lang en           # English engine
+skat search vurdering --site VURDST             # sister site
+skat search fradrag -v                           # also print descriptions
+skat search fradrag --raw                        # raw JSON response
+
+# Cludo public engine settings (no auth)
+skat settings 13369                              # SKAT/da engine
+
+# Print the Cludo customerId / engineId map
+skat engines
+skat engines --raw                               # raw JSON
+
+# Enumerate URLs from /sitemap.xml
+skat sitemap --prefix /borger/ --limit 50
+```
 
 ## What you cannot do
 

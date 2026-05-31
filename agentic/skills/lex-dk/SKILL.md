@@ -171,23 +171,50 @@ Prefer `.json` equivalents. Fall back to HTML when you need fields the JSON omit
 | `GET /.temaside/<slug>` | Curated theme page. |
 | `GET /.recent-activities` | ~400 kB HTML — use JSON form instead. |
 
-## Helper script
+## CLI
 
-`lex_dk_api.py` (in this folder) wraps verified endpoints. Standard library only. **`--host` is a top-level option, must precede subcommands.**
+The `lexdk` CLI wraps verified endpoints — it can be run from anywhere, with no need to point at the skill directory. **`--host` is a top-level option, must precede subcommands.**
+
+### Prerequisites
+
+Verify the CLI is installed:
 
 ```bash
-python3 lex_dk_api.py autocomplete Marie                        # autocomplete
-python3 lex_dk_api.py --host trap.lex.dk autocomplete Aalborg   # subdomain autocomplete
-python3 lex_dk_api.py article Marie_Curie                       # full article JSON
-python3 lex_dk_api.py article-meta Marie_Curie                  # JSON-LD + articleId from HTML
-python3 lex_dk_api.py taxonomy 1648                             # taxonomy node
-python3 lex_dk_api.py recent                                    # edits feed
-python3 lex_dk_api.py define blod                               # dictionary
-python3 lex_dk_api.py announcements                             # banners
-python3 lex_dk_api.py status                                    # health check
-python3 lex_dk_api.py sitemap                                   # list sitemap shards
-python3 lex_dk_api.py urls --shard 1                            # all <loc> URLs in shard 1
-python3 lex_dk_api.py urls --shard 1 --grep Curie               # filter shard URLs
+which lexdk
+```
+
+If missing, install it editable with pipx (from the skill directory). First make sure pipx itself is available, then install:
+
+```bash
+# Ensure pipx is installed
+which pipx || python3 -m pip install --user pipx
+python3 -m pipx ensurepath
+
+# Install the lexdk CLI
+pipx install -e <path-to-lex-dk-skill>
+```
+
+After installing, confirm `lexdk` is on the PATH (you may need to restart the shell so `pipx ensurepath` takes effect):
+
+```bash
+which lexdk
+```
+
+Pure Python standard library — no extra dependencies.
+
+```bash
+lexdk autocomplete Marie                        # autocomplete
+lexdk --host trap.lex.dk autocomplete Aalborg   # subdomain autocomplete
+lexdk article Marie_Curie                       # full article JSON
+lexdk article-meta Marie_Curie                  # JSON-LD + articleId from HTML
+lexdk taxonomy 1648                             # taxonomy node
+lexdk recent                                    # edits feed
+lexdk define blod                               # dictionary
+lexdk announcements                             # banners
+lexdk status                                    # health check
+lexdk sitemap                                   # list sitemap shards
+lexdk urls --shard 1                            # all <loc> URLs in shard 1
+lexdk urls --shard 1 --grep Curie               # filter shard URLs
 ```
 
 Pass `--raw` for raw JSON/XML output. Errors go to stderr, exit non-zero.

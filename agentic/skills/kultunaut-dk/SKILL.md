@@ -8,6 +8,71 @@ last-updated: 2026-05-09
 
 KultuNaut is Denmark's electronic cultural guide ("Den elektroniske kulturguide") — a centralized calendar covering culture, music, theater, exhibitions, sports, adult education, and community activities across Denmark and the Øresund region. 126,000+ events served via Perl CGI.
 
+## CLI
+
+All interaction goes through the `kultunaut` CLI — it can be run from anywhere, with no need to point at the skill directory:
+
+```bash
+kultunaut <events|event|films|rss> [options]
+```
+
+KultuNaut has **no JSON API** — every endpoint returns HTML (the documented "RSS" feed currently redirects to an HTML widget). The CLI fetches those pages and best-effort extracts a readable, machine-friendly list (compact JSON). Parsing is **defensive**: if the expected markup is not found it prints the raw body with a one-line note on stderr. Pass `--raw` to always get the unparsed upstream HTML/XML.
+
+### Prerequisites
+
+Verify the CLI is installed:
+
+```bash
+which kultunaut
+```
+
+If missing, install it editable with pipx (from the skill directory). First make sure pipx itself is available, then install:
+
+```bash
+# Ensure pipx is installed
+which pipx || python3 -m pip install --user pipx
+python3 -m pipx ensurepath
+
+# Install the kultunaut CLI
+pipx install -e <path-to-kultunaut-dk-skill>
+```
+
+After installing, confirm `kultunaut` is on the PATH (you may need to restart the shell so `pipx ensurepath` takes effect):
+
+```bash
+which kultunaut
+```
+
+Pure Python standard library — no extra dependencies.
+
+### Examples
+
+```bash
+# Today's events in Aarhus
+kultunaut events --area "8000 Aarhus C" --periode 1
+
+# Most-popular music events in the capital region this month
+kultunaut events --area "Region Hovedstaden" --periode 30 --genre Musik --order Rating
+
+# A single event's detail by ArrNr
+kultunaut event 19896575
+
+# Cinema films now showing (blank --area = all of Denmark)
+kultunaut films --periode 1
+kultunaut films --area "8000 Aarhus C" --periode 1
+
+# Popular-events feed
+kultunaut rss --order Rating
+
+# English-language pages (code goes after type-nynaut: /perl/arrlist/type-nynaut/UK)
+kultunaut events --area "Hele Danmark" --periode 1 --lang uk
+
+# Raw upstream HTML/XML for any command
+kultunaut events --area "8000 Aarhus C" --periode 1 --raw
+```
+
+Global options on every subcommand: `--raw` (raw upstream body) and `--lang {da,sv,uk,de}` (da=Danish default, sv=Swedish `S`, uk=English `UK`, de=German `D`).
+
 ## URL Structure
 
 Base: `https://www.kultunaut.dk/`

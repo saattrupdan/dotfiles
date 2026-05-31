@@ -15,12 +15,27 @@ KultuNaut is a centralized Danish cultural calendar covering:
 - Community activities (scouts, chess, dogs, literature, crafts)
 - Online events and webinars
 
-## How to Use
+## CLI
 
-1. Read `SKILL.md` for all URL patterns and API parameters.
-2. **Prefer direct HTTP requests** to `/perl/` endpoints over browser automation.
-3. Use `agent-browser` only when JavaScript rendering is required.
+All interaction goes through the `kultunaut` CLI — standard library only, no
+extra dependencies. KultuNaut has no JSON API, so the CLI scrapes the Perl CGI
+HTML pages and emits compact JSON; pass `--raw` for the unparsed body.
+
+```bash
+pipx install -e .          # from this skill directory
+```
+
+```bash
+kultunaut events --area "8000 Aarhus C" --periode 1   # event calendar
+kultunaut event 19896575                              # one event's detail
+kultunaut films --periode 1                           # cinema films now showing
+kultunaut rss --order Rating                          # popular-events feed
+```
+
+Every command accepts `--raw` (raw upstream HTML/XML) and
+`--lang {da,sv,uk,de}` (Danish default, Swedish, English, German).
 
 ## Files
 
 - `SKILL.md` — Complete reference with endpoints, parameters, and navigation guide.
+- `kultunaut_dk/main.py` — the `kultunaut` CLI implementation.

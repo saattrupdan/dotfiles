@@ -10,6 +10,42 @@ Official entrypoint for businesses and advisors dealing with Danish authorities.
 
 All URLs are relative to `https://virk.dk/`. Slugs use URL-encoded Danish letters (`æ`→`%C3%A6`, `ø`→`%C3%B8`, `å`→`%C3%A5`). Trailing `/` is significant: `/emner/Byggeri` 301→`/emner/Byggeri/`.
 
+## CLI
+
+Programmatic access goes through the `virk` CLI — it can be run from anywhere, with no need to point at the skill directory. Two subcommand groups:
+
+```bash
+virk web <command> [options]   # virk.dk editorial content + GraphQL gateway
+virk cvr <command> [options]   # CVR distribution API (Elasticsearch)
+```
+
+### Prerequisites
+
+Verify the CLI is installed:
+
+```bash
+which virk
+```
+
+If missing, install it editable with pipx (from the skill directory). First make sure pipx itself is available, then install:
+
+```bash
+# Ensure pipx is installed
+which pipx || python3 -m pip install --user pipx
+python3 -m pipx ensurepath
+
+# Install the virk CLI
+pipx install -e <path-to-virk-dk-skill>
+```
+
+After installing, confirm `virk` is on the PATH (you may need to restart the shell so `pipx ensurepath` takes effect):
+
+```bash
+which virk
+```
+
+Pure Python standard library — no extra dependencies. The `web` group is anonymous; the `cvr` group reads credentials from the `DATACVR_USER` / `DATACVR_PASS` env vars (free creds via `cvrselvbetjening@erst.dk`). Most commands support `--raw` for unformatted JSON.
+
 ## 1. Top-level sections
 
 Front page is a grid of 9 "emner" (themes); each has 4–12 sub-themes.
@@ -188,22 +224,22 @@ query redirects($q: String!, $realm: String!) {
 
 **Mutations** (auth only): `mvSkjulInformation(service, uuid, identitetType, skjul)` — hide dashboard item. `updateMinisterier(ministerier)` — editorial mutation.
 
-## Helper script
+## CLI usage — `virk web`
 
-`virk_dk_api.py` (standard library only):
+Anonymous GraphQL gateway (standard library only):
 
 ```bash
-python3 virk_dk_api.py query '<graphql>'
-python3 virk_dk_api.py article <slug>
-python3 virk_dk_api.py search-articles <text> [--limit N]
-python3 virk_dk_api.py ordninger [--limit N]
-python3 virk_dk_api.py myndigheder [--type stat|kommune|region] [--limit N]
-python3 virk_dk_api.py ministerier
-python3 virk_dk_api.py mv-services
-python3 virk_dk_api.py ressourceset <slug> [--locale da]
-python3 virk_dk_api.py redirect <vanity-url> [--realm virk]
-python3 virk_dk_api.py sitemap [--limit N] [--prefix /emner/]
-python3 virk_dk_api.py raw <file>
+virk web query '<graphql>'
+virk web article <slug>
+virk web search-articles <text> [--limit N]
+virk web ordninger [--limit N]
+virk web myndigheder [--type stat|kommune|region] [--limit N]
+virk web ministerier
+virk web mv-services
+virk web ressourceset <slug> [--locale da]
+virk web redirect <vanity-url> [--realm virk]
+virk web sitemap [--limit N] [--prefix /emner/]
+virk web raw <file>
 ```
 
 ---
@@ -285,16 +321,16 @@ Pagination: `from + size <= 3000`. Beyond that, `?scroll=1m`. For large exports 
 - No free unlimited bulk export (throttled at 3000 hits/query).
 - No SLA after end-2026 — plan migration to Datafordeler.
 
-## 3. Helper script
+## 3. CLI usage — `virk cvr`
 
-`datacvr_api.py` (expects `DATACVR_USER` / `DATACVR_PASS` env vars):
+Expects `DATACVR_USER` / `DATACVR_PASS` env vars:
 
 ```bash
-python3 datacvr_api.py virksomhed 10103940
-python3 datacvr_api.py virksomhed 10103940 --field nyesteNavn.navn
-python3 datacvr_api.py p-enhed 1003393495
-python3 datacvr_api.py deltager 4000004072
-python3 datacvr_api.py search "carlsberg" --limit 10
-python3 datacvr_api.py raw cvr-permanent virksomhed query.json
-python3 datacvr_api.py count cvr-permanent virksomhed
+virk cvr virksomhed 10103940
+virk cvr virksomhed 10103940 --field nyesteNavn.navn
+virk cvr p-enhed 1003393495
+virk cvr deltager 4000004072
+virk cvr search "carlsberg" --limit 10
+virk cvr raw cvr-permanent virksomhed query.json
+virk cvr count cvr-permanent virksomhed
 ```

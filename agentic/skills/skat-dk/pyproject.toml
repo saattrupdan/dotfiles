@@ -1,0 +1,12 @@
+[project]
+name = "skat-dk"
+version = "1.0.0"
+description = "CLI for skat.dk — Danish Tax Agency citizen portal (Next.js data, Cludo search, sitemap)"
+requires-python = ">=3.12"
+
+[project.scripts]
+skat = "skat_dk.main:main"
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"

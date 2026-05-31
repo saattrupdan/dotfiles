@@ -1,0 +1,12 @@
+[project]
+name = "lex-dk"
+version = "1.0.0"
+description = "CLI for lex.dk — Denmark's national encyclopedia (anonymous read endpoints)"
+requires-python = ">=3.12"
+
+[project.scripts]
+lexdk = "lex_dk.main:main"
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"

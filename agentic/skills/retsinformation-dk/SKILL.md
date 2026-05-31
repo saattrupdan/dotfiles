@@ -62,6 +62,67 @@ All endpoints return JSON, are anonymous, and use `GET`. Base URL: `https://www.
 
 `https://www.retsinformation.dk/sitemap.xml` — Single XML with `<url>` entries for all pages. Use to enumerate all URLs.
 
+## CLI
+
+Every endpoint above is wrapped by the `retsinformation` CLI, which can be run from anywhere — no need to point at the skill directory.
+
+### Prerequisites
+
+Verify the CLI is installed:
+
+```bash
+which retsinformation
+```
+
+If missing, install it editable with pipx (from the skill directory). First make sure pipx itself is available, then install:
+
+```bash
+# Ensure pipx is installed
+which pipx || python3 -m pip install --user pipx
+python3 -m pipx ensurepath
+
+# Install the retsinformation CLI
+pipx install -e <path-to-retsinformation-dk-skill>
+```
+
+After installing, confirm `retsinformation` is on the PATH (you may need to restart the shell so `pipx ensurepath` takes effect):
+
+```bash
+which retsinformation
+```
+
+Pure Python standard library — no extra dependencies. Every command supports `--raw` for the unformatted JSON/XML response.
+
+### Examples
+
+```bash
+# Filter/register trees
+retsinformation law-registers                          # law register tree (ministry/topic)
+retsinformation fob-tags                                # subject/tag tree
+retsinformation case-statuses                           # parliamentary case statuses
+retsinformation doc-types                               # document type filter (Regler, Afgørelser)
+retsinformation law-registry --filter miljø --sort --limit 20   # A–Z law registry
+retsinformation ressort                                 # list of ministries
+retsinformation fob-ressort                             # ministries under the Ombudsman
+
+# ELI routing & documentation
+retsinformation eli-routing                             # URL param key -> documentTypeId
+retsinformation authority-lists                         # ELI authority value summary
+retsinformation authority-lists type_document           # one authority's values
+retsinformation uri-templates                           # ELI URI templates
+retsinformation metadata-types                          # ELI ontology metadata properties
+
+# Documents (POST by ELI path; --metadata/--timeline take the numeric internal ID)
+retsinformation document eli/lta/2026/480
+retsinformation document eli/accn/A20240001
+retsinformation document 256418 --metadata
+retsinformation document 256418 --timeline
+
+# Maintenance & sitemap
+retsinformation maintenance                             # active maintenance notices
+retsinformation sitemap --filter eli --limit 50         # enumerate URLs from sitemap.xml
+```
+
 ## Key limits
 
 - No public search API — search is a client-side form posting to extremesearch.

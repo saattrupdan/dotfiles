@@ -4,7 +4,7 @@ Reference for navigating sundhed.dk — the Danish national e-health portal. Cov
 
 ## Requirements
 
-- `sundhed_dk_api.py` CLI helper — standard library only
+- `sundhed` CLI — standard library only (`pipx install -e .`)
 - Internet access to `www.sundhed.dk`
 - Fronted by `queue-it.net` at peak load — at-scale automation may be queued
 
@@ -22,19 +22,19 @@ open https://www.sundhed.dk/sundhedsfaglig/
 open https://www.sundhed.dk/sundhedsfaglig/laegehaandbogen/dli-medicin/
 
 # CLI: version, login, settings
-python3 sundhed_dk_api.py version
-python3 sundhed_dk_api.py login
-python3 sundhed_dk_api.py settings
+sundhed version
+sundhed login
+sundhed settings
 
 # CLI: menus, filters, org types
-python3 sundhed_dk_api.py menu --section borger --kind top
-python3 sundhed_dk_api.py filters --section borger
-python3 sundhed_dk_api.py orgtypes
+sundhed menu --section borger --kind top
+sundhed filters --section borger
+sundhed orgtypes
 
 # CLI: autocomplete, sitemap
-python3 sundhed_dk_api.py autocomplete blod
-python3 sundhed_dk_api.py sitemap
-python3 sundhed_dk_api.py urls --shard artikel
+sundhed autocomplete blod
+sundhed sitemap
+sundhed urls --shard artikel
 ```
 
 ## Navigation Reference

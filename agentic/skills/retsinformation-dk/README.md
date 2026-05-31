@@ -4,7 +4,7 @@ Reference for navigating retsinformation.dk — Denmark's central legal informat
 
 ## Requirements
 
-- `retsinformation_dk_api.py` CLI helper — standard library only
+- `retsinformation` CLI — standard library only (`pipx install -e .`)
 - Internet access to `www.retsinformation.dk`
 - No login required; all endpoints are anonymous
 
@@ -22,29 +22,29 @@ open https://www.retsinformation.dk/eli/accn/A20240001
 open https://www.retsinformation.dk/eli/ft/A20240001
 
 # CLI: law register tree
-python3 retsinformation_dk_api.py law-registers
+retsinformation law-registers
 
 # CLI: document types (Regler, Afgørelser)
-python3 retsinformation_dk_api.py doc-types
+retsinformation doc-types
 
 # CLI: list ministries
-python3 retsinformation_dk_api.py ressort
+retsinformation ressort
 
 # CLI: ELI routing table
-python3 retsinformation_dk_api.py eli-routing
+retsinformation eli-routing
 
 # CLI: document by ELI path (POST)
-python3 retsinformation_dk_api.py document eli/lta/2026/480
-python3 retsinformation_dk_api.py document eli/accn/A20240001
+retsinformation document eli/lta/2026/480
+retsinformation document eli/accn/A20240001
 
 # CLI: document metadata (requires numeric internal ID from document response)
-python3 retsinformation_dk_api.py document 256418 --metadata
+retsinformation document 256418 --metadata
 
 # CLI: document timeline (requires numeric internal ID from document response)
-python3 retsinformation_dk_api.py document 256418 --timeline
+retsinformation document 256418 --timeline
 
 # CLI: ELI authority values
-python3 retsinformation_dk_api.py authority-lists type_document
+retsinformation authority-lists type_document
 ```
 
 ## Navigation Reference

@@ -191,25 +191,56 @@ JSON list of sitemap shard URLs.
 ### `GET /api/alertbanners/`
 Site-wide outage banners keyed by root page.
 
-## Helper script
+## CLI
 
-`sundhed_dk_api.py` (same folder) wraps verified endpoints. Standard library only.
+The `sundhed` CLI wraps the verified anonymous endpoints. It can be run from anywhere, with no need to point at the skill directory:
 
 ```bash
-python3 sundhed_dk_api.py version                                # /api/version
-python3 sundhed_dk_api.py login                                  # login state
-python3 sundhed_dk_api.py keepalive [timeleft|renew]             # session lifetime
-python3 sundhed_dk_api.py settings                               # startup settings as key=value
-python3 sundhed_dk_api.py setting PortalV2WebHost                # single app setting
-python3 sundhed_dk_api.py menu --section borger --kind top       # top|footer|icon menu
-python3 sundhed_dk_api.py filters --section borger               # regions + municipalities
-python3 sundhed_dk_api.py orgtypes                               # provider catalogue
-python3 sundhed_dk_api.py pagetheme --path /borger/              # page themes
-python3 sundhed_dk_api.py alerts                                 # active banners
-python3 sundhed_dk_api.py plugins                                # app-plugin registry
-python3 sundhed_dk_api.py autocomplete blod                      # medical dictionary
-python3 sundhed_dk_api.py sitemap                                # sitemap shards
-python3 sundhed_dk_api.py urls --shard artikel                   # URLs in a shard
+sundhed <command> [options]
+```
+
+### Prerequisites
+
+Verify the CLI is installed:
+
+```bash
+which sundhed
+```
+
+If missing, install it editable with pipx (from the skill directory). First make sure pipx itself is available, then install:
+
+```bash
+# Ensure pipx is installed
+which pipx || python3 -m pip install --user pipx
+python3 -m pipx ensurepath
+
+# Install the sundhed CLI
+pipx install -e <path-to-sundhed-dk-skill>
+```
+
+After installing, confirm `sundhed` is on the PATH (you may need to restart the shell so `pipx ensurepath` takes effect):
+
+```bash
+which sundhed
+```
+
+Pure Python standard library — no extra dependencies.
+
+```bash
+sundhed version                                # /api/version
+sundhed login                                  # login state
+sundhed keepalive [timeleft|renew]             # session lifetime
+sundhed settings                               # startup settings as key=value
+sundhed setting PortalV2WebHost                # single app setting
+sundhed menu --section borger --kind top       # top|footer|icon menu
+sundhed filters --section borger               # regions + municipalities
+sundhed orgtypes                               # provider catalogue
+sundhed pagetheme --path /borger/              # page themes
+sundhed alerts                                 # active banners
+sundhed plugins                                # app-plugin registry
+sundhed autocomplete blod                      # medical dictionary
+sundhed sitemap                                # sitemap shards
+sundhed urls --shard artikel                   # URLs in a shard
 ```
 
 Append `--raw` to skip the formatter and print raw JSON. Errors go to stderr (non-zero exit).

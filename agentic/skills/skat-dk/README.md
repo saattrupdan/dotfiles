@@ -4,7 +4,7 @@ Reference for navigating skat.dk — the Danish Tax Agency's public citizen ("Bo
 
 ## Requirements
 
-- Python 3 (stdlib only) for `skat_dk_api.py`
+- `skat` CLI — standard library only (`pipx install -e .`)
 - Internet access to `skat.dk`
 - MitID or TastSelv-kode for personal self-service
 
@@ -74,6 +74,6 @@ open https://vent.skat.dk/?c=skat&e=prod250303login&t=https%3A%2F%2Fwww.tastselv
 ## Troubleshooting
 
 - **No personal-data API** — All citizen-specific data lives in `tastselv.skat.dk` behind MitID login. There is no service-account path.
-- **Search returns empty** — `/soeg` is client-side only (Cludo widget). Use the Cludo API via `skat_dk_api.py search` for programmatic search.
+- **Search returns empty** — `/soeg` is client-side only (Cludo widget). Use the Cludo API via `skat search` for programmatic search.
 - **Login URLs broken** — The `vent.skat.dk/?…&e=prodNNNNNN…` campaign IDs rotate every few months. Re-fetch the home page for fresh URLs.
 - **Translation unavailable** — Not every article has every language translation. Check `pageLanguageVersions` in the Next.js data feed.

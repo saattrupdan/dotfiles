@@ -21,15 +21,19 @@ BASE = "http://distribution.virk.dk"
 UA = "datacvr-api-cli"
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    sub = parser.add_subparsers(dest="cmd", required=True)
+def add_group(sub: t.Any) -> None:
+    """Register the ``cvr`` (CVR distribution API) command group."""
+    g = sub.add_parser(
+        "cvr",
+        help="CVR distribution API (Elasticsearch; needs DATACVR_USER/DATACVR_PASS)",
+    )
+    gsub = g.add_subparsers(dest="cmd", required=True)
 
     def _add(
         name: str,
         **kwargs: t.Any,
     ) -> argparse.ArgumentParser:
-        p = sub.add_parser(name, **kwargs)
+        p = gsub.add_parser(name, **kwargs)
         p.add_argument(
             "--raw",
             action="store_true",
@@ -109,9 +113,6 @@ def main() -> None:
     p.add_argument("index")
     p.add_argument("type")
     p.set_defaults(func=cmd_count)
-
-    args = parser.parse_args()
-    args.func(args)
 
 
 def _auth_header() -> dict[str, str]:
@@ -315,7 +316,3 @@ def cmd_count(args: argparse.Namespace) -> None:
     if isinstance(total, dict):
         total = total.get("value")
     print(total if total is not None else "?")
-
-
-if __name__ == "__main__":
-    main()
