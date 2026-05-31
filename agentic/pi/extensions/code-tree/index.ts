@@ -26,12 +26,12 @@ const Params = Type.Object({
 	path: Type.Optional(
 		Type.String({
 			description:
-				"Subdirectory to show (relative to repo root or absolute). Default: repo root.",
+				"Subdirectory to show (relative to cwd or absolute). Default: cwd.",
 		}),
 	),
 	depth: Type.Optional(
 		Type.Integer({
-			description: `How many levels of directories to show (1-${MAX_DEPTH}). Default ${DEFAULT_DEPTH}.`,
+			description: `How many levels below the starting path to show (1-${MAX_DEPTH}). Default ${DEFAULT_DEPTH}.`,
 			minimum: 1,
 			maximum: MAX_DEPTH,
 			default: DEFAULT_DEPTH,
@@ -40,8 +40,8 @@ const Params = Type.Object({
 	include_files: Type.Optional(
 		Type.Boolean({
 			description:
-				"If true, also list individual files inside each directory at the deepest shown level. Default false (directories only with file counts).",
-			default: false,
+				"If false, show directories only with recursive file counts. Default true (include files at each level).",
+			default: true,
 		}),
 	),
 });
@@ -207,7 +207,7 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			const depth = params.depth ?? DEFAULT_DEPTH;
-			const lines = renderTree(subtree, depth, params.include_files ?? false);
+			const lines = renderTree(subtree, depth, params.include_files ?? true);
 			const truncated = lines.length > MAX_LINES;
 			const view = truncated ? lines.slice(0, MAX_LINES) : lines;
 			const header = `# tree ${relToRoot || "."} (${subtree.fileCountRecursive} files, depth ${depth})`;
