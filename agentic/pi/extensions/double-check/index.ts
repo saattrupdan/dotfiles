@@ -1,12 +1,17 @@
 /**
- * Nudge the agent to double-check its work before it goes idle.
+ * Nudge the agent to keep going when it stops mid-task.
  *
- * Agents have a habit of stopping a beat too early — they answer most of a
- * request, then end the turn with a step still unfinished, a test unrun, or an
- * edge case unhandled. This extension catches that: when the orchestrator's
- * agent loop ends normally, it injects one hidden prompt asking the agent to
- * re-read the original request, verify nothing was missed, and finish the job
- * if something was. The agent gets exactly one extra shot per user turn.
+ * Agents — especially local ones — sometimes end a turn without actually
+ * finishing: the loop stops right after a tool call it never acted on, or after
+ * a bare thinking block with no concluding response. A genuine turn ends with a
+ * real text answer; those content-less stops are the failure this catches.
+ *
+ * So the nudge is *conditional* on the shape of the final message. When the
+ * orchestrator's loop ends with a regular text response, the agent meant to
+ * stop — we leave it alone. When it ends on a tool call or a thinking block
+ * with no concluding text, we inject one hidden prompt asking the agent to
+ * re-read the request, verify nothing was missed, and finish the job. The agent
+ * gets exactly one extra shot per user turn.
  *
  * Two things stay out of the transcript so the meta-exchange is invisible:
  *
@@ -32,15 +37,6 @@
  * Orchestrator-only: a subagent reports back to its parent rather than going
  * idle in front of the user, so a self-nudge there is just wasted tokens — and
  * the parent's own run already brackets the subagent's work.
- *
- * Thinking is suppressed for the check turn: a bookkeeping pass over work the
- * agent just did doesn't need reasoning tokens, and skipping them keeps the
- * nudge cheap and fast. We can't lower the thinking *level* — the local vLLM
- * models are `openai-completions` with no reasoning flag, so Pi's thinking
- * level never reaches them. Instead we set `PI_DISABLE_THINKING=1` for the
- * duration of the turn; the `vllm-thinking` extension honours that flag and
- * injects `thinking_token_budget: 0` into the request. If `vllm-thinking` isn't
- * loaded the flag is simply inert — no harm.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -59,15 +55,13 @@ interface MessageLike {
 
 const CUSTOM_TYPE = "double-check:nudge";
 
-/** Generic "skip reasoning for the current request" signal, honoured by vllm-thinking. */
-const DISABLE_THINKING_ENV = "PI_DISABLE_THINKING";
-
 /** The hidden nudge. Kept terse — it's prepended to a full context window. */
 const PROMPT =
-	"Before this turn ends: re-read the original request and check your work against it. " +
-	"Did you actually finish everything that was asked — every step, every file, every edge " +
-	"case — or did you stop early? Look for unfinished steps, TODOs you left behind, checks or " +
-	"tests you meant to run, and claims you haven't verified.\n\n" +
+	"Your last turn ended on a tool call or a thinking step rather than a finished response — " +
+	"it looks like you may have stopped mid-task. Re-read the original request and check your " +
+	"work against it: did you finish everything that was asked, or stop early? Look for " +
+	"unfinished steps, pending tool calls you never acted on, checks or tests you meant to run, " +
+	"and claims you haven't verified.\n\n" +
 	"If anything is missing or incomplete, finish it now without asking. If — and only if — the " +
 	"work is genuinely complete, reply with exactly the single word `done` and nothing else.\n\n" +
 	"(This is an automated self-check, not a message from the user.)";
@@ -78,18 +72,6 @@ let armed = false;
 let checking = false;
 /** User-facing kill switch for the session (`/double-check off`). Defaults on. */
 let sessionEnabled = true;
-
-/** Suppress reasoning for the check turn; vllm-thinking turns this into budget 0. */
-function disableThinking(): void {
-	process.env[DISABLE_THINKING_ENV] = "1";
-}
-
-/** Restore normal thinking once the check turn is over (or never started). */
-function restoreThinking(): void {
-	if (process.env[DISABLE_THINKING_ENV] !== undefined) {
-		delete process.env[DISABLE_THINKING_ENV];
-	}
-}
 
 /** Flatten an assistant message's text blocks into one string. */
 function messageText(message: MessageLike): string {
@@ -108,16 +90,36 @@ function isBareDone(message: MessageLike): boolean {
 	return text === "done" || text === "`done`";
 }
 
-/** Did the just-ended loop finish cleanly (vs. error / user abort)? */
-function endedCleanly(messages: readonly MessageLike[]): boolean {
+/** The most recent assistant message in the loop's transcript, if any. */
+function lastAssistant(messages: readonly MessageLike[]): MessageLike | undefined {
 	for (let i = messages.length - 1; i >= 0; i--) {
-		const m = messages[i];
-		if (m?.role === "assistant") {
-			return m.stopReason !== "error" && m.stopReason !== "aborted";
-		}
+		if (messages[i]?.role === "assistant") return messages[i];
 	}
-	// No assistant message at all → nothing was really done; don't nudge.
-	return false;
+	return undefined;
+}
+
+/**
+ * Should we nudge? Only when the run ended *mid-task* — i.e. the final
+ * assistant message is not a regular text response. That means it ended on a
+ * tool call it never acted on, or on a thinking block with no concluding text.
+ * A real text answer (the agent deliberately wrapping up) is left alone, as are
+ * errored / user-aborted runs and runs with no assistant output at all.
+ */
+function endedMidTask(messages: readonly MessageLike[]): boolean {
+	const m = lastAssistant(messages);
+	if (!m) return false;
+	if (m.stopReason === "error" || m.stopReason === "aborted") return false;
+
+	const content = m.content;
+	if (typeof content === "string") {
+		// Plain-text final message → regular response, no nudge.
+		return content.trim().length === 0;
+	}
+	if (!Array.isArray(content)) return true;
+
+	const endedOnToolCall = content.some((c) => c?.type === "toolCall");
+	const hasConcludingText = content.some((c) => c?.type === "text" && (c.text ?? "").trim().length > 0);
+	return endedOnToolCall || !hasConcludingText;
 }
 
 export default function (pi: ExtensionAPI) {
@@ -126,20 +128,15 @@ export default function (pi: ExtensionAPI) {
 	if (process.env.PI_SUBAGENT_CHILD === "1") return;
 
 	// Arm on the start of a genuine run; the injected loop's own start is
-	// skipped so it can never re-arm itself. A genuine run also clears any
-	// thinking-disable flag that somehow leaked from a prior interrupted check.
+	// skipped so it can never re-arm itself.
 	pi.on("agent_start", async () => {
-		if (!checking) {
-			armed = true;
-			restoreThinking();
-		}
+		if (!checking) armed = true;
 	});
 
 	pi.on("agent_end", async (event, ctx: ExtensionContext) => {
-		// End of the injected loop: clear the flags and stop. Never re-inject.
+		// End of the injected loop: clear the flag and stop. Never re-inject.
 		if (checking) {
 			checking = false;
-			restoreThinking();
 			return;
 		}
 
@@ -148,23 +145,20 @@ export default function (pi: ExtensionAPI) {
 		armed = false;
 
 		if (!sessionEnabled) return;
-		if (!endedCleanly((event.messages ?? []) as MessageLike[])) return;
+		// Only nudge when the run stopped mid-task (ended on a tool call or a
+		// bare thinking block), not when it gave a real answer.
+		if (!endedMidTask((event.messages ?? []) as MessageLike[])) return;
 
 		// Enter the double-check loop. Set the flag now so the injected loop's
 		// agent_start (which fires before the deferred send completes) is
 		// recognised and doesn't re-arm.
 		checking = true;
 
-		// Suppress reasoning for the upcoming check turn (see header). Set before
-		// the trigger so the turn's very first provider request already sees it.
-		disableThinking();
-
 		// Defer the trigger so the current agent_end fully settles and the
 		// session is idle before we start a fresh loop from underneath it.
 		setImmediate(() => {
 			if (!ctx.isIdle()) {
 				checking = false;
-				restoreThinking();
 				return;
 			}
 			pi.sendMessage(
@@ -206,7 +200,7 @@ export default function (pi: ExtensionAPI) {
 			pi.sendMessage({
 				customType: "double-check:status",
 				content: sessionEnabled
-					? "Double-check: armed — the agent self-reviews once before going idle."
+					? "Double-check: armed — the agent gets one nudge to continue if it stops mid-task."
 					: "Double-check: off for this session (`/double-check on` to re-arm).",
 				display: true,
 			});
