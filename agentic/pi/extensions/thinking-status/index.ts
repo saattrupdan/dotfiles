@@ -33,12 +33,29 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-// Tool name -> footer label. Unmapped tools fall back to pi's default.
+// Tool name -> footer label. Unmapped tools fall back to pi's default "Working...".
 const TOOL_LABELS: Record<string, string> = {
+	// built-in tools
 	read: "Reading...",
 	write: "Writing...",
 	edit: "Editing...",
 	bash: "Bashing...",
+	ls: "Listing...",
+	grep: "Grepping...",
+	find: "Finding...",
+	// extension tools
+	search: "Searching...",
+	code_tree: "Mapping...",
+	skill: "Upskilling...",
+	question: "Questioning...",
+	web_browse: "Browsing...",
+	web_search: "Googling...",
+	subagent: "Delegating...",
+	memory_index: "Reminiscing...",
+	memory_read: "Recalling...",
+	memory_save: "Memorising...",
+	memory_delete: "Forgetting...",
+	memory_suggest: "Pondering...",
 };
 
 export default function (pi: ExtensionAPI) {
