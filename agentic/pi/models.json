@@ -17,7 +17,7 @@
       "apiKey": "sparkie",
       "models": [
         {
-          "id": "AEON-7/Qwen3.6-35B-A3B-heretic-NVFP4",
+          "id": "Intel/Qwen3.6-35B-A3B-int4-mixed-AutoRound",
           "contextWindow": 262144,
           "thinkingTokenBudget": 2048
         }
