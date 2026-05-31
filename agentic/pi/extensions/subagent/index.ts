@@ -365,6 +365,16 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 	return { command: "pi", args };
 }
 
+interface CurrentModel {
+	provider: string;
+	id: string;
+}
+
+function modelToCliPattern(model: CurrentModel | undefined): string | undefined {
+	if (!model) return undefined;
+	return `${model.provider}/${model.id}`;
+}
+
 type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
 
 /**
@@ -388,6 +398,7 @@ async function runSingleAgent(
 	onUpdate: OnUpdateCallback | undefined,
 	makeDetails: (results: SingleResult[]) => SubagentDetails,
 	fulfillQuestion: QuestionFulfiller | undefined,
+	sessionModel: string | undefined,
 	taskSkills?: string[],
 ): Promise<SingleResult> {
 	const agent = agents.find((a) => a.name === agentName);
@@ -438,7 +449,8 @@ async function runSingleAgent(
 	}
 
 	const args: string[] = ["--mode", "json", "-p", "--no-session"];
-	if (agent.model) args.push("--model", agent.model);
+	const childModel = agent.model ?? sessionModel;
+	if (childModel) args.push("--model", childModel);
 	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
 
 	// Skill scoping.
@@ -514,7 +526,7 @@ async function runSingleAgent(
 		messages: [],
 		stderr: "",
 		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
-		model: agent.model,
+		model: childModel,
 		step,
 		worktreePath: worktreeHandle?.worktreePath,
 		worktreeBranch: worktreeHandle?.branchName,
@@ -808,6 +820,7 @@ export default function (pi: ExtensionAPI) {
 			const discovery = discoverAgents(ctx.cwd, agentScope);
 			const agents = discovery.agents;
 			const confirmProjectAgents = params.confirmProjectAgents ?? true;
+			const sessionModel = modelToCliPattern(ctx.model);
 
 			// Builds the per-call question fulfiller used when a child subagent
 			// emits a PI_QUESTION_REQUEST: defers to ctx.ui in the orchestrator,
@@ -901,6 +914,7 @@ export default function (pi: ExtensionAPI) {
 						chainUpdate,
 						makeDetails("chain"),
 						fulfillQuestion,
+						sessionModel,
 						step.skills,
 					);
 					results.push(result);
@@ -981,6 +995,7 @@ export default function (pi: ExtensionAPI) {
 						},
 						makeDetails("parallel"),
 						fulfillQuestion,
+						sessionModel,
 						t.skills,
 					);
 					allResults[index] = result;
@@ -1019,6 +1034,7 @@ export default function (pi: ExtensionAPI) {
 					onUpdate,
 					makeDetails("single"),
 					fulfillQuestion,
+					sessionModel,
 					params.skills,
 				);
 				const isError = isFailedResult(result);
