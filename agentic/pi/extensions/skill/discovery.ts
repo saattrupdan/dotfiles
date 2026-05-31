@@ -18,10 +18,10 @@ function toStringArray(value: unknown): string[] {
 			return trimmed
 				.slice(1, -1)
 				.split(",")
-				.map((v) => v.trim().replace(/^['\"]|['\"]$/g, ""))
+				.map((v) => v.trim().replace(/^['"]|['"]$/g, ""))
 				.filter(Boolean);
 		}
-		return [trimmed.replace(/^['\"]|['\"]$/g, "")].filter(Boolean);
+		return [trimmed.replace(/^['"]|['"]$/g, "")].filter(Boolean);
 	}
 	return [];
 }
