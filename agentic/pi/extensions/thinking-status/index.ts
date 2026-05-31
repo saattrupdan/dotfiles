@@ -47,7 +47,7 @@ const TOOL_LABELS: Record<string, string> = {
 	question: "Questioning...",
 	web_browse: "Browsing...",
 	web_search: "Googling...",
-	subagent: "Delegating...",
+	subagent: "Whipping the subagents...",
 	memory_index: "Reminiscing...",
 	memory_read: "Recalling...",
 	memory_save: "Memorising...",
