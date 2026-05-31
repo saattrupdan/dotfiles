@@ -1,6 +1,6 @@
 ---
 name: dmi-dk
-description: DMI (Danmarks Meteorologiske Institut) weather data and forecasts. Use for querying Denmark/Greenland weather, radar-satellite images, sea conditions, warnings, and tide tables.
+description: DMI (Danmarks Meteorologiske Institut) weather data and forecasts. Use to get weather forecasts, radar-satellite images, sea conditions, warnings, and tide tables.
 last-updated: 2026-05-09
 ---
 
