@@ -1,22 +1,24 @@
 ---
 name: kultunaut-dk
 description: KultuNaut.dk — Denmark's electronic cultural guide. Search events by genre, place, and date via Perl CGI endpoints returning HTML. Use when browsing Danish cultural events, cinema films, adult education courses, or embedding a KultuNaut calendar widget.
-last-updated: 2026-05-09
+last-updated: 2026-05-31
 ---
 
 # KultuNaut.dk Skill
 
-KultuNaut is Denmark's electronic cultural guide ("Den elektroniske kulturguide") — a centralized calendar covering culture, music, theater, exhibitions, sports, adult education, and community activities across Denmark and the Øresund region. 126,000+ events served via Perl CGI.
+KultuNaut is Denmark's electronic cultural guide ("Den elektroniske kulturguide") — a centralized calendar covering culture, music, theater, exhibitions, sports, adult education, and community activities across Denmark and the Øresund region. 126,000+ events, served by a Perl CGI backend with **no JSON API** (every endpoint returns HTML; the documented "RSS" feed currently redirects to an HTML widget).
 
-## CLI
+## Use the `kultunaut` CLI
 
-All interaction goes through the `kultunaut` CLI — it can be run from anywhere, with no need to point at the skill directory:
+**Always go through the `kultunaut` CLI** to search events, get event details, list films, or read the feed. The CLI fetches the upstream pages, best-effort extracts the data, and prints **JSON** — so you do **not** construct the Perl-CGI URLs or scrape the site by hand. (The raw endpoints and URL conventions are documented at the end as a fallback, for the rare case the CLI doesn't expose what you need.)
+
+The CLI runs from anywhere — no need to point at the skill directory:
 
 ```bash
 kultunaut <events|event|films|rss> [options]
 ```
 
-KultuNaut has **no JSON API** — every endpoint returns HTML (the documented "RSS" feed currently redirects to an HTML widget). The CLI fetches those pages and best-effort extracts a readable, machine-friendly list (compact JSON). Parsing is **defensive**: if the expected markup is not found it prints the raw body with a one-line note on stderr. Pass `--raw` to always get the unparsed upstream HTML/XML.
+Parsing is **defensive**: if the expected markup is not found, the CLI prints the raw body with a one-line note on stderr. Pass `--raw` on any command to always get the unparsed upstream HTML/XML instead of JSON. Pure Python standard library — no extra dependencies.
 
 ### Prerequisites
 
@@ -43,7 +45,32 @@ After installing, confirm `kultunaut` is on the PATH (you may need to restart th
 which kultunaut
 ```
 
-Pure Python standard library — no extra dependencies.
+### Command reference
+
+| Command | Purpose |
+|---------|---------|
+| `kultunaut events [opts]` | Search the event calendar; prints a JSON list of events (arrnr, title, genre, datetime, venue, url). |
+| `kultunaut event <ArrNr>` | Fetch one event's detail (title + description) by its `ArrNr`. |
+| `kultunaut films [opts]` | List cinema films now showing (title + cinema/series `stednr`). |
+| `kultunaut rss [opts]` | Read the popular-events feed (title/link/description, falling back to event cards). |
+
+**`events` options:**
+
+| Option | Maps to | Values |
+|--------|---------|--------|
+| `--area` | `Area` | `"8000 Aarhus C"`, `"Region Hovedstaden"`, `"Hele Danmark"` |
+| `--periode` | `periode` | `1` = today/current, `30` = upcoming month |
+| `--genre` | `Genre` | `Musik`, `Jazz`, `Rock/Pop`, `Skuespil`, `Udstilling`, `Familiefilm`, `Workshop`, … |
+| `--order` | `Order` | `Rating` = most popular |
+
+**`films` options:** `--area` (blank = all of Denmark) and `--periode` (`Genre=Film` is set automatically).
+
+**`rss` options:** `--order` (`Rating` for popularity) and `--periode`.
+
+**Global options on every subcommand:**
+
+- `--raw` — print the raw upstream HTML/XML instead of parsed JSON.
+- `--lang {da,sv,uk,de}` — page language: `da`=Danish (default), `sv`=Swedish (`S`), `uk`=English (`UK`), `de`=German (`D`). The code is inserted after `type-nynaut` in the URL. (Note: `rss` has no language segment.)
 
 ### Examples
 
@@ -64,94 +91,50 @@ kultunaut films --area "8000 Aarhus C" --periode 1
 # Popular-events feed
 kultunaut rss --order Rating
 
-# English-language pages (code goes after type-nynaut: /perl/arrlist/type-nynaut/UK)
+# English-language pages
 kultunaut events --area "Hele Danmark" --periode 1 --lang uk
 
 # Raw upstream HTML/XML for any command
 kultunaut events --area "8000 Aarhus C" --periode 1 --raw
 ```
 
-Global options on every subcommand: `--raw` (raw upstream body) and `--lang {da,sv,uk,de}` (da=Danish default, sv=Swedish `S`, uk=English `UK`, de=German `D`).
+---
 
-## URL Structure
+## Reference: underlying endpoints & URL conventions
 
-Base: `https://www.kultunaut.dk/`
+This is what the CLI wraps. **Consult it only when you need something the CLI doesn't expose** (e.g. the website-only features below). For everyday event/film/feed lookups, use the CLI above instead of building these URLs or scraping by hand.
 
-Language codes go between the type prefix and page name:
-- No code → Danish (default)
+All endpoints use GET and require no auth for read operations. Base: `https://www.kultunaut.dk/`
+
+**Language-code convention** (what `--lang` implements): the code goes between the type prefix and page name, directly after `type-nynaut`:
+
+- no code → Danish (default)
 - `S` → Swedish
 - `UK` → English
 - `D` → German
 
-Example: `/type-nynaut/S/` = Swedish, `/type-nynaut/UK/` = English
+Example: `/perl/arrlist/type-nynaut/UK` = English event list.
 
-## API Endpoints (Prefer Over Browser Automation)
+### Endpoints the CLI wraps
 
-All endpoints use GET. No auth required for read operations.
+| CLI | Endpoint | Notes |
+|-----|----------|-------|
+| `events` | `GET /perl/arrlist/type-nynaut` | Event calendar search. Params: `Area`, `periode`, `Genre`, `Order` (see option tables above). Example: `?Area=8000+Aarhus+C&periode=1&Genre=Rock/Pop` |
+| `event` | `GET /perl/arrmore/type-nynaut?ArrNr={number}` | Single event detail. Each event has a unique `ArrNr` (e.g. `19896575`), found in search results. |
+| `films` | `GET /perl/searchlist/type-nynaut?Genre=Film&Area=&periode=1` | Cinema films; add `Area` to filter by region. |
+| `rss` | `GET /perl/mini/type-rss?Order=Rating&periode=` | Popular-events feed (no `type-nynaut`/language segment). |
 
-### Event Calendar (Primary Search)
+`periode=1` = current events, `periode=30` = upcoming month. The `MarkType` param covers niche categories (circus, cycling, chess, scouts, dogs, etc.). Events carry structured metadata: title, date/time, venue, genre, description, organizer.
 
-```
-GET https://www.kultunaut.dk/perl/arrlist/type-nynaut
-```
+### Website-only features (not covered by the CLI)
 
-Query parameters:
+These have no CLI subcommand — navigate the site directly if needed:
 
-| Param | Description | Examples |
-|-------|-------------|----------|
-| `Area` | Geography | `8000 Aarhus C`, `Region Hovedstaden`, `Hele Danmark` |
-| `periode` | Time period | `1` = today, `30` = upcoming month |
-| `Genre` | Event genre | `Musik`, `Jazz`, `Skuespil`, `Udstilling`, `Familiefilm`, `Workshop` |
-| `Order` | Sort | `Rating` = most popular |
-
-Example: `https://www.kultunaut.dk/perl/arrlist/type-nynaut?Area=8000+Aarhus+C&periode=1&Genre=Rock/Pop`
-
-### Event Detail
-
-```
-GET https://www.kultunaut.dk/perl/arrmore/type-nynaut?ArrNr={number}
-```
-
-Each event has a unique `ArrNr` (e.g., `19896575`). Retrieve from search results for full details.
-
-### Cinema Films
-
-```
-GET https://www.kultunaut.dk/perl/searchlist/type-nynaut?periode=1&Genre=Film&Area=
-```
-
-Add `Area` to filter by region.
-
-### RSS Feed
-
-```
-GET https://www.kultunaut.dk/perl/mini/type-rss?Order=Rating&periode=
-```
-
-Add `Order=Rating` for popularity sort.
-
-### Widget
-
-```
-GET https://www.kultunaut.dk/perl/widget/type-nynaut
-```
-
-Embeddable widget for external sites.
-
-### One-Liners
-
-| Endpoint | URL |
-|----------|-----|
-| Free Events | `/perl/view/type-nynaut/gratiskalender` |
-| Special Calendars | `/perl/view/type-nynaut/specialkalendere` |
-| Adult School Courses | `/perl/view/type-nynaut/aftenskole` |
-| Bookmarks | `/perl/profile/type-nynaut/myratings` (requires login) |
-
-## Key Notes
-
-- Perl-based application — no JSON REST API. All endpoints return HTML.
-- No authentication required for browsing/searching.
-- Login at `/perl/openlogin/type-nynaut` enables bookmarking.
-- Events carry structured metadata: title, date/time, venue, genre, description, organizer.
-- `MarkType` filter covers niche categories (circus, cycling, chess, scouts, dogs, etc.).
-- `periode=1` = current events, `periode=30` = upcoming month.
+| Feature | URL |
+|---------|-----|
+| Embeddable widget | `/perl/widget/type-nynaut` |
+| Login (enables bookmarking) | `/perl/openlogin/type-nynaut` |
+| Bookmarks (requires login) | `/perl/profile/type-nynaut/myratings` |
+| Free events | `/perl/view/type-nynaut/gratiskalender` |
+| Special calendars | `/perl/view/type-nynaut/specialkalendere` |
+| Adult-school courses | `/perl/view/type-nynaut/aftenskole` |
