@@ -1,8 +1,9 @@
 /**
- * Inject `thinking.token_budget` into vLLM requests.
+ * Inject `thinking_token_budget` into vLLM requests.
  *
  * Reads `thinkingTokenBudget` directly from models.json for the current model,
- * then injects `thinking: { token_budget: <value> }` into the request payload.
+ * then injects the flat `thinking_token_budget: <value>` field into the request
+ * payload (the field vLLM's OpenAI-compatible server recognizes).
  * Fully self-contained — no Pi core changes needed.
  *
  * Usage in models.json (top-level on the model, not inside compat):
