@@ -40,9 +40,6 @@ const TOOL_LABELS: Record<string, string> = {
 	write: "Writing...",
 	edit: "Editing...",
 	bash: "Bashing...",
-	ls: "Listing...",
-	grep: "Grepping...",
-	find: "Finding...",
 	// extension tools
 	search: "Searching...",
 	code_tree: "Mapping...",
