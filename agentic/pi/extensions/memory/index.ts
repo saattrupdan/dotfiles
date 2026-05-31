@@ -469,12 +469,18 @@ interface MemoryRenderDetails {
 	collapsed?: string;
 }
 
-function renderMemoryResult(result: { content: Array<{ type: string; text?: string }>; details?: unknown }, { expanded }: { expanded: boolean }) {
+function renderMemoryResult(
+	result: { content: Array<{ type: string; text?: string }>; details?: unknown },
+	{ expanded }: { expanded: boolean },
+	theme: { fg: (name: string, text: string) => string },
+) {
 	const text = textContent(result.content);
 	if (expanded) return new Text(text, 0, 0);
 
 	const details = result.details as MemoryRenderDetails | undefined;
-	return new Text(details?.collapsed ?? firstLine(text), 0, 0);
+	if (details?.collapsed) return new Text(theme.fg("success", details.collapsed), 0, 0);
+
+	return new Text(firstLine(text), 0, 0);
 }
 
 function textContent(content: Array<{ type: string; text?: string }>): string {
