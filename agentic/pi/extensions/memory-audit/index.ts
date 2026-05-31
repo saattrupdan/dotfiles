@@ -125,6 +125,7 @@ export default function (pi: ExtensionAPI) {
 		ctx: ExtensionContext,
 		context: TriggerContext,
 		allowed: ReadonlySet<Trigger["event"]>,
+		forceOnce = false,
 	): string | null {
 		const sessionId = ctx.sessionManager?.getSessionId() ?? "unknown";
 		ensureLoaded(sessionId);
@@ -132,17 +133,21 @@ export default function (pi: ExtensionAPI) {
 		const fired: MemoryDoc[] = [];
 		for (const m of loadTriggeredMemories(ctx.cwd)) {
 			const key = memKey(m);
-			// "once" (default) memories are deduped per session; "always" memories fire every time.
-			if (m.triggerFrequency !== "always" && injected.has(key)) continue;
+			// "once" (default) memories are deduped per session; "always" memories
+			// fire every time — except when `forceOnce` is set (the tool_call block
+			// path), where re-firing would re-block the same call and livelock the
+			// agent, so every memory is treated as once there.
+			const once = forceOnce || m.triggerFrequency !== "always";
+			if (once && injected.has(key)) continue;
 			if (m.triggers.some((t) => allowed.has(t.event) && evaluateTrigger(t, context))) {
 				fired.push(m);
 			}
 		}
 		if (fired.length === 0) return null;
 
-		// Only track "once" memories in the injected set ("always" memories keep firing).
+		// Track once-semantics memories in the injected set so they don't re-fire.
 		for (const m of fired) {
-			if (m.triggerFrequency !== "always") injected.add(memKey(m));
+			if (forceOnce || m.triggerFrequency !== "always") injected.add(memKey(m));
 		}
 		persist(sessionId);
 		return formatMemories(fired);
@@ -185,6 +190,7 @@ export default function (pi: ExtensionAPI) {
 			ctx,
 			{ tool_calls: [event.toolName], tool_input: JSON.stringify(event.input ?? {}) },
 			TOOL_CALL_EVENTS,
+			true, // forceOnce: a repeated block would livelock the tool call
 		);
 		if (!block) return undefined;
 
