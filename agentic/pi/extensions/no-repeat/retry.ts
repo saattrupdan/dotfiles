@@ -1,6 +1,27 @@
 import * as crypto from "node:crypto";
 
-const expectedAutoloadRetries = new Map<string, string>();
+// Share retry coordination across duplicate module/runtime instances in this
+// process; skill autoload and no-repeat may import this helper via separate
+// extension loaders but must still consume the same one-shot retry allowance.
+const RETRY_STORE_KEY = Symbol.for("pi.extensions.no-repeat.retryStore");
+
+interface RetryStore {
+	expectedAutoloadRetries: Map<string, string>;
+}
+
+function retryStore(): RetryStore {
+	const globalStore = globalThis as typeof globalThis & Record<symbol, RetryStore | undefined>;
+	const existing = globalStore[RETRY_STORE_KEY];
+	if (existing) return existing;
+
+	const created: RetryStore = {
+		expectedAutoloadRetries: new Map(),
+	};
+	globalStore[RETRY_STORE_KEY] = created;
+	return created;
+}
+
+const expectedAutoloadRetries = retryStore().expectedAutoloadRetries;
 
 export function canonicalize(value: unknown): unknown {
 	if (value === null || typeof value !== "object") return value;
