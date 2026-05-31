@@ -215,22 +215,26 @@ that point the Mac sleeps immediately; if it's open nothing changes.
 
 `pmset disablesleep` needs root. The extension **never prompts for a password** —
 it only activates when passwordless access to `pmset` is already configured.
-Grant it once by adding a sudoers line via `sudo visudo`, replacing `<you>` with
-your username:
+Grant it once by running this in a terminal (it'll ask for your password the one
+time, then never again):
 
+```sh
+echo "$USER ALL=(ALL) NOPASSWD: /usr/bin/pmset" | sudo tee /etc/sudoers.d/pi-caffeinate >/dev/null && \
+  sudo chmod 440 /etc/sudoers.d/pi-caffeinate && \
+  sudo visudo -cf /etc/sudoers.d/pi-caffeinate
 ```
-<you> ALL=(ALL) NOPASSWD: /usr/bin/pmset
-```
 
-That scopes the grant to that one binary. With it in place, a session-lived
-watcher shells out with `sudo -n /usr/bin/pmset` (no prompt, ever) and toggles
-`disablesleep` 1/0 from a tiny state file pi writes at run start/end. The watcher
-also restores `disablesleep 0` and exits if pi dies, so a crash never leaves the
-Mac unable to sleep.
+This writes a scoped drop-in (the grant covers `/usr/bin/pmset` and nothing
+else), locks its permissions, and validates the syntax so a typo can't break
+sudo. Remove it any time with `sudo rm /etc/sudoers.d/pi-caffeinate`. With it in
+place, a session-lived watcher shells out with `sudo -n /usr/bin/pmset` (no
+prompt, ever) and toggles `disablesleep` 1/0 from a tiny state file pi writes at
+run start/end. The watcher also restores `disablesleep 0` and exits if pi dies,
+so a crash never leaves the Mac unable to sleep.
 
-If the sudoers line is missing, the extension stays completely inert and prints
-a one-time hint (with the exact line above) on the first run — no prompts, no
-half-working state.
+If the drop-in is missing, the extension stays completely inert and prints a
+one-time hint on the first run — the same command above, with your username
+already filled in — so it's a copy-paste. No prompts, no half-working state.
 
 Manual control: `/caffeinate status` reports state, `/caffeinate off` disables
 it for the session, `/caffeinate on` re-arms it. macOS-only and

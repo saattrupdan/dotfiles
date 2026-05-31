@@ -53,16 +53,27 @@ const STATUS_KEY = "caffeinate";
 // sleep. Keyed by pid so concurrent pi processes don't collide.
 const STATE_PATH = path.join(os.tmpdir(), `pi-caffeinate-${process.pid}.state`);
 
-/** The sudoers line that unlocks the extension — scoped to pmset alone. */
-function sudoersHint(): string {
-	const user = (() => {
-		try {
-			return os.userInfo().username;
-		} catch {
-			return "<you>";
-		}
-	})();
-	return `${user} ALL=(ALL) NOPASSWD: /usr/bin/pmset`;
+/** Drop-in sudoers file that unlocks the extension — scoped to pmset alone. */
+const SUDOERS_FILE = "/etc/sudoers.d/pi-caffeinate";
+
+function currentUser(): string {
+	try {
+		return os.userInfo().username;
+	} catch {
+		return "<you>";
+	}
+}
+
+/**
+ * The one-shot command that grants passwordless pmset access: write a scoped
+ * drop-in, lock its perms, and validate the syntax before it can take effect.
+ * `user` is baked in so the nudge shows a ready-to-paste line.
+ */
+function installCommand(user: string): string {
+	return (
+		`echo "${user} ALL=(ALL) NOPASSWD: /usr/bin/pmset" | sudo tee ${SUDOERS_FILE} >/dev/null && ` +
+		`sudo chmod 440 ${SUDOERS_FILE} && sudo visudo -cf ${SUDOERS_FILE}`
+	);
 }
 
 // User-facing kill switch for the session (`/caffeinate off`). Defaults on.
@@ -122,8 +133,8 @@ function nudge(ctx: ExtensionContext): void {
 	if (!ctx.hasUI) return;
 	ctx.ui.notify(
 		"caffeinate: to keep runs going with the lid closed, grant passwordless " +
-			"pmset access. Run `sudo visudo` and add:\n    " +
-			sudoersHint() +
+			"pmset access. Run this once in a terminal:\n    " +
+			installCommand(currentUser()) +
 			"\nUntil then this extension stays off — it never prompts for a password.",
 		"info",
 	);
@@ -265,8 +276,8 @@ export default function (pi: ExtensionAPI) {
 				state = "disabled for this session (`/caffeinate on` to re-arm).";
 			} else if (!hasPasswordlessPmset()) {
 				state =
-					"off — needs passwordless pmset. Run `sudo visudo` and add:\n    " +
-					sudoersHint();
+					"off — needs passwordless pmset. Run this once in a terminal:\n    " +
+					installCommand(currentUser());
 			} else if (engaged) {
 				state = "active — this run keeps the Mac awake, even with the lid closed.";
 			} else {
