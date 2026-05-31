@@ -2,7 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
-import { registerAutoload } from "./autoload.ts";
+import { markSkillLoadedForSession, registerAutoload } from "./autoload.ts";
 import { discoverSkills, readSkillContent } from "./discovery.ts";
 
 const Params = Type.Object({
@@ -52,6 +52,8 @@ function registerSkillTool(pi: ExtensionAPI): void {
 					details: undefined,
 				};
 			}
+
+			markSkillLoadedForSession(ctx, skill);
 
 			// The full markdown goes in `content` so the *model* receives it.
 			// The chat view is kept to a one-line status via `renderResult`

@@ -110,9 +110,8 @@ export function readSkillContent(skill: Skill): string {
 export function discoverAutoloadSkills(cwd: string): DiscoveredSkill[] {
 	return discoverSkills(cwd).flatMap((skill) => {
 		try {
-			const content = readSkillContent(skill);
-			const autoload = parseSkillAutoloadFrontmatter(content);
-			return autoload ? [{ ...skill, content, autoload }] : [];
+			const autoload = parseSkillAutoloadFrontmatter(readSkillContent(skill));
+			return autoload ? [{ ...skill, autoload }] : [];
 		} catch {
 			return [];
 		}

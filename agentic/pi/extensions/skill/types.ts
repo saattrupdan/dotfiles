@@ -13,7 +13,6 @@ export interface SkillAutoloadConfig {
 }
 
 export interface DiscoveredSkill extends Skill {
-	content: string;
 	autoload?: SkillAutoloadConfig;
 }
 
