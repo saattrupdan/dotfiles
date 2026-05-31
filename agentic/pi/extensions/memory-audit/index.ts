@@ -87,7 +87,10 @@ function formatMemories(mems: MemoryDoc[]): string {
 		`Before you respond, call \`memory_read\` on ${plural ? "each one" : "it"} below to load the ` +
 		`full body, then actually apply what you learn — let it shape your answer, your plan, and the ` +
 		`commands you run. Only the name + description are shown here, which is not enough to act on:\n\n` +
-		`${lines.join("\n")}`
+		`${lines.join("\n")}\n\n` +
+		`If this was injected after a tool call of yours, we might have blocked it. Check ` +
+    `if this is the case, and if so, read the ${plural ? "memories" : "memory"} above ` +
+    `and try again where you take into account the ${plural ? "memories" : "memory"}.`
 	);
 }
 
