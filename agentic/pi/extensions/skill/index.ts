@@ -1,28 +1,9 @@
-/**
- * `skill` tool.
- *
- * Loads the full SKILL.md for a named skill, in one shot, with no outlining,
- * no dedupe, no symbol slicing — the file goes back verbatim.
- *
- * This is intentionally distinct from `read`. The modified `read` in this
- * config returns an outline for large files, which is the wrong behaviour for
- * skill loading: a skill's whole point is the procedural instructions in its
- * body, and those frequently exceed the small-file threshold.
- *
- * Splitting `skill` out from `read` also lets us hand an agent the ability to
- * load skills without granting it general filesystem read access (e.g. an
- * orchestrator that should look up its own playbook but not poke at source
- * files).
- *
- * Skill discovery delegates to `loadSkills` from pi-coding-agent so we honour
- * exactly the same locations pi advertises in its system prompt.
- */
-
-import * as fs from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { getAgentDir, loadSkills, type Skill } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+
+import { registerAutoload } from "./autoload.ts";
+import { discoverSkills, readSkillContent } from "./discovery.ts";
 
 const Params = Type.Object({
 	name: Type.String({
@@ -30,17 +11,7 @@ const Params = Type.Object({
 	}),
 });
 
-function discoverSkills(cwd: string): Skill[] {
-	const { skills } = loadSkills({
-		cwd,
-		agentDir: getAgentDir(),
-		skillPaths: [],
-		includeDefaults: true,
-	});
-	return skills;
-}
-
-export default function (pi: ExtensionAPI) {
+function registerSkillTool(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "skill",
 		label: "skill",
@@ -69,7 +40,7 @@ export default function (pi: ExtensionAPI) {
 
 			let content: string;
 			try {
-				content = fs.readFileSync(skill.filePath, "utf-8");
+				content = readSkillContent(skill);
 			} catch (err) {
 				return {
 					content: [
@@ -108,4 +79,9 @@ export default function (pi: ExtensionAPI) {
 			return new Text(theme.fg("success", `✓ loaded skill "${name}"`), 0, 0);
 		},
 	});
+}
+
+export default function (pi: ExtensionAPI): void {
+	registerSkillTool(pi);
+	registerAutoload(pi);
 }
