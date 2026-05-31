@@ -3,6 +3,13 @@ name: vue
 description: Conventions for Vue.js frontend development, including component structure, code quality, and standard packages. Use when building Vue.js frontends.
 tagline: Vue.js frontend development conventions and component structure
 last-updated: 2026-05-09
+autoload:
+  tools:
+    - read
+    - write
+    - edit
+  extensions:
+    - .vue
 ---
 
 ## Vue.js Conventions
