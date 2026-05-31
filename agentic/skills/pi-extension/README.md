@@ -211,3 +211,8 @@ export default function (pi: ExtensionAPI) {
 
 **Note:** extensions load at startup — after editing one, `/reload` (which reloads
 extensions, skills, prompts, themes, keybindings) or restart pi to pick up the change.
+
+**Adding a tool?** When you register a new tool with `pi.registerTool`, also add its
+`name -> "Doing..."` entry to a footer-status extension's `TOOL_LABELS` map (the names
+must match the tool's registered `name`, e.g. `web_browse`, `memory_save`). Otherwise the
+new tool silently shows the generic "Working..." instead of a phase-specific label.

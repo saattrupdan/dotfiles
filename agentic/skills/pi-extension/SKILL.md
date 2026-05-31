@@ -35,6 +35,10 @@ export default function (pi: ExtensionAPI) {
 - `pi.registerTool(def)`, `pi.registerCommand(name, opts)`, `pi.registerShortcut`,
   `pi.registerFlag`/`getFlag`, `pi.registerMessageRenderer(customType, renderer)`,
   `pi.registerProvider`, `pi.setModel`, `pi.get/setThinkingLevel`, `pi.set/getActiveTools`.
+- **When you add a tool, give it a footer label too.** If a working-status extension
+  maps tool names to footer-spinner labels (see the worked example — `TOOL_LABELS`),
+  registering a new tool with `pi.registerTool` should be paired with adding its
+  `name -> "Doing..."` entry there, or it silently falls back to "Working...".
 
 ### The `ctx` (ExtensionContext)
 
