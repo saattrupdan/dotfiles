@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import subprocess
 import json
 import logging
 import math
@@ -593,6 +594,13 @@ def cmd_forecast_city(args: argparse.Namespace) -> None:
             city = "k\u00f8benhavn"
             logger.info("(Could not detect location, defaulting to K\u00f8benhavn)")
 
+    vpn_notice: str | None = None
+    if not args.city and _is_vpn_active():
+        vpn_notice = (
+            "⚠ Detected location may be inaccurate because your VPN is active. "
+            "Disable your VPN or specify a city explicitly for a more accurate forecast."
+        )
+
     # DMI indexes Danish cities under their Danish names, so translate a known
     # English exonym (Copenhagen -> K\u00f8benhavn). For an explicitly typed city we
     # always translate (this is a Danish-centric service); for an auto-detected
@@ -658,6 +666,7 @@ def cmd_forecast_city(args: argparse.Namespace) -> None:
         last_update=last_update,
         sunrise=sunrise,
         sunset=sunset,
+        notice=vpn_notice,
     )
 
     timeseries: list[dict] = forecast_data.get("timeserie", [])
@@ -867,6 +876,7 @@ def _print_header(
     last_update: str,
     sunrise: str,
     sunset: str,
+    notice: str | None = None,
 ) -> None:
     """Print the forecast header block.
 
@@ -881,6 +891,8 @@ def _print_header(
             Sunrise time string.
         sunset:
             Sunset time string.
+        notice (optional):
+            Optional notice line to print after sunrise/sunset.
     """
     logger.info(f"Vejrprognose for {city} ({country})")
     if last_update:
@@ -897,6 +909,8 @@ def _print_header(
         sr = sunrise.zfill(4) if sunrise else ""
         ss = sunset.zfill(4) if sunset else ""
         logger.info(f"Solopgang: {sr[:2]}:{sr[2:]}  Solnedgang: {ss[:2]}:{ss[2:]}")
+    if notice:
+        logger.info(notice)
     logger.info("")
 
 
@@ -1312,6 +1326,34 @@ def _geo_locate() -> tuple[str, str] | None:
         pass
 
     return None
+
+
+def _is_vpn_active() -> bool:
+    """Detect whether a VPN tunnel interface is active.
+
+    Checks the default route interface on macOS. VPN connections (WireGuard,
+    OpenVPN, etc.) route traffic through ``utun`` or ``tun`` interfaces.  If
+    the default gateway interface starts with ``utun`` or ``tun``, a VPN is
+    assumed to be active.
+
+    Returns:
+        True if a VPN interface is detected, False otherwise.
+    """
+    try:
+        result = subprocess.run(
+            ["route", "-n", "get", "default"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if line.startswith("interface:"):
+                iface = line.split(":", 1)[1].strip()
+                return iface.startswith(("utun", "tun"))
+    except (subprocess.SubprocessError, ValueError):
+        pass
+    return False
 
 
 def _request(
