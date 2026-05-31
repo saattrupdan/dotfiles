@@ -76,6 +76,8 @@ function installCommand(user: string): string {
 	);
 }
 
+// The extension API, captured at load so helpers can post messages.
+let piApi: ExtensionAPI | null = null;
 // User-facing kill switch for the session (`/caffeinate off`). Defaults on.
 let sessionEnabled = true;
 // Whether a run is currently being held awake.
@@ -126,18 +128,24 @@ function hasPasswordlessPmset(): boolean {
 	return sudoOk;
 }
 
-/** One-time hint telling the user how to enable the extension. */
-function nudge(ctx: ExtensionContext): void {
+/**
+ * One-time hint telling the user how to enable the extension. Posted as a
+ * displayed message (not a transient toast) so it persists in the transcript
+ * and the install command can be copied. Shown at most once per session.
+ */
+function nudge(): void {
 	if (nudged) return;
 	nudged = true;
-	if (!ctx.hasUI) return;
-	ctx.ui.notify(
-		"caffeinate: to keep runs going with the lid closed, grant passwordless " +
-			"pmset access. Run this once in a terminal:\n    " +
+	piApi?.sendMessage({
+		customType: "caffeinate:setup",
+		content:
+			"caffeinate: to keep runs going with the lid closed, grant passwordless " +
+			"pmset access. Run this once in a terminal:\n\n    " +
 			installCommand(currentUser()) +
-			"\nUntil then this extension stays off — it never prompts for a password.",
-		"info",
-	);
+			"\n\nUntil then this extension stays off — it never prompts for a password. " +
+			"(`/caffeinate status` shows this again.)",
+		display: true,
+	});
 }
 
 /**
@@ -184,7 +192,7 @@ function engage(ctx: ExtensionContext): void {
 
 	// No passwordless pmset → stay inert and nudge once. Never prompt.
 	if (!hasPasswordlessPmset()) {
-		nudge(ctx);
+		nudge();
 		return;
 	}
 
@@ -230,6 +238,15 @@ function release(ctx: ExtensionContext): void {
 export default function (pi: ExtensionAPI) {
 	// Subagents share the parent's machine; only the orchestrator manages power.
 	if (process.env.PI_SUBAGENT_CHILD === "1") return;
+
+	piApi = pi;
+
+	// Surface the setup hint right when Pi opens, before any message is sent, so
+	// it's discoverable. Only when unconfigured, and only once per session.
+	pi.on("session_start", async () => {
+		if (!IS_MACOS || !sessionEnabled) return;
+		if (!hasPasswordlessPmset()) nudge();
+	});
 
 	// Engage for the lifetime of each agent run, release when it ends.
 	pi.on("agent_start", async (_event, ctx) => {
