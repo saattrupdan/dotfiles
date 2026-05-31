@@ -23,7 +23,8 @@ fall into three categories:
 - **Tools the agent calls** — `read`, `skill`, `search`, `code-tree`,
   `web-search`, `web-browse`, `subagent`, `memory_index`,
   `memory_read`, `memory_save`, `memory_delete`, `memory_suggest`.
-- **Behavioural guardrails** (no tools registered) — `no-repeat`, `memory-audit`.
+- **Behavioural guardrails** (no tools registered) — `no-repeat`, `memory-audit`,
+  `caffeinate`.
 - **Shared internal library** — `_outliner` (consumed by `read` and `search`).
 
 ### `read`
@@ -198,6 +199,45 @@ Trigger kinds:
 | `startup` | the first user message of a session (then deduped)      | —           |
 | `tool`    | a tool with the matching name produces a result         | `tool`      |
 | `pattern` | the regex matches the user message **or** a tool output | `pattern`   |
+
+### `caffeinate`
+
+Keeps the Mac awake **while an agent run is in progress** — even with the lid
+closed — so you can kick off a long run, shut the laptop, and let it finish.
+When the run ends, normal sleep behaviour is restored: if the lid is closed at
+that point the Mac sleeps immediately; if it's open nothing changes.
+
+- `agent_start` → spawns `caffeinate -dimsu` (no idle/display/disk/system sleep)
+  and asks a session-lived watcher to set `pmset -a disablesleep 1` (the only
+  switch that defeats lid-close sleep).
+- `agent_end` → tells the watcher to set `pmset -a disablesleep 0` and kills the
+  `caffeinate` process.
+
+`pmset disablesleep` needs root, so a watcher process holds the privilege for
+the whole session and toggles `disablesleep` 1/0 from a tiny state file that pi
+writes at run start/end — that way you authenticate at most once per session,
+not once per run. The watcher also restores `disablesleep 0` and exits if pi
+dies, so a crash never leaves the Mac unable to sleep.
+
+How root is acquired, least-intrusive first:
+
+1. **Passwordless `pmset` (recommended, zero prompts).** Add a sudoers line via
+   `sudo visudo`, replacing `<you>` with your username:
+
+   ```
+   <you> ALL=(ALL) NOPASSWD: /usr/bin/pmset
+   ```
+
+   The watcher then shells out with `sudo -n /usr/bin/pmset` and never prompts.
+
+2. **Native auth dialog (no setup).** Otherwise the watcher launches via
+   `osascript … with administrator privileges`, which pops one macOS password
+   dialog on the first run of the session.
+
+Manual control: `/caffeinate status` reports state, `/caffeinate off` disables
+it for the session, `/caffeinate on` re-arms it. macOS-only and
+orchestrator-only (subagents share the parent's machine, and the parent run
+already brackets their work).
 
 ### `_outliner` (library, not a tool)
 
