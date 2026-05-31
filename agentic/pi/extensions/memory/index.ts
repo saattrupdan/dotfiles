@@ -136,6 +136,7 @@ function renderFrontmatter(
 	accessedAt: string,
 	body: string,
 	triggers?: Trigger[],
+	triggerFrequency?: "once" | "always",
 ): string {
 	const trimmedBody = body.replace(/^\n+/, "");
 	let fm = (
@@ -145,6 +146,9 @@ function renderFrontmatter(
 		`created_at: ${createdAt}\n` +
 		`accessed_at: ${accessedAt}\n`
 	);
+	if (triggerFrequency && triggerFrequency !== "once") {
+		fm += `trigger_frequency: ${triggerFrequency}\n`;
+	}
 	if (triggers && triggers.length > 0) {
 		fm += "triggers:\n";
 		for (const t of triggers) {
@@ -322,6 +326,11 @@ const SaveParams = Type.Object({
 			description: "When this memory should be auto-injected. Empty or omitted = never auto-injected (manual retrieval only).",
 		}),
 	),
+	triggerFrequency: Type.Optional(
+		Type.Union([Type.Literal("once"), Type.Literal("always")], {
+			description: "How often triggered memories are auto-injected: 'once' (default, injected at most once per session) or 'always' (injected every time the trigger fires).",
+		}),
+	),
 });
 
 const DeleteParams = Type.Object({
@@ -451,6 +460,7 @@ interface Suggestion {
 	score: number;
 	body?: string;
 	triggers?: Trigger[];
+	triggerFrequency?: "once" | "always";
 }
 
 export default function (pi: ExtensionAPI) {
@@ -542,7 +552,7 @@ export default function (pi: ExtensionAPI) {
 			"Save things that will be useful in *future* conversations — user preferences, project context, references, feedback — not transient task state.",
 		parameters: SaveParams,
 
-		async execute(_id, { scope, name, description, content, triggers }, _signal, _onUpdate, ctx): Promise<any> {
+		async execute(_id, { scope, name, description, content, triggers, triggerFrequency }, _signal, _onUpdate, ctx): Promise<any> {
 			const nameErr = validateName(name);
 			if (nameErr) return errorResult(nameErr);
 			const desc = description.trim();
@@ -571,7 +581,7 @@ export default function (pi: ExtensionAPI) {
 					// keep `now`
 				}
 			}
-			const rendered = renderFrontmatter(name, description, createdAt, now, content, triggers);
+			const rendered = renderFrontmatter(name, description, createdAt, now, content, triggers, triggerFrequency);
 			fs.writeFileSync(filePath, rendered, "utf-8");
 
 			// Invalidate suggestion cache so new triggers are picked up
@@ -621,6 +631,7 @@ export default function (pi: ExtensionAPI) {
 						score: 0,
 						body,
 						triggers: parseTriggers(meta.triggers) ?? undefined,
+						triggerFrequency: (meta.trigger_frequency as "once" | "always" | undefined) ?? "once",
 					});
 				} catch {
 					cachedMemories.push({

@@ -65,6 +65,9 @@ export function scopeDir(scope: MemoryScope, cwd: string): string {
 
 export type MemoryScope = "system" | "project";
 
+/** How often a triggered memory is auto-injected: "once" (default, one-time) or "always" (every time it fires). */
+export type MemoryTriggerFrequency = "once" | "always";
+
 export interface Trigger {
 	event: "startup" | "tool" | "pattern";
 	tool?: string;
@@ -164,6 +167,7 @@ export interface MemoryFrontmatter {
 	created_at?: string;
 	accessed_at?: string;
 	triggers?: string;
+	trigger_frequency?: string;
 }
 
 /** Tiny YAML-ish frontmatter parser. `triggers` is returned as its raw block. */
@@ -182,7 +186,7 @@ export function parseFrontmatter(content: string): { meta: MemoryFrontmatter; bo
 	// `triggers` spans multiple lines (a list) so we parse it separately by
 	// slurping every line from `triggers:` to the next top-level key.
 	const lines = block.split("\n");
-	const scalarRe = /^(name|description|created_at|accessed_at):\s*(.*)$/;
+	const scalarRe = /^(name|description|created_at|accessed_at|trigger_frequency):\s*(.*)$/;
 	for (let i = 0; i < lines.length; i++) {
 		const line = lines[i];
 		const m = line.match(scalarRe);
@@ -219,6 +223,7 @@ export interface MemoryDoc {
 	body: string;
 	filePath: string;
 	triggers: Trigger[];
+	triggerFrequency?: MemoryTriggerFrequency;
 }
 
 function listScopeDocs(scope: MemoryScope, cwd: string): MemoryDoc[] {
@@ -240,6 +245,7 @@ function listScopeDocs(scope: MemoryScope, cwd: string): MemoryDoc[] {
 				body,
 				filePath,
 				triggers,
+				triggerFrequency: (meta.trigger_frequency as MemoryTriggerFrequency | undefined) ?? "once",
 			});
 		} catch {
 			// Unreadable file — skip.

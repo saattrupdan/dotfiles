@@ -132,14 +132,18 @@ export default function (pi: ExtensionAPI) {
 		const fired: MemoryDoc[] = [];
 		for (const m of loadTriggeredMemories(ctx.cwd)) {
 			const key = memKey(m);
-			if (injected.has(key)) continue;
+			// "once" (default) memories are deduped per session; "always" memories fire every time.
+			if (m.triggerFrequency !== "always" && injected.has(key)) continue;
 			if (m.triggers.some((t) => allowed.has(t.event) && evaluateTrigger(t, context))) {
 				fired.push(m);
 			}
 		}
 		if (fired.length === 0) return null;
 
-		for (const m of fired) injected.add(memKey(m));
+		// Only track "once" memories in the injected set ("always" memories keep firing).
+		for (const m of fired) {
+			if (m.triggerFrequency !== "always") injected.add(memKey(m));
+		}
 		persist(sessionId);
 		return formatMemories(fired);
 	}
