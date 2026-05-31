@@ -165,21 +165,26 @@ function watcherShell(): string {
 	const state = STATE_PATH.replace(/'/g, `'\\''`);
 	const pmset = "sudo -n /usr/bin/pmset";
 	const hotMarker = HOT_MARKER_PATH.replace(/'/g, `'\\''`);
-	return (
-		`prev=; hot=; ` +
-		`while /bin/kill -0 ${process.pid} 2>/dev/null; do ` +
-		`if [ -f '${state}' ]; then s=\`/bin/cat '${state}'\`; else s=0; fi; ` +
-		`if [ "$s" != "$prev" ]; then ${pmset} -a disablesleep "$s" 2>/dev/null; prev="$s"; fi; ` +
-		`# Battery thermal safety: re-enable sleep if battery >= 35 °C. ` +
-		`tmp=\$(ioreg -rn AppleSmartBattery 2>/dev/null | grep -i Temperature | grep -o '[0-9]\\+'); ` +
-		`if [ -n "$tmp" ] && [ "$tmp" -ge 3500 ] 2>/dev/null; then ` +
-		`s=0; prev=0; ${pmset} -a disablesleep 0 2>/dev/null; ` +
-		`if [ -z "$hot" ]; then touch '${hotMarker}'; hot=1; fi; fi; ` +
-		`/bin/sleep 1; ` +
-		`done; ` +
-		`${pmset} -a disablesleep 0 2>/dev/null; ` +
-		`/bin/rm -f '${state}' '${hotMarker}'`
-	);
+
+	// Keep this as a real multi-line shell script: in a one-liner, any inline
+	// `#` comment eats the rest of the watcher and prevents the restore path.
+	return [
+		`prev=; hot=`,
+		`cleanup() { ${pmset} -a disablesleep 0 2>/dev/null; /bin/rm -f '${state}' '${hotMarker}'; }`,
+		`trap cleanup EXIT`,
+		`trap 'exit 0' HUP INT TERM`,
+		`while /bin/kill -0 ${process.pid} 2>/dev/null; do`,
+		`\tif [ -f '${state}' ]; then s=$(/bin/cat '${state}'); else s=0; fi`,
+		`\tcase "$s" in 1) ;; *) s=0 ;; esac`,
+		`\tif [ "$s" != "$prev" ]; then ${pmset} -a disablesleep "$s" 2>/dev/null; prev="$s"; fi`,
+		`\ttmp=$(ioreg -rn AppleSmartBattery 2>/dev/null | grep -i Temperature | grep -o '[0-9]\\+' | head -n 1)`,
+		`\tif [ -n "$tmp" ] && [ "$tmp" -ge 3500 ] 2>/dev/null; then`,
+		`\t\ts=0; prev=0; ${pmset} -a disablesleep 0 2>/dev/null`,
+		`\t\tif [ -z "$hot" ]; then touch '${hotMarker}'; hot=1; fi`,
+		`\tfi`,
+		`\t/bin/sleep 1`,
+		`done`,
+	].join("\n");
 }
 
 /** Launch the session-lived watcher exactly once. */
