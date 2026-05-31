@@ -58,7 +58,7 @@ async function loadModules() {
 // ---------------------------------------------------------------------------
 
 const callIndex = { current: 0 };
-const dedupeCache = new Map<string, { sha: string; callIndex: number }>();
+const dedupeCache = new Map<string, { sha: string; callIndex: number; text: string }>();
 
 function cacheKey(sha: string, filePath: string, symbol: string | undefined): string {
 	return `${sha}|${filePath}|${symbol ?? ""}`;
@@ -262,7 +262,7 @@ export default async function (pi: ExtensionAPI) {
 				const cached = dedupeCache.get(key);
 				if (cached && cached.sha === sha) {
 					return {
-						content: [{ type: "text", text: `unchanged since call #${cached.callIndex}` }],
+						content: [{ type: "text", text: cached.text }],
 						details: { dedupe: true, callIndex: cached.callIndex },
 					};
 				}
@@ -273,7 +273,10 @@ export default async function (pi: ExtensionAPI) {
 					return { content: [{ type: "text", text: `Could not fetch ${filePath} via docling: ${(err as Error).message}` }] };
 				}
 				const banner = `# ${filePath} — fetched and converted to Markdown via docling`;
-				return withBanner(renderContent(filePath, "page.md", markdown, symbol, outline, collapsedView, key, sha), banner);
+				const rendered = withBanner(renderContent(filePath, "page.md", markdown, symbol, outline, collapsedView, key, sha), banner);
+				const callIdx = ++callIndex.current;
+				dedupeCache.set(key, { sha, callIndex: callIdx, text: rendered.content[0].text });
+				return rendered;
 			}
 
 			const absolutePath = path.resolve(filePath);
@@ -337,7 +340,7 @@ export default async function (pi: ExtensionAPI) {
 			const cached = dedupeCache.get(key);
 			if (cached && cached.sha === sha) {
 				return {
-					content: [{ type: "text", text: `unchanged since call #${cached.callIndex}` }],
+					content: [{ type: "text", text: cached.text }],
 					details: { dedupe: true, callIndex: cached.callIndex },
 				};
 			}
@@ -354,7 +357,10 @@ export default async function (pi: ExtensionAPI) {
 				}
 				const displayPath = path.basename(absolutePath);
 				const banner = `# ${displayPath} — ${ext.slice(1).toUpperCase()} converted to Markdown via docling`;
-				return withBanner(renderContent(displayPath, `${displayPath}.md`, markdown, symbol, outline, collapsedView, key, sha), banner);
+				const rendered = withBanner(renderContent(displayPath, `${displayPath}.md`, markdown, symbol, outline, collapsedView, key, sha), banner);
+				const callIdx = ++callIndex.current;
+				dedupeCache.set(key, { sha, callIndex: callIdx, text: rendered.content[0].text });
+				return rendered;
 			}
 
 			// 4. Open the index (no full build) and refresh just this file.
@@ -383,7 +389,8 @@ export default async function (pi: ExtensionAPI) {
 				const preambleHeader = cutoff
 					? `# ${relPath}::__preamble__  lines 1-${lastLine} (before line ${cutoff})`
 					: `# ${relPath}::__preamble__  lines 1-${lastLine} (no class/function found — whole file)`;
-				dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
+				const callIdx = ++callIndex.current;
+				dedupeCache.set(key, { sha, callIndex: callIdx, text: `${preambleHeader}\n${slice.join("\n")}` });
 				return { content: [{ type: "text", text: `${preambleHeader}\n${slice.join("\n")}` }] };
 			}
 
@@ -404,14 +411,16 @@ export default async function (pi: ExtensionAPI) {
 				const symbolHeader = `# ${relPath}::${symbol}  lines ${sym.line_start}-${sym.line_end} (${sym.kind})`;
 				const symbolPreamble = `${symbolHeader}\n`;
 				const numbered = slice.map((line, i) => `  ${sym.line_start + i}: ${line}`).join("\n");
-				dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
+				const callIdx = ++callIndex.current;
+				dedupeCache.set(key, { sha, callIndex: callIdx, text: `${symbolPreamble}${numbered}` });
 				return { content: [{ type: "text", text: `${symbolPreamble}${numbered}` }] };
 			}
 
 			// 6. Small file → verbatim
 			if (totalLines <= SMALL_FILE_LINES) {
 				const smallFileHeader = `# ${relPath} (${totalLines} lines)`;
-				dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
+				const callIdx = ++callIndex.current;
+				dedupeCache.set(key, { sha, callIndex: callIdx, text: `${smallFileHeader}\n${content}` });
 				return { content: [{ type: "text", text: `${smallFileHeader}\n${content}` }] };
 			}
 
@@ -422,16 +431,19 @@ export default async function (pi: ExtensionAPI) {
 				: outline(absolutePath, content);
 			// Nothing to navigate → return the whole file rather than an empty outline.
 			if (result.entries.length === 0) {
-				dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
+				const callIdx = ++callIndex.current;
+				dedupeCache.set(key, { sha, callIndex: callIdx, text: `# ${relPath} (${totalLines} lines, no sections — full contents)\n${content}` });
 				return { content: [{ type: "text", text: `# ${relPath} (${totalLines} lines, no sections — full contents)\n${content}` }] };
 			}
 			const view = collapsedView(result, { hidePrivate: true, maxLines: 200 });
 			const outlineHeader = `# outline of ${relPath} (${totalLines} lines)`;
 			const footer = OUTLINE_FOOTER;
-			dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
+			const callIdx = ++callIndex.current;
+			const output = `${outlineHeader}\n${view.join("\n")}\n${footer}`;
+			dedupeCache.set(key, { sha, callIndex: callIdx, text: output });
 			return {
 				content: [
-					{ type: "text", text: `${outlineHeader}\n${view.join("\n")}\n${footer}` },
+					{ type: "text", text: output },
 				],
 			};
 		},
@@ -490,8 +502,10 @@ function renderContent(
 		const header = cutoff
 			? `# ${displayPath}::__preamble__  lines 1-${lastLine} (before line ${cutoff})`
 			: `# ${displayPath}::__preamble__  lines 1-${lastLine} (no class/function found — whole file)`;
-		dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
-		return { content: [{ type: "text", text: `${header}\n${slice.join("\n")}` }] };
+		const text = `${header}\n${slice.join("\n")}`;
+		const callIdx = ++callIndex.current;
+		dedupeCache.set(key, { sha, callIndex: callIdx, text });
+		return { content: [{ type: "text", text }] };
 	}
 
 	if (symbol) {
@@ -519,14 +533,18 @@ function renderContent(
 		if (hit.docFirstLine) meta.push(`Docstring: ${hit.docFirstLine}`);
 		const preamble = meta.length > 0 ? `${header}\n${meta.join("\n")}\n` : `${header}\n`;
 		const numbered = slice.map((line, i) => `  ${hit.line + i}: ${line}`).join("\n");
-		dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
-		return { content: [{ type: "text", text: `${preamble}${numbered}` }] };
+		const text = `${preamble}${numbered}`;
+		const callIdx = ++callIndex.current;
+		dedupeCache.set(key, { sha, callIndex: callIdx, text });
+		return { content: [{ type: "text", text }] };
 	}
 
 	if (totalLines <= SMALL_FILE_LINES) {
-		dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
+		const text = `# ${displayPath} (${totalLines} lines)\n${content}`;
+		const callIdx = ++callIndex.current;
+		dedupeCache.set(key, { sha, callIndex: callIdx, text });
 		return {
-			content: [{ type: "text", text: `# ${displayPath} (${totalLines} lines)\n${content}` }],
+			content: [{ type: "text", text }],
 		};
 	}
 
@@ -535,19 +553,24 @@ function renderContent(
 	// Markdown file) → there's nothing to pick a symbol from, so just return
 	// the whole thing verbatim rather than an empty outline.
 	if (result.entries.length === 0) {
-		dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
+		const text = `# ${displayPath} (${totalLines} lines, no sections — full contents)\n${content}`;
+		const callIdx = ++callIndex.current;
+		dedupeCache.set(key, { sha, callIndex: callIdx, text });
 		return {
-			content: [{ type: "text", text: `# ${displayPath} (${totalLines} lines, no sections — full contents)\n${content}` }],
+			content: [{ type: "text", text }],
 		};
 	}
 	const view = collapsedView(result, { hidePrivate: true, maxLines: 200 });
-	dedupeCache.set(key, { sha, callIndex: ++callIndex.current });
+	const text = `# outline of ${displayPath} (${totalLines} lines)\n${view.join("\n")}\n${OUTLINE_FOOTER}`;
+	const callIdx = ++callIndex.current;
+	dedupeCache.set(key, { sha, callIndex: callIdx, text });
 	return {
 		content: [
-			{ type: "text", text: `# outline of ${displayPath} (${totalLines} lines)\n${view.join("\n")}\n${OUTLINE_FOOTER}` },
+			{ type: "text", text },
 		],
 	};
 }
+
 
 /** Read a file living outside the indexed repo, then render it index-free. */
 function readOutsideRepo(
