@@ -3,6 +3,20 @@ name: pi-extension
 description: Conventions and hard-won gotchas for writing pi (pi-coding-agent) extensions. Use when creating, editing, or debugging a pi extension, or when asked to change pi's behaviour — pi is changed by extending it, never by editing the installed package.
 tagline: Writing pi-coding-agent extensions — anatomy, events, ctx API, rendering limits
 last-updated: 2026-05-31
+autoload:
+  tools:
+    - read
+    - write
+    - edit
+  paths:
+    - agentic/pi/extensions/**/*.ts
+    - agentic/pi/extensions/package.json
+    - agentic/pi/extensions/package-lock.json
+    - agentic/pi/extensions/tsconfig.json
+    - agentic/pi/extensions/**/package.json
+    - agentic/pi/extensions/**/tsconfig.json
+    - agentic/pi/agents/*.md
+    - agentic/pi/prompts/*.md
 ---
 
 ## pi extension conventions
