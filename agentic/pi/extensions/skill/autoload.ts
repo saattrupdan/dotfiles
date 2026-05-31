@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext, Skill } from "@earendil-works/pi-coding-agent";
 
-import { recordAutoloadRetry } from "../_tool_call_retry/index.ts";
+import { recordAutoloadRetry } from "../no-repeat/retry.ts";
 import { discoverAutoloadSkills, readSkillContent } from "./discovery.ts";
 import { matchingAutoloadSkills, targetPathForToolCall } from "./matchers.ts";
 import { AUTOLOAD_TOOL_NAMES, type DiscoveredSkill } from "./types.ts";

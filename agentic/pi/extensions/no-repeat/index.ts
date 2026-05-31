@@ -18,7 +18,7 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import { canonicalInput, clearAutoloadRetry, consumeAutoloadRetry, toolCallFingerprint } from "../_tool_call_retry/index.ts";
+import { canonicalInput, clearAutoloadRetry, consumeAutoloadRetry, toolCallFingerprint } from "./retry.ts";
 
 function sessionId(ctx: ExtensionContext): string {
 	return ctx.sessionManager?.getSessionId() ?? "runtime";
