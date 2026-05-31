@@ -213,26 +213,24 @@ that point the Mac sleeps immediately; if it's open nothing changes.
 - `agent_end` → tells the watcher to set `pmset -a disablesleep 0` and kills the
   `caffeinate` process.
 
-`pmset disablesleep` needs root, so a watcher process holds the privilege for
-the whole session and toggles `disablesleep` 1/0 from a tiny state file that pi
-writes at run start/end — that way you authenticate at most once per session,
-not once per run. The watcher also restores `disablesleep 0` and exits if pi
-dies, so a crash never leaves the Mac unable to sleep.
+`pmset disablesleep` needs root. The extension **never prompts for a password** —
+it only activates when passwordless access to `pmset` is already configured.
+Grant it once by adding a sudoers line via `sudo visudo`, replacing `<you>` with
+your username:
 
-How root is acquired, least-intrusive first:
+```
+<you> ALL=(ALL) NOPASSWD: /usr/bin/pmset
+```
 
-1. **Passwordless `pmset` (recommended, zero prompts).** Add a sudoers line via
-   `sudo visudo`, replacing `<you>` with your username:
+That scopes the grant to that one binary. With it in place, a session-lived
+watcher shells out with `sudo -n /usr/bin/pmset` (no prompt, ever) and toggles
+`disablesleep` 1/0 from a tiny state file pi writes at run start/end. The watcher
+also restores `disablesleep 0` and exits if pi dies, so a crash never leaves the
+Mac unable to sleep.
 
-   ```
-   <you> ALL=(ALL) NOPASSWD: /usr/bin/pmset
-   ```
-
-   The watcher then shells out with `sudo -n /usr/bin/pmset` and never prompts.
-
-2. **Native auth dialog (no setup).** Otherwise the watcher launches via
-   `osascript … with administrator privileges`, which pops one macOS password
-   dialog on the first run of the session.
+If the sudoers line is missing, the extension stays completely inert and prints
+a one-time hint (with the exact line above) on the first run — no prompts, no
+half-working state.
 
 Manual control: `/caffeinate status` reports state, `/caffeinate off` disables
 it for the session, `/caffeinate on` re-arms it. macOS-only and

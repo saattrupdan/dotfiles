@@ -20,21 +20,18 @@
  *      Per the approach in https://apple.stackexchange.com/questions/219885,
  *      that's unavoidable.
  *
- * Re-prompting for a password on every run would be miserable, so the privilege
- * is acquired *once per session* by a long-lived watcher launched on the first
- * run. The watcher polls a tiny state file and flips `disablesleep` to match
- * (1 while a run is active, 0 when idle); pi just writes "1"/"0" to that file at
- * agent_start / agent_end. The watcher also self-restores `disablesleep 0` and
- * exits if this pi process dies, so a crash never leaves the Mac unable to
- * sleep.
+ * We refuse to prompt for a password — ever. The extension only activates if
+ * `sudo -n /usr/bin/pmset` already works, i.e. you've granted passwordless
+ * access to *that one binary* via sudoers (see the nudge / README). If you
+ * haven't, the extension stays completely inert and, on the first run, prints a
+ * one-time hint showing the exact line to add. No prompts, no half-measures.
  *
- * How root is obtained, preferring the least intrusive:
- *   • If `sudo -n /usr/bin/pmset` works (you've added a NOPASSWD sudoers line —
- *     see the README), the watcher runs unprivileged and shells out with
- *     `sudo -n` — zero prompts, ever.
- *   • Otherwise it's launched via `osascript … with administrator privileges`,
- *     which pops one native auth dialog on the first run and then holds root
- *     for the rest of the session.
+ * When it is active, a session-lived watcher process holds the privilege for
+ * the whole session and toggles `disablesleep` 1/0 from a tiny state file that
+ * pi writes at agent_start / agent_end — so the lid switch tracks the run
+ * without pi itself needing root. The watcher also restores `disablesleep 0`
+ * and exits if this pi process dies, so a crash never leaves the Mac unable to
+ * sleep.
  *
  * macOS-only and orchestrator-only: subagents share the parent's machine and
  * the parent's run already brackets their work, so they never touch power. On
@@ -56,22 +53,31 @@ const STATUS_KEY = "caffeinate";
 // sleep. Keyed by pid so concurrent pi processes don't collide.
 const STATE_PATH = path.join(os.tmpdir(), `pi-caffeinate-${process.pid}.state`);
 
+/** The sudoers line that unlocks the extension — scoped to pmset alone. */
+function sudoersHint(): string {
+	const user = (() => {
+		try {
+			return os.userInfo().username;
+		} catch {
+			return "<you>";
+		}
+	})();
+	return `${user} ALL=(ALL) NOPASSWD: /usr/bin/pmset`;
+}
+
 // User-facing kill switch for the session (`/caffeinate off`). Defaults on.
 let sessionEnabled = true;
 // Whether a run is currently being held awake.
 let engaged = false;
-// The privileged watcher, launched lazily on the first run and kept alive for
-// the whole session. Self-exits when this pid dies.
+// Tri-state cache of the passwordless-sudo probe: null = not yet checked.
+let sudoOk: boolean | null = null;
+// The privileged watcher, launched lazily on the first held run and kept alive
+// for the whole session. Self-exits when this pid dies.
 let watcherStarted = false;
-// True once the watcher is confirmed to be holding root (sudo -n probe passed,
-// or the osascript dialog wasn't declined). Drives the status label.
-let lidCovered = false;
+// Show the "set up sudoers" nudge at most once per session.
+let nudged = false;
 // The per-run `caffeinate` assertion process.
 let caffeinateChild: ChildProcess | null = null;
-
-function escapeForAppleScript(s: string): string {
-	return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-}
 
 function setStatus(ctx: ExtensionContext): void {
 	if (!ctx.hasUI) return;
@@ -79,7 +85,7 @@ function setStatus(ctx: ExtensionContext): void {
 		ctx.ui.setStatus(STATUS_KEY, undefined);
 		return;
 	}
-	ctx.ui.setStatus(STATUS_KEY, lidCovered ? "☕ awake (lid ok)" : "☕ awake (idle only)");
+	ctx.ui.setStatus(STATUS_KEY, "☕ awake (lid ok)");
 }
 
 function writeState(value: "1" | "0"): void {
@@ -90,26 +96,48 @@ function writeState(value: "1" | "0"): void {
 	}
 }
 
-/** Does `sudo -n /usr/bin/pmset` work without a password (NOPASSWD sudoers)? */
-function sudoPmsetNoPassword(): boolean {
+/**
+ * Does `sudo -n /usr/bin/pmset` work without a password? `-n` means
+ * non-interactive: sudo fails fast instead of prompting, so this never blocks
+ * and never pops a dialog. Cached after the first probe.
+ */
+function hasPasswordlessPmset(): boolean {
+	if (sudoOk !== null) return sudoOk;
 	try {
 		const r = spawnSync("sudo", ["-n", "/usr/bin/pmset", "-g"], {
 			stdio: "ignore",
 			timeout: 2000,
 		});
-		return r.status === 0;
+		sudoOk = r.status === 0;
 	} catch {
-		return false;
+		sudoOk = false;
 	}
+	return sudoOk;
+}
+
+/** One-time hint telling the user how to enable the extension. */
+function nudge(ctx: ExtensionContext): void {
+	if (nudged) return;
+	nudged = true;
+	if (!ctx.hasUI) return;
+	ctx.ui.notify(
+		"caffeinate: to keep runs going with the lid closed, grant passwordless " +
+			"pmset access. Run `sudo visudo` and add:\n    " +
+			sudoersHint() +
+			"\nUntil then this extension stays off — it never prompts for a password.",
+		"info",
+	);
 }
 
 /**
- * The watcher loop, parameterised by how it invokes pmset. Polls the state file
- * every second, mirrors it into `disablesleep`, and restores `disablesleep 0`
- * when either the state file is removed or this pi process exits.
+ * The watcher loop: poll the state file every second, mirror it into
+ * `disablesleep` via `sudo -n` (passwordless, already verified), and restore
+ * `disablesleep 0` when either the state file is removed or this pi process
+ * exits.
  */
-function watcherShell(pmset: string): string {
+function watcherShell(): string {
 	const state = STATE_PATH.replace(/'/g, `'\\''`);
+	const pmset = "sudo -n /usr/bin/pmset";
 	return (
 		`prev=; ` +
 		`while /bin/kill -0 ${process.pid} 2>/dev/null; do ` +
@@ -122,66 +150,38 @@ function watcherShell(pmset: string): string {
 	);
 }
 
-/** Launch the session-lived privileged watcher exactly once. */
-function startWatcher(ctx: ExtensionContext): void {
+/** Launch the session-lived watcher exactly once. */
+function startWatcher(): void {
 	if (watcherStarted) return;
 	watcherStarted = true;
-
-	let child: ChildProcess;
 	try {
-		if (sudoPmsetNoPassword()) {
-			// Zero-prompt path: unprivileged loop, `sudo -n` per pmset call.
-			child = spawn("sh", ["-c", watcherShell("sudo -n /usr/bin/pmset")], {
-				stdio: "ignore",
-				detached: true,
-			});
-			lidCovered = true;
-		} else {
-			// One-prompt path: the whole loop runs as root via a native dialog.
-			const shell = watcherShell("/usr/bin/pmset");
-			const appleScript = `do shell script "${escapeForAppleScript(shell)}" with administrator privileges`;
-			child = spawn("osascript", ["-e", appleScript], { stdio: "ignore", detached: true });
-			lidCovered = true;
-		}
+		const child = spawn("sh", ["-c", watcherShell()], { stdio: "ignore", detached: true });
+		child.on("error", () => {
+			watcherStarted = false;
+		});
+		child.on("exit", () => {
+			watcherStarted = false;
+		});
+		child.unref();
 	} catch {
 		watcherStarted = false;
-		lidCovered = false;
-		setStatus(ctx);
-		return;
 	}
-
-	child.on("error", () => {
-		watcherStarted = false;
-		lidCovered = false;
-		setStatus(ctx);
-	});
-	child.on("exit", (code) => {
-		// The watcher should outlive every run. An early exit means the admin
-		// dialog was declined (or sudo failed): the lid is no longer covered.
-		watcherStarted = false;
-		if (code !== 0) {
-			lidCovered = false;
-			if (engaged && ctx.hasUI) {
-				ctx.ui.notify(
-					"Couldn't disable lid-close sleep (admin not granted). The run is " +
-						"held awake while the lid is open, but closing it will sleep the Mac. " +
-						"See the caffeinate extension README to set up passwordless pmset.",
-					"warning",
-				);
-			}
-			setStatus(ctx);
-		}
-	});
-	child.unref();
 }
 
 function engage(ctx: ExtensionContext): void {
 	if (!IS_MACOS || !sessionEnabled || engaged) return;
+
+	// No passwordless pmset → stay inert and nudge once. Never prompt.
+	if (!hasPasswordlessPmset()) {
+		nudge(ctx);
+		return;
+	}
+
 	engaged = true;
 
 	// Tell the watcher to hold the lid open, launching it on the first run.
 	writeState("1");
-	startWatcher(ctx);
+	startWatcher();
 
 	// Idle/display/system assertions for the duration of the run. Dies with us
 	// as an extra backstop even if the watcher is somehow lost.
@@ -262,13 +262,15 @@ export default function (pi: ExtensionAPI) {
 			if (!IS_MACOS) {
 				state = "unavailable — macOS only.";
 			} else if (!sessionEnabled) {
-				state = "disabled for this session (runs will not hold the Mac awake).";
+				state = "disabled for this session (`/caffeinate on` to re-arm).";
+			} else if (!hasPasswordlessPmset()) {
+				state =
+					"off — needs passwordless pmset. Run `sudo visudo` and add:\n    " +
+					sudoersHint();
 			} else if (engaged) {
-				state = lidCovered
-					? "active — this run keeps the Mac awake, even with the lid closed."
-					: "active — idle sleep is held off, but lid-close will still sleep (admin not granted).";
+				state = "active — this run keeps the Mac awake, even with the lid closed.";
 			} else {
-				state = "armed — the Mac will stay awake (lid-close included) while a run is in progress.";
+				state = "armed — runs will keep the Mac awake (lid-close included) while in progress.";
 			}
 			pi.sendMessage({
 				customType: "caffeinate:status",
