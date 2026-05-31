@@ -1,159 +1,115 @@
 ---
 name: virk-dk
 description: virk.dk — the Danish government portal for businesses. Covers the anonymous editorial surface (9 themes, ~2000 articles, agency tree, self-service launchers), Mit Virk dashboard, GraphQL gateway, and CVR data portals. Use when looking up Danish business-admin procedures, self-service forms, or querying virk.dk's GraphQL or Elasticsearch endpoints.
-last-updated: 2026-05-07
+last-updated: 2026-05-31
 ---
 
 # virk.dk — Danish business portal
 
-Official entrypoint for businesses and advisors dealing with Danish authorities. Run by **Erhvervsstyrelsen** on Nuxt 2 / Vue SSR backed by Contentful (CMS) and a private Mit Virk aggregation backend. Anonymous browsing is open; personalised pages need **MitID Erhverv**. Site language: Danish.
+Official entrypoint for businesses and advisors dealing with Danish authorities, run by **Erhvervsstyrelsen**. Two surfaces:
 
-All URLs are relative to `https://virk.dk/`. Slugs use URL-encoded Danish letters (`æ`→`%C3%A6`, `ø`→`%C3%B8`, `å`→`%C3%A5`). Trailing `/` is significant: `/emner/Byggeri` 301→`/emner/Byggeri/`.
+- **Editorial surface** (`virk.dk`) — anonymous themes/articles, agency tree, self-service launchers, plus the GraphQL gateway behind the SSR front-end.
+- **CVR data** — the Central Business Register: company, P-unit, and participant data, served system-to-system from an Elasticsearch distribution API.
 
-## CLI
+Personalised pages (Mit Virk dashboard) need **MitID Erhverv** and have no programmatic path. Site language is Danish, so **answer the user in Danish** unless they write in another language.
 
-Programmatic access goes through the `virk` CLI — it can be run from anywhere, with no need to point at the skill directory. Two subcommand groups:
+## CLI — use this first
+
+Programmatic access goes through the `virk` CLI. It wraps both the GraphQL gateway and the CVR Elasticsearch API, so **prefer it over POSTing GraphQL by hand, hitting `distribution.virk.dk` directly, or navigating `datacvr.virk.dk`**. The raw endpoints are documented in the reference section at the end — consult them only for something the CLI does not expose (e.g. a custom GraphQL query via `virk web query`, or a custom ES query via `virk cvr raw`).
+
+The CLI runs from anywhere; no need to point at the skill directory. Two subcommand groups:
 
 ```bash
-virk web <command> [options]   # virk.dk editorial content + GraphQL gateway
-virk cvr <command> [options]   # CVR distribution API (Elasticsearch)
+virk web <command> [options]   # virk.dk editorial content + GraphQL gateway (anonymous)
+virk cvr <command> [options]   # CVR distribution API (Elasticsearch; needs credentials)
 ```
 
-### Prerequisites
-
-Verify the CLI is installed:
+### Install / prerequisites
 
 ```bash
-which virk
+which virk   # check if already installed
 ```
 
-If missing, install it editable with pipx (from the skill directory). First make sure pipx itself is available, then install:
+If missing, install editable with pipx:
 
 ```bash
-# Ensure pipx is installed
 which pipx || python3 -m pip install --user pipx
 python3 -m pipx ensurepath
-
-# Install the virk CLI
 pipx install -e <path-to-virk-dk-skill>
+which virk   # confirm on PATH (restart shell if ensurepath just ran)
 ```
 
-After installing, confirm `virk` is on the PATH (you may need to restart the shell so `pipx ensurepath` takes effect):
+Pure Python standard library — no extra dependencies. The `web` group is anonymous. The `cvr` group reads `DATACVR_USER` / `DATACVR_PASS` env vars (free, long-lived creds — email `cvrselvbetjening@erst.dk` with name, org, CVR, and use-case). Most commands accept `--raw` for unformatted JSON.
 
-```bash
-which virk
-```
+### `virk web` — editorial content + GraphQL gateway
 
-Pure Python standard library — no extra dependencies. The `web` group is anonymous; the `cvr` group reads credentials from the `DATACVR_USER` / `DATACVR_PASS` env vars (free creds via `cvrselvbetjening@erst.dk`). Most commands support `--raw` for unformatted JSON.
+| Command | Purpose | Example |
+|---|---|---|
+| `article <slug>` | Fetch one Artikel by slug | `virk web article start-virksomhed` |
+| `search-articles <text> [--limit N]` | Substring match on `Artikel.overskrift` | `virk web search-articles moms --limit 20` |
+| `ordninger [--limit N]` | List Ordninger (schemes) | `virk web ordninger` |
+| `myndigheder [--type stat\|kommune\|region] [--limit N]` | List agencies | `virk web myndigheder --type stat` |
+| `ministerier` | Ministry → agency tree (backs `/nye-regler/`) | `virk web ministerier` |
+| `mv-services` | Mit Virk backend service status (anon) | `virk web mv-services` |
+| `ressourceset <slug> [--locale da]` | Key/value strings of an i18n bundle | `virk web ressourceset <slug>` |
+| `redirect <url> [--realm virk]` | Resolve a vanity URL via `redirectQuery` | `virk web redirect /start` |
+| `sitemap [--limit N] [--prefix /emner/]` | URLs from `/sitemap.xml` | `virk web sitemap --prefix /emner/` |
+| `query '<graphql>' [--variables JSON]` | Run an arbitrary GraphQL query string | `virk web query '{ ordningCollection { total } }'` |
+| `raw <file> [--variables JSON]` | POST a GraphQL document from a file | `virk web raw query.graphql` |
 
-## 1. Top-level sections
+All `virk web` commands take `--raw` to print the unformatted GraphQL JSON response.
 
-Front page is a grid of 9 "emner" (themes); each has 4–12 sub-themes.
+### `virk cvr` — CVR distribution API
 
-| Theme | URL |
-|---|---|
-| Byggeri | `/emner/Byggeri/` |
-| Handel - og servicefag | `/emner/Handel%20-%20og%20servicefag/` |
-| Miljø | `/emner/Milj%C3%B8/` |
-| Personale | `/emner/Personale/` |
-| Sikkerhed | `/emner/Sikkerhed/` |
-| Statistik | `/emner/Statistik/` |
-| Transport | `/emner/Transport/` |
-| Virksomhed | `/emner/Virksomhed/` |
-| Økonomi | `/emner/%C3%98konomi/` |
+Needs `DATACVR_USER` / `DATACVR_PASS`. All commands print the matched `_source` (or `--raw` for the full ES response).
 
-Drill pattern: `/emner/<theme>/<sub-theme>/` → introside listing articles, ordninger, and self-service shortcuts.
+| Command | Purpose | Example |
+|---|---|---|
+| `virksomhed <cvr> [--field <dot-path>]` | Company by CVR number; `--field` extracts a path under `virksomhedMetadata` (then `Vrvirksomhed`) | `virk cvr virksomhed 10103940 --field nyesteNavn.navn` |
+| `p-enhed <pnr>` | Production unit by P-number | `virk cvr p-enhed 1003393495` |
+| `deltager <enhedsNummer>` | Participant by `enhedsNummer` | `virk cvr deltager 4000004072` |
+| `search <name> [--limit N]` | Company name search (`match` on `nyesteNavn.navn`) | `virk cvr search carlsberg --limit 10` |
+| `count <index> <type>` | Document count for an index/type (`match_all`) | `virk cvr count cvr-permanent virksomhed` |
+| `raw <index> <type> <body-file>` | POST a raw ES query body to `<index>/<type>/_search` | `virk cvr raw cvr-permanent virksomhed query.json` |
 
-## 2. Article anatomy
+## Site map (editorial surface)
 
-Articles live under sub-themes. Each mixes:
+For agents, reach the content below via the CLI; the URLs are for human navigation or `virk web redirect`.
 
-- **Body copy** — Contentful Rich Text, often with inline modals.
-- **Genveje til selvbetjening** — CTAs pointing to `/myndigheder/<type>/<agency>/selvbetjening/<slug>/` launcher pages that hand off to the agency's own application.
-- **Related mikroartikler** — short references.
+- **9 themes ("emner")** on the front page, each with 4–12 sub-themes: Byggeri, Handel - og servicefag, Miljø, Personale, Sikkerhed, Statistik, Transport, Virksomhed, Økonomi. Drill: `/emner/<theme>/<sub-theme>/` → introside listing articles, ordninger, and self-service shortcuts.
+- **Articles** live under sub-themes: Contentful Rich Text body + "Genveje til selvbetjening" CTAs + related mikroartikler. Find them with `virk web article` / `virk web search-articles`.
+- **Self-service launchers**: `/myndigheder/<type>/<agency>/selvbetjening/<slug>/` per-agency launcher pages that hand off to the agency's own application (launchers are stubs — actual filing happens in the agency app). Named launchers on the home page: Start virksomhed, Ændre virksomhed, Luk virksomhed, Indberet moms, Refusion af sygedagpenge, Overførsel af ferie, Anmeld arbejdsulykke.
+- **Agency tree**: `/myndigheder/` (169 myndigheder); query with `virk web myndigheder` / `virk web ministerier`.
+- **Upcoming legislation**: `/nye-regler/` by ministry.
+- **Help & about**: `/vejledning/virk-hjaelp/` and `/vejledning/`. Accessibility: `https://www.was.digst.dk/virk-dk`.
+- **Sister sites**: `businessindenmark.virk.dk` (English mirror, curated subset — many articles only exist in Danish) and `datacvr.virk.dk` (CVR search, website-only — see below).
 
-## 3. Self-service entry points
+## Website-only surfaces
 
-| Pattern | Behaviour |
-|---|---|
-| `/myndigheder/<type>/<agency>/selvbetjening/<slug>/` | Per-agency launcher page. `<type>` is `stat`, `kommune`, `region`, etc. |
-| `/myndigheder/` | Agency tree — 169 myndigheder by type and ministry. |
-| `/search/?term=<query>` | SSR-rendered search (no JSON autocomplete). Query is `?term=` (URL-encoded); trailing `/` required. |
-| `/nye-regler/` | Upcoming legislation by ministry. |
+These have no API and must be used through a browser:
 
-Named launchers on the home page include: Start virksomhed, Ændre virksomhed, Luk virksomhed, Indberet moms, Refusion af sygedagpenge, Overførsel af ferie, Anmeld arbejdsulykke. Launcher slugs use `_` and spelled-out Danish letters (e.g. `Aendre`, `Foersel`).
-
-**Sister sites**: `businessindenmark.virk.dk` (English mirror, curated subset) and `datacvr.virk.dk` (CVR search).
-
-## 4. "Mit Virk" — logged-in dashboard
-
-Root: `/mit-virk/`. Aggregated state from agency backends (CVR, Skat, Danmarks Statistik, etc.) after MitID Erhverv login. Surfaces four item types:
-
-| Type | What |
-|---|---|
-| `MVSag` | Active case with authority |
-| `MVFrist` | Upcoming deadline |
-| `MVBesked` | Message from authority |
-| `MVTilladelse` | Permit / authorisation |
-
-Backend services (queryable via `mvServices`): `elastic`, `virksomhedsaendringer`, `danmarksstatistik`, `regnskab`, `fstyr`, `kompensation`. No service-account path — all data is session-bound to a live MitID Erhverv login. `/mit-virk/` and `/digitalpost/` are in `robots.txt`.
-
-## 5. Help & about
-
-Help lives at `/vejledning/virk-hjaelp/`. Guides for voluntary associations, authorities, and cookie/privacy policies at `/vejledning/`. Accessibility statement at `https://www.was.digst.dk/virk-dk`.
-
-## 6. Sitemap & enumeration
-
-- Sitemap: `https://virk.dk/sitemap.xml` — ~7,800 `<loc>` entries, no `<lastmod>`. Omits `/myndigheder/<...>/selvbetjening/<...>/` — enumerate via agency tree or GraphQL `udstillerCollection` (8316 entries).
-- `robots.txt` blocks: `/admin`, `/assistent`, `/design`, `/digitalpost`, `/mit-virk`, `/preview`, `/redigering`, `/search`.
-
-## 7. Common business tasks
-
-- **Find an article**: drill from theme tile or search `/search/?term=<query>`. Programmatic: query `artikelCollection`, `mikroartikelCollection` via GraphQL.
-- **Launch a form**: article's "Genveje til selvbetjening" → launcher page → agency app.
-- **Company overview**: `/mit-virk/` after MitID Erhverv login.
-- **Agency info**: `/myndigheder/` or query `myndighedCollection`.
-- **Read in English**: `businessindenmark.virk.dk`.
-- **Look up CVR**: `datacvr.virk.dk` or `distribution.virk.dk` Elasticsearch.
-
-## 8. Limits worth flagging
-
-- Mit Virk data is session-bound to MitID Erhverv — no public API or service-account access.
-- Site search returns SSR HTML only; no JSON autocomplete.
-- English mirror is curated; many articles only exist in Danish.
-- Launcher pages are stubs — actual filing happens in the agency's own application.
+- **`datacvr.virk.dk`** — human-facing CVR search SPA behind Cloudflare Turnstile (returns 403 to headless scrapers). Free-text search (`?soeg=`), company detail (`/enhed/virksomhed/<cvr>`), P-unit detail (`/enhed/produktionsenhed/<pnr>`), downloadable CSV/Excel at `/datakatalog/`. For programmatic CVR lookups use `virk cvr` instead. Legacy `cvr.virk.dk` 308→`datacvr.virk.dk`.
+- **Mit Virk dashboard** (`/mit-virk/`) — aggregated state (cases `MVSag`, deadlines `MVFrist`, messages `MVBesked`, permits `MVTilladelse`) after MitID Erhverv login. Session-bound only — no public API or service account. `/mit-virk/` and `/digitalpost/` are in `robots.txt`.
+- **Datafordeler successor** — `https://datafordeler.dk/dataoversigt/det-centrale-virksomhedsregister-cvr/` is the REST/JSON-over-OAuth2 replacement for CVR distribution. The `distribution.virk.dk` Elasticsearch endpoint retires **end of 2026**; new integrations should target Datafordeler.
 
 ---
 
-# GraphQL gateway
+## Reference: GraphQL gateway, CVR Elasticsearch & site structure
 
-`https://virk.dk/graphql` — single anonymous endpoint backing the Nuxt SSR front-end. **No REST `/api/*` routes** (all 404). `robots.txt` does not block `/graphql`.
+What the CLI wraps. Consult only when you need something the CLI does not expose — feed custom GraphQL through `virk web query`/`virk web raw`, and custom ES queries through `virk cvr raw`.
 
-## Conventions
+### GraphQL gateway
+
+`https://virk.dk/graphql` — single anonymous endpoint backing the Nuxt 2 / Vue SSR front-end (Contentful CMS). **No REST `/api/*` routes** (all 404). `robots.txt` does not block `/graphql`.
 
 - `POST /graphql` with `Content-Type: application/json`: `{"query": "...", "variables": {...}}`. GET also works.
-- Server: `x-env: Azure/K8s GraphQL Gateway`. CORS wide open (`Access-Control-Allow-Origin: *`).
-- **Introspection disabled**: `__schema` returns errors. Type discovery from SPA bundle or trial-and-error.
-- Error envelope: `{"errors":[...], "data": ...}`. Per-resolver errors don't fail the whole query. Codes include `SERVICE_REFERENCE_INVALID`.
-- Federates **two** backends:
-  - **Contentful Delivery API** — standard Contentful pattern: every type `Foo` has `fooCollection(limit, skip, where, locale, preview, order)`.
-  - **Mit Virk aggregator** — private wrapper over per-agency backends.
+- Federates **two** backends: the **Contentful Delivery API** (every type `Foo` has `fooCollection(limit, skip, where, locale, preview, order)`) and the private **Mit Virk aggregator**.
+- **Introspection disabled**: `__schema` returns errors; discover types from the SPA bundle or trial-and-error.
+- Error envelope `{"errors":[...], "data": ...}`; per-resolver errors don't fail the whole query. Codes include `SERVICE_REFERENCE_INVALID`. CORS wide open.
 
-## Auth model
+Auth: Contentful collections, `redirectQuery`, and `mvServices` are anonymous (the entire editorial surface). `mvSag`/`mvFrist`/`mvBesked`/`mvTilladelse`/`mvInformationCollection` and mutations (`mvSkjulInformation`, `updateMinisterier`) are session-bound to MitID Erhverv and unreachable anonymously.
 
-| Surface | Auth |
-|---|---|
-| Contentful collections (`artikelCollection`, `myndighedCollection`, `udstillerCollection`, etc.) | Anonymous |
-| `redirectQuery` | Anonymous |
-| `mvServices` | Anonymous |
-| `mvSag`, `mvFrist`, `mvBesked`, `mvTilladelse`, `mvInformationCollection` | Session-bound (MitID Erhverv) |
-| Mutations (`mvSkjulInformation`, `updateMinisterier`) | Session-bound |
-
-Anonymous use covers the entire editorial surface. Personal-business data is unreachable.
-
-## Schema cribsheet
-
-Verified via `<type>Collection { items { __typename } }`:
+**Schema cribsheet** (verified via `<type>Collection { items { __typename } }`):
 
 | Collection | total | Key fields |
 |---|---|---|
@@ -161,7 +117,7 @@ Verified via `<type>Collection { items { __typename } }`:
 | `mikroartikelCollection` | 1908 | `sys.id, overskrift` |
 | `masterCollection` | 1773 | `sys.id, slug, titel, myndighedstype` |
 | `introsideCollection` | 1931 | `sys.id, slug, titel` |
-| `udstillerCollection` | 8316 | Links self-service entry to issuing agency |
+| `udstillerCollection` | 8316 | Links self-service entry to issuing agency (use to enumerate launchers, which `sitemap.xml` omits) |
 | `myndighedCollection` | 169 | `forkortelse, type, cvr, beskrivelse` — **no `navn`/`slug`** (on linked `Ministerium`) |
 | `ordningCollection` | 64 | `slug, overordnetTitel` |
 | `emneCollection` | 465 | Topic taxonomy |
@@ -172,13 +128,9 @@ Verified via `<type>Collection { items { __typename } }`:
 | `ressourceSetCollection` | small | i18n string bundles |
 | `ministeriumCollection` | small | Ministry → agency tree |
 
-`Asset`: `{ url, fileName, contentType, width, height, sys{id,publishedAt} }`. `SimpeltLink`: `{url, linkText}`. `MVLink`: `{url, titel, ariaLabel}`.
+`Asset`: `{ url, fileName, contentType, width, height, sys{id,publishedAt} }`. `SimpeltLink`: `{url, linkText}`. `MVLink`: `{url, titel, ariaLabel}`. Mit Virk types share `id, titel, beskrivelse, system{...}, gyldighedsperiode{from,to}, myndighed{cvr,navn}, primaerPart{partType,identifikator}, handlingsLink{...}`. Enums: `MVAubElevType`, `MVIdentitetType`. Input: `MVInformationFilter`. The `redirectQuery(query, realm)` resolver returns `redirectUrl=""` / `httpStatus=-1` when no match (realm `"virk"`).
 
-Mit Virk types have common fields: `id, titel, beskrivelse, system{...}, gyldighedsperiode{from,to}, myndighed{cvr,navn}, primaerPart{partType,identifikator}, handlingsLink{...}`. Enums: `MVAubElevType`, `MVIdentitetType`. Input: `MVInformationFilter`.
-
-## Verified queries
-
-All examples: `POST https://virk.dk/graphql` with `{"query": "<below>", "variables": {...}}`.
+Example raw queries (each via `virk web query '<below>'` or POST `https://virk.dk/graphql`):
 
 ```graphql
 # Article by slug
@@ -193,13 +145,13 @@ query ArticleBySlug($slug: String!) {
 # Mit Virk page tree
 query mvSideStruktur($slug: String) {
   mitVirkSideCollection(where: { slug: $slug }, limit: 1) {
-    items { overskrift slug mitVirkSiderCollection { items { overskrift slug mitVirkSiderCollection { items { overskrift slug } } } } }
+    items { overskrift slug mitVirkSiderCollection { items { overskrift slug } } }
   }
 }
 ```
 
 ```graphql
-# i18n bundle
+# i18n bundle (wrapped by `virk web ressourceset`)
 query RessourceSet($slug: String!, $locale: String = "da") {
   ressourceSetCollection(where: { slug: $slug }, locale: $locale, limit: 1) {
     items { ressourcerCollection(limit: 1000) { items { key value } } }
@@ -207,94 +159,28 @@ query RessourceSet($slug: String!, $locale: String = "da") {
 }
 ```
 
-```graphql
-# Ministry / agency tree
-query fetchMinisterier {
-  ministeriumCollection { items { navn cvr myndigheder { navn cvr } } }
-}
+### CVR Elasticsearch distribution API
+
+`http://distribution.virk.dk` — plain HTTP, Elasticsearch v6. HTTP Basic on every request (returns 401 without creds); `GET` and `POST /_search` both work. Replies are vanilla ES6 JSON. `virk cvr` wraps all of this.
+
+Indices:
+
+```
+cvr-permanent/virksomhed/_search                   # companies
+cvr-permanent/produktionsenhed/_search             # P-units
+cvr-permanent/deltager/_search                     # participants
+registreringstekster/registreringstekst/_search    # registration texts
 ```
 
-```graphql
-# Vanity URL resolver
-query redirects($q: String!, $realm: String!) {
-  redirectQuery(query: $q, realm: $realm) { redirectUrl httpStatus }
-}
-# realm: "virk". Returns redirectUrl="" and httpStatus=-1 if no match.
-```
-
-**Mutations** (auth only): `mvSkjulInformation(service, uuid, identitetType, skjul)` — hide dashboard item. `updateMinisterier(ministerier)` — editorial mutation.
-
-## CLI usage — `virk web`
-
-Anonymous GraphQL gateway (standard library only):
+Alias `cvr-update` exists for incremental syncs. Equivalent raw lookup behind `virk cvr virksomhed`:
 
 ```bash
-virk web query '<graphql>'
-virk web article <slug>
-virk web search-articles <text> [--limit N]
-virk web ordninger [--limit N]
-virk web myndigheder [--type stat|kommune|region] [--limit N]
-virk web ministerier
-virk web mv-services
-virk web ressourceset <slug> [--locale da]
-virk web redirect <vanity-url> [--realm virk]
-virk web sitemap [--limit N] [--prefix /emner/]
-virk web raw <file>
-```
-
----
-
-# CVR data
-
-The Central Business Register (**CVR**) is administered by Erhvervsstyrelsen. Two channels:
-
-| Channel | Audience | Auth |
-|---|---|---|
-| `https://datacvr.virk.dk/` (UI) | Humans | Anonymous (Cloudflare Turnstile) |
-| `http://distribution.virk.dk/cvr-permanent/...` (Elasticsearch) | Systems | HTTP Basic (free) |
-
-Older URL `cvr.virk.dk` 308→`datacvr.virk.dk`. Successor: **Datafordeler** (`https://datafordeler.dk/dataoversigt/det-centrale-virksomhedsregister-cvr/`) — REST/JSON over HTTPS with OAuth2, phased-in replacement.
-
-## 1. Human-facing portal — `datacvr.virk.dk`
-
-React SPA behind Cloudflare Turnstile (returns 403 to headless scrapers). Use Playwright or the ES endpoint for programmatic access.
-
-Features: free-text search (`?soeg=`), company detail (`/enhed/virksomhed/<cvr>`), P-unit detail (`/enhed/produktionsenhed/<pnr>`), advertising protection suppression, downloadable CSV/Excel snapshots at `/datakatalog/`. Legal document scans cost a small fee.
-
-## 2. System-to-system — `distribution.virk.dk`
-
-Plain HTTP (Elasticsearch v6). No anonymised crawling — returns 401 without credentials.
-
-### Credentials
-
-Email `cvrselvbetjening@erst.dk` with name, org, CVR, use-case description. Free, long-lived creds.
-
-### Indices
-
-```
-cvr-permanent/virksomhed/_search          # companies
-cvr-permanent/produktionsenhed/_search    # P-units
-cvr-permanent/deltager/_search            # participants
-registreringstekster/registreringstekst/_search   # registration texts
-```
-
-Alias `cvr-update` exists for incremental syncs.
-
-### Auth & methods
-
-HTTP Basic on every request (`-u user:pass`). `GET` and `POST /_search` both work. Replies are vanilla ES6 JSON.
-
-### Canonical lookup
-
-```bash
-curl -s -u "USER:PASS" \
-  -H 'Content-Type: application/json' \
+curl -s -u "$DATACVR_USER:$DATACVR_PASS" -H 'Content-Type: application/json' \
   -X POST 'http://distribution.virk.dk/cvr-permanent/virksomhed/_search' \
-  -d '{"query": {"term": {"Vrvirksomhed.cvrNummer": 10103940}}}' \
-  | jq '.hits.hits[0]._source.Vrvirksomhed.virksomhedMetadata.nyesteNavn'
+  -d '{"query": {"term": {"Vrvirksomhed.cvrNummer": 10103940}}}'
 ```
 
-Field shortcuts:
+Field shortcuts (useful for interpreting `virk cvr` output and building `virk cvr raw` bodies):
 
 | Lookup | Field |
 |---|---|
@@ -308,29 +194,8 @@ Field shortcuts:
 
 Top-level `_source` shape: `Vrvirksomhed` with `cvrNummer`, `enhedsNummer`, `navne[]`, `beliggenhedsadresse[]`, `deltagerRelation[]`, and `virksomhedMetadata.nyeste*` mirrors. P-units and participants follow analogous shapes with historical arrays.
 
-Pagination: `from + size <= 3000`. Beyond that, `?scroll=1m`. For large exports prefer daily ndjson dumps from `/datakatalog/`.
+Pagination: `from + size <= 3000`; beyond that use `?scroll=1m`, or prefer the daily ndjson dumps at `/datakatalog/` for large exports. "Reklamebeskyttede" units have email/phone redacted even with credentials, and protected sole-traders' addresses are suppressed. Update lag: minutes for live, end-of-day for dumps. No tax/accounting figures beyond published annual reports. Endpoint retires end of 2026 — migrate to Datafordeler.
 
-"Reklamebeskyttede" units have email/phone redacted even with credentials. Update lag: minutes for live, end-of-day for dumps.
+### URL conventions
 
-**Phase-out**: distribution endpoint retires end of 2026. New integrations should target Datafordeler.
-
-### What you cannot do
-
-- No personal data of protected sole-traders (address redacted).
-- No tax/accounting figures beyond published annual reports (those are in Skat).
-- No free unlimited bulk export (throttled at 3000 hits/query).
-- No SLA after end-2026 — plan migration to Datafordeler.
-
-## 3. CLI usage — `virk cvr`
-
-Expects `DATACVR_USER` / `DATACVR_PASS` env vars:
-
-```bash
-virk cvr virksomhed 10103940
-virk cvr virksomhed 10103940 --field nyesteNavn.navn
-virk cvr p-enhed 1003393495
-virk cvr deltager 4000004072
-virk cvr search "carlsberg" --limit 10
-virk cvr raw cvr-permanent virksomhed query.json
-virk cvr count cvr-permanent virksomhed
-```
+All editorial URLs are relative to `https://virk.dk/`. Slugs use URL-encoded Danish letters (`æ`→`%C3%A6`, `ø`→`%C3%B8`, `å`→`%C3%A5`). Trailing `/` is significant (`/emner/Byggeri` 301→`/emner/Byggeri/`). Launcher slugs use `_` and spelled-out Danish letters (e.g. `Aendre`, `Foersel`). Site search (`/search/?term=<query>`) is SSR HTML only — no JSON autocomplete. `robots.txt` blocks `/admin`, `/assistent`, `/design`, `/digitalpost`, `/mit-virk`, `/preview`, `/redigering`, `/search`. `sitemap.xml` has ~7,800 `<loc>` entries (no `<lastmod>`) and omits selvbetjening launchers.
