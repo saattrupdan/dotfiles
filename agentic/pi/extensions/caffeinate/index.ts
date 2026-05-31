@@ -98,7 +98,7 @@ function setStatus(ctx: ExtensionContext): void {
 		ctx.ui.setStatus(STATUS_KEY, undefined);
 		return;
 	}
-	ctx.ui.setStatus(STATUS_KEY, "☕ awake (lid ok)");
+	ctx.ui.setStatus(STATUS_KEY, "☕");
 }
 
 function writeState(value: "1" | "0"): void {
