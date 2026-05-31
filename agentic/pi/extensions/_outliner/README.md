@@ -56,7 +56,7 @@ export function collapsedView(
 | `.ts`                     | `tree-sitter-typescript` (typescript grammar)               |
 | `.tsx`                    | `tree-sitter-typescript` (tsx grammar)                      |
 | `.js`, `.jsx`, `.mjs`, `.cjs` | `tree-sitter-javascript`                                |
-| `.vue`                    | Regex-split `<script[^>]*>...</script>` blocks; parse content as TS (if `lang="ts"`/`"typescript"`) or JS. Line numbers are offset back to the original file. |
+| `.vue`                    | One `block` entry per top-level SFC section (`template`, `script`/`script-setup`, `style`, with `style-2`… for repeats) so the markup and styles are reachable on large files; plus the symbols inside each `<script>` block, parsed as TS (if `lang="ts"`/`"typescript"`) or JS, with line numbers offset back to the original file. |
 | `.md`, `.markdown`        | Headings extracted by regex on `^(#{1,6})\s+(.+)$`, skipping fenced code blocks. |
 | anything else             | Heuristic fallback (see below).                             |
 

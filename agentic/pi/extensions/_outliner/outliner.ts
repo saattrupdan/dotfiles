@@ -450,10 +450,67 @@ function leadingJsDoc(source: string): string | undefined {
 
 const VUE_SCRIPT_RE = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi;
 
+// Top-level SFC block opener (`<template>` / `<script>` / `<style>`). Root blocks
+// are written at column 0 by every formatter, whereas nested `<template>` inside
+// the root template are indented — anchoring open/close to the line start picks
+// the root block boundaries rather than a nested one.
+const VUE_BLOCK_OPEN_RE = /^<(template|script|style)\b([^>]*)>/i;
+
 function outlineVue(source: string): OutlineEntry[] {
 	const entries: OutlineEntry[] = [];
-	const matches = source.matchAll(VUE_SCRIPT_RE);
-	for (const m of matches) {
+	const lines = source.split("\n");
+
+	// 1. Emit one navigable `block` entry per top-level SFC section so the
+	//    `<template>` and `<style>` blocks (which hold no parseable symbols) are
+	//    reachable via symbol="template"/"style" on large files — otherwise they
+	//    are invisible and unreadable, since `read` has no pagination.
+	const nameCounts = new Map<string, number>();
+	for (let i = 0; i < lines.length; i++) {
+		const open = VUE_BLOCK_OPEN_RE.exec(lines[i]!);
+		if (!open) continue;
+		const tag = open[1]!.toLowerCase();
+		const attrs = open[2] ?? "";
+		const startLine = i + 1;
+
+		// Locate the matching close tag, anchored at the start of a line.
+		let endLine = lines.length;
+		let closeIdx = lines.length - 1;
+		if (new RegExp(`</${tag}>`, "i").test(lines[i]!.slice(open[0].length))) {
+			// Block opens and closes on the same line (e.g. `<style></style>`).
+			endLine = startLine;
+			closeIdx = i;
+		} else {
+			const closeRe = new RegExp(`^</${tag}>`, "i");
+			for (let j = i + 1; j < lines.length; j++) {
+				if (closeRe.test(lines[j]!)) {
+					endLine = j + 1;
+					closeIdx = j;
+					break;
+				}
+			}
+		}
+
+		// Symbol-friendly name (no spaces): `script setup` → "script-setup",
+		// repeated blocks → "style-2", "style-3", …
+		const base = tag === "script" && /\bsetup\b/.test(attrs) ? "script-setup" : tag;
+		const n = (nameCounts.get(base) ?? 0) + 1;
+		nameCounts.set(base, n);
+		const name = n > 1 ? `${base}-${n}` : base;
+
+		// Surface lang / scoped as a hint in the signature column.
+		const hints: string[] = [];
+		const langMatch = /\blang\s*=\s*["']([^"']+)["']/i.exec(attrs);
+		if (langMatch) hints.push(`lang=${langMatch[1]!.toLowerCase()}`);
+		if (/\bscoped\b/.test(attrs)) hints.push("scoped");
+		const signature = hints.length ? `  [${hints.join(", ")}]` : undefined;
+
+		entries.push({ line: startLine, lineEnd: endLine, kind: "block", name, signature });
+		i = closeIdx; // skip the block body so a nested </tag> can't start a phantom block
+	}
+
+	// 2. Extract the symbols inside each <script> block so functions/classes stay
+	//    individually navigable. Line numbers are offset back to the original file.
+	for (const m of source.matchAll(VUE_SCRIPT_RE)) {
 		const attrs = m[1] ?? "";
 		const body = m[2] ?? "";
 		const openIdx = m.index ?? 0;
@@ -465,12 +522,12 @@ function outlineVue(source: string): OutlineEntry[] {
 		const info = detectLanguage(isTs ? "x.ts" : "x.js");
 		if (!info.parserLanguage) continue;
 		try {
-			const sub = runTreeSitter(body, info.parserLanguage, extractTsJs, linesBefore);
-			entries.push(...sub);
+			entries.push(...runTreeSitter(body, info.parserLanguage, extractTsJs, linesBefore));
 		} catch {
 			// ignore broken script block; other blocks may still parse
 		}
 	}
+
 	entries.sort((a, b) => a.line - b.line);
 	return entries;
 }
