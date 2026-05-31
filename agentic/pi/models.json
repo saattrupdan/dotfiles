@@ -17,7 +17,7 @@
       "apiKey": "sparkie",
       "models": [
         {
-          "id": "Intel/Qwen3.6-35B-A3B-int4-mixed-AutoRound",
+          "id": "Qwen/Qwen3.6-35B-A3B-FP8",
           "contextWindow": 262144,
           "thinkingTokenBudget": 2048
         }
