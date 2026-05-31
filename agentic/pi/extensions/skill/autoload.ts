@@ -1,57 +1,57 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, Skill } from "@earendil-works/pi-coding-agent";
 
 import { discoverAutoloadSkills } from "./discovery.ts";
 import { matchingAutoloadSkills, targetPathForToolCall } from "./matchers.ts";
 import { AUTOLOAD_TOOL_NAMES, type DiscoveredSkill } from "./types.ts";
 
-const delivered = new Set<string>();
+const loaded = new Set<string>();
 let currentSessionId: string | undefined;
 
 function sessionId(ctx: ExtensionContext): string {
 	return ctx.sessionManager?.getSessionId() ?? "runtime";
 }
 
-function skillKey(session: string, skill: DiscoveredSkill): string {
+function skillKey(session: string, skill: Pick<Skill, "name" | "filePath">): string {
 	return `${session}\0${skill.name}\0${skill.filePath}`;
 }
 
 function syncSession(ctx: ExtensionContext): string {
 	const id = sessionId(ctx);
 	if (currentSessionId && currentSessionId !== id) {
-		delivered.clear();
+		loaded.clear();
 	}
 	currentSessionId = id;
 	return id;
 }
 
-export function alreadyInjectedForSession(ctx: ExtensionContext, skill: DiscoveredSkill): boolean {
-	return delivered.has(skillKey(syncSession(ctx), skill));
+export function alreadyLoadedForSession(ctx: ExtensionContext, skill: Pick<Skill, "name" | "filePath">): boolean {
+	return loaded.has(skillKey(syncSession(ctx), skill));
 }
 
-function markDelivered(ctx: ExtensionContext, skills: DiscoveredSkill[]): void {
-	const id = syncSession(ctx);
-	for (const skill of skills) {
-		delivered.add(skillKey(id, skill));
-	}
+export function markSkillLoadedForSession(ctx: ExtensionContext, skill: Pick<Skill, "name" | "filePath">): void {
+	loaded.add(skillKey(syncSession(ctx), skill));
 }
 
-function formatAutoloadBlock(skills: DiscoveredSkill[], toolName: string, rawPath: string): string {
-	const skillNames = skills.map((s) => s.name).join(", ");
-	const renderedSkills = skills
-		.map((skill) => `<skill name="${skill.name}" path="${skill.filePath}">\n${skill.content}\n</skill>`)
-		.join("\n\n");
+function formatSkillCall(name: string): string {
+	return `\`skill\` with ${JSON.stringify({ name })}`;
+}
+
+function formatAutoloadRequest(skills: DiscoveredSkill[], toolName: string, rawPath: string): string {
+	const skillNames = skills.map((skill) => `\`${skill.name}\``).join(", ");
+	const calls = skills.map((skill) => `- Call ${formatSkillCall(skill.name)}`).join("\n");
 
 	return (
 		`Relevant skill${skills.length === 1 ? "" : "s"} matched this ${toolName} call for \`${rawPath}\`: ${skillNames}.\n\n` +
-		"The original tool call has been blocked once so you can read and apply the guidance below. " +
-		"After applying it, retry the original tool call; these skills are marked delivered for this session, so the retry will proceed.\n\n" +
-		renderedSkills
+		"The original tool call has been blocked so the matching skill guidance can be loaded explicitly first. " +
+		"Call the `skill` tool as listed below, then retry the original tool call with the same arguments. " +
+		"This autoload block intentionally does not include full skill content; the explicit `skill` tool result remains the source of model-visible guidance.\n\n" +
+		calls
 	);
 }
 
 export function registerAutoload(pi: ExtensionAPI): void {
 	pi.on("session_start", async () => {
-		delivered.clear();
+		loaded.clear();
 		currentSessionId = undefined;
 	});
 
@@ -64,7 +64,7 @@ export function registerAutoload(pi: ExtensionAPI): void {
 		let matches: DiscoveredSkill[];
 		try {
 			matches = matchingAutoloadSkills(discoverAutoloadSkills(ctx.cwd), event.toolName, target).filter(
-				(skill) => !alreadyInjectedForSession(ctx, skill),
+				(skill) => !alreadyLoadedForSession(ctx, skill),
 			);
 		} catch {
 			return undefined;
@@ -72,10 +72,9 @@ export function registerAutoload(pi: ExtensionAPI): void {
 
 		if (matches.length === 0) return undefined;
 
-		markDelivered(ctx, matches);
 		return {
 			block: true,
-			reason: formatAutoloadBlock(matches, event.toolName, target.raw),
+			reason: formatAutoloadRequest(matches, event.toolName, target.raw),
 		};
 	});
 }
