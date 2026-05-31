@@ -32,6 +32,15 @@
  * Orchestrator-only: a subagent reports back to its parent rather than going
  * idle in front of the user, so a self-nudge there is just wasted tokens — and
  * the parent's own run already brackets the subagent's work.
+ *
+ * Thinking is suppressed for the check turn: a bookkeeping pass over work the
+ * agent just did doesn't need reasoning tokens, and skipping them keeps the
+ * nudge cheap and fast. We can't lower the thinking *level* — the local vLLM
+ * models are `openai-completions` with no reasoning flag, so Pi's thinking
+ * level never reaches them. Instead we set `PI_DISABLE_THINKING=1` for the
+ * duration of the turn; the `vllm-thinking` extension honours that flag and
+ * injects `thinking_token_budget: 0` into the request. If `vllm-thinking` isn't
+ * loaded the flag is simply inert — no harm.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -50,6 +59,9 @@ interface MessageLike {
 
 const CUSTOM_TYPE = "double-check:nudge";
 
+/** Generic "skip reasoning for the current request" signal, honoured by vllm-thinking. */
+const DISABLE_THINKING_ENV = "PI_DISABLE_THINKING";
+
 /** The hidden nudge. Kept terse — it's prepended to a full context window. */
 const PROMPT =
 	"Before this turn ends: re-read the original request and check your work against it. " +
@@ -66,6 +78,18 @@ let armed = false;
 let checking = false;
 /** User-facing kill switch for the session (`/double-check off`). Defaults on. */
 let sessionEnabled = true;
+
+/** Suppress reasoning for the check turn; vllm-thinking turns this into budget 0. */
+function disableThinking(): void {
+	process.env[DISABLE_THINKING_ENV] = "1";
+}
+
+/** Restore normal thinking once the check turn is over (or never started). */
+function restoreThinking(): void {
+	if (process.env[DISABLE_THINKING_ENV] !== undefined) {
+		delete process.env[DISABLE_THINKING_ENV];
+	}
+}
 
 /** Flatten an assistant message's text blocks into one string. */
 function messageText(message: MessageLike): string {
@@ -102,15 +126,20 @@ export default function (pi: ExtensionAPI) {
 	if (process.env.PI_SUBAGENT_CHILD === "1") return;
 
 	// Arm on the start of a genuine run; the injected loop's own start is
-	// skipped so it can never re-arm itself.
+	// skipped so it can never re-arm itself. A genuine run also clears any
+	// thinking-disable flag that somehow leaked from a prior interrupted check.
 	pi.on("agent_start", async () => {
-		if (!checking) armed = true;
+		if (!checking) {
+			armed = true;
+			restoreThinking();
+		}
 	});
 
 	pi.on("agent_end", async (event, ctx: ExtensionContext) => {
-		// End of the injected loop: clear the flag and stop. Never re-inject.
+		// End of the injected loop: clear the flags and stop. Never re-inject.
 		if (checking) {
 			checking = false;
+			restoreThinking();
 			return;
 		}
 
@@ -126,11 +155,16 @@ export default function (pi: ExtensionAPI) {
 		// recognised and doesn't re-arm.
 		checking = true;
 
+		// Suppress reasoning for the upcoming check turn (see header). Set before
+		// the trigger so the turn's very first provider request already sees it.
+		disableThinking();
+
 		// Defer the trigger so the current agent_end fully settles and the
 		// session is idle before we start a fresh loop from underneath it.
 		setImmediate(() => {
 			if (!ctx.isIdle()) {
 				checking = false;
+				restoreThinking();
 				return;
 			}
 			pi.sendMessage(

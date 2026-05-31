@@ -20,6 +20,13 @@
  *       }
  *     }
  *   }
+ *
+ * Disable signal: when another extension sets `PI_DISABLE_THINKING=1` (e.g. the
+ * `double-check` extension while it runs its hidden self-review turn), we inject
+ * `thinking_token_budget: 0` instead of the configured budget — forcing the
+ * model to skip reasoning for that turn. We only override models that already
+ * have a configured budget, so a model that wouldn't otherwise get the field
+ * never has it added (and can't be broken by an unsupported field).
  */
 
 import * as fs from "node:fs";
@@ -74,7 +81,11 @@ export default function (pi: ExtensionAPI) {
 		const budget = getThinkingTokenBudgetForModel(models, model.provider, model.id);
 		if (budget === undefined || budget === null) return;
 
+		// A disable signal (set per-turn by another extension) forces thinking off
+		// for this request without touching models that have no configured budget.
+		const disabled = process.env.PI_DISABLE_THINKING === "1";
+
 		const payload = event.payload as Record<string, unknown>;
-		payload.thinking_token_budget = budget;
+		payload.thinking_token_budget = disabled ? 0 : budget;
 	});
 }
