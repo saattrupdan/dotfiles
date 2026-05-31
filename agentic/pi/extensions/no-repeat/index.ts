@@ -16,28 +16,12 @@
  * identical `read` calls in a row are not.
  */
 
-import * as crypto from "node:crypto";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { canonicalInput, clearAutoloadRetry, consumeAutoloadRetry, toolCallFingerprint } from "../_tool_call_retry/index.ts";
 
-function canonicalize(value: unknown): unknown {
-	if (value === null || typeof value !== "object") return value;
-	if (Array.isArray(value)) return value.map(canonicalize);
-	const out: Record<string, unknown> = {};
-	for (const key of Object.keys(value as object).sort()) {
-		out[key] = canonicalize((value as Record<string, unknown>)[key]);
-	}
-	return out;
-}
-
-function fingerprint(toolName: string, input: unknown): string {
-	let json: string;
-	try {
-		json = JSON.stringify(canonicalize(input));
-	} catch {
-		json = String(input);
-	}
-	return `${toolName}\0${crypto.createHash("sha1").update(json).digest("hex")}`;
+function sessionId(ctx: ExtensionContext): string {
+	return ctx.sessionManager?.getSessionId() ?? "runtime";
 }
 
 /**
@@ -63,7 +47,7 @@ function blockReason(toolName: string, input: unknown): string {
 		}
 		return (
 			`You already have the body of \`${String(symbol)}\` above. To get more, ` +
-			'pick a different symbol from the outline, `read` symbol="__preamble__" for imports/constants, ' +
+			'read a different symbol from the outline, `read` symbol="__preamble__" for imports/constants, ' +
 			"or use `search` to find what you need."
 		);
 	}
@@ -75,16 +59,35 @@ function blockReason(toolName: string, input: unknown): string {
 
 export default function (pi: ExtensionAPI) {
 	let last: string | null = null;
+	let currentSessionId: string | undefined;
 
-	pi.on("tool_call", async (event) => {
+	pi.on("session_start", async (_event, ctx) => {
+		last = null;
+		currentSessionId = undefined;
+		clearAutoloadRetry(sessionId(ctx));
+	});
+
+	pi.on("tool_call", async (event, ctx) => {
+		const session = sessionId(ctx);
+		if (currentSessionId && currentSessionId !== session) {
+			last = null;
+		}
+		currentSessionId = session;
+
 		// If the input canonicalizes to nothing (non-enumerable shape, empty
 		// args), don't risk a false collision — treat it as never matching.
-		const canonical = JSON.stringify(canonicalize(event.input));
-		if (!canonical || canonical === "{}" || canonical === "null") {
+		const canonical = canonicalInput(event.input);
+		if (!canonical) {
 			last = null;
 			return;
 		}
-		const fp = fingerprint(event.toolName, event.input);
+
+		const fp = toolCallFingerprint(event.toolName, event.input);
+		if (consumeAutoloadRetry(session, event.toolName, event.input)) {
+			last = fp;
+			return;
+		}
+
 		if (last === fp) {
 			// Reset so a third identical attempt does not stay permanently blocked;
 			// after the nudge the model usually changes its arguments.

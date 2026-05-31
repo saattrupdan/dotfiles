@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext, Skill } from "@earendil-works/pi-coding-agent";
 
-import { discoverAutoloadSkills } from "./discovery.ts";
+import { recordAutoloadRetry } from "../_tool_call_retry/index.ts";
+import { discoverAutoloadSkills, readSkillContent } from "./discovery.ts";
 import { matchingAutoloadSkills, targetPathForToolCall } from "./matchers.ts";
 import { AUTOLOAD_TOOL_NAMES, type DiscoveredSkill } from "./types.ts";
 
@@ -32,20 +33,30 @@ export function markSkillLoadedForSession(ctx: ExtensionContext, skill: Pick<Ski
 	loaded.add(skillKey(syncSession(ctx), skill));
 }
 
-function formatSkillCall(name: string): string {
-	return `\`skill\` with ${JSON.stringify({ name })}`;
+function formatInjectedSummary(skills: DiscoveredSkill[]): string {
+	if (skills.length === 1) return `↪ ${skills[0].name} skill injected`;
+	const names = skills.map((skill) => skill.name).join(", ");
+	return `↪ ${names} skills injected`;
 }
 
-function formatAutoloadRequest(skills: DiscoveredSkill[], toolName: string, rawPath: string): string {
-	const skillNames = skills.map((skill) => `\`${skill.name}\``).join(", ");
-	const calls = skills.map((skill) => `- Call ${formatSkillCall(skill.name)}`).join("\n");
+function formatInjectedSkill(skill: DiscoveredSkill, content: string): string {
+	return [`<skill name="${skill.name}">`, content.trimEnd(), "</skill>"].join("\n");
+}
+
+function formatAutoloadInjection(
+	skills: Array<{ skill: DiscoveredSkill; content: string }>,
+	toolName: string,
+	rawPath: string,
+): string {
+	const summary = formatInjectedSummary(skills.map(({ skill }) => skill));
+	const injected = skills.map(({ skill, content }) => formatInjectedSkill(skill, content)).join("\n\n");
 
 	return (
-		`Relevant skill${skills.length === 1 ? "" : "s"} matched this ${toolName} call for \`${rawPath}\`: ${skillNames}.\n\n` +
-		"The original tool call has been blocked so the matching skill guidance can be loaded explicitly first. " +
-		"Call the `skill` tool as listed below, then retry the original tool call with the same arguments. " +
-		"This autoload block intentionally does not include full skill content; the explicit `skill` tool result remains the source of model-visible guidance.\n\n" +
-		calls
+		`${summary}\n\n` +
+		`Relevant skill${skills.length === 1 ? "" : "s"} matched this ${toolName} call for \`${rawPath}\`. ` +
+		"The original tool call was blocked once so the full skill guidance could be injected directly below. " +
+		"Retry the exact original tool call now; no explicit `skill` tool call is needed for this autoload.\n\n" +
+		injected
 	);
 }
 
@@ -72,9 +83,25 @@ export function registerAutoload(pi: ExtensionAPI): void {
 
 		if (matches.length === 0) return undefined;
 
+		const injected = matches.flatMap((skill) => {
+			try {
+				return [{ skill, content: readSkillContent(skill) }];
+			} catch {
+				return [];
+			}
+		});
+
+		if (injected.length === 0) return undefined;
+
+		const session = syncSession(ctx);
+		for (const { skill } of injected) {
+			markSkillLoadedForSession(ctx, skill);
+		}
+		recordAutoloadRetry(session, event.toolName, event.input);
+
 		return {
 			block: true,
-			reason: formatAutoloadRequest(matches, event.toolName, target.raw),
+			reason: formatAutoloadInjection(injected, event.toolName, target.raw),
 		};
 	});
 }
