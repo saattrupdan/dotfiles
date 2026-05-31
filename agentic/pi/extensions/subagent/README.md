@@ -14,7 +14,7 @@ Agents are discovered from `~/.pi/agent/agents/*.md` (user scope) and, when
 name: builder
 description: One-line description shown to the orchestrator.
 tools: read, write, edit, bash           # optional, comma-separated allow-list
-model: anthropic/claude-sonnet-4-5       # optional
+model: anthropic/claude-sonnet-4-5       # optional explicit override; otherwise inherit current session model
 worktree: true                            # optional; run in a fresh git worktree
 skills: [commit, python, fastapi]         # optional; see "Skill scoping" below
 refuse:                                   # optional; see "Refusal patterns" below
@@ -24,6 +24,12 @@ refuse:                                   # optional; see "Refusal patterns" bel
 
 Body becomes the agent's appended system prompt.
 ```
+
+## Model selection
+
+By default, subagents inherit the parent session's current model. If an agent
+frontmatter declares `model:`, that value is passed to the child process as an
+explicit override instead.
 
 ## Skill scoping
 
