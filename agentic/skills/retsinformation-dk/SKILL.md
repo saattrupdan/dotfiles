@@ -1,70 +1,23 @@
 ---
 name: retsinformation-dk
 description: retsinformation.dk — Denmark's central legal information portal. Use when the user wants to look up Danish law/regulations, retrieve legislation metadata, find parliamentary documents, or navigate by ministry/topic.
-last-updated: 2026-05-09
+last-updated: 2026-05-31
 ---
 
 # retsinformation.dk — Danish legal information portal
 
-Operated by *Civilstyrelsen* (Viborg). Free, anonymous, no login. All content loads client-side (React SPA). Respond in Danish unless the user signals otherwise.
+Operated by *Civilstyrelsen* (Viborg). Free, anonymous, no login. Respond in Danish unless the user signals otherwise.
 
-## ELI URL patterns
-
-Retsinformation uses the EU ELI standard. Document URIs:
-
-| Pattern | Example | Meaning |
-|---|---|---|
-| `/{pubMedia}/{year}/{number}` | `/retsinfo/1989/0001` | CST canonical |
-| `/eli/accn/{accn}` | `/eli/accn/A19890001` | Accession alias |
-| `/eli/ft/{accn}` | `/eli/ft/A19890001` | Parliamentary doc |
-| `/eli/eu/{celex}` | `/eli/eu/CELEX:31989L0048` | EU/CLEX |
-| `/{cls}/{docType}/{year}/{month}/{day}/{number}` | `/eli/regel/lovh/2024/01/15/001` | Classification alias |
-
-Suffixes for content format: `/html` (raw HTML), `/dan` (Danish text), `/dan/html`, `/rawhtml`.
-
-Publication media codes in URLs: `lta`, `ltb`, `ltc`, `mt`, `retsinfo`, `ft`, `fob`.
-
-## Internal JSON APIs
-
-All endpoints return JSON, are anonymous, and use `GET`. Base URL: `https://www.retsinformation.dk/`. Undocumented — may change without notice.
-
-### Filter/register trees
-
-- **`/api/extremesearch/GetLawRegisters`** — Hierarchical law register tree by ministry/topic. Response: `[{value, title, children: [...]}]`.
-- **`/api/extremesearch/GetFobTags`** — Hierarchical subject tags (same shape).
-- **`/api/extremesearch/getcasehistorystatus`** — Parliamentary case history statuses. Response: `[{id, name}]` (Afvist, Beretning afgivet, Bortfaldet, Delt, Forkastet, Igangværende, Tilbagetaget, Vedtaget).
-- **`/api/documentClassificationfilter`** — Document type filter tree. Top-level: `Regler` and `Afgørelser`. Response: `[{ids, key, displayName, documentTypes: [{documentTypeId, name, popularName}]}]`. Use `documentTypeId` for API filters.
-- **`/api/lawregistry`** — Flat A–Z law register list. Response: `[{id, label, key}]`.
-- **`/api/ressort`** — Ministries. Response: `[{id, name}]`.
-- **`/api/ressort/fob`** — Ministries under Parliamentary Ombudsman (same shape).
-
-### ELI routing & documentation
-
-- **`/api/eli/routing-data`** — Maps URL param keys to `documentTypeId`. Key entries: `lovh`→10 (Lov), `lovc`→20 (Ændringslov), `lbkh`→30 (Lovbekendtgørelse), `dskh`→40 (Datasammenskrivning), `fin`→50 (Tekstanmærkning), `bekh`→60 (Bekendtgørelse), `bkr`→70 (Cirkulære), `bekc`→80 (Bekendtgørelse), `beki`→90 (Ikrafttrædelsesbekendtgørelse), `andh`→100 (Anordning), `andc`→110 (Andet).
-- **`/api/eli/named-authority-lists`** — Definitive ELI authority codes. Keys: `type_document` (LOVH, LTBB, LOVC, …), `passed_by` (FOL, REG, …), `relevant_for` (INDOC, FO, GR, DK, …).
-- **`/api/eli/documentation/uri-templates`** — ELI URI templates. Key types: `canonicalCst` (`/{pubMedia}/{year}/{number}`), `partialCst` (`/{pubMedia}/{year}`), `canonicalFt` (`/ft/{accn}`), `accn_alias` (`/eli/accn/{accn}`), `classification_alias` (`/{cls}/{docType}/{year}/{month}/{day}/{number}`).
-- **`/api/eli/documentation/metadata-types`** — ELI ontology metadata properties. Response: `[{key, types: [{id, type}]}]`. Key keys: `LegalResource`, `Expression`, `Manifestation`, `Item`.
-
-### Document endpoints
-
-- **`POST /api/document/{eli_path}`** — Document details by ELI path (e.g. `eli/lta/2026/480`, `eli/accn/A20240001`). Body: `{"isRawHtml": false}`. Response: `[{}]` (fields: `id`, `accessionNumber`, `title`, `documentTypeId`, `shortName`, `documentHtml`, `ressort`, `metadata`). The `id` field is an internal numeric ID used for timeline/metadata lookups.
-- **`/api/document/metadata/{id}`** — Structured metadata for a document (GET, uses internal numeric `id`).
-- **`/api/document/{id}/timeline`** — Legislative history/timeline (GET, uses internal numeric `id`). Response: `[...]`.
-- **`/api/document/documentLinks/{id}/references/{showRelated}`** — References (changes, commenced by, etc.).
-- **`/api/document/documentLinks/{id}/{group}`** — Grouped document links.
-
-### Maintenance & static files
-
-- **`/api/maintenance/messages`** — Active maintenance notices (usually empty).
-- **Static files**: `/static/eli-metadata-documentation.json`, `/static/eli-parameters-documentation.json`, `/static/eli-technical-documentation.json`, `/static/eliIntro.da.html`, `/static/eliIntro.en.html`.
-
-### Sitemap
-
-`https://www.retsinformation.dk/sitemap.xml` — Single XML with `<url>` entries for all pages. Use to enumerate all URLs.
+**Use the `retsinformation` CLI for everything.** Run `retsinformation ...` to look up laws, metadata, timelines, registers, ministries and ELI documentation.
 
 ## CLI
 
-Every endpoint above is wrapped by the `retsinformation` CLI, which can be run from anywhere — no need to point at the skill directory.
+The `retsinformation` CLI can be run from anywhere — no need to point at the skill directory. Pure Python standard library, no extra dependencies.
+
+### Limits
+
+- No public search API: the site is a React SPA with no server-rendered HTML and no search endpoint, so use the CLI's register/registry/sitemap commands to discover documents rather than scraping or searching the site.
+- All access is anonymous (no login).
 
 ### Prerequisites
 
@@ -91,41 +44,52 @@ After installing, confirm `retsinformation` is on the PATH (you may need to rest
 which retsinformation
 ```
 
-Pure Python standard library — no extra dependencies. Every command supports `--raw` for the unformatted JSON/XML response.
+### Command reference
 
-### Examples
+Every command supports `--raw` to print the unformatted JSON/XML response instead of the cleaned output.
+
+| Command | Purpose | Example |
+|---|---|---|
+| `law-registers` | Hierarchical law register tree by ministry/topic | `retsinformation law-registers` |
+| `fob-tags` | Hierarchical subject/tag tree (used for filtering) | `retsinformation fob-tags` |
+| `case-statuses` | Parliamentary case-history statuses (Afvist, Vedtaget, …) | `retsinformation case-statuses` |
+| `doc-types` | Document type filter tree (`Regler`, `Afgørelser`); gives `documentTypeId`s | `retsinformation doc-types` |
+| `law-registry` | Flat A–Z law registry; `--filter <substr>`, `--sort`, `--limit <n>` | `retsinformation law-registry --filter miljø --sort --limit 20` |
+| `ressort` | List of Danish ministries | `retsinformation ressort` |
+| `fob-ressort` | Ministries under the Parliamentary Ombudsman | `retsinformation fob-ressort` |
+| `eli-routing` | ELI URL routing table (param key → `documentTypeId`) | `retsinformation eli-routing` |
+| `authority-lists` | ELI authority value summary; pass one authority to expand it | `retsinformation authority-lists type_document` |
+| `uri-templates` | ELI URI template definitions | `retsinformation uri-templates` |
+| `metadata-types` | ELI ontology metadata property definitions | `retsinformation metadata-types` |
+| `document <id>` | Fetch a document; see below | `retsinformation document eli/lta/2026/480` |
+| `maintenance` | Active maintenance notices (usually none) | `retsinformation maintenance` |
+| `sitemap` | Enumerate URLs from `sitemap.xml`; `--filter <substr>`, `--limit <n>` | `retsinformation sitemap --filter eli --limit 50` |
+
+### Looking up documents
+
+`document` takes either an **ELI path** (for the document body/details) or a **numeric internal ID** (for `--timeline` / `--metadata`):
 
 ```bash
-# Filter/register trees
-retsinformation law-registers                          # law register tree (ministry/topic)
-retsinformation fob-tags                                # subject/tag tree
-retsinformation case-statuses                           # parliamentary case statuses
-retsinformation doc-types                               # document type filter (Regler, Afgørelser)
-retsinformation law-registry --filter miljø --sort --limit 20   # A–Z law registry
-retsinformation ressort                                 # list of ministries
-retsinformation fob-ressort                             # ministries under the Ombudsman
-
-# ELI routing & documentation
-retsinformation eli-routing                             # URL param key -> documentTypeId
-retsinformation authority-lists                         # ELI authority value summary
-retsinformation authority-lists type_document           # one authority's values
-retsinformation uri-templates                           # ELI URI templates
-retsinformation metadata-types                          # ELI ontology metadata properties
-
-# Documents (POST by ELI path; --metadata/--timeline take the numeric internal ID)
+# Document details by ELI path (POSTs the ELI path to the document API)
 retsinformation document eli/lta/2026/480
 retsinformation document eli/accn/A20240001
-retsinformation document 256418 --metadata
-retsinformation document 256418 --timeline
 
-# Maintenance & sitemap
-retsinformation maintenance                             # active maintenance notices
-retsinformation sitemap --filter eli --limit 50         # enumerate URLs from sitemap.xml
+# Timeline and metadata take the numeric internal ID
+# (found in the `id` field of the document-details response)
+retsinformation document 256418 --metadata     # structured ELI metadata
+retsinformation document 256418 --timeline      # legislative history
 ```
 
-## Key limits
+#### Forming the `<eli_path>` argument
 
-- No public search API — search is a client-side form posting to extremesearch.
-- No authentication required — fully anonymous.
-- SPA-only — all routes return the same shell HTML; content loads via internal APIs.
-- Undocumented APIs — internal endpoints may change without notice.
+The ELI path is the document URI with the leading `/` stripped. Retsinformation uses the EU ELI standard; map the URL you have to the CLI argument like so:
+
+| URL pattern | Example URL | CLI invocation |
+|---|---|---|
+| `/{pubMedia}/{year}/{number}` (CST canonical) | `/retsinfo/1989/0001` | `retsinformation document eli/lta/2026/480` |
+| `/eli/accn/{accn}` (accession alias) | `/eli/accn/A19890001` | `retsinformation document eli/accn/A20240001` |
+| `/eli/ft/{accn}` (parliamentary doc) | `/eli/ft/A19890001` | `retsinformation document eli/ft/A19890001` |
+| `/eli/eu/{celex}` (EU/CELEX) | `/eli/eu/CELEX:31989L0048` | `retsinformation document eli/eu/CELEX:31989L0048` |
+| `/{cls}/{docType}/{year}/{month}/{day}/{number}` (classification alias) | `/eli/regel/lovh/2024/01/15/001` | `retsinformation document eli/regel/lovh/2024/01/15/001` |
+
+Publication media codes used in CST paths: `lta`, `ltb`, `ltc`, `mt`, `retsinfo`, `ft`, `fob`.

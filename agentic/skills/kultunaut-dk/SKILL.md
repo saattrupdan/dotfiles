@@ -10,7 +10,7 @@ KultuNaut is Denmark's electronic cultural guide ("Den elektroniske kulturguide"
 
 ## Use the `kultunaut` CLI
 
-**Always go through the `kultunaut` CLI** to search events, get event details, list films, or read the feed. The CLI fetches the upstream pages, best-effort extracts the data, and prints **JSON** — so you do **not** construct the Perl-CGI URLs or scrape the site by hand. (The raw endpoints and URL conventions are documented at the end as a fallback, for the rare case the CLI doesn't expose what you need.)
+**Always go through the `kultunaut` CLI** to search events, get event details, list films, or read the feed. The CLI fetches the upstream pages, best-effort extracts the data, and prints **JSON** — so you do **not** construct the Perl-CGI URLs or scrape the site by hand.
 
 The CLI runs from anywhere — no need to point at the skill directory:
 
@@ -70,7 +70,7 @@ which kultunaut
 **Global options on every subcommand:**
 
 - `--raw` — print the raw upstream HTML/XML instead of parsed JSON.
-- `--lang {da,sv,uk,de}` — page language: `da`=Danish (default), `sv`=Swedish (`S`), `uk`=English (`UK`), `de`=German (`D`). The code is inserted after `type-nynaut` in the URL. (Note: `rss` has no language segment.)
+- `--lang {da,sv,uk,de}` — page language: `da`=Danish (default), `sv`=Swedish, `uk`=English, `de`=German. (Note: `rss` is unaffected by `--lang`.)
 
 ### Examples
 
@@ -98,43 +98,6 @@ kultunaut events --area "Hele Danmark" --periode 1 --lang uk
 kultunaut events --area "8000 Aarhus C" --periode 1 --raw
 ```
 
----
+## Out of scope
 
-## Reference: underlying endpoints & URL conventions
-
-This is what the CLI wraps. **Consult it only when you need something the CLI doesn't expose** (e.g. the website-only features below). For everyday event/film/feed lookups, use the CLI above instead of building these URLs or scraping by hand.
-
-All endpoints use GET and require no auth for read operations. Base: `https://www.kultunaut.dk/`
-
-**Language-code convention** (what `--lang` implements): the code goes between the type prefix and page name, directly after `type-nynaut`:
-
-- no code → Danish (default)
-- `S` → Swedish
-- `UK` → English
-- `D` → German
-
-Example: `/perl/arrlist/type-nynaut/UK` = English event list.
-
-### Endpoints the CLI wraps
-
-| CLI | Endpoint | Notes |
-|-----|----------|-------|
-| `events` | `GET /perl/arrlist/type-nynaut` | Event calendar search. Params: `Area`, `periode`, `Genre`, `Order` (see option tables above). Example: `?Area=8000+Aarhus+C&periode=1&Genre=Rock/Pop` |
-| `event` | `GET /perl/arrmore/type-nynaut?ArrNr={number}` | Single event detail. Each event has a unique `ArrNr` (e.g. `19896575`), found in search results. |
-| `films` | `GET /perl/searchlist/type-nynaut?Genre=Film&Area=&periode=1` | Cinema films; add `Area` to filter by region. |
-| `rss` | `GET /perl/mini/type-rss?Order=Rating&periode=` | Popular-events feed (no `type-nynaut`/language segment). |
-
-`periode=1` = current events, `periode=30` = upcoming month. The `MarkType` param covers niche categories (circus, cycling, chess, scouts, dogs, etc.). Events carry structured metadata: title, date/time, venue, genre, description, organizer.
-
-### Website-only features (not covered by the CLI)
-
-These have no CLI subcommand — navigate the site directly if needed:
-
-| Feature | URL |
-|---------|-----|
-| Embeddable widget | `/perl/widget/type-nynaut` |
-| Login (enables bookmarking) | `/perl/openlogin/type-nynaut` |
-| Bookmarks (requires login) | `/perl/profile/type-nynaut/myratings` |
-| Free events | `/perl/view/type-nynaut/gratiskalender` |
-| Special calendars | `/perl/view/type-nynaut/specialkalendere` |
-| Adult-school courses | `/perl/view/type-nynaut/aftenskole` |
+The embeddable calendar widget, login/bookmarks, and the special view pages (free events, special calendars, adult-school courses) are not covered by this skill.

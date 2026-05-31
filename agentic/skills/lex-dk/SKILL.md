@@ -12,7 +12,7 @@ Run by *foreningen lex.dk*; published under restrictive licence (`/.licenses/res
 
 ## Use the `lexdk` CLI
 
-**Reach for `lexdk ...` to look things up — don't fetch pages by hand.** The CLI wraps every verified anonymous endpoint, handles slug/URL-encoding and error handling for you, and works for the main site and every subdomain. Hand-fetching raw HTML or JSON is a fallback only for the few things the CLI doesn't expose (see the reference section at the end).
+**Reach for `lexdk ...` to look things up — don't fetch pages by hand.** The CLI wraps every verified anonymous endpoint, handles slug/URL-encoding and error handling for you, and works for the main site and every subdomain.
 
 ### Prerequisites
 
@@ -67,6 +67,20 @@ lexdk --host biografiskleksikon.lex.dk autocomplete "H.C. Andersen"
 lexdk article Marie_Curie --raw                    # full raw JSON, no summary
 ```
 
+Valid `--host` values (each is a separate encyclopedia sharing the same routing; main-site `autocomplete`/`article` already returns hits across all of them, default `lex.dk`):
+
+| `--host` value | Encyclopedia |
+|---|---|
+| `lex.dk` (default) | lex.dk main site — all encyclopedias combined. |
+| `trap.lex.dk` | **Trap Danmark** — geographical descriptions of every Danish municipality/locality. |
+| `denstoredanske.lex.dk` | **Den Store Danske** — Gyldendal's legacy general encyclopedia (frozen). |
+| `biografiskleksikon.lex.dk` | **Dansk Biografisk Leksikon** — historical Danish biographies (3rd ed.). |
+| `danmarkshistorien.lex.dk` | **Danmarkshistorien** — Aarhus University's peer-written Danish history. |
+| `naturenidanmark.lex.dk` | **Naturen i Danmark** — flora, fauna, ecology. |
+| `kvindebiografiskleksikon.lex.dk` | **Dansk Kvindebiografisk Leksikon** — Danish women's biographies. |
+
+Other subdomains exist too (Trap 5th ed., Grønland, Færøerne, etc.); any `*.lex.dk` encyclopedia subdomain is a valid `--host`.
+
 ### Common tasks (via the CLI)
 
 - **Look up / disambiguate a person, place, or term** → `lexdk autocomplete "<term>"`, then `lexdk article <slug>` on the chosen result.
@@ -89,69 +103,3 @@ lexdk article Marie_Curie --raw                    # full raw JSON, no summary
 - Small Danish non-profit operates lex.dk. Throttle: stay under ~1 req/s. For bulk URL work, use `lexdk urls` (sitemap), not the search page. Heavy `/.search*` iteration is `Disallow`ed by `robots.txt`.
 - Licence (`/.licenses/restricted`, "Begrænset anvendelse"): copyright-protected. Linking, citing under §22, and personal copies are fine. **Foreningen lex.dk has opted out of the §11 b stk. 2 text-and-data-mining exception** — do not build ML-training corpora; bulk redistribution requires permission. Image rights are per-image and may be more restrictive.
 - Permissions: `info@lex.dk` / `https://om.lex.dk/Kontakt_redaktionen`. Educational/institutional reuse via Copydan Tekst & Node.
-
----
-
-# Reference: site structure & URL conventions
-
-The `lexdk` CLI wraps the routes and endpoints below — **consult this section only when you need something the CLI doesn't expose** (e.g. HTML search pagination, theme pages, or raw page-level details for interpreting CLI output).
-
-## URL conventions
-
-| Pattern | Meaning |
-|---|---|
-| `https://lex.dk/<Slug>` | Article slug: spaces → `_`, Danish letters URL-encoded (`%C3%A6`/`%C3%B8`/`%C3%A5` for æ/ø/å). **Case-sensitive**: proper nouns capitalised (`Marie_Curie`), common nouns lower-case (`statiner`). Disambiguated articles use `_-_` (e.g. `Marie_-_dronning`). |
-| `https://lex.dk/.search?query=<term>&page=<n>` | Search results (HTML). |
-| `https://lex.dk/.alfabetisk/<L>/<page>` | Alphabetical browse. `<L>` ∈ `A`–`Z`, `Æ` (`%C3%86`), `Ø` (`%C3%98`), `Å` (`%C3%85`), `#` (`%23`). |
-| `https://lex.dk/.taxonomy/<id>` | Subject-tree node. IDs from article breadcrumbs. |
-| `https://lex.dk/.temaside/<slug>` | Editorial theme page. |
-| `https://lex.dk/.recent-activities` | Recent edits stream. |
-| `https://brugere.lex.dk/<user-id>` | Contributor profile. |
-| `https://media.lex.dk/media/<id>/<filename>` | Image CDN. |
-| `https://lex.dk/.sitemap/sitemap.xml` | Sitemap index → `sitemap1.xml`…`sitemap6.xml`. |
-
-`https://www.lex.dk/...` redirects to `https://lex.dk/...`. The front page (`https://lex.dk/`) shows current events (**Det sker**), curated themes, cultural spotlights, reading stats, **Vidste du?** facts, the top-level subject taxonomies (**Emner på Lex**), the alphabetical index, and recent changes.
-
-## Subdomain encyclopedias (map to `--host`)
-
-Each subdomain is a separate encyclopedia sharing the same routing. Main-site search/autocomplete returns hits from all subdomains. Pass the host to `lexdk --host <subdomain> ...`.
-
-| Subdomain (`--host`) | Encyclopedia |
-|---|---|
-| `trap.lex.dk` | **Trap Danmark** — geographical descriptions of every Danish municipality/locality. |
-| `denstoredanske.lex.dk` | **Den Store Danske** — Gyldendal's legacy general encyclopedia (frozen). |
-| `biografiskleksikon.lex.dk` | **Dansk Biografisk Leksikon** — historical Danish biographies (3rd ed.). |
-| `danmarkshistorien.lex.dk` | Aarhus University's *Danmarkshistorien* — peer-written Danish history. |
-| `naturenidanmark.lex.dk` | *Naturen i Danmark* — flora, fauna, ecology. |
-| `kvindebiografiskleksikon.lex.dk` | **Dansk Kvindebiografisk Leksikon** — Danish women's biographies. |
-
-Other subdomains exist (Trap 5th ed., Grønland, Færøerne, etc.). See `om.lex.dk` for the full list.
-
-## Article anatomy (interpreting `article` / `article-meta` output)
-
-Each article (`/<Slug>`) has: `<h1>` title + *manchet* (lead), section anchors (`#-<anchor>`), **Faktaboks** (factbox), highlighted authors with `brugere.lex.dk` links, breadcrumbs to `/.taxonomy/<id>`, a schema.org `<script type="application/ld+json">` block (full citation data: author/editor/ORCID/ROR), a `dataLayer` `<script>` with `articleId`, "Se også" cross-links, "Senest ændret" date, and a "Citér denne artikel" block. `lexdk article` returns the JSON view of this; `lexdk article-meta` extracts the JSON-LD + `articleId` from the HTML. Legacy *Den Store Danske* equivalents appear at `denstoredanske.lex.dk` when present.
-
-## Anonymous API endpoints (raw-fetch fallback)
-
-No documented API, no `/api/` contract, no OpenAPI. Routes with a leading dot (`/.search`, `/.sitemap`, `/.announcements`) or a `.json` suffix serve JSON/XML. `robots.txt` disallows `/.search*`, `/.version*`, `/.bruker*`, `/.admin*`, `/.improvements*`, and blocks AI crawlers (CCBot, GPTBot, ClaudeBot, etc.) outright. `Disallow: /.search*` covers `/.search/autocomplete` — light interactive use is fine; do not bulk-iterate. All endpoints work without cookies; send a real-looking `User-Agent` and `Accept: application/json`. Every subdomain shares the same routes for its own corpus. HTTP 404 with an HTML body is the normal "not found" response.
-
-- **`GET /<Slug>.json`** — full article (`lexdk article`). Keys: `id`, `title`, `url`, `xhtml_body` (rendered HTML, starts with lead paragraph, omits headword), `created_at`/`changed_at`, `subject_title`/`subject_url`, `authors[]` (`full_name` only — **no** ORCID/ROR; use `article-meta` for those), `images[]` (`full_size_url`, `standard_size_url`, `copyright`, `license`, `xhtml`), `license_name` (usually `"begrænset"`), `metadata` (varies by type; people have `birth_date`/`death_date`/`gender`/`birth_place`/`death_place`), `professions`, `language`. `?format=json` does **not** work. Returns 404 for unknown slugs or cross-subdomain lookups.
-- **`GET /.taxonomy/<id>.json`** — taxonomy node (`lexdk taxonomy`). `{ "taxonomy": { "title", "ancestors": [{ "title", "url" }] } }`. `ancestors[].url` are `.json`-suffixed — walk up the tree. **No article list**; fetch HTML `/.taxonomy/<id>` for that.
-- **`GET /.recent-activities.json`** — edits feed (`lexdk recent`). Array of items with `id`, `trackable_type`, `encyclopedia_id`, `created_at`, `properties.{action, user_name, article_url (slug only), article_title, taxonomy_id, taxonomy_title}`.
-- **`GET /.search/autocomplete?query=<term>`** — autocomplete (`lexdk autocomplete`). Up to 5 ranked hits, no pagination. Fields: `id`, `title`, `excerpt` (~100 chars), `article_url` (fully qualified), `permalink` (slug), `encyclopedia` (empty for main site; source name otherwise). Alternate `.json` form exists; subdomain-scoped calls return only that encyclopedia's hits.
-- **`GET /.announcements?v=2`** — banners (`lexdk announcements`). `{ "announcements": [] }`, almost always empty.
-- **`GET /api/definition/v1/definition/<word>`** — dictionary (`lexdk define`). *Den Danske Ordbog* passthrough; array of homonyms with `word`, `conjugation`, `partOfSpeech`, `phonetic`, `etymology`, `definitions[]` (`definition`, `usage`, `domain`, `synonyms`, `relateds`, `examples`).
-- **`GET /.status`** — plaintext `ready` (`lexdk status`).
-- **`GET /.sitemap/sitemap.xml`** — sitemap index (`lexdk sitemap`) → `sitemap1.xml`…`sitemap6.xml`. **`GET /.sitemap/sitemap<N>.xml`** (`lexdk urls`) — `<urlset>` of every article URL across all subdomains (~7–9 MB each), with `<lastmod>`, `<changefreq>`, `<priority>`, sometimes `<image:image>`.
-
-### HTML routes (not wrapped by the CLI)
-
-For these, fetch the raw HTML directly. Read `<script>` tags directly when parsing — markdown renderers strip them.
-
-| Route | Purpose |
-|---|---|
-| `GET /<Slug>` | Article HTML. Two `<script>` blocks: schema.org JSON-LD (full citation) and `dataLayer` (`articleId`, breadcrumbs). `lexdk article-meta` extracts both. |
-| `GET /.search?query=<term>&page=<n>` | Full paginated search results. Hit count in the first `<h2>`. (No CLI subcommand — `autocomplete` covers most lookups.) |
-| `GET /.alfabetisk/<L>/<page>` | Alphabetical article list. |
-| `GET /.taxonomy/<id>` | Article list for a subject node (the `.json` form gives breadcrumbs only). |
-| `GET /.temaside/<slug>` | Curated theme page. |
