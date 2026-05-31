@@ -180,6 +180,8 @@ function touchAccessed(filePath: string, name: string): void {
 			created,
 			now,
 			body,
+			parseTriggers(meta.triggers) ?? undefined,
+			(meta.trigger_frequency as "once" | "always" | undefined),
 		);
 		fs.writeFileSync(filePath, rendered, "utf-8");
 	} catch {
@@ -323,7 +325,7 @@ const SaveParams = Type.Object({
 	}),
 	triggers: Type.Optional(
 		Type.Array(TriggerParam, {
-			description: "When this memory should be auto-injected. Empty or omitted = never auto-injected (manual retrieval only).",
+			description: "When this memory should be auto-injected. On a new memory, empty or omitted = never auto-injected (manual retrieval only). On an update, omitting this keeps the existing triggers; pass an empty array to clear them.",
 		}),
 	),
 	triggerFrequency: Type.Optional(
@@ -573,15 +575,27 @@ export default function (pi: ExtensionAPI) {
 			const existed = fs.existsSync(filePath);
 			const now = new Date().toISOString();
 			let createdAt = now;
+			// Updates are a full overwrite, but `triggers`/`triggerFrequency` are
+			// optional args — so when they're omitted on an update we carry over
+			// the existing file's values rather than silently dropping the
+			// `triggers:` block. Pass an explicit empty array to clear triggers.
+			let effectiveTriggers = triggers;
+			let effectiveFrequency = triggerFrequency;
 			if (existed) {
 				try {
 					const { meta } = parseFrontmatter(fs.readFileSync(filePath, "utf-8"));
 					if (meta.created_at) createdAt = meta.created_at;
+					if (effectiveTriggers === undefined) {
+						effectiveTriggers = parseTriggers(meta.triggers) ?? undefined;
+					}
+					if (effectiveFrequency === undefined) {
+						effectiveFrequency = meta.trigger_frequency as "once" | "always" | undefined;
+					}
 				} catch {
-					// keep `now`
+					// keep `now` and the provided args
 				}
 			}
-			const rendered = renderFrontmatter(name, description, createdAt, now, content, triggers, triggerFrequency);
+			const rendered = renderFrontmatter(name, description, createdAt, now, content, effectiveTriggers, effectiveFrequency);
 			fs.writeFileSync(filePath, rendered, "utf-8");
 
 			// Invalidate suggestion cache so new triggers are picked up
