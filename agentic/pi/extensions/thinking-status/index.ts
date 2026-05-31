@@ -13,13 +13,22 @@
  *
  * 2. Replace pi's generic "Working..." footer spinner with a phase-specific label:
  *      - "Thinking..."  while reasoning tokens stream
- *      - "Reading..."   while the `read` tool runs
- *      - "Writing..."   while the `write` tool runs
- *      - "Editing..."   while the `edit` tool runs
- *      - "Bashing..."   while the `bash` tool runs
- *    Any other tool / phase falls back to pi's default "Working...". The footer
- *    spinner is transient — pi clears it when streaming stops — so the label is
- *    always live and never lingers in the chat.
+ *      - "Reading..." / "Writing..." / "Editing..." / "Bashing..."  for the
+ *        read / write / edit / bash tools
+ *    Any other tool / phase falls back to pi's default "Working...".
+ *
+ *    A tool's elapsed time splits across two phases, and the label must cover
+ *    both or it barely shows:
+ *      - argument streaming — the model generates the tool call (e.g. the whole
+ *        file body for `write`/`edit`); seen via `message_update`, where the last
+ *        content block is a `toolCall` carrying the tool `name`. This dominates
+ *        for write/edit.
+ *      - execution — the tool actually runs; seen via `tool_execution_start/end`.
+ *        This dominates for bash/read.
+ *    We track both and let execution take precedence over streaming.
+ *
+ *    The footer spinner is transient — pi clears it when streaming stops — so the
+ *    label is always live and never lingers in the chat.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -42,25 +51,28 @@ export default function (pi: ExtensionAPI) {
 	pi.on("agent_start", (_event, ctx) => ctx.ui.setHiddenThinkingLabel(HIDDEN_LABEL));
 
 	// --- 2. Phase-specific footer spinner ------------------------------------
-	let thinking = false;
-	// toolCallId -> label, for the tools currently executing (handles overlap;
-	// the most recently started running tool wins the spinner).
+	// Label from the current streaming block (thinking / tool-call arg generation).
+	let streamLabel: string | undefined;
+	// toolCallId -> label for tools currently executing (handles overlap; most
+	// recently started wins). Execution takes precedence over streaming.
 	const activeTools = new Map<string, string>();
 
 	// undefined restores pi's default working message ("Working...").
 	const currentLabel = (): string | undefined => {
 		if (activeTools.size > 0) return [...activeTools.values()].at(-1);
-		if (thinking) return "Thinking...";
-		return undefined;
+		return streamLabel;
 	};
 	const apply = (ctx: { ui: { setWorkingMessage(message?: string): void } }) =>
 		ctx.ui.setWorkingMessage(currentLabel());
 
 	pi.on("message_update", (event, ctx) => {
-		const type = event.assistantMessageEvent?.type;
-		const isThinking = type === "thinking_start" || type === "thinking_delta";
-		if (isThinking === thinking) return;
-		thinking = isThinking;
+		const blocks = event.message?.content;
+		const last = Array.isArray(blocks) ? blocks[blocks.length - 1] : undefined;
+		let next: string | undefined;
+		if (last?.type === "thinking") next = "Thinking...";
+		else if (last?.type === "toolCall") next = TOOL_LABELS[last.name];
+		if (next === streamLabel) return;
+		streamLabel = next;
 		apply(ctx);
 	});
 
@@ -75,14 +87,14 @@ export default function (pi: ExtensionAPI) {
 		apply(ctx);
 	});
 
-	// Reset so nothing lingers past the reasoning phase or the turn.
+	// Reset so nothing lingers past the streaming phase or the turn.
 	pi.on("message_end", (_event, ctx) => {
-		if (!thinking) return;
-		thinking = false;
+		if (streamLabel === undefined) return;
+		streamLabel = undefined;
 		apply(ctx);
 	});
 	pi.on("agent_end", (_event, ctx) => {
-		thinking = false;
+		streamLabel = undefined;
 		activeTools.clear();
 		apply(ctx);
 	});

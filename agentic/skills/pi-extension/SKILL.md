@@ -54,8 +54,14 @@ export default function (pi: ExtensionAPI) {
 - **`message_end` returning `{ message }` PERSISTS** the replacement to the session.
   Don't strip content you still need (e.g. thinking traces the built-in reasoning
   toggle rebuilds from session).
-- **Detect what's streaming** via `event.assistantMessageEvent.type` in `message_update`:
-  `thinking_start|thinking_delta|thinking_end|text_*|toolcall_*|done|error`.
+- **Detect what's streaming** in `message_update` via either the delta type
+  (`event.assistantMessageEvent.type`: `thinking_*|text_*|toolcall_*|done|error`) or,
+  more usefully, the **last block of `event.message.content`** (`thinking` | `text` |
+  `toolCall` — the `toolCall` block carries `.name`, so you can tell *which* tool).
+- **A tool's elapsed time has two phases** — label both or it barely shows:
+  *argument streaming* (the model generates the call; for `write`/`edit` this is the
+  whole file body — seen in `message_update` as a trailing `toolCall` block) and
+  *execution* (`tool_execution_start`→`tool_execution_end`; dominates for `bash`/`read`).
 - **Footer spinner is transient** — `ctx.ui.setWorkingMessage("…")` auto-clears when
   streaming stops; good for live indicators that should vanish on their own. Pass
   `undefined` to restore the default ("Working...").

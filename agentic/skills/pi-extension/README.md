@@ -160,14 +160,19 @@ These are the walls you'll hit; design around them.
 
 ## Worked example: reasoning indicator
 
-A small extension that ties several lessons together — it relabels the global
-hidden-thinking marker (re-applied on `session_start`/`agent_start`, since pi resets it on
-reload/switch) and drives a transient `"Thinking..."` footer spinner off
-`assistantMessageEvent.type`, so the live indicator appears during reasoning and clears
-itself afterwards:
+An extension that gives the footer a phase-specific label — `"Thinking..."` while
+reasoning streams, and `"Reading..."/"Writing..."/"Editing..."/"Bashing..."` for the
+matching tools — and relabels the inline hidden-thinking marker. It demonstrates
+footer-spinner control, the global-label limitation, re-applying settings after resets,
+and **covering both tool phases** (arg streaming via the trailing `toolCall` content
+block, plus execution via `tool_execution_*`, with execution taking precedence):
 
 ```ts
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+const TOOL_LABELS: Record<string, string> = {
+	read: "Reading...", write: "Writing...", edit: "Editing...", bash: "Bashing...",
+};
 
 export default function (pi: ExtensionAPI) {
 	// Replace the misleading persistent "Thinking..." with a static marker.
@@ -176,22 +181,33 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", (_e, ctx) => ctx.ui.setHiddenThinkingLabel(LABEL));
 	pi.on("agent_start", (_e, ctx) => ctx.ui.setHiddenThinkingLabel(LABEL));
 
-	// Live "Thinking..." in the transient footer spinner while reasoning streams.
-	let thinking = false;
+	let streamLabel: string | undefined;          // current streaming phase
+	const activeTools = new Map<string, string>(); // executing tools (id -> label)
+	const current = () =>
+		activeTools.size > 0 ? [...activeTools.values()].at(-1) : streamLabel;
+	const apply = (ctx: { ui: { setWorkingMessage(m?: string): void } }) =>
+		ctx.ui.setWorkingMessage(current()); // undefined -> pi default "Working..."
+
 	pi.on("message_update", (event, ctx) => {
-		const t = event.assistantMessageEvent?.type;
-		const isThinking = t === "thinking_start" || t === "thinking_delta";
-		if (isThinking === thinking) return;
-		thinking = isThinking;
-		ctx.ui.setWorkingMessage(isThinking ? "Thinking..." : undefined);
+		const blocks = event.message?.content;
+		const last = Array.isArray(blocks) ? blocks.at(-1) : undefined;
+		const next = last?.type === "thinking" ? "Thinking..."
+			: last?.type === "toolCall" ? TOOL_LABELS[last.name]
+			: undefined;
+		if (next === streamLabel) return;
+		streamLabel = next; apply(ctx);
 	});
-	const clear = (_e: unknown, ctx: { ui: { setWorkingMessage(m?: string): void } }) => {
-		if (thinking) { thinking = false; ctx.ui.setWorkingMessage(undefined); }
-	};
-	pi.on("message_end", clear);
-	pi.on("agent_end", clear);
+	pi.on("tool_execution_start", (event, ctx) => {
+		const label = TOOL_LABELS[event.toolName];
+		if (label) { activeTools.set(event.toolCallId, label); apply(ctx); }
+	});
+	pi.on("tool_execution_end", (event, ctx) => {
+		if (activeTools.delete(event.toolCallId)) apply(ctx);
+	});
+	pi.on("message_end", (_e, ctx) => { if (streamLabel) { streamLabel = undefined; apply(ctx); } });
+	pi.on("agent_end", (_e, ctx) => { streamLabel = undefined; activeTools.clear(); apply(ctx); });
 }
 ```
 
-It demonstrates footer-spinner control, the global-label limitation, and re-applying
-settings after resets.
+**Note:** extensions load at startup — after editing one, `/reload` (which reloads
+extensions, skills, prompts, themes, keybindings) or restart pi to pick up the change.
