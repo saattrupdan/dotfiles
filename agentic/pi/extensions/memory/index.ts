@@ -465,6 +465,29 @@ interface Suggestion {
 	triggerFrequency?: "once" | "always";
 }
 
+interface MemoryRenderDetails {
+	collapsed?: string;
+}
+
+function renderMemoryResult(result: { content: Array<{ type: string; text?: string }>; details?: unknown }, { expanded }: { expanded: boolean }) {
+	const text = textContent(result.content);
+	if (expanded) return new Text(text, 0, 0);
+
+	const details = result.details as MemoryRenderDetails | undefined;
+	return new Text(details?.collapsed ?? firstLine(text), 0, 0);
+}
+
+function textContent(content: Array<{ type: string; text?: string }>): string {
+	return content
+		.filter((item) => item.type === "text" && item.text)
+		.map((item) => item.text)
+		.join("\n");
+}
+
+function firstLine(text: string): string {
+	return text.split("\n")[0] || "(no output)";
+}
+
 export default function (pi: ExtensionAPI) {
 	// -----------------------------------------------------------------------
 	// memory_index
@@ -493,7 +516,7 @@ export default function (pi: ExtensionAPI) {
 
 			return {
 				content: [{ type: "text", text: sections.join("\n\n") }],
-				details: undefined,
+				details: { collapsed: "✓ memory index listed" },
 			};
 		},
 
@@ -505,6 +528,8 @@ export default function (pi: ExtensionAPI) {
 				0,
 			);
 		},
+
+		renderResult: renderMemoryResult,
 	});
 
 	// -----------------------------------------------------------------------
@@ -528,7 +553,10 @@ export default function (pi: ExtensionAPI) {
 			const content = fs.readFileSync(filePath, "utf-8");
 			touchAccessed(filePath, name);
 			const header = `# memory: ${scope}/${name}  (${filePath})`;
-			return { content: [{ type: "text", text: `${header}\n${content}` }], details: undefined };
+			return {
+				content: [{ type: "text", text: `${header}\n${content}` }],
+				details: { collapsed: `✓ memory read ${scope}/${name}` },
+			};
 		},
 
 		renderCall(args, theme) {
@@ -540,6 +568,8 @@ export default function (pi: ExtensionAPI) {
 				0,
 			);
 		},
+
+		renderResult: renderMemoryResult,
 	});
 
 	// -----------------------------------------------------------------------
@@ -611,7 +641,7 @@ export default function (pi: ExtensionAPI) {
 						text: `${verb} memory \`${scope}/${name}\` → ${filePath}`,
 					},
 				],
-				details: undefined,
+				details: { collapsed: "✓ memory saved" },
 			};
 		},
 
@@ -624,6 +654,8 @@ export default function (pi: ExtensionAPI) {
 				0,
 			);
 		},
+
+		renderResult: renderMemoryResult,
 	});
 
 	// -----------------------------------------------------------------------
@@ -693,7 +725,10 @@ export default function (pi: ExtensionAPI) {
 
 				const top = Array.from(triggerResults.values()).sort((a, b) => b.score - a.score);
 				if (top.length === 0) {
-					return { content: [{ type: "text", text: "No relevant memories found." }], details: undefined };
+					return {
+						content: [{ type: "text", text: "No relevant memories found." }],
+						details: { collapsed: "✓ memory suggestions checked" },
+					};
 				}
 
 				const results = top.map(
@@ -708,14 +743,17 @@ export default function (pi: ExtensionAPI) {
 							text: `Relevant memories:\n\n${results.join("\n")}\n\nThe agent should remember these memories when formulating an answer to the query below.`,
 						},
 					],
-					details: undefined,
+					details: { collapsed: `✓ found ${top.length} relevant memories` },
 				};
 			}
 
 			// Query present = manual retrieval: fuzzy search only, no triggers
 			const queryTokens = tokenize(query);
 			if (queryTokens.length === 0) {
-				return { content: [{ type: "text", text: "No meaningful tokens in query." }], details: undefined };
+				return {
+					content: [{ type: "text", text: "No meaningful tokens in query." }],
+					details: { collapsed: "✓ memory suggestions checked" },
+				};
 			}
 
 			const scored = memories.map((m) => {
@@ -737,7 +775,10 @@ export default function (pi: ExtensionAPI) {
 				.slice(0, top_k);
 
 			if (top.length === 0) {
-				return { content: [{ type: "text", text: "No relevant memories found." }] };
+				return {
+					content: [{ type: "text", text: "No relevant memories found." }],
+					details: { collapsed: "✓ memory suggestions checked" },
+				};
 			}
 
 			const results = top.map(
@@ -752,7 +793,7 @@ export default function (pi: ExtensionAPI) {
 						text: `Relevant memories for "${query}":\n\n${results.join("\n")}\n\nThe agent should remember these memories when formulating an answer to the query below.`,
 					},
 				],
-				details: undefined,
+				details: { collapsed: `✓ found ${top.length} relevant memories` },
 			};
 		},
 
@@ -765,6 +806,8 @@ export default function (pi: ExtensionAPI) {
 				0,
 			);
 		},
+
+		renderResult: renderMemoryResult,
 	});
 
 	// -----------------------------------------------------------------------
@@ -791,7 +834,7 @@ export default function (pi: ExtensionAPI) {
 
 			return {
 				content: [{ type: "text", text: `deleted memory \`${scope}/${name}\`` }],
-				details: undefined,
+				details: { collapsed: "✓ memory deleted" },
 			};
 		},
 
@@ -804,6 +847,8 @@ export default function (pi: ExtensionAPI) {
 				0,
 			);
 		},
+
+		renderResult: renderMemoryResult,
 	});
 }
 
