@@ -1,7 +1,7 @@
 ---
 name: planner
 description: Produces concrete implementation plans for code changes. Read-only — uses `read` plus stored memories. Cannot edit files or spawn subagents.
-tools: read, memory_index, memory_read, memory_suggest, question
+tools: read, skill, memory_index, memory_read, memory_suggest, question
 skills: []
 worktree: false
 refuse:

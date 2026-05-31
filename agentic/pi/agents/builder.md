@@ -1,7 +1,7 @@
 ---
 name: builder
 description: Implements a concrete, scoped code change. Has full read/write/bash permissions. Always runs in an isolated git worktree that is merged back on completion.
-tools: search, read, write, edit, bash, memory_index, memory_read, memory_suggest, question
+tools: search, read, write, edit, skill, bash, memory_index, memory_read, memory_suggest, question
 skills: [commit, python, fastapi, vue, sqlmodel, full-stack, slides, agent-browser]
 worktree: true
 refuse:
