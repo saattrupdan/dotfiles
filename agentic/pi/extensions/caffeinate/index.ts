@@ -53,6 +53,11 @@ const STATUS_KEY = "caffeinate";
 // sleep. Keyed by pid so concurrent pi processes don't collide.
 const STATE_PATH = path.join(os.tmpdir(), `pi-caffeinate-${process.pid}.state`);
 
+/** Marker written by the shell watcher when the battery hits the thermal
+ *  threshold (35 °C). The parent TypeScript side polls for it and calls
+ *  `piApi.sendMessage()` once so the user knows sleep was re-enabled. */
+const HOT_MARKER_PATH = path.join(os.tmpdir(), `pi-caffeinate-${process.pid}.hot`);
+
 /** Drop-in sudoers file that unlocks the extension — scoped to pmset alone. */
 const SUDOERS_FILE = "/etc/sudoers.d/pi-caffeinate";
 
@@ -91,6 +96,8 @@ let watcherStarted = false;
 let nudged = false;
 // The per-run `caffeinate` assertion process.
 let caffeinateChild: ChildProcess | null = null;
+// Interval handle for the battery-hot marker poller.
+let hotCheckRef: ReturnType<typeof setInterval> | null = null;
 
 function setStatus(ctx: ExtensionContext): void {
 	if (!ctx.hasUI) return;
@@ -157,15 +164,21 @@ function nudge(): void {
 function watcherShell(): string {
 	const state = STATE_PATH.replace(/'/g, `'\\''`);
 	const pmset = "sudo -n /usr/bin/pmset";
+	const hotMarker = HOT_MARKER_PATH.replace(/'/g, `'\\''`);
 	return (
-		`prev=; ` +
+		`prev=; hot=; ` +
 		`while /bin/kill -0 ${process.pid} 2>/dev/null; do ` +
 		`if [ -f '${state}' ]; then s=\`/bin/cat '${state}'\`; else s=0; fi; ` +
 		`if [ "$s" != "$prev" ]; then ${pmset} -a disablesleep "$s" 2>/dev/null; prev="$s"; fi; ` +
+		`# Battery thermal safety: re-enable sleep if battery >= 35 °C. ` +
+		`tmp=\$(ioreg -rn AppleSmartBattery 2>/dev/null | grep -i Temperature | grep -o '[0-9]\\+'); ` +
+		`if [ -n "$tmp" ] && [ "$tmp" -ge 3500 ] 2>/dev/null; then ` +
+		`s=0; prev=0; ${pmset} -a disablesleep 0 2>/dev/null; ` +
+		`if [ -z "$hot" ]; then touch '${hotMarker}'; hot=1; fi; fi; ` +
 		`/bin/sleep 1; ` +
 		`done; ` +
 		`${pmset} -a disablesleep 0 2>/dev/null; ` +
-		`/bin/rm -f '${state}'`
+		`/bin/rm -f '${state}' '${hotMarker}'`
 	);
 }
 
@@ -190,6 +203,9 @@ function startWatcher(): void {
 function engage(ctx: ExtensionContext): void {
 	if (!IS_MACOS || !sessionEnabled || engaged) return;
 
+	// Clean up any stale hot-marker left from a prior crashed session.
+	fs.rmSync(HOT_MARKER_PATH, { force: true });
+
 	// No passwordless pmset → stay inert and nudge once. Never prompt.
 	if (!hasPasswordlessPmset()) {
 		nudge();
@@ -212,6 +228,28 @@ function engage(ctx: ExtensionContext): void {
 		caffeinateChild = null;
 	}
 
+	// Poll for the hot-marker file so we can notify the user once the shell
+	// watcher has re-enabled sleep due to battery temperature.
+	hotCheckRef = setInterval(() => {
+		if (fs.existsSync(HOT_MARKER_PATH)) {
+			piApi?.sendMessage({
+				customType: "caffeinate:battery-warning",
+				content:
+					"Battery temperature reached 35 °C — sleep mode re-enabled to protect the battery. The agent run will continue.",
+				display: true,
+			});
+			// Remove the marker so we don't re-notify.
+			fs.rmSync(HOT_MARKER_PATH, { force: true });
+		}
+	}, 5000);
+	// Safety cap: clear the interval after 24h even if release is never called.
+	setTimeout(() => {
+		if (hotCheckRef) {
+			clearInterval(hotCheckRef);
+			hotCheckRef = null;
+		}
+	}, 24 * 60 * 60 * 1000);
+
 	setStatus(ctx);
 }
 
@@ -230,6 +268,12 @@ function release(ctx: ExtensionContext): void {
 			// already gone
 		}
 		caffeinateChild = null;
+	}
+
+	// Clean up any in-flight hot-check interval.
+	if (hotCheckRef) {
+		clearInterval(hotCheckRef);
+		hotCheckRef = null;
 	}
 
 	setStatus(ctx);
