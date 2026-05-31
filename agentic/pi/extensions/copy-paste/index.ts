@@ -24,7 +24,30 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-const PLACEHOLDER = /\{tool:\s*([A-Za-z0-9_-]+)\s*\}/g;
+const PLACEHOLDER = /\{tool:\s*([^}]*\S)\s*\}/g;
+
+export function toolCallIdTag(toolCallId: string) {
+	return `[toolCallId: ${toolCallId}]\n`;
+}
+
+export function stripPrependedToolCallIdTag(raw: string, toolCallId: string) {
+	const tag = toolCallIdTag(toolCallId);
+	if (!raw.startsWith(tag)) return raw;
+
+	let contentStart = tag.length;
+	if (raw[contentStart] === "\n") contentStart += 1;
+	return raw.slice(contentStart);
+}
+
+export function expandToolPlaceholders(
+	text: string,
+	toolResultMap: ReadonlyMap<string, string>,
+) {
+	return text.replace(PLACEHOLDER, (match: string, id: string) => {
+		const captured = toolResultMap.get(id);
+		return captured === undefined ? match : captured;
+	});
+}
 
 export default function (pi: ExtensionAPI) {
 	// toolCallId → captured tool result text (with the `[toolCallId: ...]`
@@ -32,7 +55,7 @@ export default function (pi: ExtensionAPI) {
 	const toolResultMap = new Map<string, string>();
 
 	pi.on("tool_result", async (event) => {
-		const tag = `[toolCallId: ${event.toolCallId}]\n`;
+		const tag = toolCallIdTag(event.toolCallId as string);
 		const original = event.content ?? [];
 		return { content: [{ type: "text" as const, text: tag }, ...original] };
 	});
@@ -44,10 +67,7 @@ export default function (pi: ExtensionAPI) {
 			.map((c) => (c.type === "text" ? c.text ?? "" : ""))
 			.filter(Boolean)
 			.join("\n");
-		const stripped = raw.replace(
-			new RegExp(`^\\[toolCallId: ${tcid}\\]\\n+`),
-			"",
-		);
+		const stripped = stripPrependedToolCallIdTag(raw, tcid);
 		toolResultMap.set(tcid, stripped);
 	});
 
@@ -60,12 +80,8 @@ export default function (pi: ExtensionAPI) {
 		let changed = false;
 		const newContent = content.map((part: any) => {
 			if (part?.type !== "text" || typeof part.text !== "string") return part;
-			const expanded = part.text.replace(PLACEHOLDER, (m: string, id: string) => {
-				const captured = toolResultMap.get(id);
-				if (captured === undefined) return m;
-				changed = true;
-				return captured;
-			});
+			const expanded = expandToolPlaceholders(part.text, toolResultMap);
+			if (expanded !== part.text) changed = true;
 			return expanded === part.text ? part : { ...part, text: expanded };
 		});
 
