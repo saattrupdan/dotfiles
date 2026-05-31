@@ -1112,12 +1112,10 @@ export default function (pi: ExtensionAPI) {
 			// is not a reliable "still running" signal. `isPartial` is also what
 			// renderCall uses to hide the task preview, so both flip together on
 			// the final frame.
-			//
-			// Collapsed == tool output hidden, so errors are hidden too: failures
-			// render identically to successes here ("✓ All done") with no error
-			// text or ✗ marker. The full error detail (stopReason, errorMessage,
-			// transcript) is still one Ctrl+O away in the expanded view below.
 			if (!isPartial && !expanded) {
+				const anyFailed = details.results.some((r) => isFailedResult(r));
+				if (anyFailed)
+					return new Text(theme.fg("error", "✗ done with errors (Ctrl+O to expand)"), 0, 0);
 				return new Text(theme.fg("success", "✓ All done"), 0, 0);
 			}
 
