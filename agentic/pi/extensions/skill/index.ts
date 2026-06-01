@@ -99,8 +99,8 @@ function firstLine(text: string): string {
 	return text.split("\n")[0] || "(no output)";
 }
 
-export default async function (pi: ExtensionAPI): Promise<void> {
+export default function (pi: ExtensionAPI): void {
 	registerSkillTool(pi);
 	registerAutoload(pi);
-	await registerAutoloadRenderOverrides(pi);
+	registerAutoloadRenderOverrides(pi);
 }

@@ -28,7 +28,13 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import type { AgentToolResult, ExtensionAPI, Theme, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
+import {
+	type AgentToolResult,
+	createReadToolDefinition,
+	type ExtensionAPI,
+	type Theme,
+	type ToolRenderResultOptions,
+} from "@earendil-works/pi-coding-agent";
 import { type Component, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
@@ -242,9 +248,9 @@ export default async function (pi: ExtensionAPI) {
 
 	// Delegate result rendering to pi's built-in `read` renderer, first
 	// collapsing any skill-autoload injection to its summary line (see
-	// renderResult below). Loaded once here because renderResult is synchronous
-	// and cannot await these imports itself.
-	const builtinReadRenderResult = await loadBuiltinReadRenderResult();
+	// renderResult below). Captured here because renderResult is synchronous and
+	// cannot await the sibling-extension helper import itself.
+	const builtinReadRenderResult = createReadToolDefinition(process.cwd()).renderResult as RenderResultFn;
 	const { collapseAutoloadResult } = await loadSkillRenderHelpers();
 
 	pi.registerTool({
@@ -505,13 +511,6 @@ type RenderResultFn = (
 	theme: Theme,
 	context: ReadRenderContext,
 ) => Component;
-
-/** Grab pi's built-in `read` result renderer so we can delegate to it. */
-async function loadBuiltinReadRenderResult(): Promise<RenderResultFn> {
-	const builtIn = await import("$PI/dist/core/tools/read.js" as any);
-	const def = builtIn.createReadToolDefinition(process.cwd());
-	return def.renderResult as RenderResultFn;
-}
 
 /** Load the skill-autoload render helpers from the sibling `skill` extension. */
 async function loadSkillRenderHelpers(): Promise<typeof import("../skill/types.ts")> {
