@@ -56,7 +56,7 @@ async function loadOutliner(): Promise<typeof import("../_outliner/outliner.js")
 
 import {
 	ensureFullIndex,
-	refreshFile,
+	reconcileIndex,
 	touchMeta,
 	querySymbols,
 	queryExactSymbol,
@@ -83,11 +83,18 @@ function runRipgrep(repoRoot: string, query: string): RipgrepResult[] {
 		const rgPath = findRipgrep();
 		const proc = childProcess.spawnSync(
 			rgPath,
-			["--json", "-n", "--", query],
+			// -F: treat the query as a literal string, not a regex (a bare "(" or
+			//     "." would otherwise be a regex parse error / wildcard).
+			// --hidden: also search dotfiles like .zshrc (still honours .gitignore,
+			//     so node_modules/ etc. stay excluded).
+			["--json", "-n", "-F", "--hidden", "--", query],
 			{
 				cwd: repoRoot,
 				stdio: "pipe",
 				encoding: "utf-8",
+				// Default maxBuffer is 1 MB — large result sets get silently
+				// truncated/errored. Give it room.
+				maxBuffer: 64 * 1024 * 1024,
 			},
 		);
 
@@ -168,13 +175,11 @@ export default async function (pi: ExtensionAPI) {
 			const { db, repoId, repoRoot } = ensureFullIndex(process.cwd(), outline);
 			touchMeta(repoId);
 
-			// Incremental refresh: re-parse only changed files.
-			const rows = db
-				.prepare("SELECT path FROM files")
-				.all() as { path: string }[];
-			for (const r of rows) {
-				refreshFile(db, repoRoot, r.path, outline);
-			}
+			// Reconcile the index against the live tree: add files created since
+			// the last build, re-parse changed ones, drop deleted ones. Walking
+			// the disk every call is cheap because refreshFile short-circuits
+			// unchanged files via mtime/size.
+			reconcileIndex(db, repoRoot, outline);
 
 			// --- Definition lookup ---
 			let defResults: { file: string; line: number; kind: string; name: string; parent: string | null }[] = [];

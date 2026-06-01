@@ -639,11 +639,43 @@ export function refreshFile(
 }
 
 /**
- * Recursively list all files in a directory tree, skipping .git/, node_modules/, .pi/.
+ * Reconcile the index against the live working tree: index files created since
+ * the last build, re-parse changed ones, and drop files that no longer exist.
+ *
+ * `refreshFile` already handles all three cases — it inserts new files (no DB
+ * row), skips unchanged ones (matching mtime/size), and re-parses changed ones.
+ * The earlier "iterate existing DB rows" approach never discovered new files,
+ * leaving the index frozen at its first build.
+ */
+export function reconcileIndex(
+	db: DatabaseInstance,
+	repoRoot: string,
+	outline: OutlinerFn,
+): void {
+	const diskFiles = listFiles(repoRoot);
+	for (const relPath of diskFiles) {
+		refreshFile(db, repoRoot, relPath, outline);
+	}
+	removeMissingFiles(db, new Set(diskFiles));
+}
+
+/**
+ * Recursively list all files in a directory tree, skipping VCS, dependency, and
+ * build/cache directories that would otherwise flood the index with noise.
  */
 export function listFiles(repoRoot: string): string[] {
 	const results: string[] = [];
-	const skipDirs = new Set([".git", "node_modules", ".pi"]);
+	const skipDirs = new Set([
+		".git",
+		"node_modules",
+		".pi",
+		".venv",
+		"venv",
+		"__pycache__",
+		".ruff_cache",
+		".mypy_cache",
+		".pytest_cache",
+	]);
 
 	function walk(dir: string): void {
 		const entries = fs.readdirSync(dir, { withFileTypes: true });
