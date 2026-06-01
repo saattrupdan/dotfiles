@@ -60,7 +60,23 @@ gh pr list --state open --author me
 gh pr status                       # Current branch
 
 gh pr close 123 / reopen 123 / lock 123 / ready 123 / revert 123
+gh pr edit 123 --body-file body.md  # Update body from file
 ```
+
+### PR description style
+
+Write PR descriptions that a human (or agent) can skim — focus on **what** the PR does, **why**, and **how to use it**. Avoid file-level diffs.
+
+Recommended structure:
+
+1. **What** — one paragraph on the core change or new capability
+2. **Key features** — bullet list of the most user-facing changes
+3. **Examples** — concrete CLI examples or API calls showing how it works
+4. **Why it helps** (optional) — one short paragraph on the motivation or
+   benefit
+
+Less emphasis on technical internals — agents should know *what* the PR
+delivers, not *which files changed*. (The diffs page covers that.)
 
 Auto-close: `Fixes #N`, `Closes #N`, `Resolves #N` in body.
 Aliases: `gh pr new` = `create`, `gh pr co` = `checkout`.
