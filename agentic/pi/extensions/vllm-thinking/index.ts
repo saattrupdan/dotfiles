@@ -25,6 +25,8 @@
  *   /reasoning-budget <N> [prompt]  — set a sticky budget of N tokens for the rest
  *                                     of this session; if a prompt follows, submit it
  *                                     immediately. Overrides the models.json default.
+ *                                     N may also be "unlimited" (sent as -1, the vLLM /
+ *                                     llama.cpp sentinel for an uncapped thinking budget).
  *   /reset-reasoning-budget         — clear the override; revert to the models.json
  *                                     default for this model.
  * The override is in-memory only: new sessions always start on the models.json default.
@@ -36,8 +38,14 @@ import * as path from "node:path";
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-/** Sticky per-session budget override (tokens). null = use the models.json default. */
+/**
+ * Sticky per-session budget override (tokens). null = use the models.json default.
+ * -1 means "unlimited" — the vLLM / llama.cpp sentinel for an uncapped thinking budget.
+ */
 let sessionBudgetOverride: number | null = null;
+
+/** vLLM / llama.cpp sentinel: no cap on thinking tokens. */
+const UNLIMITED_BUDGET = -1;
 
 const STATUS_KEY = "reasoningBudget";
 
@@ -78,10 +86,13 @@ function getThinkingTokenBudgetForModel(
 
 function updateStatus(ctx: ExtensionContext): void {
 	if (!ctx.hasUI) return;
-	ctx.ui.setStatus(
-		STATUS_KEY,
-		sessionBudgetOverride === null ? undefined : `🧠 ${sessionBudgetOverride}`,
-	);
+	const label =
+		sessionBudgetOverride === null
+			? undefined
+			: sessionBudgetOverride === UNLIMITED_BUDGET
+				? "🧠 ∞"
+				: `🧠 ${sessionBudgetOverride}`;
+	ctx.ui.setStatus(STATUS_KEY, label);
 }
 
 export default function (pi: ExtensionAPI) {
@@ -111,36 +122,39 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerCommand("reasoning-budget", {
 		description:
-			"Set a sticky reasoning-token budget for this session: /reasoning-budget <N> [prompt]",
+			"Set a sticky reasoning-token budget for this session: /reasoning-budget <N|unlimited> [prompt]",
 		handler: async (args, ctx) => {
 			const trimmed = args.trim();
 			if (!trimmed) {
 				if (ctx.hasUI)
 					ctx.ui.notify(
-						"Usage: /reasoning-budget <N> [prompt] — N is a positive integer of thinking tokens.",
+						"Usage: /reasoning-budget <N|unlimited> [prompt] — N is a positive integer of thinking tokens.",
 						"warning",
 					);
 				return;
 			}
 
-			const match = trimmed.match(/^(\d+)(?:\s+([\s\S]+))?$/);
+			const match = trimmed.match(/^(\d+|unlimited)(?:\s+([\s\S]+))?$/i);
 			if (!match) {
 				if (ctx.hasUI)
 					ctx.ui.notify(
-						`Invalid budget "${trimmed.split(/\s+/)[0]}" — expected a positive integer first, e.g. /reasoning-budget 16384`,
+						`Invalid budget "${trimmed.split(/\s+/)[0]}" — expected a positive integer or "unlimited" first, e.g. /reasoning-budget 16384`,
 						"error",
 					);
 				return;
 			}
 
-			const budget = Number.parseInt(match[1], 10);
+			const isUnlimited = match[1].toLowerCase() === "unlimited";
+			const budget = isUnlimited ? UNLIMITED_BUDGET : Number.parseInt(match[1], 10);
 			const prompt = match[2]?.trim();
 
 			sessionBudgetOverride = budget;
 			updateStatus(ctx);
 			if (ctx.hasUI)
 				ctx.ui.notify(
-					`Reasoning budget set to ${budget} tokens for this session.`,
+					isUnlimited
+						? "Reasoning budget set to unlimited for this session."
+						: `Reasoning budget set to ${budget} tokens for this session.`,
 					"info",
 				);
 
