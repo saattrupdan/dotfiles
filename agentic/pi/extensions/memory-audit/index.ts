@@ -90,7 +90,8 @@ function formatMemories(mems: MemoryDoc[]): string {
 		`${lines.join("\n")}\n\n` +
 		`If this was injected after a tool call of yours, we might have blocked it. Check ` +
     `if this is the case, and if so, read the ${plural ? "memories" : "memory"} above ` +
-    `and try again where you take into account the ${plural ? "memories" : "memory"}.`
+    `and try again where you take into account the ${plural ? "memories" : "memory"}.\n\n` +
+    `Command exited with code 1.`
 	);
 }
 
