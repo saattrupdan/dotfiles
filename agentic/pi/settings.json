@@ -3,6 +3,7 @@
   "defaultProvider": "sparkie",
   "defaultModel": "Qwen/Qwen3.6-35B-A3B-FP8",
   "defaultThinkingLevel": "medium",
+  "httpIdleTimeoutMs": 0,
   "hideThinkingBlock": true,
   "quietStartup": true,
   "theme": "gruvbox",
