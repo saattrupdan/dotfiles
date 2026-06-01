@@ -91,6 +91,27 @@ interface RefSearch {
 }
 
 /**
+ * Directories never worth searching — mirrors the index's skip set. Excluded
+ * EXPLICITLY (not via .gitignore) because the content search runs with
+ * --no-ignore for grep parity: ripgrep otherwise skips .gitignore'd files, so
+ * `search` returned nothing where a plain `grep -r` found matches (e.g. a
+ * tracked-but-ignored report.tex, or any file under an ignored build/ dir).
+ * Without an explicit skip list, --no-ignore would flood results with
+ * node_modules/build output.
+ */
+const EXCLUDE_DIRS = [
+	".git",
+	"node_modules",
+	".pi",
+	".venv",
+	"venv",
+	"__pycache__",
+	".ruff_cache",
+	".mypy_cache",
+	".pytest_cache",
+];
+
+/**
  * Parse ripgrep `--json` stream output into content matches.
  *
  * The snippet comes from `data.lines.text` (the full matching line). The
@@ -143,10 +164,7 @@ function runGrepFallback(repoRoot: string, query: string, regex: boolean, rgErro
 			[
 				"-rnI",
 				regex ? "-E" : "-F",
-				"--exclude-dir=.git",
-				"--exclude-dir=node_modules",
-				"--exclude-dir=.venv",
-				"--exclude-dir=__pycache__",
+				...EXCLUDE_DIRS.map((d) => `--exclude-dir=${d}`),
 				"--",
 				query,
 				".",
@@ -199,7 +217,7 @@ function tokenCoverage(text: string, tokens: string[]): number {
 }
 
 /**
- * Run a single content search against ripgrep (fast, .gitignore-aware), falling
+ * Run a single content search against ripgrep (fast, --no-ignore), falling
  * back to grep when ripgrep is unavailable or errors, surfacing the reason
  * rather than swallowing it.
  */
@@ -215,9 +233,13 @@ function runEngine(repoRoot: string, query: string, regex: boolean): RefSearch {
 				// --smart-case: case-insensitive unless the query contains an
 				//   uppercase letter — matches what people expect from quick search.
 				"--smart-case",
-				// --hidden: also search dotfiles like .zshrc (still honours
-				//   .gitignore, so node_modules/ etc. stay excluded).
+				// --hidden: also search dotfiles like .zshrc.
 				"--hidden",
+				// --no-ignore: do NOT skip .gitignore'd/.ignore'd files — a search
+				//   tool should find what `grep -r` finds. Heavy dirs are excluded
+				//   explicitly below so results aren't flooded by build output.
+				"--no-ignore",
+				...EXCLUDE_DIRS.flatMap((d) => ["-g", `!**/${d}/**`]),
 				// -F: literal string unless the caller asked for regex, so a bare
 				//   "(" or "." is not a regex parse error / wildcard.
 				...(regex ? [] : ["-F"]),
