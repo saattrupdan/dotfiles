@@ -89,6 +89,47 @@ Never assign the author as a reviewer.
 Auto-close: `Fixes #N`, `Closes #N`, `Resolves #N` in body.
 Aliases: `gh pr new` = `create`, `gh pr co` = `checkout`.
 
+### Review cycle
+
+When a PR gets a Copilot review, Copilot usually ticks in about **5 minutes** after
+pushing changes. To check for pending reviews:
+
+```bash
+gh pr status
+gh pr view <N> --json reviewDecision,reviews  # reviewDecision empty = not yet reviewed
+```
+
+A `COMMENTED` review decision means Copilot has left inline comments (not approval).
+Always inspect and address them.
+
+**Workflow for each review comment:**
+
+1. **Fetch all inline comments:**
+   ```bash
+   gh api repos/<org>/<repo>/pulls/<N>/reviews --jq '.[] | select(.author.login == "copilot-pull-request-reviewer") | .id'
+   gh api repos/<org>/<repo>/pulls/<N>/reviews/<ID>/comments --jq '.[] | {path: .path, line: .line, body: .body, id: .id}'
+   ```
+2. **Read the relevant code** and judge whether the comment makes sense.
+3. **Fix the code** if the comment is valid (or improve it even if the suggestion isn't perfect).
+4. **Address ambiguous comments** — if a comment contains a question or you don't understand it, write a reply comment on that specific review comment:
+   ```bash
+   gh api repos/<org>/<repo>/pulls/comments/<COMMENT_ID> -X POST -f body="Your clarification question here"
+   ```
+5. **Post a summary comment** on the PR listing what you fixed and why, tagged with `@copilot` so it sees it:
+   ```bash
+   gh pr comment <N> -b "Addressed all comments. Fixes: <list> @copilot"
+   ```
+6. **Resolve all review threads** (Copilot review comments cannot be resolved via the REST API — use GraphQL):
+   ```bash
+   # Find thread IDs for a given review
+   gh api graphql --method POST -f 'query=query { repository(owner: "<org>", name: "<repo>") { pullRequest(number: <N>) { reviewThreads(first: 20) { edges { node { id isResolved } } } } } }'
+   # Resolve each unresolved thread (IDs start with PRRT_)
+   gh api graphql --method POST -f 'query=mutation { resolveReviewThread(input: {threadId: "PRRT_xxx"}) { clientMutationId } }'
+   ```
+7. **Repeat** — after ~5 minutes Copilot may post new changes, a new review, or a new comment. Run through the cycle again until no substantive comments remain (only nits are acceptable).
+
+Note: You cannot submit a review (`gh pr review`) on your own PR — only post comments and resolve threads.
+
 ## Issues
 
 ```bash
@@ -188,4 +229,4 @@ gh completion -s bash | zsh | fish | powershell
 - `--web` opens the GitHub page in browser.
 - Project board membership needs `project` scope (`gh auth refresh -s project`).
 - Draft PRs show `[WIP]` in listings.
-- **Copilot reviews:** `state: COMMENTED` means *changes requested*, not approval. Always inspect inline comments on Copilot-reviewed PRs.
+- **Copilot reviews:** `state: COMMENTED` means *changes requested*, not approval. See the "Review cycle" section for the full workflow.
