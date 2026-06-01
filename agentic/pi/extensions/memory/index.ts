@@ -561,7 +561,7 @@ export default function (pi: ExtensionAPI) {
 			const header = `# memory: ${scope}/${name}  (${filePath})`;
 			return {
 				content: [{ type: "text", text: `${header}\n${content}` }],
-				details: { collapsed: `✓ memory read ${scope}/${name}` },
+				details: { collapsed: `✓ memory read` },
 			};
 		},
 
