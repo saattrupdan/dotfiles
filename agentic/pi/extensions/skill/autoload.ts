@@ -33,6 +33,9 @@ export function markSkillLoadedForSession(ctx: ExtensionContext, skill: Pick<Ski
 	loaded.add(skillKey(syncSession(ctx), skill));
 }
 
+// The summary is the first line of every injection reason. The read/write/edit
+// result renderers recognise it via `autoloadSummaryLine` (types.ts) to collapse
+// the guidance, so keep the two in sync if this wording changes.
 function formatInjectedSummary(skills: DiscoveredSkill[]): string {
 	if (skills.length === 1) return `↪ ${skills[0].name} skill injected`;
 	const names = skills.map((skill) => skill.name).join(", ");

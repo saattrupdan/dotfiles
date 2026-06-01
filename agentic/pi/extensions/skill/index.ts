@@ -4,6 +4,7 @@ import { Type } from "typebox";
 
 import { markSkillLoadedForSession, registerAutoload } from "./autoload.ts";
 import { discoverSkills, readSkillContent } from "./discovery.ts";
+import { registerAutoloadRenderOverrides } from "./render-overrides.ts";
 
 const Params = Type.Object({
 	name: Type.String({
@@ -98,7 +99,8 @@ function firstLine(text: string): string {
 	return text.split("\n")[0] || "(no output)";
 }
 
-export default function (pi: ExtensionAPI): void {
+export default async function (pi: ExtensionAPI): Promise<void> {
 	registerSkillTool(pi);
 	registerAutoload(pi);
+	await registerAutoloadRenderOverrides(pi);
 }

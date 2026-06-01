@@ -28,8 +28,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
+import type { AgentToolResult, ExtensionAPI, Theme, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
+import { type Component, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 // ---------------------------------------------------------------------------
@@ -239,6 +239,13 @@ export default async function (pi: ExtensionAPI) {
 	const { outliner, indexStore } = await loadModules();
 	const { outline, collapsedView } = outliner;
 	const { openIndex, refreshFile, getFileOutline, getSymbol } = indexStore;
+
+	// Delegate result rendering to pi's built-in `read` renderer, first
+	// collapsing any skill-autoload injection to its summary line (see
+	// renderResult below). Loaded once here because renderResult is synchronous
+	// and cannot await these imports itself.
+	const builtinReadRenderResult = await loadBuiltinReadRenderResult();
+	const { collapseAutoloadResult } = await loadSkillRenderHelpers();
 
 	pi.registerTool({
 		name: "read",
@@ -459,7 +466,57 @@ export default async function (pi: ExtensionAPI) {
 				0,
 			);
 		},
+
+		// A blocked read (e.g. skill autoload) surfaces as an error result whose
+		// text the harness shows in full even when collapsed. Collapse such an
+		// injection to its `↪ … skills injected` summary line, then defer to pi's
+		// built-in read renderer — so the full guidance still shows on expand
+		// (Ctrl+O) and every other result renders exactly as before.
+		renderResult(result, options, theme, context) {
+			return builtinReadRenderResult(
+				collapseAutoloadResult(result, options.expanded, context.isError),
+				options,
+				theme,
+				context,
+			);
+		},
 	});
+}
+
+// ---------------------------------------------------------------------------
+// Sibling/built-in module loaders (resolved lazily, like loadModules above)
+// ---------------------------------------------------------------------------
+
+// `ToolRenderContext` is not exported from the package root, so type the
+// context structurally with the fields the built-in read renderer reads. The
+// full context the harness passes is a superset and assigns cleanly.
+interface ReadRenderContext {
+	args: unknown;
+	isError: boolean;
+	expanded: boolean;
+	showImages: boolean;
+	cwd: string;
+	lastComponent: Component | undefined;
+}
+
+type RenderResultFn = (
+	result: AgentToolResult<unknown>,
+	options: ToolRenderResultOptions,
+	theme: Theme,
+	context: ReadRenderContext,
+) => Component;
+
+/** Grab pi's built-in `read` result renderer so we can delegate to it. */
+async function loadBuiltinReadRenderResult(): Promise<RenderResultFn> {
+	const builtIn = await import("$PI/dist/core/tools/read.js" as any);
+	const def = builtIn.createReadToolDefinition(process.cwd());
+	return def.renderResult as RenderResultFn;
+}
+
+/** Load the skill-autoload render helpers from the sibling `skill` extension. */
+async function loadSkillRenderHelpers(): Promise<typeof import("../skill/types.ts")> {
+	const jiti = await import("jiti").then((m) => m.createJiti(import.meta.url, { moduleCache: false }));
+	return jiti.import("../skill/types.ts") as Promise<typeof import("../skill/types.ts")>;
 }
 
 // ---------------------------------------------------------------------------
