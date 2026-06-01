@@ -58,6 +58,7 @@ export function collapsedView(
 | `.js`, `.jsx`, `.mjs`, `.cjs` | `tree-sitter-javascript`                                |
 | `.vue`                    | One `block` entry per top-level SFC section (`template`, `script`/`script-setup`, `style`, with `style-2`… for repeats) so the markup and styles are reachable on large files; plus the symbols inside each `<script>` block, parsed as TS (if `lang="ts"`/`"typescript"`) or JS, with line numbers offset back to the original file. |
 | `.md`, `.markdown`        | Headings extracted by regex on `^(#{1,6})\s+(.+)$`, skipping fenced code blocks. |
+| `.tex`, `.latex`, `.ltx`, `.sty`, `.cls` | Sectioning commands (`\part`…`\subparagraph`) extracted by regex into a nested heading hierarchy, skipping verbatim/`lstlisting`/`minted` bodies and `%`-commented lines. |
 | anything else             | Heuristic fallback (see below).                             |
 
 Docstring extraction:

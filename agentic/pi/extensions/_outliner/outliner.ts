@@ -60,6 +60,8 @@ export function outline(filePath: string, source: string): OutlineResult {
 				return { entries: outlineVue(source) };
 			case "markdown":
 				return { entries: outlineMarkdown(source) };
+			case "latex":
+				return { entries: outlineLatex(source), moduleDoc: leadingLineComment(source, "%") };
 			case "lua":
 				return { entries: outlineLua(source), moduleDoc: leadingLineComment(source, "--") };
 			case "rust":
@@ -575,6 +577,104 @@ function outlineMarkdown(source: string): OutlineEntry[] {
 			// `signature` carries the leading `#`s so the index DB round-trips level
 			// info and the renderer can show nesting.
 			signature: m[1]!,
+		});
+		stack.push({ idx, level });
+	}
+	closeTo(0, lines.length);
+	return out;
+}
+
+// ---------------------------------------------------------------------------
+// LaTeX
+// ---------------------------------------------------------------------------
+
+// Sectioning commands in descending hierarchy → heading level (1 = top), so the
+// renderer can indent them like Markdown headings (it reads the `#`-run carried
+// in `signature`). `paragraph`/`subparagraph` share the deepest level.
+const LATEX_SECTION_LEVELS: Record<string, number> = {
+	part: 1,
+	chapter: 2,
+	section: 3,
+	subsection: 4,
+	subsubsection: 5,
+	paragraph: 6,
+	subparagraph: 6,
+};
+
+// A sectioning command at the start of a line: `\section`, the starred
+// `\section*`, with an optional `[short title]` arg, up to the `{` that opens
+// the title. The title is brace-matched separately (it may contain commands or
+// nested braces, e.g. `\section{The \emph{good} part}`).
+const LATEX_SECTION_RE = /^\s*\\(part|chapter|section|subsection|subsubsection|paragraph|subparagraph)\*?\s*(?:\[[^\]]*\]\s*)?\{/;
+
+// Verbatim-like environments whose bodies must not be scanned for structure —
+// a `\section{…}` printed as example code is text, not an outline entry.
+const LATEX_VERBATIM_BEGIN_RE = /^\s*\\begin\{(verbatim|Verbatim|lstlisting|minted|comment)\*?\}/;
+const LATEX_VERBATIM_END_RE = /^\s*\\end\{(verbatim|Verbatim|lstlisting|minted|comment)\*?\}/;
+
+// Return the contents of a brace group whose opening `{` is at `openIdx`,
+// balancing nested braces. Falls back to the rest of the line if unbalanced.
+function readBraceGroup(line: string, openIdx: number): string {
+	let depth = 0;
+	for (let i = openIdx; i < line.length; i++) {
+		const ch = line[i]!;
+		if (ch === "{") depth++;
+		else if (ch === "}") {
+			depth--;
+			if (depth === 0) return line.slice(openIdx + 1, i);
+		}
+	}
+	return line.slice(openIdx + 1);
+}
+
+// Reduce a section title to plain text: drop `\command` wrappers but keep their
+// argument text, then strip braces. `The \emph{good} part` → `The good part`.
+function latexCleanTitle(raw: string): string {
+	return raw
+		.replace(/\\[a-zA-Z]+\*?\s*/g, "")
+		.replace(/[{}]/g, "")
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
+function outlineLatex(source: string): OutlineEntry[] {
+	const out: OutlineEntry[] = [];
+	const lines = source.split("\n");
+	const stack: { idx: number; level: number }[] = [];
+	let inVerbatim = false;
+
+	// A section ends where the next section of equal-or-shallower level begins.
+	const closeTo = (level: number, endLine: number) => {
+		while (stack.length && stack[stack.length - 1]!.level >= level) {
+			const top = stack.pop()!;
+			out[top.idx]!.lineEnd = endLine;
+		}
+	};
+
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i]!;
+		if (LATEX_VERBATIM_BEGIN_RE.test(line)) { inVerbatim = true; continue; }
+		if (LATEX_VERBATIM_END_RE.test(line)) { inVerbatim = false; continue; }
+		if (inVerbatim) continue;
+		if (line.trimStart().startsWith("%")) continue; // commented-out line
+
+		const m = LATEX_SECTION_RE.exec(line);
+		if (!m) continue;
+		const level = LATEX_SECTION_LEVELS[m[1]!]!;
+		// The regex ends at the title's opening `{`; it's the last matched char.
+		const title = latexCleanTitle(readBraceGroup(line, m[0].length - 1));
+		const name = truncate(title || m[1]!, DOC_CAP);
+		closeTo(level, i);
+		const parentIdx = stack.length ? stack[stack.length - 1]!.idx : -1;
+		const parent = parentIdx >= 0 ? out[parentIdx]!.name : undefined;
+		const idx = out.length;
+		out.push({
+			line: i + 1,
+			lineEnd: lines.length,
+			kind: "heading",
+			name,
+			parent,
+			signature: "#".repeat(level),
 		});
 		stack.push({ idx, level });
 	}

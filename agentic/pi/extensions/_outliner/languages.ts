@@ -17,6 +17,7 @@ export type LanguageKind =
 	| "javascript"
 	| "tsx"
 	| "markdown"
+	| "latex"
 	| "vue"
 	| "lua"
 	| "rust"
@@ -69,6 +70,12 @@ export function detectLanguage(filePath: string): LanguageInfo {
 		case ".md":
 		case ".markdown":
 			return { kind: "markdown" };
+		case ".tex":
+		case ".latex":
+		case ".ltx":
+		case ".sty":
+		case ".cls":
+			return { kind: "latex" };
 		case ".lua":
 			return { kind: "lua" };
 		case ".rs":
