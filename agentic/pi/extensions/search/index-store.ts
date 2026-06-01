@@ -392,7 +392,8 @@ export function querySymbols(db: DatabaseInstance, query: string): SymbolResult[
 		`SELECT name, kind, file, line_start, line_end, parent
 		 FROM symbols
 		 WHERE name LIKE ?
-		 ORDER BY kind = 'class' OR kind = 'function' DESC`,
+		 ORDER BY kind = 'class' OR kind = 'function' DESC
+		 LIMIT 50`,
 	);
 	const results = stmt.all(`%${query}%`);
 	return results as unknown as SymbolResult[];
