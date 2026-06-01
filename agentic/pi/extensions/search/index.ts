@@ -91,13 +91,9 @@ interface RefSearch {
 }
 
 /**
- * Directories never worth searching — mirrors the index's skip set. Excluded
- * EXPLICITLY (not via .gitignore) because the content search runs with
- * --no-ignore for grep parity: ripgrep otherwise skips .gitignore'd files, so
- * `search` returned nothing where a plain `grep -r` found matches (e.g. a
- * tracked-but-ignored report.tex, or any file under an ignored build/ dir).
- * Without an explicit skip list, --no-ignore would flood results with
- * node_modules/build output.
+ * Directories the grep second-opinion fallback skips. ripgrep already skips
+ * these via .gitignore, but grep doesn't read .gitignore, so without these
+ * --exclude-dir flags the fallback would flood with node_modules/build output.
  */
 const EXCLUDE_DIRS = [
 	".git",
@@ -225,6 +221,11 @@ function runEngine(repoRoot: string, query: string, regex: boolean): RefSearch {
 	let rgError: string | undefined;
 	try {
 		const rgPath = findRipgrep();
+		// Strip RIPGREP_CONFIG_PATH so a user's ~/.ripgreprc (type filters, glob
+		// excludes, default flags, …) can't make the tool's results silently
+		// diverge from a plain grep.
+		const env = { ...process.env };
+		delete env.RIPGREP_CONFIG_PATH;
 		const proc = childProcess.spawnSync(
 			rgPath,
 			[
@@ -235,11 +236,12 @@ function runEngine(repoRoot: string, query: string, regex: boolean): RefSearch {
 				"--smart-case",
 				// --hidden: also search dotfiles like .zshrc.
 				"--hidden",
-				// --no-ignore: do NOT skip .gitignore'd/.ignore'd files — a search
-				//   tool should find what `grep -r` finds. Heavy dirs are excluded
-				//   explicitly below so results aren't flooded by build output.
-				"--no-ignore",
-				...EXCLUDE_DIRS.flatMap((d) => ["-g", `!**/${d}/**`]),
+				// NOTE: we deliberately do NOT pass --no-ignore + `-g` exclude globs.
+				//   That combo silently dropped real matches (an exclude glob hiding
+				//   the file's own directory), so a bare `rg foo` found things this
+				//   tool did not. ripgrep here behaves like a plain `rg` (respects
+				//   .gitignore); genuinely .gitignore'd files are still covered by the
+				//   grep second opinion in searchContent().
 				// -F: literal string unless the caller asked for regex, so a bare
 				//   "(" or "." is not a regex parse error / wildcard.
 				...(regex ? [] : ["-F"]),
@@ -250,6 +252,7 @@ function runEngine(repoRoot: string, query: string, regex: boolean): RefSearch {
 				cwd: repoRoot,
 				stdio: "pipe",
 				encoding: "utf-8",
+				env,
 				// Default maxBuffer is 1 MB — large result sets get silently
 				// truncated/errored. Give it room.
 				maxBuffer: 128 * 1024 * 1024,
@@ -279,21 +282,47 @@ function runEngine(repoRoot: string, query: string, regex: boolean): RefSearch {
  * Regex queries (regex:true) are taken verbatim and never split.
  */
 function searchContent(repoRoot: string, query: string, regex: boolean): RefSearch {
-	const primary = runEngine(repoRoot, query, regex);
-	if (primary.results.length > 0 || regex || primary.engine === "none") return primary;
+	const tokens = regex ? [] : query.trim().split(/\s+/).filter(Boolean);
+	const orPattern = tokens.length >= 2 ? tokens.map(escapeRegex).join("|") : "";
 
-	const tokens = query.trim().split(/\s+/).filter(Boolean);
-	if (tokens.length < 2) return primary;
+	// Rank an OR-pattern result so lines containing the most query words come
+	// first, and attach an explanatory note.
+	const rankOr = (res: RefSearch): RefSearch => {
+		const lower = tokens.map((t) => t.toLowerCase());
+		res.results.sort((a, b) => tokenCoverage(b.snippet, lower) - tokenCoverage(a.snippet, lower));
+		res.total = res.results.length;
+		res.error = `note: no exact match for "${query}" — showing lines matching any of: ${tokens.join(", ")} (most matches first)`;
+		return res;
+	};
 
-	const pattern = tokens.map(escapeRegex).join("|");
-	const multi = runEngine(repoRoot, pattern, true);
-	if (multi.results.length === 0 || multi.engine === "none") return primary;
+	// 1) ripgrep, exact (literal phrase or regex).
+	const exact = runEngine(repoRoot, query, regex);
+	if (exact.results.length > 0) return exact;
 
-	const lower = tokens.map((t) => t.toLowerCase());
-	multi.results.sort((a, b) => tokenCoverage(b.snippet, lower) - tokenCoverage(a.snippet, lower));
-	multi.total = multi.results.length;
-	multi.error = `note: no exact match for "${query}" — showing lines matching any of: ${tokens.join(", ")} (most matches first)`;
-	return multi;
+	// 2) ripgrep, OR of the words — for a multi-word literal query whose words
+	//    don't appear adjacent (e.g. "title status").
+	if (orPattern && exact.engine === "ripgrep") {
+		const m = runEngine(repoRoot, orPattern, true);
+		if (m.results.length > 0) return rankOr(m);
+	}
+
+	// 3) grep second opinion. ripgrep ran but matched nothing — grep is a
+	//    different engine that ignores rg's config/type filters, so if `grep`
+	//    would find it (the user's recurring case), so will we. Skipped when
+	//    ripgrep already failed over to grep (exact.engine !== "ripgrep").
+	if (exact.engine === "ripgrep") {
+		const g = runGrepFallback(repoRoot, query, regex);
+		if (g.results.length > 0) {
+			g.error = "note: ripgrep matched nothing but grep did — its results are shown (check for a global rg config / type filters)";
+			return g;
+		}
+		if (orPattern) {
+			const gm = runGrepFallback(repoRoot, orPattern, true);
+			if (gm.results.length > 0) return rankOr(gm);
+		}
+	}
+
+	return exact;
 }
 
 // ---------------------------------------------------------------------------
