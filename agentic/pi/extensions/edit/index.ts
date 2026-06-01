@@ -44,10 +44,19 @@ import * as path from "node:path";
 import {
 	type AgentToolResult,
 	createEditToolDefinition,
+	type EditToolDetails,
 	type ExtensionAPI,
 	type ExtensionContext,
-	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+
+import { collapseAutoloadResult } from "../skill/types.ts";
+
+// The exact shape `createEditToolDefinition` returns (concrete params/details/
+// state). Typing every base reference as this keeps `pi.registerTool` inference
+// precise — widening to the default `ToolDefinition<TSchema, unknown, any>`
+// makes the overridden `execute`/`renderResult` signatures stop lining up.
+type EditToolDef = ReturnType<typeof createEditToolDefinition>;
+type EditResult = AgentToolResult<EditToolDetails | undefined>;
 
 // ---------------------------------------------------------------------------
 // Tolerant matching
@@ -173,7 +182,7 @@ function robustifyEdits(input: EditInput, cwd: string): { input: EditInput; rewr
 	return rewritten > 0 ? { input: { path: input.path, edits }, rewritten } : { input, rewritten: 0 };
 }
 
-function annotate(result: AgentToolResult, rewritten: number): AgentToolResult {
+function annotate(result: EditResult, rewritten: number): EditResult {
 	const note =
 		`\n\n(Resolved ${rewritten} edit${rewritten === 1 ? "" : "s"} with tolerant matching: ` +
 		`oldText differed from the file only in whitespace, quotes, or dashes.)`;
@@ -195,12 +204,12 @@ function annotate(result: AgentToolResult, rewritten: number): AgentToolResult {
 export default function (pi: ExtensionAPI) {
 	// One definition for rendering/metadata; its render closures use the live
 	// context.cwd internally, so the cwd passed here is immaterial for them.
-	const renderBase = createEditToolDefinition(process.cwd());
+	const renderBase: EditToolDef = createEditToolDefinition(process.cwd());
 
 	// Execution must resolve relative paths against the live session cwd, so we
 	// keep a small per-cwd cache of base definitions.
-	const baseByCwd = new Map<string, ToolDefinition>();
-	const baseFor = (cwd: string): ToolDefinition => {
+	const baseByCwd = new Map<string, EditToolDef>();
+	const baseFor = (cwd: string): EditToolDef => {
 		let base = baseByCwd.get(cwd);
 		if (!base) {
 			base = createEditToolDefinition(cwd);
@@ -209,7 +218,7 @@ export default function (pi: ExtensionAPI) {
 		return base;
 	};
 
-	pi.registerTool({
+	const tool: EditToolDef = {
 		...renderBase,
 		description:
 			renderBase.description +
@@ -219,9 +228,21 @@ export default function (pi: ExtensionAPI) {
 		async execute(toolCallId, input, signal, onUpdate, ctx: ExtensionContext) {
 			const cwd = ctx?.cwd ?? process.cwd();
 			const base = baseFor(cwd);
-			const { input: resolved, rewritten } = robustifyEdits(input as EditInput, cwd);
+			const { input: resolved, rewritten } = robustifyEdits(input, cwd);
 			const result = await base.execute(toolCallId, resolved, signal, onUpdate, ctx);
 			return rewritten > 0 ? annotate(result, rewritten) : result;
 		},
-	});
+	};
+
+	// Wrap the built-in result renderer to collapse a skill-autoload injection to
+	// its one-line summary, exactly as the `read` extension and the skill `write`
+	// override do. Since this extension owns the `edit` tool, the skill extension
+	// no longer overrides `edit` (that would collide), so the collapse lives here.
+	const baseRenderResult = renderBase.renderResult;
+	if (baseRenderResult) {
+		tool.renderResult = (result, options, theme, context) =>
+			baseRenderResult(collapseAutoloadResult(result, options.expanded, context.isError), options, theme, context);
+	}
+
+	pi.registerTool(tool);
 }
