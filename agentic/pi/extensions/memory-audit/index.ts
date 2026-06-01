@@ -75,23 +75,40 @@ function memKey(m: MemoryDoc): string {
 // Injection formatting
 // ---------------------------------------------------------------------------
 
-function formatMemories(mems: MemoryDoc[]): string {
+function formatMemories(mems: MemoryDoc[], blocked = false): string {
 	const lines = mems.map(
 		(m) => `- \`${m.scope}/${m.name}\`${m.description ? ` — ${m.description}` : ""}`,
 	);
 	const plural = mems.length > 1;
+	const refEach = plural ? "each one" : "it";
+	const memWord = plural ? "memories" : "memory";
+
+	// Block path: the tool call was just cancelled, so the message has to be an
+	// unambiguous order — read first, then retry — not the soft "you might want
+	// to look at this" framing of the passive injection path. Earlier wording
+	// hedged ("we might have blocked it"), which let the agent skip the read and
+	// immediately retry the identical call.
+	if (blocked) {
+		return (
+			`STOP — this tool call was deliberately blocked because ${plural ? "memories" : "a memory"} ` +
+			`below applies to it and you have not read ${refEach} yet.\n\n` +
+			`Do NOT retry this call as-is. Required steps, in order:\n` +
+			`1. Call \`memory_read\` on ${refEach} listed below to load the full body ` +
+			`(the name + description here is not enough to act on).\n` +
+			`2. Change your approach so it honors the ${memWord}.\n` +
+			`3. Only then issue the corrected tool call.\n\n` +
+			`${lines.join("\n")}`
+		);
+	}
+
 	return (
-		`Relevant ${plural ? "memories" : "memory"} found for this request (auto-injected). ` +
+		`Relevant ${memWord} found for this request (auto-injected). ` +
 		`${plural ? "These capture" : "This captures"} prior context, user preferences, and gotchas ` +
 		`that apply to what you're doing right now and reflect how the user expects you to work.\n\n` +
-		`Before you respond, call \`memory_read\` on ${plural ? "each one" : "it"} below to load the ` +
+		`Before you respond, call \`memory_read\` on ${refEach} below to load the ` +
 		`full body, then actually apply what you learn — let it shape your answer, your plan, and the ` +
 		`commands you run. Only the name + description are shown here, which is not enough to act on:\n\n` +
-		`${lines.join("\n")}\n\n` +
-		`If this was injected after a tool call of yours, we might have blocked it. Check ` +
-    `if this is the case, and if so, read the ${plural ? "memories" : "memory"} above ` +
-    `and try again where you take into account the ${plural ? "memories" : "memory"}.\n\n` +
-    `Command exited with code 1.`
+		`${lines.join("\n")}`
 	);
 }
 
@@ -130,6 +147,7 @@ export default function (pi: ExtensionAPI) {
 		context: TriggerContext,
 		allowed: ReadonlySet<Trigger["event"]>,
 		forceOnce = false,
+		blocked = false,
 	): string | null {
 		const sessionId = ctx.sessionManager?.getSessionId() ?? "unknown";
 		ensureLoaded(sessionId);
@@ -154,7 +172,7 @@ export default function (pi: ExtensionAPI) {
 			if (forceOnce || m.triggerFrequency !== "always") injected.add(memKey(m));
 		}
 		persist(sessionId);
-		return formatMemories(fired);
+		return formatMemories(fired, blocked);
 	}
 
 	const INPUT_EVENTS = new Set<Trigger["event"]>(["startup", "pattern"]);
@@ -195,10 +213,19 @@ export default function (pi: ExtensionAPI) {
 			{ tool_calls: [event.toolName], tool_input: JSON.stringify(event.input ?? {}) },
 			TOOL_CALL_EVENTS,
 			true, // forceOnce: a repeated block would livelock the tool call
+			true, // blocked: emit the hard "stop, read, then retry" directive
 		);
 		if (!block) return undefined;
 
-		return { block: true, reason: block };
+		// Blocking a tool surfaces `reason` as the tool's result. For `bash` we
+		// tack on a failed-command tail so the agent treats the block like a
+		// genuine shell failure and retries. The tool never actually ran, so the
+		// code is a conventional non-zero stand-in, not a real exit status — and
+		// the wording only fits `bash`, so other tools get the bare reason.
+		const reason =
+			event.toolName === "bash" ? `${block}\n\nCommand exited with code 1.` : block;
+
+		return { block: true, reason };
 	});
 
 	// Auto-inject on tool output: tool + pattern triggers (matched against the
