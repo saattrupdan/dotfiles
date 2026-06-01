@@ -267,7 +267,7 @@ export default async function (pi: ExtensionAPI) {
 			"There is no pagination — you cannot walk a file via offset/limit. If the outline is not enough, use the `search` tool to locate what you need, then read the symbol. For interactive/JS-heavy pages, use `web_browse` instead.",
 		parameters: Params,
 
-		async execute(_toolCallId, { path: filePath, symbol }, signal, _onUpdate, _ctx) {
+		async execute(_toolCallId, { path: filePath, symbol }, signal, _onUpdate, ctx) {
 			// 0a. URL → download + convert to Markdown via docling, then render.
 			if (URL_RE.test(filePath)) {
 				const sha = sha256String(filePath);
@@ -377,7 +377,9 @@ export default async function (pi: ExtensionAPI) {
 			}
 
 			// 4. Open the index (no full build) and refresh just this file.
-			const { db, repoRoot } = openIndex(process.cwd());
+			// Use the session cwd (ctx.cwd), not process.cwd() — see the search
+			// extension for why the two can diverge.
+			const { db, repoRoot } = openIndex(ctx?.cwd ?? process.cwd());
 			const relPath = path.relative(repoRoot, absolutePath);
 			if (relPath.startsWith("..")) {
 				// File lives outside the repo — fall back to verbatim/outline without the index.

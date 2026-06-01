@@ -532,12 +532,15 @@ export function openIndex(cwd: string): {
 	repoId: string;
 	repoRoot: string;
 } {
-	if (cachedDb && cachedRepoId && cachedRepoRoot) {
+	const repoRoot = path.resolve(cwd);
+	// Cache is keyed by the resolved cwd: the session cwd can change between
+	// calls (and `search` vs `read` may pass different cwds), so a cache that
+	// ignored cwd would pin every lookup to whichever directory was seen first.
+	if (cachedDb && cachedRepoRoot === repoRoot && cachedRepoId) {
 		return { db: cachedDb, repoId: cachedRepoId, repoRoot: cachedRepoRoot };
 	}
 
 	const repoId = resolveRepoId(cwd);
-	const repoRoot = path.resolve(cwd);
 	writeMeta(repoId, repoRoot);
 
 	const db = openDb(repoId);

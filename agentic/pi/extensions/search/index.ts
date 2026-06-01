@@ -342,7 +342,7 @@ export default async function (pi: ExtensionAPI) {
 			{ query, kind = "any", regex = false },
 			_signal,
 			_onUpdate,
-			_ctx,
+			ctx,
 		) {
 			if (!outline) {
 				return {
@@ -350,7 +350,12 @@ export default async function (pi: ExtensionAPI) {
 					details: undefined,
 				};
 			}
-			const { db, repoId, repoRoot } = ensureFullIndex(process.cwd(), outline);
+			// Use the SESSION cwd (ctx.cwd), not process.cwd(). The node process's
+			// cwd is pi's launch directory and may differ from where the session /
+			// agent actually is — searching process.cwd() then looks in the wrong
+			// tree and finds nothing where the user's files live.
+			const cwd = ctx?.cwd ?? process.cwd();
+			const { db, repoId, repoRoot } = ensureFullIndex(cwd, outline);
 			touchMeta(repoId);
 
 			// Reconcile the index against the live tree: add files created since
@@ -477,7 +482,10 @@ export default async function (pi: ExtensionAPI) {
 			}
 
 			if (output.length === 0) {
-				output.push("No results found.");
+				// Report the directory actually searched: if it's not where the user
+				// expects (process.cwd() vs session cwd), a "no results" is really a
+				// "looked in the wrong place" and this makes that immediately visible.
+				output.push(`No results found. (searched ${repoRoot})`);
 			}
 
 			// Footer: report what was truncated and any content-engine fallback,
