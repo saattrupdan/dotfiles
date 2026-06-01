@@ -158,7 +158,7 @@ export default function (pi: ExtensionAPI) {
 					"info",
 				);
 
-			if (prompt) ctx.sendUserMessage(prompt);
+			if (prompt) pi.sendUserMessage(prompt);
 		},
 	});
 

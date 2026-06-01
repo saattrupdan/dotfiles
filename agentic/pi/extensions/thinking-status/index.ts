@@ -80,8 +80,11 @@ export default function (pi: ExtensionAPI) {
 		ctx.ui.setWorkingMessage(currentLabel());
 
 	pi.on("message_update", (event, ctx) => {
-		const blocks = event.message?.content;
-		const last = Array.isArray(blocks) ? blocks[blocks.length - 1] : undefined;
+		// `AgentMessage` is a union (user/assistant/tool/custom); only some members
+		// carry `content`, so read it structurally and key off the block's `type`.
+		const content = (event.message as { content?: unknown } | undefined)?.content;
+		const blocks = Array.isArray(content) ? content : undefined;
+		const last = blocks ? blocks[blocks.length - 1] : undefined;
 		let next: string | undefined;
 		if (last?.type === "thinking") next = "Thinking...";
 		else if (last?.type === "toolCall") next = TOOL_LABELS[last.name];

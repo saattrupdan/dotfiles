@@ -52,8 +52,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { execSync } from "node:child_process";
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
+import type { AgentToolResult, ExtensionAPI, Theme, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
+import { type Component, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 import {
@@ -470,10 +470,10 @@ interface MemoryRenderDetails {
 }
 
 function renderMemoryResult(
-	result: { content: Array<{ type: string; text?: string }>; details?: unknown },
-	{ expanded }: { expanded: boolean },
-	theme: { fg: (name: string, text: string) => string },
-) {
+	result: AgentToolResult<unknown>,
+	{ expanded }: ToolRenderResultOptions,
+	theme: Theme,
+): Component {
 	const text = textContent(result.content);
 	if (expanded) return new Text(text, 0, 0);
 
