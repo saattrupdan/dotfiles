@@ -251,6 +251,7 @@ function runEngine(repoRoot: string, query: string, regex: boolean): RefSearch {
 				...(regex ? [] : ["-F"]),
 				"--",
 				query,
+				".",
 			],
 			{
 				cwd: repoRoot,
