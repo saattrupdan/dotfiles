@@ -391,7 +391,7 @@ export function querySymbols(db: DatabaseInstance, query: string): SymbolResult[
 	const stmt = db.prepare(
 		`SELECT name, kind, file, line_start, line_end, parent
 		 FROM symbols
-		 WHERE name LIKE ?
+		 WHERE LOWER(name) LIKE LOWER(?)
 		 ORDER BY kind = 'class' OR kind = 'function' DESC
 		 LIMIT 50`,
 	);

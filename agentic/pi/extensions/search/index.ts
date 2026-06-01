@@ -158,7 +158,8 @@ function runGrepFallback(repoRoot: string, query: string, regex: boolean, rgErro
 		const proc = childProcess.spawnSync(
 			"grep",
 			[
-				"-rnI",
+				"-rniI",
+				// -i: case-insensitive, matching ripgrep's -i + --no-type behaviour.
 				regex ? "-E" : "-F",
 				...EXCLUDE_DIRS.map((d) => `--exclude-dir=${d}`),
 				"--",
@@ -187,7 +188,9 @@ function runGrepFallback(repoRoot: string, query: string, regex: boolean, rgErro
 			results,
 			engine: "grep",
 			total: results.length,
-			error: rgError ? `note: ripgrep unavailable (${rgError}) — used grep` : undefined,
+			error: rgError
+					? `content search used grep fallback (ripgrep: ${rgError})`
+					: undefined,
 		};
 	} catch (err) {
 		return {
@@ -231,9 +234,10 @@ function runEngine(repoRoot: string, query: string, regex: boolean): RefSearch {
 			[
 				"--json",
 				"-n",
-				// --smart-case: case-insensitive unless the query contains an
-				//   uppercase letter — matches what people expect from quick search.
-				"--smart-case",
+				// -i: always case-insensitive — avoids the --smart-case pitfall
+				//   where all-uppercase queries become case-sensitive (e.g. "TLS"
+				//   wouldn't match "tls" in a file).
+				"-i",
 				// --hidden: also search dotfiles like .zshrc.
 				"--hidden",
 				// NOTE: we deliberately do NOT pass --no-ignore + `-g` exclude globs.
@@ -307,14 +311,12 @@ function searchContent(repoRoot: string, query: string, regex: boolean): RefSear
 	}
 
 	// 3) grep second opinion. ripgrep ran but matched nothing — grep is a
-	//    different engine that ignores rg's config/type filters, so if `grep`
-	//    would find it (the user's recurring case), so will we. Skipped when
-	//    ripgrep already failed over to grep (exact.engine !== "ripgrep").
+	//    different engine with different defaults, so if `grep` would find it,
+	//    so will we. Skipped when ripgrep already failed over to grep.
 	if (exact.engine === "ripgrep") {
 		const g = runGrepFallback(repoRoot, query, regex);
 		if (g.results.length > 0) {
-			g.error = "note: ripgrep matched nothing but grep did — its results are shown (check for a global rg config / type filters)";
-			return g;
+			return g; // error message set by runGrepFallback already
 		}
 		if (orPattern) {
 			const gm = runGrepFallback(repoRoot, orPattern, true);
