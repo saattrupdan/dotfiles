@@ -20,6 +20,27 @@ deployed config land back in this repo).
 - Commit messages follow Conventional Commits (see recent history: `chore:`,
   `fix:`, `feat:`). Most dotfile syncs land as `chore: Update dot files`.
 
+## Quality checks
+
+The only compiled code is the TypeScript under `agentic/pi/extensions/`. After
+creating or editing files there, run both checks **from that directory** (they
+use the project-local `tsc`/`eslint`):
+
+```sh
+cd agentic/pi/extensions
+
+# Typecheck — the trailing filter drops third-party errors inside dependency
+# .d.ts files (the project itself excludes node_modules; skipLibCheck is off).
+./node_modules/.bin/tsc -p tsconfig.json --noEmit 2>&1 | grep "error TS" | grep -v node_modules
+
+# Lint — eslint.config.mjs already ignores **/node_modules/**.
+./node_modules/.bin/eslint .
+```
+
+A clean typecheck prints nothing. The 9 remaining `node_modules` errors are
+upstream dependency declaration bugs, so the filter is expected — never "fix"
+them by editing files under `node_modules/`.
+
 ## Gotchas
 
 - **These files are symlinked into their real locations** (e.g. `~/.config/nvim`).
