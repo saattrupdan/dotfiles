@@ -240,12 +240,10 @@ function runEngine(repoRoot: string, query: string, regex: boolean): RefSearch {
 				"-i",
 				// --hidden: also search dotfiles like .zshrc.
 				"--hidden",
-				// NOTE: we deliberately do NOT pass --no-ignore + `-g` exclude globs.
-				//   That combo silently dropped real matches (an exclude glob hiding
-				//   the file's own directory), so a bare `rg foo` found things this
-				//   tool did not. ripgrep here behaves like a plain `rg` (respects
-				//   .gitignore); genuinely .gitignore'd files are still covered by the
-				//   grep second opinion in searchContent().
+				// --no-ignore: search everything (including .gitignore'd files).
+				//   Simple `--no-ignore` works fine — it was the `-g` exclude
+				//   globs that caused problems (a glob hiding a file's own dir).
+				"--no-ignore",
 				// -F: literal string unless the caller asked for regex, so a bare
 				//   "(" or "." is not a regex parse error / wildcard.
 				...(regex ? [] : ["-F"]),
@@ -311,19 +309,9 @@ function searchContent(repoRoot: string, query: string, regex: boolean): RefSear
 		if (m.results.length > 0) return rankOr(m);
 	}
 
-	// 3) grep second opinion. ripgrep ran but matched nothing — grep is a
-	//    different engine with different defaults, so if `grep` would find it,
-	//    so will we. Skipped when ripgrep already failed over to grep.
-	if (exact.engine === "ripgrep") {
-		const g = runGrepFallback(repoRoot, query, regex);
-		if (g.results.length > 0) {
-			return g; // error message set by runGrepFallback already
-		}
-		if (orPattern) {
-			const gm = runGrepFallback(repoRoot, orPattern, true);
-			if (gm.results.length > 0) return rankOr(gm);
-		}
-	}
+	// 3) grep fallback — only runs if ripgrep crashed/errored (engine !==
+	//    "ripgrep"). When ripgrep works normally, it covers everything since
+	//    --no-ignore means it searches all files including .gitignore'd ones.
 
 	return exact;
 }
