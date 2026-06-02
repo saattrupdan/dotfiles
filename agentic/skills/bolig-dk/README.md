@@ -8,8 +8,8 @@ Reference and CLI for Danish housing listings, covering two complementary source
 ## Requirements
 
 - Python 3.12+ for the CLI helper (standard library only).
-- Internet access to `www.boligportal.dk` and `www.boligsiden.dk`.
-- boligsiden's site and API are behind Cloudflare Turnstile; the CLI cannot bypass the challenge (it exits non-zero with a clear error).
+- Internet access to `www.boligportal.dk` and `api.boligsiden.dk`.
+- boligsiden's www site and `/api/` are behind a Cloudflare managed challenge; the CLI sidesteps it by using the ungated data host `api.boligsiden.dk` (the same one `bolig-ping` uses).
 - boligportal's `search` (incl. keyword body search) works **anonymously** via the public hub pages; `top-favorites` is session-bound; `promoted` works anonymously.
 
 ## CLI
@@ -27,16 +27,16 @@ bolig rent promoted --city kobenhavn
 bolig rent top-favorites --limit 5
 bolig rent raw listing/listings '{"page":0,"pageSize":5}'
 
-# --- For-sale (boligsiden.dk) ---
+# --- For-sale (boligsiden.dk, via api.boligsiden.dk) ---
 bolig buy cases --limit 5
-bolig buy cases --min-price 2000000 --city "København"
+bolig buy cases --min-price 2000000 --municipality københavn    # whole city = municipality
 bolig buy cases --type villa --min-rooms 4 --limit 10
-bolig buy cases --city "København" -k badekar                   # body keyword search
-bolig buy cases --municipality-code 101
-bolig buy address "strandvejen 42 københavn"
-bolig buy realtor "edc" --limit 5
+bolig buy cases --city frederiksberg -k badekar                 # body keyword search
+bolig buy cases --zip-code 2000
+bolig buy address strandvejen                                   # road-name prefix
+bolig buy realtor københavn --location-type municipality
 bolig buy municipalities
-bolig buy raw cases query.json
+bolig buy raw search/cases "page=1&cities=frederiksberg"
 ```
 
 Every command supports `--raw` for unformatted JSON output. See `SKILL.md` for the full API reference, URL conventions, and image CDN patterns.
@@ -49,6 +49,5 @@ Every command supports `--raw` for unformatted JSON output. See `SKILL.md` for t
 
 ## Troubleshooting
 
-- **Keyword search (`-k`) finds nothing** — the term may genuinely be rare in the scanned set; raise `--max-scan` (rent default 100, buy default 200) or loosen filters. For rent, each scanned listing costs one detail-page fetch, so large scans take a while.
-- **`bolig buy ...` returns a Cloudflare error** — the boligsiden API blocks non-browser clients; there is no anonymous bypass.
-- **City not found for `bolig buy cases --city`** — the city isn't in the built-in zip map; pass `--zip-code` or `--municipality-code` instead.
+- **Keyword search (`-k`) finds nothing** — for `buy`, boligsiden caps `descriptionBody` at ~500 chars, so terms buried deep in a description (often `badekar`) are missed; common features like `altan` appear early and match. For `rent`, the term may be rare in the scanned set; raise `--max-scan` (rent default 100, buy default 200). Each scanned `rent` listing costs one detail-page fetch, so large scans take a while.
+- **`bolig buy cases --city københavn` returns 0** — whole big cities are *municipalities*, not city slugs. Use `--municipality københavn` (or `--zip-code`); `--city` is for districts like `frederiksberg` or `aarhus c`.

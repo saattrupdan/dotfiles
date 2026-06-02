@@ -1,7 +1,7 @@
 ---
 name: bolig-dk
 description: Danish housing listings — rentals (boligportal.dk) and for-sale homes (boligsiden.dk). Provides the `bolig` CLI for searching listings by filters or by keywords in the description body (e.g. 'badekar'), plus addresses, realtors, municipalities, and documented internal/public APIs. Use when searching Danish rental or for-sale properties, browsing by city/municipality/zip, free-text/keyword searching listing descriptions, or querying the sites' APIs.
-last-updated: 2026-05-30
+last-updated: 2026-06-02
 ---
 
 # bolig-dk — Danish housing (rentals + for-sale)
@@ -115,30 +115,35 @@ bolig buy cases --min-price 2000000 --city "København"
 bolig buy cases --type villa --min-rooms 4 --limit 10
 
 # KEYWORD body search: for-sale homes whose description mentions 'badekar'
-bolig buy cases --city "København" -k badekar
+bolig buy cases --city frederiksberg -k badekar
 
 # Multiple keywords (all by default; --match any for OR)
 bolig buy cases -k brændeovn -k udsigt --match any
 
-# Filter by municipality code (101 = København)
-bolig buy cases --municipality-code 101
+# Whole big city → filter by municipality (repeatable)
+bolig buy cases --municipality københavn --type villa
 
-# Look up an address
-bolig buy address "strandvejen 42 københavn"
+# Filter by postal code (repeatable)
+bolig buy cases --zip-code 2000
 
-# Search real estate agencies
-bolig buy realtor "edc" --limit 5
+# Look up addresses by road name (prefix match)
+bolig buy address strandvejen
 
-# List all municipalities with population
+# List real estate agencies in a location
+bolig buy realtor københavn --location-type municipality
+
+# List all municipalities with population and slug
 bolig buy municipalities
 
-# POST a raw query body (from a file) to an endpoint
-bolig buy raw cases query.json
+# GET a raw API path with a query string
+bolig buy raw search/cases "page=1&cities=frederiksberg&numberOfRoomsMin=3"
 ```
 
-`--type` values: `villa`, `lejlighed`, `rækkehus`, `etagebolig`, `holiday house`, etc. `--city` accepts a name (mapped to a zip via a built-in table) or a numeric zip; use `--zip-code`/`--municipality-code` for precision. `-k`/`--keyword` filters on each case's embedded `descriptionTitle`/`descriptionBody` (no extra requests — the body ships with the listing); pages are scanned up to `--max-scan` (default 200) to collect `--limit` matches.
+`--type` values: Danish or English — `lejlighed`/`condo`, `villa`, `rækkehus`/`terraced house`, `andelsbolig`/`cooperative`, `villalejlighed`/`villa apartment`, `landejendom`/`farm`, `sommerhus`/`holiday house`, `husbåd`/`houseboat`, etc. (repeatable). Geography uses boligsiden **place slugs**: `--city` is a city/district slug (`frederiksberg`, `aarhus c`) while whole big cities are *municipalities* (`--municipality københavn`, `aarhus`, `odense`); `--zip-code` filters by postal code. All three are repeatable. Run `bolig buy municipalities` to see municipality slugs.
 
-**Note:** boligsiden's front-end and REST API are both behind **Cloudflare Turnstile**. Unauthenticated non-browser clients receive a JS challenge (403) or an HTML redirect. The CLI detects this and exits non-zero with a descriptive error — it cannot bypass the challenge.
+`-k`/`--keyword` filters on each case's embedded `descriptionTitle` + `descriptionBody` (no extra requests — the body ships with the listing); pages are scanned up to `--max-scan` (default 200) to collect `--limit` matches.
+
+**Note:** the API caps `descriptionBody` at **~500 characters**, so `-k` only matches terms appearing in the title or the first ~500 chars of the body. Common features (`altan`, `elevator`) usually appear early; rarer ones buried deep in a description (often `badekar`) may be missed even though the listing has them.
 
 ---
 
@@ -233,57 +238,50 @@ Request: `{"limit": 10}`.
 
 ## boligsiden.dk reference (for-sale)
 
-`https://www.boligsiden.dk/` aggregates listings from dozens of real estate agencies. Both the front-end and REST API are behind **Cloudflare Turnstile** (see CLI note above).
+boligsiden aggregates listings from dozens of real estate agencies. The public site `https://www.boligsiden.dk/` **and its `/api/` HAL endpoints sit behind a Cloudflare managed challenge** (`cf-mitigated: challenge`) that a non-browser client cannot solve — requests get a 403 JS-challenge HTML page. The data-only host **`https://api.boligsiden.dk`** is **not gated**, so the CLI talks to it directly with a plain `GET`. (This is the same host `bolig-ping` uses.)
 
-### URL conventions
+### URL conventions (the gated www site, for humans)
 
-- Listing: `https://www.boligsiden.dk/lejlighed/kobenhavn/...` or `https://home.dk/...`
+- Listing redirect: `https://boligsiden.dk/viderestilling/<caseID>` (redirects to the agency's own listing page; printed by `bolig buy cases`).
 - Realtor: `https://www.boligsiden.dk/ejendomsmægler/<slug>`
-- Search: `https://www.boligsiden.dk/sog?query=<term>` (JS-driven)
 - Municipality: `https://www.boligsiden.dk/kommune/<slug>`
 
-### Internal REST API (HAL-style)
+### Data API — `api.boligsiden.dk` (GET, HAL-style)
 
-Base URL: `https://www.boligsiden.dk/api`. No API key required. Conventions:
+Base URL: `https://api.boligsiden.dk`. No API key, no Cloudflare. Each resource carries `_links.self.href`. Responses are plain objects (no `_embedded` wrapper): list endpoints return a named array plus `totalHits`.
 
-- **HAL format** — each resource has `_links.self.href`.
-- **Pagination** — `_page` (1-indexed) and `_limit` (default 20, max 100).
-- **Sorting** — `_sort` (e.g. `priceCash`, `housingArea`, `daysOnMarket`) and `_order` (`asc`/`desc`).
-- **Filtering** — query params matching resource fields.
-
-| Endpoint | Description |
+| Endpoint | Returns |
 |---|---|
-| `/api/cases` | Property listings (primary resource). |
-| `/api/addresses` | Address lookup by street, city, or zip. |
-| `/api/realtors` | Real estate agency profiles. |
-| `/api/realtor_branches` | Branch offices. |
-| `/api/municipalities` | Danish municipalities with stats. |
-| `/api/places` | Cities, towns, districts. |
-| `/api/zip_codes` | Danish postal codes. |
-| `/api/floor_plans` | Floor plan images. |
+| `/search/cases` | `{cases: [...], totalHits}` — property listings (primary). |
+| `/cases/<uuid>` | A single case. |
+| `/search/addresses` | `{addresses: [...], totalHits}` — address lookup. |
+| `/search/realtors` | `{realtors: [...]}` — agencies in a location. |
+| `/municipalities` | `{municipalities: [...]}` — all 98, with `slug` + tax/population stats. |
 
-#### `/api/cases` query parameters
+#### `/search/cases` query parameters
 
 | Param | Description |
 |---|---|
-| `_page` / `_limit` | Pagination (1-indexed; default 20, max 100). |
-| `_sort` / `_order` | Sort field and direction. |
-| `priceCash_min` / `priceCash_max` | Price range in DKK. |
-| `housingArea_min` / `housingArea_max` | Living area in m². |
-| `numberOfRooms_min` / `numberOfRooms_max` | Room count range. |
-| `municipalityCode` | Municipality code (numeric). |
-| `zipCode` | Postal code. |
-| `addressType` | Property type: `villa`, `lejlighed`, `rækkehus`, `etagebolig`, `holiday house`, etc. |
-| `isPublic` / `isOnMarket` | `true`/`false` visibility flags. |
+| `page` | Page number (**1-indexed**). |
+| `per_page` | Page size (default 50). |
+| `sort` / `sortAscending` | Sort field (`priceCash`, `housingArea`, `daysOnMarket`, `timeOnMarket`, …) and `true`/`false`. |
+| `priceMin` / `priceMax` | Price range in DKK. |
+| `areaMin` / `areaMax` | Living area in m². |
+| `numberOfRoomsMin` / `numberOfRoomsMax` | Room count range. |
+| `cities` | City/district place slug (repeatable), e.g. `frederiksberg`, `aarhus c`. |
+| `municipalities` | Municipality place slug (repeatable), e.g. `københavn`, `aarhus`. |
+| `zipCodes` | Postal code (repeatable). |
+| `addressTypes` | Property type (repeatable, **English**): `condo`, `villa`, `terraced house`, `cooperative`, `villa apartment`, `farm`, `hobby farm`, `holiday house`, `holiday plot`, `full year plot`, `houseboat`. |
 
-Each case contains `_links` (self, address, realtor, realtorBranch), pricing (`priceCash`, `perAreaPrice`), area metrics (`housingArea`, `lotArea`, `basementArea`), room counts, `yearBuilt`, `energyLabel`, boolean amenities (`hasBalcony`, `hasElevator`, `hasTerrace`), `daysOnMarket`, `descriptionTitle`/`descriptionBody`, `nextOpenHouse`, embedded `address` (coordinates, municipality, province, building details), embedded `realtor` (name, rating, contact, branch), and `images`/`floorPlanImages` arrays with `imageSources` (CDN URLs + dimensions).
+**Geography gotcha:** `cities` matches boligsiden place slugs, so whole big cities return nothing as a *city* — `cities=københavn` → 0 hits, but `municipalities=københavn` → ~1600. Use `municipalities` for a whole city/kommune, `cities` for a named district. `municipalityCodes` is **not** honoured (silently ignored — returns everything); filter by slug instead.
+
+Each case contains `_links`, `caseID`, `caseUrl` (agency redirect), pricing (`priceCash`, `perAreaPrice`, `monthlyExpense`), area metrics (`housingArea`, `lotArea`, `weightedArea`), `numberOfRooms`/`numberOfBathrooms`/`numberOfToilets`/`numberOfFloors`, `yearBuilt`, `energyLabel`, boolean amenities (`hasBalcony`, `hasElevator`, `hasTerrace`), `daysOnMarket`/`daysListed`/`timeOnMarket`, `descriptionTitle`, `descriptionBody` (**truncated to ~500 chars**, even on `/cases/<uuid>`), embedded `address` (coordinates, municipality, province, building details), embedded `realtor`, and `images`/`floorPlanImages` arrays.
 
 #### Other endpoints
 
-- `/api/addresses?q=<street>+<city>&_limit=N` — returns address UUID, type, road, house number, zip, municipality, province, coordinates.
-- `/api/realtors?q=<name|city>` — agency search.
-- `/api/municipalities?_limit=200` — all municipalities with population and tax stats.
-- `/api/places`, `/api/zip_codes`, `/api/floor_plans`.
+- `/search/addresses?text=<road-name>&per_page=N` — `text` is a **road-name prefix** match (single token; multi-word queries like `strandvejen 1 aarhus` return `addresses: null`). Each hit has address UUID, type, road, house number, zip, municipality, coordinates.
+- `/search/realtors?locationType=<municipality|city>&locationName=<slug>` — agencies in that location (location-based, **not** a name search). Each realtor has `name`, `url`, `slug`, `contactInformation`, `rating` (`seller`/`buyer` scores), `caseCounts`.
+- `/municipalities` — all municipalities with `municipalityCode`, `slug`, `name`, `population`, tax stats.
 
 ### Image CDN
 

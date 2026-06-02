@@ -6,7 +6,8 @@ Two sources, grouped as subcommands:
 - ``bolig rent ...`` -- boligportal.dk, Denmark's largest *rental* marketplace.
   Internal JSON API (POST-only). Some endpoints are session-bound.
 - ``bolig buy ...``  -- boligsiden.dk, the *for-sale* listing aggregator.
-  Public HAL REST API (GET), behind Cloudflare Turnstile.
+  The www site/API are behind a Cloudflare managed challenge, so this talks
+  to the ungated data host api.boligsiden.dk (HAL-style GET JSON).
 
 Standard library only. See ./SKILL.md for the full API specification.
 """
@@ -27,7 +28,11 @@ RENT_BASE = "https://www.boligportal.dk"
 RENT_API = f"{RENT_BASE}/api"
 
 # --- boligsiden.dk (for-sale) ---
-BUY_API = "https://www.boligsiden.dk/api"
+# The www.boligsiden.dk front-end and its /api/ HAL endpoints sit behind a
+# Cloudflare managed challenge (cf-mitigated: challenge) that a non-browser
+# client can't solve. The data-only host api.boligsiden.dk is NOT gated, so all
+# `bolig buy` traffic goes there instead.
+BUY_API = "https://api.boligsiden.dk"
 
 UA = "Mozilla/5.0 (bolig-dk-api-cli)"
 # boligportal's HTML pages gate non-browser User-Agents, so the hub/detail
@@ -45,33 +50,39 @@ RENT_CATEGORY_PATH: dict[str, str] = {
     "townhouse": "rækkehuse",
 }
 
-# Danish city -> zip code, used to translate a free-text --city for the
-# boligsiden /cases endpoint (which filters by zipCode, not city name).
-CITY_ZIP_MAP: dict[str, str] = {
-    "kobenhavn": "1000",
-    "københavn": "1000",
-    "aarhus": "8000",
-    "arhus": "8000",
-    "odense": "5000",
-    "aalborg": "9000",
-    "esbjerg": "6700",
-    "randers": "8900",
-    "vejle": "7100",
-    "roskilde": "4000",
-    "holstebro": "7500",
-    "hillerod": "2800",
-    "frederiksberg": "1800",
-    "viborg": "8800",
-    "soenderborg": "6400",
-    "holte": "2840",
-    "gentofte": "2820",
-    "lyngby": "2800",
-    "ballerup": "2750",
-    "farum": "3520",
-    "rodovre": "2610",
-    "gladsaxe": "2860",
-    "herlev": "2730",
-    "alleroed": "3650",
+# Danish (and English) property-type label -> boligsiden addressType. The
+# /search/cases endpoint filters on the English addressType values; we accept
+# the common Danish words too. Unknown values pass through unchanged.
+BUY_ADDRESS_TYPES: dict[str, str] = {
+    "lejlighed": "condo",
+    "ejerlejlighed": "condo",
+    "condo": "condo",
+    "andelsbolig": "cooperative",
+    "andelslejlighed": "cooperative",
+    "cooperative": "cooperative",
+    "villa": "villa",
+    "hus": "villa",
+    "parcelhus": "villa",
+    "rækkehus": "terraced house",
+    "raekkehus": "terraced house",
+    "terraced house": "terraced house",
+    "villalejlighed": "villa apartment",
+    "villa apartment": "villa apartment",
+    "landejendom": "farm",
+    "gård": "farm",
+    "farm": "farm",
+    "nedlagt landbrug": "hobby farm",
+    "hobby farm": "hobby farm",
+    "fritidshus": "holiday house",
+    "sommerhus": "holiday house",
+    "holiday house": "holiday house",
+    "fritidsgrund": "holiday plot",
+    "holiday plot": "holiday plot",
+    "grund": "full year plot",
+    "helårsgrund": "full year plot",
+    "full year plot": "full year plot",
+    "husbåd": "houseboat",
+    "houseboat": "houseboat",
 }
 
 
@@ -459,26 +470,25 @@ def cmd_rent_raw(args: argparse.Namespace) -> None:
 
 def _buy_request(
     path: str,
-    method: str = "GET",
-    params: dict[str, str] | None = None,
-    body: bytes | None = None,
-    headers: dict[str, str] | None = None,
+    params: list[tuple[str, str]] | None = None,
 ) -> tuple[int, bytes]:
-    """Send a request to the boligsiden HAL API."""
+    """GET from the boligsiden data API (api.boligsiden.dk).
+
+    ``params`` is a list of ``(key, value)`` pairs so filters like ``cities``
+    can repeat; values are URL-encoded here.
+    """
     url = path if path.startswith("http") else BUY_API + path
     if params:
         sep = "&" if "?" in url else "?"
         url += sep + urllib.parse.urlencode(params)
-    h: dict[str, str] = {"User-Agent": UA, "Accept": "application/json"}
-    if headers:
-        h.update(headers)
-    req = urllib.request.Request(url, data=body, method=method, headers=h)
+    h = {"User-Agent": UA, "Accept": "application/json"}
+    req = urllib.request.Request(url, method="GET", headers=h)
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             return r.status, r.read()
     except urllib.error.HTTPError as e:
         body_text = e.read() if e.fp else b""
-        sys.stderr.write(f"HTTP {e.code} {e.reason} on {method} {url}\n")
+        sys.stderr.write(f"HTTP {e.code} {e.reason} on GET {url}\n")
         if body_text:
             sys.stderr.write(
                 body_text.decode("utf-8", errors="replace").rstrip() + "\n"
@@ -486,71 +496,64 @@ def _buy_request(
         sys.exit(2)
 
 
-def _buy_get(path: str, params: dict[str, str] | None = None) -> t.Any:
-    """GET JSON from a boligsiden endpoint, handling Cloudflare challenges."""
-    _, raw = _buy_request(path, method="GET", params=params)
+def _buy_get(path: str, params: list[tuple[str, str]] | None = None) -> t.Any:
+    """GET and parse JSON from a boligsiden endpoint."""
+    _, raw = _buy_request(path, params=params)
     text = raw.decode("utf-8", errors="replace")
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         sys.stderr.write(
-            "Could not parse API response as JSON (the server may be "
-            "returning a Cloudflare challenge page).\n"
+            f"Could not parse API response as JSON from GET {path}.\n"
         )
         sys.stderr.write(text[:500] + "\n")
         sys.exit(2)
 
 
+def _buy_case_params(args: argparse.Namespace) -> list[tuple[str, str]]:
+    """Build the ``/search/cases`` query params from search args.
+
+    Geography is filtered by ``cities`` / ``municipalities`` (place slugs, e.g.
+    ``frederiksberg``, ``københavn``) and ``zipCodes`` — all repeatable. Note
+    that whole big cities (København, Aarhus, …) are *municipalities*, while
+    ``--city`` takes a place/district slug (``frederiksberg``, ``aarhus c``).
+    """
+    params: list[tuple[str, str]] = []
+    if args.sort:
+        params.append(("sort", args.sort))
+    if args.order:
+        params.append(("sortAscending", "true" if args.order == "asc" else "false"))
+    if args.min_price:
+        params.append(("priceMin", args.min_price))
+    if args.max_price:
+        params.append(("priceMax", args.max_price))
+    if args.min_area:
+        params.append(("areaMin", args.min_area))
+    if args.max_area:
+        params.append(("areaMax", args.max_area))
+    if args.min_rooms:
+        params.append(("numberOfRoomsMin", args.min_rooms))
+    if args.max_rooms:
+        params.append(("numberOfRoomsMax", args.max_rooms))
+    for city in args.city or []:
+        params.append(("cities", city.strip().lower()))
+    for muni in args.municipality or []:
+        params.append(("municipalities", muni.strip().lower()))
+    for zc in args.zip_code or []:
+        params.append(("zipCodes", zc))
+    for raw_type in args.type or []:
+        params.append(
+            ("addressTypes", BUY_ADDRESS_TYPES.get(raw_type.lower(), raw_type))
+        )
+    return params
+
+
 def cmd_buy_cases(args: argparse.Namespace) -> None:
     """Search for-sale property listings."""
-    params: dict[str, str] = {"_page": str(args.page), "_limit": str(args.limit)}
-    if args.sort:
-        params["_sort"] = args.sort
-    if args.order:
-        params["_order"] = args.order
-    if args.min_price:
-        params["priceCash_min"] = args.min_price
-    if args.max_price:
-        params["priceCash_max"] = args.max_price
-    if args.min_area:
-        params["housingArea_min"] = args.min_area
-    if args.max_area:
-        params["housingArea_max"] = args.max_area
-    if args.min_rooms:
-        params["numberOfRooms_min"] = args.min_rooms
-    if args.max_rooms:
-        params["numberOfRooms_max"] = args.max_rooms
-    if args.municipality_code:
-        params["municipalityCode"] = args.municipality_code
-    if args.zip_code:
-        params["zipCode"] = args.zip_code
-    if args.type:
-        params["addressType"] = args.type
-    if args.city:
-        city_lower = (
-            args.city.lower()
-            .strip()
-            .replace("ø", "o")
-            .replace("å", "a")
-            .replace("æ", "ae")
-        )
-        if city_lower.isdigit():
-            params["zipCode"] = city_lower
-        else:
-            mapped = False
-            for key, val in CITY_ZIP_MAP.items():
-                if key in city_lower or city_lower in key:
-                    params["zipCode"] = val
-                    mapped = True
-                    break
-            if not mapped:
-                sys.stderr.write(
-                    f"City {args.city!r} not in built-in map. Use "
-                    "--municipality-code or --zip-code for precise filtering.\n"
-                )
+    base = _buy_case_params(args)
 
     if args.keyword:
-        cases, scanned = _buy_cases_by_keyword(args, params)
+        cases, scanned = _buy_cases_by_keyword(args, base)
         if args.raw:
             _emit(cases, raw=True)
             return
@@ -563,24 +566,23 @@ def cmd_buy_cases(args: argparse.Namespace) -> None:
             _buy_print_case(case)
         return
 
-    resp = _buy_get("/cases", params)
+    params = base + [("page", str(args.page)), ("per_page", str(args.limit))]
+    resp = _buy_get("/search/cases", params)
     if args.raw:
         _emit(resp, raw=True)
         return
 
-    page = resp.get("page", {})
-    print(
-        f"# {page.get('totalElements', '?')} total, "
-        f"page {page.get('number', '?')}/{page.get('totalPages', '?')}"
-    )
-    for case in resp.get("_embedded", {}).get("cases", []):
+    total = resp.get("totalHits", 0)
+    total_pages = (total + args.limit - 1) // args.limit if args.limit else "?"
+    print(f"# {total} total, page {args.page}/{total_pages}")
+    for case in resp.get("cases") or []:
         _buy_print_case(case)
 
 
 def _buy_cases_by_keyword(
-    args: argparse.Namespace, params: dict[str, str]
+    args: argparse.Namespace, base: list[tuple[str, str]]
 ) -> tuple[list[dict], int]:
-    """Page through ``/cases`` keeping those whose description matches keywords.
+    """Page through ``/search/cases`` keeping matches on the description body.
 
     boligsiden embeds ``descriptionTitle``/``descriptionBody`` on each case, so
     the body search is a client-side filter. Pages are fetched (50 at a time)
@@ -591,12 +593,11 @@ def _buy_cases_by_keyword(
     matches: list[dict] = []
     scanned = 0
     page = args.page
-    params = {**params, "_limit": "50"}
 
     while len(matches) < args.limit and scanned < args.max_scan:
-        params["_page"] = str(page)
-        resp = _buy_get("/cases", params)
-        cases = resp.get("_embedded", {}).get("cases", [])
+        params = base + [("page", str(page)), ("per_page", "50")]
+        resp = _buy_get("/search/cases", params)
+        cases = resp.get("cases") or []
         if not cases:
             break
         for case in cases:
@@ -613,8 +614,7 @@ def _buy_cases_by_keyword(
                     break
             if scanned >= args.max_scan:
                 break
-        page_info = resp.get("page", {})
-        if page >= page_info.get("totalPages", page):
+        if scanned >= resp.get("totalHits", scanned):
             break
         page += 1
     return matches, scanned
@@ -623,32 +623,38 @@ def _buy_cases_by_keyword(
 def _buy_print_case(case: dict) -> None:
     """Print one for-sale case as tab-separated fields."""
     addr = case.get("address", {})
-    price = case.get("priceCash", 0)
+    price = case.get("priceCash") or 0
+    case_id = case.get("caseID", "")
+    url = f"https://boligsiden.dk/viderestilling/{case_id}" if case_id else ""
     print(
-        f"{case.get('slugAddress', '')}\t"
-        f"{addr.get('addressType', '?')}\t"
         f"{addr.get('cityName', '?')} {addr.get('zipCode', '?')}\t"
+        f"{case.get('addressType', '?')}\t"
         f"{case.get('numberOfRooms', '?')} værelser\t"
         f"{case.get('housingArea', '?')} m²\t"
         f"{price:,.0f} kr\t"
-        f"{case.get('descriptionTitle', 'Uden titel')}"
+        f"{case.get('descriptionTitle') or 'Uden titel'}\t"
+        f"{url}"
     )
 
 
 def cmd_buy_address(args: argparse.Namespace) -> None:
-    """Look up an address by street, city, or zip."""
-    params: dict[str, str] = {"_limit": str(args.limit)}
+    """Look up an address by (the start of) a road name.
+
+    The API's ``text`` filter is a road-name prefix match, so pass a road name
+    like ``strandvejen`` rather than a full street + city + number string.
+    """
+    params: list[tuple[str, str]] = [("per_page", str(args.limit))]
     if args.q:
-        params["q"] = args.q
-    resp = _buy_get("/addresses", params)
+        params.append(("text", args.q))
+    resp = _buy_get("/search/addresses", params)
     if args.raw:
         _emit(resp, raw=True)
         return
 
-    for addr in resp.get("_embedded", {}).get("addresses", []):
+    for addr in resp.get("addresses") or []:
         road = addr.get("roadName", "")
         number = addr.get("houseNumber", "")
-        letter = addr.get("houseLetter", "")
+        letter = addr.get("houseLetter") or ""
         print(
             f"{road} {number}{letter}\t"
             f"{addr.get('zipCode', '')} {addr.get('cityName', '')}\t"
@@ -657,60 +663,59 @@ def cmd_buy_address(args: argparse.Namespace) -> None:
 
 
 def cmd_buy_realtor(args: argparse.Namespace) -> None:
-    """Search for real estate agencies by name or city."""
-    params: dict[str, str] = {"_limit": str(args.limit)}
-    if args.q:
-        params["q"] = args.q
-    resp = _buy_get("/realtors", params)
+    """List real estate agencies in a given location.
+
+    The API searches realtors by location, not by name: it needs a
+    ``locationType`` (``municipality`` or ``city``) plus a ``locationName``
+    (place slug, e.g. ``københavn`` or ``frederiksberg``).
+    """
+    params: list[tuple[str, str]] = [
+        ("locationType", args.location_type),
+        ("locationName", args.location.strip().lower()),
+    ]
+    resp = _buy_get("/search/realtors", params)
     if args.raw:
         _emit(resp, raw=True)
         return
 
-    for r in resp.get("_embedded", {}).get("realtors", []):
+    for r in resp.get("realtors") or []:
         rating = r.get("rating", {})
         seller_score = rating.get("seller", {}).get("score", "?")
         buyer_score = rating.get("buyer", {}).get("score", "?")
+        city = r.get("contactInformation", {}).get("cityName", "")
         print(
-            f"{r.get('name', '')}\t{r.get('url', '')}\t"
+            f"{r.get('name', '')}\t{r.get('url', '')}\t{city}\t"
             f"seller:{seller_score}\tbuyer:{buyer_score}"
         )
 
 
 def cmd_buy_municipalities(args: argparse.Namespace) -> None:
-    """List all Danish municipalities with population."""
-    resp = _buy_get("/municipalities", {"_limit": "200"})
+    """List all Danish municipalities with population and place slug."""
+    resp = _buy_get("/municipalities")
     if args.raw:
         _emit(resp, raw=True)
         return
 
-    for m in resp.get("_embedded", {}).get("municipalities", []):
+    for m in resp.get("municipalities") or []:
         print(
-            f"{m.get('municipalityCode', '')}\t{m.get('name', '')}\t"
-            f"{m.get('population', '?')} indbyggere"
+            f"{m.get('municipalityCode', '')}\t{m.get('slug', '')}\t"
+            f"{m.get('name', '')}\t{m.get('population', '?')} indbyggere"
         )
 
 
 def cmd_buy_raw(args: argparse.Namespace) -> None:
-    """POST a raw query body (from a file) to a boligsiden API endpoint."""
-    with open(args.file, "r", encoding="utf-8") as f:
-        query = f.read()
-    _, raw = _buy_request(
-        f"/{args.endpoint}",
-        method="POST",
-        body=query.encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-    )
-    text = raw.decode("utf-8", errors="replace")
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        sys.stderr.write(
-            "Could not parse API response as JSON (the server may be "
-            "returning a Cloudflare challenge page).\n"
-        )
-        sys.stderr.write(text[:500] + "\n")
-        sys.exit(2)
-    _emit(data, raw=True)
+    """GET a raw boligsiden API path with an optional query string."""
+    path = args.endpoint if args.endpoint.startswith("/") else f"/{args.endpoint}"
+    if args.query:
+        params = [
+            (k, v)
+            for k, _, v in (
+                pair.partition("=") for pair in args.query.split("&") if pair
+            )
+        ]
+    else:
+        params = None
+    _emit(_buy_get(path, params), raw=True)
 
 
 # ---------------------------------------------------------------------------
@@ -847,14 +852,28 @@ def _build_buy_parser(sub: t.Any) -> None:
     p.add_argument("--min-rooms", dest="min_rooms", help="minimum rooms")
     p.add_argument("--max-rooms", dest="max_rooms", help="maximum rooms")
     p.add_argument(
-        "--municipality-code",
-        dest="municipality_code",
-        help="municipality code",
+        "--municipality",
+        action="append",
+        help="municipality place slug, e.g. københavn (repeatable); use this "
+        "for whole big cities",
     )
-    p.add_argument("--zip-code", dest="zip_code", help="postal code")
-    p.add_argument("--city", help="city name (approximate)")
     p.add_argument(
-        "--type", help="property type (villa, lejlighed, rækkehus, etc.)"
+        "--zip-code",
+        dest="zip_code",
+        action="append",
+        help="postal code (repeatable)",
+    )
+    p.add_argument(
+        "--city",
+        action="append",
+        help="city/district place slug, e.g. frederiksberg, 'aarhus c' "
+        "(repeatable)",
+    )
+    p.add_argument(
+        "--type",
+        action="append",
+        help="property type, Danish or English (repeatable): lejlighed, villa, "
+        "rækkehus, andelsbolig, sommerhus, …",
     )
     _add_buy_common(p)
     _add_keyword_opts(p, default_scan=200)
@@ -865,18 +884,35 @@ def _build_buy_parser(sub: t.Any) -> None:
     _add_buy_common(p)
     p.set_defaults(func=cmd_buy_address)
 
-    p = bsub.add_parser("realtor", help="search for real estate agencies")
-    p.add_argument("q", nargs="?", help="search term (agency name, city)")
-    _add_buy_common(p)
+    p = bsub.add_parser(
+        "realtor", help="list real estate agencies in a location"
+    )
+    p.add_argument(
+        "location", help="place slug, e.g. københavn or frederiksberg"
+    )
+    p.add_argument(
+        "--location-type",
+        dest="location_type",
+        choices=["municipality", "city"],
+        default="municipality",
+        help="how to interpret the location (default municipality)",
+    )
+    p.add_argument("--raw", action="store_true", help="print raw JSON response")
     p.set_defaults(func=cmd_buy_realtor)
 
     p = bsub.add_parser("municipalities", help="list all Danish municipalities")
     p.add_argument("--raw", action="store_true")
     p.set_defaults(func=cmd_buy_municipalities)
 
-    p = bsub.add_parser("raw", help="POST a raw query body to an API endpoint")
-    p.add_argument("endpoint", help="API path, e.g. 'cases' or 'realtors'")
-    p.add_argument("file", help="file containing the JSON query body")
+    p = bsub.add_parser("raw", help="GET a raw API path with a query string")
+    p.add_argument(
+        "endpoint", help="API path, e.g. 'search/cases' or 'municipalities'"
+    )
+    p.add_argument(
+        "query",
+        nargs="?",
+        help="optional query string, e.g. 'page=1&cities=frederiksberg'",
+    )
     p.set_defaults(func=cmd_buy_raw)
 
 
