@@ -17,8 +17,10 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import os
 import re
 import sys
+import time
 import typing as t
 import urllib.error
 import urllib.parse
@@ -555,11 +557,13 @@ def cmd_buy_cases(args: argparse.Namespace) -> None:
     base = _buy_case_params(args)
 
     if args.keyword:
-        cases, scanned, fetched = _buy_cases_by_keyword(args, base)
+        cases, scanned, fetched, cached = _buy_cases_by_keyword(args, base)
         if args.raw:
             _emit(cases, raw=True)
             return
-        deep = f", {fetched} deep fetch(es)" if args.deep else ""
+        deep = (
+            f", {fetched} deep fetch(es), {cached} cached" if args.deep else ""
+        )
         print(
             f"# {len(cases)} match(es) for "
             f"{args.match}({', '.join(args.keyword)}) "
@@ -601,8 +605,36 @@ def _json_descriptions(obj: t.Any) -> list[str]:
 _DEEP_MAX_HTML = 3_000_000  # bytes of HTML to read per page
 _DEEP_MAX_TEXT = 15_000  # chars of extracted description to keep
 
+# On-disk cache for deep fetches, so repeat runs don't re-ping agency pages
+# (descriptions rarely change). Keyed by caseUrl -> {"text", "ts"}.
+_DEEP_CACHE_PATH = os.path.join(
+    os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"),
+    "bolig-dk",
+    "deep-text.json",
+)
 
-def _buy_fetch_full_text(url: str) -> str:
+
+def _deep_cache_load() -> dict[str, dict]:
+    """Load the deep-fetch cache, or return an empty dict if absent/corrupt."""
+    try:
+        with open(_DEEP_CACHE_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _deep_cache_save(cache: dict[str, dict]) -> None:
+    """Persist the deep-fetch cache (best-effort; ignores write errors)."""
+    try:
+        os.makedirs(os.path.dirname(_DEEP_CACHE_PATH), exist_ok=True)
+        with open(_DEEP_CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(cache, f, ensure_ascii=False)
+    except OSError:
+        pass
+
+
+def _buy_fetch_full_text(url: str) -> str | None:
     """Fetch a listing's full description from the agency page behind ``caseUrl``.
 
     boligsiden's API caps ``descriptionBody`` at ~500 chars and its own site is
@@ -612,7 +644,11 @@ def _buy_fetch_full_text(url: str) -> str:
     the standard description fields — JSON-LD ``description``, then
     ``og:``/``meta`` description — which are agency-agnostic. Only if neither
     exists do we fall back to the few longest visible text blocks. Both the
-    download and the kept text are capped; returns "" on any fetch error.
+    download and the kept text are capped.
+
+    Returns the extracted text (possibly ``""`` if the page has no usable
+    server-side text — e.g. JS-rendered), or ``None`` on a fetch error so the
+    caller can choose not to cache it and retry later.
     """
     req = urllib.request.Request(
         url, headers={"User-Agent": BROWSER_UA, "Accept": "text/html"}
@@ -621,7 +657,7 @@ def _buy_fetch_full_text(url: str) -> str:
         with urllib.request.urlopen(req, timeout=25) as r:
             doc = r.read(_DEEP_MAX_HTML).decode("utf-8", errors="replace")
     except (urllib.error.URLError, TimeoutError, OSError):
-        return ""
+        return None
 
     parts: list[str] = []
     for block in re.findall(
@@ -662,15 +698,24 @@ def _buy_cases_by_keyword(
     page (only when the truncated text doesn't already match, to save requests).
     Those deep fetches run concurrently per page (``--deep-workers`` threads),
     but matches are assembled in listing order so results are deterministic.
-    Pages are fetched 50 at a time until ``--limit`` matches are collected or
+    Full texts are cached on disk by ``caseUrl`` (TTL ``--cache-ttl-days``, off
+    with ``--no-cache``), so repeat runs skip pages already fetched. Pages are
+    fetched 50 at a time until ``--limit`` matches are collected or
     ``--max-scan`` cases are seen.
 
-    Returns ``(matches, scanned_count, deep_fetch_count)``.
+    Returns ``(matches, scanned_count, deep_fetch_count, cache_hit_count)``.
     """
     matches: list[dict] = []
     scanned = 0
     fetched = 0
+    cache_hits = 0
     page = args.page
+
+    use_cache = args.deep and not args.no_cache
+    cache = _deep_cache_load() if use_cache else {}
+    cache_dirty = False
+    ttl = args.cache_ttl_days * 86400
+    now = time.time()
 
     while len(matches) < args.limit and scanned < args.max_scan:
         params = base + [("page", str(page)), ("per_page", "50")]
@@ -696,25 +741,35 @@ def _buy_cases_by_keyword(
                 (case, haystack, _matches(haystack, args.keyword, args.match))
             )
 
-        # Deep-fetch full text for the not-yet-matching candidates, in parallel.
+        # Resolve full text for the not-yet-matching candidates: serve from
+        # cache where fresh, fetch the rest concurrently.
         full_texts: dict[int, str] = {}
         if args.deep:
-            todo = [
-                (i, c["caseUrl"])
-                for i, (c, _, hit) in enumerate(page_items)
-                if not hit and c.get("caseUrl")
-            ]
-            if todo:
-                fetched += len(todo)
-                workers = min(max(args.deep_workers, 1), len(todo))
+            misses: list[tuple[int, str]] = []
+            for i, (case, _, hit) in enumerate(page_items):
+                url = case.get("caseUrl")
+                if hit or not url:
+                    continue
+                entry = cache.get(url) if use_cache else None
+                if entry and now - entry.get("ts", 0) < ttl:
+                    full_texts[i] = entry.get("text", "")
+                    cache_hits += 1
+                else:
+                    misses.append((i, url))
+            if misses:
+                fetched += len(misses)
+                workers = min(max(args.deep_workers, 1), len(misses))
                 with ThreadPoolExecutor(max_workers=workers) as pool:
-                    for i, text in zip(
-                        (i for i, _ in todo),
-                        pool.map(_buy_fetch_full_text, (u for _, u in todo)),
-                    ):
-                        full_texts[i] = text
+                    results = pool.map(
+                        _buy_fetch_full_text, (u for _, u in misses)
+                    )
+                    for (i, url), text in zip(misses, results):
+                        full_texts[i] = text or ""
+                        if use_cache and text is not None:
+                            cache[url] = {"text": text, "ts": now}
+                            cache_dirty = True
 
-        # Assemble matches in listing order, applying deep results where fetched.
+        # Assemble matches in listing order, applying deep results where present.
         for i, (case, haystack, hit) in enumerate(page_items):
             if not hit and full_texts.get(i):
                 hit = _matches(
@@ -728,7 +783,10 @@ def _buy_cases_by_keyword(
         if scanned >= resp.get("totalHits", scanned):
             break
         page += 1
-    return matches, scanned, fetched
+
+    if cache_dirty:
+        _deep_cache_save(cache)
+    return matches, scanned, fetched, cache_hits
 
 
 def _buy_print_case(case: dict) -> None:
@@ -1001,6 +1059,19 @@ def _build_buy_parser(sub: t.Any) -> None:
         type=int,
         default=8,
         help="concurrent agency-page fetches in --deep mode (default 8)",
+    )
+    p.add_argument(
+        "--no-cache",
+        dest="no_cache",
+        action="store_true",
+        help="don't read/write the on-disk cache of --deep full texts",
+    )
+    p.add_argument(
+        "--cache-ttl-days",
+        dest="cache_ttl_days",
+        type=float,
+        default=7.0,
+        help="how long cached --deep full texts stay fresh (default 7 days)",
     )
     p.set_defaults(func=cmd_buy_cases)
 
