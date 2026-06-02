@@ -124,6 +124,12 @@ bolig buy cases --city frederiksberg -k badekar --deep
 # Multiple keywords (all by default; --match any for OR)
 bolig buy cases -k brændeovn -k udsigt --match any
 
+# Ground-floor (stueetage) flats — use the FLOOR filter, never `-k stue`
+bolig buy cases --city frederiksberg --type lejlighed --min-floor 0 --max-floor 0
+
+# Cap the monthly owner expense (ejerudgift)
+bolig buy cases --city frederiksberg --max-monthly-fee 4000
+
 # Whole big city → filter by municipality (repeatable)
 bolig buy cases --municipality københavn --type villa
 
@@ -144,6 +150,8 @@ bolig buy raw search/cases "page=1&cities=frederiksberg&numberOfRoomsMin=3"
 ```
 
 `--type` values: Danish or English — `lejlighed`/`condo`, `villa`, `rækkehus`/`terraced house`, `andelsbolig`/`cooperative`, `villalejlighed`/`villa apartment`, `landejendom`/`farm`, `sommerhus`/`holiday house`, `husbåd`/`houseboat`, etc. (repeatable). Geography uses boligsiden **place slugs**: `--city` is a city/district slug (`frederiksberg`, `aarhus c`) while whole big cities are *municipalities* (`--municipality københavn`, `aarhus`, `odense`); `--zip-code` filters by postal code. All three are repeatable. Run `bolig buy municipalities` to see municipality slugs.
+
+**Prefer built-in filters over `-k`.** Anything the API can filter structurally should use a dedicated option, not keyword search — it's faster, exact, and not subject to the description-body cap. In particular **ground floor / stueetage is `--min-floor 0 --max-floor 0`, never `-k stue`/`-k stueetage`**. The structural filters are: price (`--min-price`/`--max-price`), monthly owner expense (`--min-monthly-fee`/`--max-monthly-fee`), area (`--min-area`/`--max-area`), rooms (`--min-rooms`/`--max-rooms`), floor (`--min-floor`/`--max-floor`), property type (`--type`), and geography (`--city`/`--municipality`/`--zip-code`). Reserve `-k` for genuinely free-text features that have no structural filter (e.g. `badekar`, `brændeovn`, `udsigt`, `nyrenoveret`).
 
 `-k`/`--keyword` filters on each case's embedded `descriptionTitle` + `descriptionBody` (no extra requests — the body ships with the listing); pages are scanned up to `--max-scan` (default 200) to collect `--limit` matches.
 
@@ -270,8 +278,10 @@ Base URL: `https://api.boligsiden.dk`. No API key, no Cloudflare. Each resource 
 | `per_page` | Page size (default 50). |
 | `sort` / `sortAscending` | Sort field (`priceCash`, `housingArea`, `daysOnMarket`, `timeOnMarket`, …) and `true`/`false`. |
 | `priceMin` / `priceMax` | Price range in DKK. |
+| `monthlyExpenseMin` / `monthlyExpenseMax` | Monthly owner expense (ejerudgift) in DKK. |
 | `areaMin` / `areaMax` | Living area in m². |
 | `numberOfRoomsMin` / `numberOfRoomsMax` | Room count range. |
+| `floorMin` / `floorMax` | Floor range; **ground floor (stueetage) = `0`**. `floorMax=0` alone 400s — send `floorMin=0&floorMax=0` for ground floor only. |
 | `cities` | City/district place slug (repeatable), e.g. `frederiksberg`, `aarhus c`. |
 | `municipalities` | Municipality place slug (repeatable), e.g. `københavn`, `aarhus`. |
 | `zipCodes` | Postal code (repeatable). |

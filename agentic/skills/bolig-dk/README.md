@@ -31,6 +31,7 @@ bolig rent raw listing/listings '{"page":0,"pageSize":5}'
 bolig buy cases --limit 5
 bolig buy cases --min-price 2000000 --municipality københavn    # whole city = municipality
 bolig buy cases --type villa --min-rooms 4 --limit 10
+bolig buy cases --type lejlighed --min-floor 0 --max-floor 0     # ground floor (stueetage) — use the filter, not -k stue
 bolig buy cases --city frederiksberg -k badekar                 # body keyword search (first ~500 chars)
 bolig buy cases --city frederiksberg -k badekar --deep          # full-text search via agency pages
 bolig buy cases --zip-code 2000

@@ -531,6 +531,10 @@ def _buy_case_params(args: argparse.Namespace) -> list[tuple[str, str]]:
         params.append(("priceMin", args.min_price))
     if args.max_price:
         params.append(("priceMax", args.max_price))
+    if args.min_monthly_fee:
+        params.append(("monthlyExpenseMin", args.min_monthly_fee))
+    if args.max_monthly_fee:
+        params.append(("monthlyExpenseMax", args.max_monthly_fee))
     if args.min_area:
         params.append(("areaMin", args.min_area))
     if args.max_area:
@@ -539,6 +543,16 @@ def _buy_case_params(args: argparse.Namespace) -> list[tuple[str, str]]:
         params.append(("numberOfRoomsMin", args.min_rooms))
     if args.max_rooms:
         params.append(("numberOfRoomsMax", args.max_rooms))
+    # Floor (stueetage / ground floor == 0). Use `is not None` so floor 0 isn't
+    # dropped as falsy. floorMax alone — especially =0 — 400s, so default
+    # floorMin to 0 when only an upper bound is given (floors start at ground).
+    min_floor, max_floor = args.min_floor, args.max_floor
+    if max_floor is not None and min_floor is None:
+        min_floor = "0"
+    if min_floor is not None:
+        params.append(("floorMin", min_floor))
+    if max_floor is not None:
+        params.append(("floorMax", max_floor))
     for city in args.city or []:
         params.append(("cities", city.strip().lower()))
     for muni in args.municipality or []:
@@ -1016,10 +1030,31 @@ def _build_buy_parser(sub: t.Any) -> None:
     p = bsub.add_parser("cases", help="search for-sale property listings")
     p.add_argument("--min-price", dest="min_price", help="minimum price in DKK")
     p.add_argument("--max-price", dest="max_price", help="maximum price in DKK")
+    p.add_argument(
+        "--min-monthly-fee",
+        dest="min_monthly_fee",
+        help="minimum monthly owner expense (ejerudgift) in DKK",
+    )
+    p.add_argument(
+        "--max-monthly-fee",
+        dest="max_monthly_fee",
+        help="maximum monthly owner expense (ejerudgift) in DKK",
+    )
     p.add_argument("--min-area", dest="min_area", help="minimum area in m²")
     p.add_argument("--max-area", dest="max_area", help="maximum area in m²")
     p.add_argument("--min-rooms", dest="min_rooms", help="minimum rooms")
     p.add_argument("--max-rooms", dest="max_rooms", help="maximum rooms")
+    p.add_argument(
+        "--min-floor",
+        dest="min_floor",
+        help="minimum floor (ground floor / stueetage = 0)",
+    )
+    p.add_argument(
+        "--max-floor",
+        dest="max_floor",
+        help="maximum floor; for ground floor only use --min-floor 0 "
+        "--max-floor 0",
+    )
     p.add_argument(
         "--municipality",
         action="append",
