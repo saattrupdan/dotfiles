@@ -27,6 +27,10 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { unzip } from "node:zlib";
+import { promisify } from "node:util";
+
+const unzipAsync = promisify(unzip);
 
 import {
 	type AgentToolResult,
@@ -37,6 +41,176 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { type Component, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+
+// ---------------------------------------------------------------------------
+// DOCX comment extraction
+// ---------------------------------------------------------------------------
+
+/**
+ * Read a specific entry from a DOCX (ZIP) file.
+ * Returns the uncompressed content as a string, or null if not found.
+ */
+async function readDocxZipEntry(docxPath: string, entryName: string): Promise<string | null> {
+	// Use unzip -p to extract a specific file to stdout
+	const { exec } = await import("node:child_process");
+	const { promisify } = await import("node:util");
+	const execAsync = promisify(exec);
+	
+	try {
+		const { stdout } = await execAsync(`unzip -p "${docxPath}" "${entryName}" 2>/dev/null`);
+		return stdout;
+	} catch {
+		return null;
+	}
+}
+
+interface DocxComment {
+	id: string;
+	author: string;
+	initials: string;
+	date: string;
+	text: string;
+	anchorText?: string; // Text between commentRangeStart/End in document.xml
+}
+
+interface DocxCommentWithAnchor extends DocxComment {
+	anchorText: string;
+}
+
+/**
+ * Extract inline comments from a DOCX file.
+ * Parses word/comments.xml to get comment metadata and text.
+ */
+async function extractDocxComments(docxPath: string): Promise<DocxComment[]> {
+	const commentsXml = await readDocxZipEntry(docxPath, "word/comments.xml");
+	if (!commentsXml) return [];
+
+	const comments: DocxComment[] = [];
+	
+	// Parse XML using regex-based extraction (avoiding dependencies)
+	// Match comment elements: <w:comment w:id="..." w:author="..." w:date="..." w:initials="...">...</w:comment>
+	const commentRegex = /<w:comment\s+([^>]+)>([\s\S]*?)<\/w:comment>/g;
+	
+	let match;
+	while ((match = commentRegex.exec(commentsXml)) !== null) {
+		const [, attrs, content] = match;
+		
+		// Extract attributes
+		const idMatch = attrs.match(/w:id="([^"]+)"/);
+		const authorMatch = attrs.match(/w:author="([^"]+)"/);
+		const dateMatch = attrs.match(/w:date="([^"]+)"/);
+		const initialsMatch = attrs.match(/w:initials="([^"]+)"/);
+		
+		if (!idMatch || !authorMatch || !dateMatch) continue;
+		
+		// Extract text from <w:t> elements within the comment
+		const textRegex = /<w:t[^>]*>([\s\S]*?)<\/w:t>/g;
+		const textParts: string[] = [];
+		let textMatch;
+		while ((textMatch = textRegex.exec(content)) !== null) {
+			textParts.push(textMatch[1]);
+		}
+		
+		comments.push({
+			id: idMatch[1],
+			author: authorMatch[1],
+			date: dateMatch[1],
+			initials: initialsMatch ? initialsMatch[1] : "",
+			text: textParts.join(" ").trim(),
+		});
+	}
+	
+	return comments;
+}
+
+/**
+ * Extract comment anchor text from document.xml using commentRangeStart/End markers.
+ * Returns a map of comment ID to the text the comment references.
+ */
+async function extractDocxCommentAnchors(docxPath: string, comments: DocxComment[]): Promise<Map<string, string>> {
+	const docXml = await readDocxZipEntry(docxPath, "word/document.xml");
+	if (!docXml) return new Map();
+
+	const anchorMap = new Map<string, string>();
+	
+	for (const comment of comments) {
+		// Find the text between commentRangeStart and commentRangeEnd for this comment id
+		const rangeRegex = new RegExp(
+			`<w:commentRangeStart\\s+w:id="${comment.id}"\\s*/>([\\s\\S]*?)<w:commentRangeEnd\\s+w:id="${comment.id}"\\s*/>`,
+			"g"
+		);
+		const rangeMatch = docXml.match(rangeRegex);
+		
+		if (rangeMatch) {
+			// Extract text from <w:t> elements between the markers
+			const textRegex = /<w:t[^>]*>([\s\S]*?)<\/w:t>/g;
+			const textParts: string[] = [];
+			let textMatch;
+			while ((textMatch = textRegex.exec(rangeMatch[0])) !== null) {
+				textParts.push(textMatch[1]);
+			}
+			const anchorText = textParts.join(" ").trim();
+			if (anchorText) {
+				anchorMap.set(comment.id, anchorText);
+			}
+		}
+	}
+	
+	return anchorMap;
+}
+
+/**
+ * Inject DOCX comments into markdown content.
+ * Comments are inserted inline after the text they reference.
+ */
+function injectDocxCommentsIntoMarkdown(markdown: string, comments: DocxComment[], anchorMap: Map<string, string>): string {
+	if (comments.length === 0) return markdown;
+
+	// Build comments with anchor text
+	const commentsWithAnchors: DocxCommentWithAnchor[] = comments
+		.filter(c => anchorMap.has(c.id))
+		.map(c => ({ ...c, anchorText: anchorMap.get(c.id)! }));
+
+	// If we have comments with anchor text, inject them after matching text
+	let result = markdown;
+	const processedCommentIds = new Set<string>();
+	
+	// Sort comments by anchor text length (longest first) to avoid substring matching issues
+	commentsWithAnchors.sort((a, b) => b.anchorText.length - a.anchorText.length);
+	
+	for (const comment of commentsWithAnchors) {
+		// Escape special regex characters in the anchor text
+		const escapedText = comment.anchorText
+			.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+			.replace(/\s+/g, "\\s+");
+		
+		// Find the text in the markdown and inject comments after it
+		const regex = new RegExp(`(${escapedText})`, "i");
+		const match = result.match(regex);
+		
+		if (match && match.index !== undefined) {
+			// Format comment
+			const commentBlock = `> 💬 **${comment.author}** (${new Date(comment.date).toLocaleDateString()}): ${comment.text}`;
+			
+			const injectionPoint = match.index + match[0].length;
+			result = result.slice(0, injectionPoint) + "\n\n" + commentBlock + "\n" + result.slice(injectionPoint);
+			processedCommentIds.add(comment.id);
+		}
+	}
+
+	// If there are unmatched comments (no anchor found), append them at the end
+	const unmatchedComments = comments.filter(c => !processedCommentIds.has(c.id));
+	
+	if (unmatchedComments.length > 0) {
+		const appendSection = "\n\n---\n\n## Review Comments\n\n" +
+			unmatchedComments
+				.map(c => `> 💬 **${c.author}** (${new Date(c.date).toLocaleDateString()}): ${c.text}`)
+				.join("\n\n");
+		result += appendSection;
+	}
+
+	return result;
+}
 
 // ---------------------------------------------------------------------------
 // Resolve sibling modules via jiti
@@ -171,8 +345,19 @@ async function convertToMarkdown(source: string, cacheKey: string, signal?: Abor
 		if (!body) {
 			throw new Error(`docling produced no output (exit ${status})${stderr ? `: ${stderr.trim().slice(0, 300)}` : ""}`);
 		}
-		fs.writeFileSync(cacheFile, body, "utf-8");
-		return body;
+
+		// For DOCX files, extract and inject inline comments
+		let result = body;
+		if (source.toLowerCase().endsWith(".docx")) {
+			const comments = await extractDocxComments(source);
+			if (comments.length > 0) {
+				const anchorMap = await extractDocxCommentAnchors(source, comments);
+				result = injectDocxCommentsIntoMarkdown(result, comments, anchorMap);
+			}
+		}
+
+		fs.writeFileSync(cacheFile, result, "utf-8");
+		return result;
 	} finally {
 		try {
 			fs.rmSync(tmpDir, { recursive: true, force: true });
