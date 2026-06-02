@@ -29,7 +29,9 @@ _PROVIDER_PRESETS = {
         "smtp_port": 587,
     },
     "imap": {"backend": "imap"},
-    "m365": {"backend": "graph", "tenant": "organizations"},
+    # Browser-driven OWA is the default M365 path because most tenants block the
+    # OAuth/Graph flow with mandatory admin consent. `--backend graph` opts back in.
+    "m365": {"backend": "owa", "tenant": "organizations"},
 }
 
 
@@ -49,6 +51,8 @@ def do_accounts_add(args) -> None:
             account[key] = value
     if args.client_id:
         account["client_id"] = args.client_id
+    if getattr(args, "backend", None):
+        account["backend"] = args.backend
     if account["backend"] == "imap":
         account["password_env"] = args.password_env or default_password_env(args.name)
 
@@ -63,6 +67,11 @@ def do_accounts_add(args) -> None:
         print(
             f"Set the app password in {account['password_env']} "
             "(env var or a .env file), then: email login --account " + args.name
+        )
+    elif account["backend"] == "owa":
+        print(
+            "Sign in (opens an Outlook browser window for a one-time login) with: "
+            f"email login --account {args.name}"
         )
     else:
         print(f"Sign in with: email login --account {args.name}")
@@ -164,6 +173,12 @@ def do_send(args) -> None:
     config = load_config()
     name, account = resolve_account(config, args.account)
     backend = get_backend(name, account)
+
+    if args.attach and account.get("backend") == "owa":
+        raise BackendError(
+            "The OWA (browser) backend does not support attachments yet. Send "
+            "without --attach, or use a Gmail/IMAP account for attachments."
+        )
 
     to = _split_addrs(args.to)
     cc = _split_addrs(args.cc)

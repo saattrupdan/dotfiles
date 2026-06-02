@@ -58,6 +58,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add.add_argument("--client-id", help="Custom Azure app client id for m365.")
     add.add_argument(
+        "--backend",
+        choices=["imap", "graph", "owa"],
+        help="Override the backend (m365 defaults to owa; use graph if your "
+        "tenant grants OAuth consent).",
+    )
+    add.add_argument(
         "--default", action="store_true", help="Make this the default account."
     )
 
