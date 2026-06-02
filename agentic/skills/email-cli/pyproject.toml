@@ -1,0 +1,16 @@
+[project]
+name = "email-cli"
+version = "1.0.0"
+description = "CLI for reading and sending email across Gmail (IMAP/SMTP) and Microsoft 365 (Graph)"
+requires-python = ">=3.12"
+dependencies = ["msal>=1.28"]
+
+[project.scripts]
+email = "email_cli.main:main"
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["email_cli*"]
