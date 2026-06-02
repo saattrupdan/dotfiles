@@ -117,6 +117,10 @@ bolig buy cases --type villa --min-rooms 4 --limit 10
 # KEYWORD body search: for-sale homes whose description mentions 'badekar'
 bolig buy cases --city frederiksberg -k badekar
 
+# DEEP keyword search: also reads each candidate's full agency-page text
+# (the API body is capped at ~500 chars, so this catches buried terms)
+bolig buy cases --city frederiksberg -k badekar --deep
+
 # Multiple keywords (all by default; --match any for OR)
 bolig buy cases -k brændeovn -k udsigt --match any
 
@@ -143,7 +147,7 @@ bolig buy raw search/cases "page=1&cities=frederiksberg&numberOfRoomsMin=3"
 
 `-k`/`--keyword` filters on each case's embedded `descriptionTitle` + `descriptionBody` (no extra requests — the body ships with the listing); pages are scanned up to `--max-scan` (default 200) to collect `--limit` matches.
 
-**Note:** the API caps `descriptionBody` at **~500 characters**, so `-k` only matches terms appearing in the title or the first ~500 chars of the body. Common features (`altan`, `elevator`) usually appear early; rarer ones buried deep in a description (often `badekar`) may be missed even though the listing has them.
+**The ~500-char cap and `--deep`:** the API caps `descriptionBody` at **~500 characters**, so by default `-k` only matches terms in the title or first ~500 chars. Common features (`altan`, `elevator`) appear early; rarer ones buried deep (often `badekar`) get missed. Pass **`--deep`** to also read each candidate's *full* description from the agency's own listing page (the case's `caseUrl`, which is not Cloudflare-gated). To stay robust as agencies come and go, `--deep` pulls only the standard description fields — JSON-LD `description`, then `og:`/`meta` description — falling back to the longest text blocks only when neither exists; both the download and kept text are capped. It costs one HTTP request per candidate whose truncated body *doesn't* already match (bounded by `--max-scan`), so it's much slower — scope it with filters and a sensible `--max-scan`. A handful of JS-rendered agency pages expose no server-side text and are silently skipped.
 
 ---
 

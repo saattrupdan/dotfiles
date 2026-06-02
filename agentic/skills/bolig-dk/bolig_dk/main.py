@@ -15,6 +15,7 @@ Standard library only. See ./SKILL.md for the full API specification.
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import re
 import sys
@@ -553,14 +554,15 @@ def cmd_buy_cases(args: argparse.Namespace) -> None:
     base = _buy_case_params(args)
 
     if args.keyword:
-        cases, scanned = _buy_cases_by_keyword(args, base)
+        cases, scanned, fetched = _buy_cases_by_keyword(args, base)
         if args.raw:
             _emit(cases, raw=True)
             return
+        deep = f", {fetched} deep fetch(es)" if args.deep else ""
         print(
             f"# {len(cases)} match(es) for "
             f"{args.match}({', '.join(args.keyword)}) "
-            f"after scanning {scanned} listing(s)"
+            f"after scanning {scanned} listing(s){deep}"
         )
         for case in cases:
             _buy_print_case(case)
@@ -579,19 +581,92 @@ def cmd_buy_cases(args: argparse.Namespace) -> None:
         _buy_print_case(case)
 
 
+def _json_descriptions(obj: t.Any) -> list[str]:
+    """Recursively collect every ``description`` string from a JSON-LD blob."""
+    out: list[str] = []
+    if isinstance(obj, dict):
+        if isinstance(obj.get("description"), str):
+            out.append(obj["description"])
+        for v in obj.values():
+            out.extend(_json_descriptions(v))
+    elif isinstance(obj, list):
+        for v in obj:
+            out.extend(_json_descriptions(v))
+    return out
+
+
+# Caps for the deep agency-page fetch, so a stray huge/JS-heavy page can't
+# blow up memory or the keyword haystack.
+_DEEP_MAX_HTML = 3_000_000  # bytes of HTML to read per page
+_DEEP_MAX_TEXT = 15_000  # chars of extracted description to keep
+
+
+def _buy_fetch_full_text(url: str) -> str:
+    """Fetch a listing's full description from the agency page behind ``caseUrl``.
+
+    boligsiden's API caps ``descriptionBody`` at ~500 chars and its own site is
+    Cloudflare-gated, but each case's ``caseUrl`` redirects to the realtor's own
+    listing page, which carries the full text and is not gated. Rather than keep
+    the whole page (agencies differ and new ones keep appearing), we pull only
+    the standard description fields — JSON-LD ``description``, then
+    ``og:``/``meta`` description — which are agency-agnostic. Only if neither
+    exists do we fall back to the few longest visible text blocks. Both the
+    download and the kept text are capped; returns "" on any fetch error.
+    """
+    req = urllib.request.Request(
+        url, headers={"User-Agent": BROWSER_UA, "Accept": "text/html"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=25) as r:
+            doc = r.read(_DEEP_MAX_HTML).decode("utf-8", errors="replace")
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return ""
+
+    parts: list[str] = []
+    for block in re.findall(
+        r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', doc, re.S
+    ):
+        try:
+            parts.extend(_json_descriptions(json.loads(block)))
+        except json.JSONDecodeError:
+            continue
+    m = re.search(
+        r'<meta[^>]+(?:property|name)="(?:og:)?description"[^>]+'
+        r'content="([^"]*)"',
+        doc,
+        re.I,
+    )
+    if m:
+        parts.append(html.unescape(m.group(1)))
+    if not parts:
+        text = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", doc, flags=re.S | re.I)
+        text = html.unescape(re.sub(r"<[^>]+>", " ", text))
+        blocks = sorted(
+            {ln.strip() for ln in re.split(r"[\n.]", text) if len(ln.strip()) > 200},
+            key=len,
+            reverse=True,
+        )
+        parts.extend(blocks[:3])
+    return " ".join(parts)[:_DEEP_MAX_TEXT]
+
+
 def _buy_cases_by_keyword(
     args: argparse.Namespace, base: list[tuple[str, str]]
-) -> tuple[list[dict], int]:
+) -> tuple[list[dict], int, int]:
     """Page through ``/search/cases`` keeping matches on the description body.
 
     boligsiden embeds ``descriptionTitle``/``descriptionBody`` on each case, so
-    the body search is a client-side filter. Pages are fetched (50 at a time)
-    until ``--limit`` matches are collected or ``--max-scan`` cases are seen.
+    the body search is a client-side filter. The API truncates the body to ~500
+    chars; with ``--deep`` we additionally fetch the full text from the agency
+    page (only when the truncated text doesn't already match, to save requests).
+    Pages are fetched 50 at a time until ``--limit`` matches are collected or
+    ``--max-scan`` cases are seen.
 
-    Returns ``(matches, scanned_count)``.
+    Returns ``(matches, scanned_count, deep_fetch_count)``.
     """
     matches: list[dict] = []
     scanned = 0
+    fetched = 0
     page = args.page
 
     while len(matches) < args.limit and scanned < args.max_scan:
@@ -608,7 +683,13 @@ def _buy_cases_by_keyword(
                     case.get("descriptionBody") or "",
                 ]
             )
-            if _matches(haystack, args.keyword, args.match):
+            hit = _matches(haystack, args.keyword, args.match)
+            if not hit and args.deep and case.get("caseUrl"):
+                full = _buy_fetch_full_text(case["caseUrl"])
+                if full:
+                    fetched += 1
+                    hit = _matches(f"{haystack} {full}", args.keyword, args.match)
+            if hit:
                 matches.append(case)
                 if len(matches) >= args.limit:
                     break
@@ -617,7 +698,7 @@ def _buy_cases_by_keyword(
         if scanned >= resp.get("totalHits", scanned):
             break
         page += 1
-    return matches, scanned
+    return matches, scanned, fetched
 
 
 def _buy_print_case(case: dict) -> None:
@@ -877,6 +958,13 @@ def _build_buy_parser(sub: t.Any) -> None:
     )
     _add_buy_common(p)
     _add_keyword_opts(p, default_scan=200)
+    p.add_argument(
+        "--deep",
+        action="store_true",
+        help="for -k: also fetch each candidate's full description from the "
+        "agency page (the API body is capped at ~500 chars). Slower — one "
+        "request per non-matching candidate, bounded by --max-scan.",
+    )
     p.set_defaults(func=cmd_buy_cases)
 
     p = bsub.add_parser("address", help="look up an address")
