@@ -215,7 +215,7 @@ alias python='python3'
 #=========
 
 # Load secret environment variables from .env
-if [ -f ~/.env ]
+if [ -f ~/.env ] && [ -s ~/.env ] && grep -qvE '^\s*(#|$)' ~/.env
 then
     export $(cat ~/.env | xargs)
 fi

@@ -115,17 +115,25 @@ function formatMemories(mems: MemoryDoc[], blocked = false): string {
 export default function (pi: ExtensionAPI) {
 	// In-memory mirror of the current session's injected set.
 	const injected = new Set<string>();
+	// Snapshot of memory keys that existed at session start — new memories saved
+	// during the session are excluded from auto-injection (they're for future sessions).
+	const existingMemories = new Set<string>();
 	let loadedSession: string | null = null;
 
-	function ensureLoaded(sessionId: string): void {
+	function ensureLoaded(sessionId: string, cwd: string): void {
 		if (loadedSession === sessionId) return;
 		loadedSession = sessionId;
 		injected.clear();
+		existingMemories.clear();
 		try {
 			const arr = JSON.parse(readFileSync(injectedFile(sessionId), "utf8")) as string[];
 			for (const s of arr) injected.add(s);
 		} catch {
 			// No prior file for this session — start empty.
+		}
+		// Snapshot which memories existed at session start
+		for (const m of loadTriggeredMemories(cwd)) {
+			existingMemories.add(memKey(m));
 		}
 	}
 
@@ -150,11 +158,14 @@ export default function (pi: ExtensionAPI) {
 		blocked = false,
 	): string | null {
 		const sessionId = ctx.sessionManager?.getSessionId() ?? "unknown";
-		ensureLoaded(sessionId);
+		ensureLoaded(sessionId, ctx.cwd);
 
 		const fired: MemoryDoc[] = [];
 		for (const m of loadTriggeredMemories(ctx.cwd)) {
 			const key = memKey(m);
+			// Skip memories that were saved during this session — they're meant for
+			// future sessions, not to be injected back immediately.
+			if (!existingMemories.has(key)) continue;
 			// "once" (default) memories are deduped per session; "always" memories
 			// fire every time — except when `forceOnce` is set (the tool_call block
 			// path), where re-firing would re-block the same call and livelock the
