@@ -23,6 +23,7 @@ import typing as t
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 
 # --- boligportal.dk (rentals) ---
 RENT_BASE = "https://www.boligportal.dk"
@@ -659,6 +660,8 @@ def _buy_cases_by_keyword(
     the body search is a client-side filter. The API truncates the body to ~500
     chars; with ``--deep`` we additionally fetch the full text from the agency
     page (only when the truncated text doesn't already match, to save requests).
+    Those deep fetches run concurrently per page (``--deep-workers`` threads),
+    but matches are assembled in listing order so results are deterministic.
     Pages are fetched 50 at a time until ``--limit`` matches are collected or
     ``--max-scan`` cases are seen.
 
@@ -675,7 +678,13 @@ def _buy_cases_by_keyword(
         cases = resp.get("cases") or []
         if not cases:
             break
+
+        # Inspect this page (respecting --max-scan), recording for each case the
+        # cheap haystack and whether the truncated text already matches.
+        page_items: list[tuple[dict, str, bool]] = []
         for case in cases:
+            if scanned >= args.max_scan:
+                break
             scanned += 1
             haystack = " ".join(
                 [
@@ -683,18 +692,39 @@ def _buy_cases_by_keyword(
                     case.get("descriptionBody") or "",
                 ]
             )
-            hit = _matches(haystack, args.keyword, args.match)
-            if not hit and args.deep and case.get("caseUrl"):
-                full = _buy_fetch_full_text(case["caseUrl"])
-                if full:
-                    fetched += 1
-                    hit = _matches(f"{haystack} {full}", args.keyword, args.match)
+            page_items.append(
+                (case, haystack, _matches(haystack, args.keyword, args.match))
+            )
+
+        # Deep-fetch full text for the not-yet-matching candidates, in parallel.
+        full_texts: dict[int, str] = {}
+        if args.deep:
+            todo = [
+                (i, c["caseUrl"])
+                for i, (c, _, hit) in enumerate(page_items)
+                if not hit and c.get("caseUrl")
+            ]
+            if todo:
+                fetched += len(todo)
+                workers = min(max(args.deep_workers, 1), len(todo))
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    for i, text in zip(
+                        (i for i, _ in todo),
+                        pool.map(_buy_fetch_full_text, (u for _, u in todo)),
+                    ):
+                        full_texts[i] = text
+
+        # Assemble matches in listing order, applying deep results where fetched.
+        for i, (case, haystack, hit) in enumerate(page_items):
+            if not hit and full_texts.get(i):
+                hit = _matches(
+                    f"{haystack} {full_texts[i]}", args.keyword, args.match
+                )
             if hit:
                 matches.append(case)
                 if len(matches) >= args.limit:
                     break
-            if scanned >= args.max_scan:
-                break
+
         if scanned >= resp.get("totalHits", scanned):
             break
         page += 1
@@ -964,6 +994,13 @@ def _build_buy_parser(sub: t.Any) -> None:
         help="for -k: also fetch each candidate's full description from the "
         "agency page (the API body is capped at ~500 chars). Slower — one "
         "request per non-matching candidate, bounded by --max-scan.",
+    )
+    p.add_argument(
+        "--deep-workers",
+        dest="deep_workers",
+        type=int,
+        default=8,
+        help="concurrent agency-page fetches in --deep mode (default 8)",
     )
     p.set_defaults(func=cmd_buy_cases)
 
