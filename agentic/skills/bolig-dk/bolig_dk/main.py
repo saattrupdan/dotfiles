@@ -25,7 +25,7 @@ import typing as t
 import urllib.error
 import urllib.parse
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # --- boligportal.dk (rentals) ---
 RENT_BASE = "https://www.boligportal.dk"
@@ -362,6 +362,57 @@ def _rent_cache_valid(entry: dict, ttl_days: int) -> bool:
     return (now - fetched_at) < (ttl_days * 86400)
 
 
+def _rent_fetch_detail(
+    url: str,
+    cache: dict[str, dict],
+    ttl_days: int,
+    use_cache: bool,
+) -> tuple[str, str | None, bool]:
+    """
+    Fetch detail page description for a rental listing.
+
+    Args:
+        url:
+            Listing URL path (e.g. '/lejligheder/aarhus/...').
+        cache:
+            Cache dict to check/update.
+        ttl_days:
+            Cache TTL in days.
+        use_cache:
+            Whether to use caching.
+
+    Returns:
+        Tuple of (url, description or None on error, cache_hit).
+    """
+    # Check cache first if enabled
+    if use_cache and url in cache:
+        entry = cache[url]
+        if _rent_cache_valid(entry=entry, ttl_days=ttl_days):
+            return (url, entry.get("description"), True)
+
+    # Fetch from remote
+    try:
+        html_content = _rent_get_html(RENT_BASE + url)
+    except (urllib.error.HTTPError, urllib.error.URLError, OSError):
+        return (url, None, False)
+
+    # Parse and extract description
+    data = _app_json(html_content)
+    description = None
+    if data:
+        ad = (data.get("props") or {}).get("page_props") or {}
+        description = (ad.get("ad") or {}).get("description")
+
+    # Update cache if enabled
+    if use_cache and url not in cache:
+        cache[url] = {
+            "description": description,
+            "fetched_at": int(time.time()),
+        }
+
+    return (url, description, False)
+
+
 def cmd_rent_search(args: argparse.Namespace) -> None:
     """Search rentals via the anonymous hub pages, with optional body search.
 
@@ -369,10 +420,20 @@ def cmd_rent_search(args: argparse.Namespace) -> None:
     required, unlike the JSON listings endpoint). With ``--keyword``, fetches
     each candidate's detail page and keeps only listings whose description body
     or title contains the term(s); detail fetches are capped by ``--max-scan``.
+    Uses concurrent HTTP fetching (``--workers``) and disk caching
+    (``--cache-ttl-days``, disable with ``--no-cache``).
     """
     results: list[dict] = []
     scanned = 0
+    fetched = 0
+    cache_hits = 0
     offset = max(args.page, 0) * 18
+
+    # Load cache if enabled
+    use_cache = not args.no_cache
+    cache = _rent_cache_load() if use_cache else {}
+    cache_dirty = False
+    ttl_days = args.cache_ttl_days
 
     while len(results) < args.limit:
         app = _app_json(_rent_get_html(_rent_hub_url(args, offset)))
@@ -381,44 +442,85 @@ def cmd_rent_search(args: argparse.Namespace) -> None:
         if not rows:
             break
 
+        # First pass: collect candidates up to max_scan
+        candidates: list[dict] = []
         for item in rows:
             if not _rent_passes(item, args):
                 continue
-            if args.keyword:
-                if scanned >= args.max_scan:
-                    break
-                scanned += 1
-                detail = _app_json(_rent_get_html(RENT_BASE + item.get("url", "")))
-                ad = (detail or {}).get("props", {}).get("page_props", {}).get("ad", {})
-                haystack = " ".join(
-                    [
-                        ad.get("description") or "",
-                        ad.get("title") or "",
-                        item.get("title") or "",
-                    ]
-                )
-                if not _matches(haystack, args.keyword, args.match):
-                    continue
-                item["_description"] = ad.get("description", "")
-            results.append(item)
-            if len(results) >= args.limit:
+            if scanned >= args.max_scan:
                 break
+            scanned += 1
+            candidates.append(item)
 
-        if args.keyword and scanned >= args.max_scan:
+        if not candidates:
+            break
+
+        # Second pass: fetch descriptions concurrently if keyword search
+        if args.keyword:
+            # Build list of (item, url) tuples to fetch
+            fetch_tasks: list[tuple[dict, str]] = [
+                (item, item.get("url", "")) for item in candidates
+            ]
+
+            # Fetch descriptions concurrently
+            with ThreadPoolExecutor(max_workers=args.workers) as pool:
+                futures = {
+                    pool.submit(
+                        _rent_fetch_detail, url, cache, ttl_days, use_cache
+                    ): (item, url)
+                    for item, url in fetch_tasks
+                }
+                for future in as_completed(futures):
+                    item, url = futures[future]
+                    _, description, cache_hit = future.result()
+                    if cache_hit:
+                        cache_hits += 1
+                    if description is not None:
+                        fetched += 1
+
+                    # Build haystack from description + titles
+                    if description is None:
+                        # Skip if fetch failed
+                        continue
+
+                    haystack = " ".join(
+                        [
+                            description,
+                            item.get("title") or "",
+                        ]
+                    )
+                    if _matches(haystack, args.keyword, args.match):
+                        item["_description"] = description
+                        results.append(item)
+                        cache_dirty = True
+
+        else:
+            # No keyword search — add all passing items
+            results.extend(candidates)
+
+        if len(results) >= args.limit or scanned >= args.max_scan:
             break
         if not page_props.get("next_page_url"):
             break
         offset += 18
+
+    # Save cache if dirty
+    if cache_dirty:
+        _rent_cache_save(cache)
 
     if args.raw:
         _emit(results, raw=True)
         return
 
     if args.keyword:
+        if use_cache:
+            stats = f", {fetched} fetch(es), {cache_hits} cached"
+        else:
+            stats = f", {fetched} fetch(es)"
         print(
             f"# {len(results)} match(es) for "
             f"{args.match}({', '.join(args.keyword)}) "
-            f"after scanning {scanned} listing(s)"
+            f"after scanning {scanned} listing(s){stats}"
         )
     else:
         print(f"# {len(results)} listing(s)")
@@ -725,7 +827,7 @@ def _buy_fetch_full_text(url: str) -> str | None:
 
 def _buy_cases_by_keyword(
     args: argparse.Namespace, base: list[tuple[str, str]]
-) -> tuple[list[dict], int, int]:
+) -> tuple[list[dict], int, int, int]:
     """Page through ``/search/cases`` keeping matches on the description body.
 
     boligsiden embeds ``descriptionTitle``/``descriptionBody`` on each case, so

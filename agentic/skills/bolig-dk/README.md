@@ -48,6 +48,20 @@ Every command supports `--raw` for unformatted JSON output. See `SKILL.md` for t
 - **SKILL.md** — full reference for both sources: CLI usage, URL conventions, APIs, auth models, and image CDNs.
 - **bolig_dk/** — the `bolig` CLI package (standard library only).
 - **pyproject.toml** — package metadata and the `bolig` entry point.
+- **tests/** — automated test harness (Bun).
+
+## Development
+
+```bash
+# Format code
+uv run ruff format .
+
+# Lint code
+uv run ruff check .
+
+# Run tests
+bun run tests/test.ts
+```
 
 ## Troubleshooting
 

@@ -679,6 +679,7 @@ export function listFiles(repoRoot: string): string[] {
 		".ruff_cache",
 		".mypy_cache",
 		".pytest_cache",
+		".Trash",
 	]);
 
 	function walk(dir: string): void {
