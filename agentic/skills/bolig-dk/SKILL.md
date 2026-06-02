@@ -87,6 +87,8 @@ The built-in filters don't cover everything (e.g. a bath tub, a specific applian
 
 `search` enumerates listings from the public hub pages (anonymous — no login), then for each candidate fetches its detail page and keeps those whose description body or title contains the term(s). Because matching reads each detail page, the number inspected is capped by `--max-scan` (default 100); raise it for rarer terms. Pass `-k` multiple times; `--match all` (default) requires every term, `--match any` requires one. The output header reports how many listings were scanned.
 
+Performance tuning: `--workers N` sets concurrent HTTP workers (default 8), `--cache-ttl-days DAYS` controls cache entry lifetime (default 7), and `--no-cache` disables caching entirely.
+
 ### Filters: server-side vs client-side
 
 boligportal's hub pages only honour `min_size_m2` (→ `--min-area`) and `max_monthly_rent` (→ `--max-price`) server-side, plus `newbuild=1` (→ `--new-build`). `--min-price`, `--max-area`, `--min-rooms`, and `--max-rooms` are applied **client-side** to the result rows (each row carries `rooms`, `size_m2`, `monthly_rent`). Category and city live in the URL path.

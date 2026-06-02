@@ -996,6 +996,25 @@ def _build_rent_parser(sub: t.Any) -> None:
     )
     _add_rent_filters(p)
     _add_keyword_opts(p, default_scan=30)
+    p.add_argument(
+        "--workers",
+        type=int,
+        default=8,
+        metavar="N",
+        help="number of concurrent HTTP workers (default 8)",
+    )
+    p.add_argument(
+        "--cache-ttl-days",
+        type=int,
+        default=7,
+        metavar="DAYS",
+        help="cache entry lifetime in days (default 7)",
+    )
+    p.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="disable cache read/write",
+    )
     p.set_defaults(func=cmd_rent_search)
 
     p = rsub.add_parser("map", help="map-view rentals with lat/lng")
