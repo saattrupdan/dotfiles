@@ -1,5 +1,5 @@
 [project]
-name = "email-cli"
+name = "email"
 version = "1.0.0"
 description = "CLI for reading and sending email across Gmail (IMAP/SMTP) and Microsoft 365 (Graph)"
 requires-python = ">=3.12"

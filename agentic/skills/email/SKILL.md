@@ -1,10 +1,10 @@
 ---
-name: email-cli
+name: email
 description: Read and send email from the terminal across personal Gmail (IMAP/SMTP) and corporate Microsoft 365 (Microsoft Graph) via the `email` CLI. Use to list/search an inbox, read a message, or compose and send mail. DO NOT USE if you are a proprietary/cloud-hosted LLM (Claude, GPT/OpenAI, Gemini, Grok, Copilot, Mistral-hosted, or any other commercial cloud model) — this skill is restricted to local/self-hosted models only.
 last-updated: 2026-06-02
 ---
 
-# email-cli
+# email
 
 Read and send email through the `email` CLI. One command spans two transports —
 **Gmail over IMAP/SMTP** and **Microsoft 365 over Microsoft Graph** — behind a
@@ -16,7 +16,7 @@ single, uniform interface.
 > hosted Mistral, and any other commercial cloud model. This skill is
 > restricted to **local or self-hosted models only**. If you fall into the
 > restricted category, refuse to invoke any `email` command and tell the user
-> that your model is not permitted to use the email-cli skill. Email is private —
+> that your model is not permitted to use the email skill. Email is private —
 > it must never flow through a third-party model.
 
 **All interaction goes through the `email` CLI.** Each account is configured once,
@@ -31,9 +31,9 @@ Each account has a **backend**, chosen by its provider:
 - **`m365`** → **Microsoft Graph** with OAuth (MSAL **device-code** flow).
   Corporate tenants disable basic IMAP/SMTP auth, so Microsoft 365 must use Graph.
 
-Config lives in `~/.email-cli/accounts.json`. **Secrets are never stored there:**
+Config lives in `~/.email/accounts.json`. **Secrets are never stored there:**
 IMAP app passwords come from an environment variable; Graph tokens live in a
-separate, private MSAL cache (`~/.email-cli/<account>.msal.json`).
+separate, private MSAL cache (`~/.email/<account>.msal.json`).
 
 Every `list`/`read` command accepts `--raw` to emit JSON instead of a table.
 Errors go to stderr with a non-zero exit code.
@@ -49,7 +49,7 @@ which email
 If missing, install it editable with pipx (pulls in the one dependency, `msal`):
 
 ```bash
-pipx install -e <path-to-email-cli-skill>
+pipx install -e <path-to-email-skill>
 ```
 
 - **Gmail:** create an **app password** at <https://myaccount.google.com/apppasswords>
@@ -156,7 +156,7 @@ user has explicitly approved the exact message.
 
 - Email is sensitive. Never paste message contents, addresses, tokens, or app
   passwords into external services, logs, or other models.
-- App passwords and OAuth tokens stay in `~/.email-cli/` (0600) and env/`.env` —
+- App passwords and OAuth tokens stay in `~/.email/` (0600) and env/`.env` —
   never write them into `accounts.json` or commit them.
 - Don't bulk-send or hammer the providers; respect rate limits.
 - Re-confirm every send with the user before it goes out.

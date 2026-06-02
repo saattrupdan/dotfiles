@@ -5,7 +5,7 @@ default client is the public "Microsoft Graph Command Line Tools" app, which is
 pre-consented in most tenants and needs no Azure app registration. If a tenant
 blocks it, set a registered app's ``client_id`` on the account.
 
-Auth state is an MSAL token cache persisted under ``~/.email-cli/<name>.msal.json``.
+Auth state is an MSAL token cache persisted under ``~/.email/<name>.msal.json``.
 Graph HTTP calls use the standard library (``urllib``).
 """
 
@@ -56,7 +56,7 @@ class GraphBackend:
         except ImportError as exc:  # pragma: no cover - install-time guard
             raise BackendError(
                 "The 'msal' package is required for Microsoft 365 accounts. "
-                "Reinstall the skill: pipx install -e <path-to-email-cli>."
+                "Reinstall the skill: pipx install -e <path-to-email>."
             ) from exc
 
         cache = msal.SerializableTokenCache()

@@ -1,6 +1,6 @@
 """Account configuration and ``.env`` loading.
 
-Accounts live in ``~/.email-cli/accounts.json``. Secrets never go in this file:
+Accounts live in ``~/.email/accounts.json``. Secrets never go in this file:
 IMAP/SMTP app passwords are read from an environment variable (named per account)
 and Graph OAuth tokens live in a separate MSAL cache file. The directory is also
 where backends keep their token caches.
@@ -12,7 +12,7 @@ import json
 import os
 from pathlib import Path
 
-CONFIG_DIR = Path.home() / ".email-cli"
+CONFIG_DIR = Path.home() / ".email"
 ACCOUNTS_PATH = CONFIG_DIR / "accounts.json"
 
 
