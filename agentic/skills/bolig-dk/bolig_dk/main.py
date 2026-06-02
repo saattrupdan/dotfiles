@@ -31,6 +31,13 @@ from concurrent.futures import ThreadPoolExecutor
 RENT_BASE = "https://www.boligportal.dk"
 RENT_API = f"{RENT_BASE}/api"
 
+# On-disk cache for rent detail fetches. Keyed by URL -> {"description", "fetched_at"}.
+_RENT_CACHE_PATH = os.path.join(
+    os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"),
+    "bolig-dk",
+    "rent-details.json",
+)
+
 # --- boligsiden.dk (for-sale) ---
 # The www.boligsiden.dk front-end and its /api/ HAL endpoints sit behind a
 # Cloudflare managed challenge (cf-mitigated: challenge) that a non-browser
@@ -138,9 +145,7 @@ class _NoRedirectHandler(urllib.request.HTTPErrorProcessor):
     returning 401/403; we want to surface that rather than follow it.
     """
 
-    def http_response(
-        self, request: urllib.request.Request, response: t.Any
-    ) -> t.Any:
+    def http_response(self, request: urllib.request.Request, response: t.Any) -> t.Any:
         return response
 
     https_response = http_response
@@ -274,9 +279,7 @@ def _rent_hub_url(args: argparse.Namespace, offset: int) -> str:
     client-side from the result rows). Student housing uses a dedicated path.
     """
     if args.city:
-        city_slug = urllib.parse.quote(
-            urllib.parse.unquote(args.city), safe=""
-        )
+        city_slug = urllib.parse.quote(urllib.parse.unquote(args.city), safe="")
     else:
         city_slug = ""
 
@@ -332,6 +335,33 @@ def _rent_print_item(item: dict) -> None:
     )
 
 
+def _rent_cache_load() -> dict[str, dict]:
+    """Load the rent detail cache, or return an empty dict if absent/corrupt."""
+    try:
+        with open(_RENT_CACHE_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _rent_cache_save(cache: dict[str, dict]) -> None:
+    """Persist the rent detail cache (best-effort; ignores write errors)."""
+    try:
+        os.makedirs(os.path.dirname(_RENT_CACHE_PATH), exist_ok=True)
+        with open(_RENT_CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(cache, f, ensure_ascii=False)
+    except OSError:
+        pass
+
+
+def _rent_cache_valid(entry: dict, ttl_days: int) -> bool:
+    """Check whether a cache entry is still valid within the TTL."""
+    fetched_at = entry.get("fetched_at", 0)
+    now = int(time.time())
+    return (now - fetched_at) < (ttl_days * 86400)
+
+
 def cmd_rent_search(args: argparse.Namespace) -> None:
     """Search rentals via the anonymous hub pages, with optional body search.
 
@@ -358,12 +388,8 @@ def cmd_rent_search(args: argparse.Namespace) -> None:
                 if scanned >= args.max_scan:
                     break
                 scanned += 1
-                detail = _app_json(
-                    _rent_get_html(RENT_BASE + item.get("url", ""))
-                )
-                ad = (detail or {}).get("props", {}).get("page_props", {}).get(
-                    "ad", {}
-                )
+                detail = _app_json(_rent_get_html(RENT_BASE + item.get("url", "")))
+                ad = (detail or {}).get("props", {}).get("page_props", {}).get("ad", {})
                 haystack = " ".join(
                     [
                         ad.get("description") or "",
@@ -507,9 +533,7 @@ def _buy_get(path: str, params: list[tuple[str, str]] | None = None) -> t.Any:
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        sys.stderr.write(
-            f"Could not parse API response as JSON from GET {path}.\n"
-        )
+        sys.stderr.write(f"Could not parse API response as JSON from GET {path}.\n")
         sys.stderr.write(text[:500] + "\n")
         sys.exit(2)
 
@@ -575,9 +599,7 @@ def cmd_buy_cases(args: argparse.Namespace) -> None:
         if args.raw:
             _emit(cases, raw=True)
             return
-        deep = (
-            f", {fetched} deep fetch(es), {cached} cached" if args.deep else ""
-        )
+        deep = f", {fetched} deep fetch(es), {cached} cached" if args.deep else ""
         print(
             f"# {len(cases)} match(es) for "
             f"{args.match}({', '.join(args.keyword)}) "
@@ -774,9 +796,7 @@ def _buy_cases_by_keyword(
                 fetched += len(misses)
                 workers = min(max(args.deep_workers, 1), len(misses))
                 with ThreadPoolExecutor(max_workers=workers) as pool:
-                    results = pool.map(
-                        _buy_fetch_full_text, (u for _, u in misses)
-                    )
+                    results = pool.map(_buy_fetch_full_text, (u for _, u in misses))
                     for (i, url), text in zip(misses, results):
                         full_texts[i] = text or ""
                         if use_cache and text is not None:
@@ -786,9 +806,7 @@ def _buy_cases_by_keyword(
         # Assemble matches in listing order, applying deep results where present.
         for i, (case, haystack, hit) in enumerate(page_items):
             if not hit and full_texts.get(i):
-                hit = _matches(
-                    f"{haystack} {full_texts[i]}", args.keyword, args.match
-                )
+                hit = _matches(f"{haystack} {full_texts[i]}", args.keyword, args.match)
             if hit:
                 matches.append(case)
                 if len(matches) >= args.limit:
@@ -933,9 +951,7 @@ def _add_rent_filters(p: argparse.ArgumentParser) -> None:
         help="student housing only",
     )
     p.add_argument("--page", type=int, default=0, help="page number (default 0)")
-    p.add_argument(
-        "--limit", type=int, default=18, help="items per page (default 18)"
-    )
+    p.add_argument("--limit", type=int, default=18, help="items per page (default 18)")
     p.add_argument("--raw", action="store_true", help="print raw JSON")
 
 
@@ -957,24 +973,21 @@ def _add_keyword_opts(p: argparse.ArgumentParser, default_scan: int) -> None:
     p.add_argument(
         "--match",
         choices=["all", "any"],
-        default="all",
-        help="require all keywords (default) or any of them",
+        default="any",
+        help="require any keyword (default) or all of them",
     )
     p.add_argument(
         "--max-scan",
         dest="max_scan",
         type=int,
         default=default_scan,
-        help=f"max listings to inspect when keyword-searching "
-        f"(default {default_scan})",
+        help=f"max listings to inspect when keyword-searching (default {default_scan})",
     )
 
 
 def _build_rent_parser(sub: t.Any) -> None:
     """Register the ``rent`` (boligportal.dk) command group."""
-    rent = sub.add_parser(
-        "rent", help="boligportal.dk — rental housing marketplace"
-    )
+    rent = sub.add_parser("rent", help="boligportal.dk — rental housing marketplace")
     rsub = rent.add_subparsers(dest="cmd", required=True)
 
     p = rsub.add_parser(
@@ -982,7 +995,7 @@ def _build_rent_parser(sub: t.Any) -> None:
         help="search rentals (anonymous); -k matches the description body",
     )
     _add_rent_filters(p)
-    _add_keyword_opts(p, default_scan=100)
+    _add_keyword_opts(p, default_scan=30)
     p.set_defaults(func=cmd_rent_search)
 
     p = rsub.add_parser("map", help="map-view rentals with lat/lng")
@@ -994,9 +1007,7 @@ def _build_rent_parser(sub: t.Any) -> None:
     p.add_argument("--raw", action="store_true")
     p.set_defaults(func=cmd_rent_promoted)
 
-    p = rsub.add_parser(
-        "top-favorites", help="most-favorited rentals across all users"
-    )
+    p = rsub.add_parser("top-favorites", help="most-favorited rentals across all users")
     p.add_argument(
         "--limit", type=int, default=10, help="number of results (default 10)"
     )
@@ -1004,18 +1015,14 @@ def _build_rent_parser(sub: t.Any) -> None:
     p.set_defaults(func=cmd_rent_top_favorites)
 
     p = rsub.add_parser("raw", help="POST a raw JSON body to any endpoint")
-    p.add_argument(
-        "endpoint", help="API path, e.g. 'listing/listings' (under /api/)"
-    )
+    p.add_argument("endpoint", help="API path, e.g. 'listing/listings' (under /api/)")
     p.add_argument("body", help="inline JSON string, or '-' to read from stdin")
     p.set_defaults(func=cmd_rent_raw)
 
 
 def _add_buy_common(p: argparse.ArgumentParser) -> None:
     """Add the shared boligsiden pagination/sort/raw options to a parser."""
-    p.add_argument(
-        "--limit", type=int, default=20, help="items per page (default 20)"
-    )
+    p.add_argument("--limit", type=int, default=20, help="items per page (default 20)")
     p.add_argument("--page", type=int, default=1, help="page number (default 1)")
     p.add_argument("--sort", help="sort field")
     p.add_argument("--order", choices=["asc", "desc"], help="sort order")
@@ -1052,8 +1059,7 @@ def _build_buy_parser(sub: t.Any) -> None:
     p.add_argument(
         "--max-floor",
         dest="max_floor",
-        help="maximum floor; for ground floor only use --min-floor 0 "
-        "--max-floor 0",
+        help="maximum floor; for ground floor only use --min-floor 0 --max-floor 0",
     )
     p.add_argument(
         "--municipality",
@@ -1070,8 +1076,7 @@ def _build_buy_parser(sub: t.Any) -> None:
     p.add_argument(
         "--city",
         action="append",
-        help="city/district place slug, e.g. frederiksberg, 'aarhus c' "
-        "(repeatable)",
+        help="city/district place slug, e.g. frederiksberg, 'aarhus c' (repeatable)",
     )
     p.add_argument(
         "--type",
@@ -1080,7 +1085,7 @@ def _build_buy_parser(sub: t.Any) -> None:
         "rækkehus, andelsbolig, sommerhus, …",
     )
     _add_buy_common(p)
-    _add_keyword_opts(p, default_scan=200)
+    _add_keyword_opts(p, default_scan=50)
     p.add_argument(
         "--deep",
         action="store_true",
@@ -1115,12 +1120,8 @@ def _build_buy_parser(sub: t.Any) -> None:
     _add_buy_common(p)
     p.set_defaults(func=cmd_buy_address)
 
-    p = bsub.add_parser(
-        "realtor", help="list real estate agencies in a location"
-    )
-    p.add_argument(
-        "location", help="place slug, e.g. københavn or frederiksberg"
-    )
+    p = bsub.add_parser("realtor", help="list real estate agencies in a location")
+    p.add_argument("location", help="place slug, e.g. københavn or frederiksberg")
     p.add_argument(
         "--location-type",
         dest="location_type",
@@ -1136,9 +1137,7 @@ def _build_buy_parser(sub: t.Any) -> None:
     p.set_defaults(func=cmd_buy_municipalities)
 
     p = bsub.add_parser("raw", help="GET a raw API path with a query string")
-    p.add_argument(
-        "endpoint", help="API path, e.g. 'search/cases' or 'municipalities'"
-    )
+    p.add_argument("endpoint", help="API path, e.g. 'search/cases' or 'municipalities'")
     p.add_argument(
         "query",
         nargs="?",
