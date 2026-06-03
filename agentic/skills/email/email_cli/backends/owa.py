@@ -221,10 +221,10 @@ class OwaBackend:
         )
 
     def login(self) -> str:
-        """Open Outlook headless and poll for MFA code or inbox.
+        """Navigate to Outlook and poll for MFA code or inbox.
 
         Two-step flow:
-        1. Opens browser headless and navigates to Outlook login.
+        1. Opens browser and navigates to Outlook login.
         2. Waits for page to load, then polls for MFA code.
         3. If MFA code found: returns it for user to enter in Authenticator.
         4. If already logged in (inbox detected): completes verification immediately.
@@ -237,10 +237,10 @@ class OwaBackend:
             BackendError:
                 If timeout occurs without detecting MFA code or inbox.
         """
-        self._browser.open(_MAIL_URL, headed=False)
+        self._browser.open(_MAIL_URL, headed=True)  # Headed: user needs to enter credentials
         self._browser.wait_load("networkidle")
 
-        # Poll for MFA code or inbox for ~60 seconds (gives time for MFA prompt to appear)
+        # Poll for MFA code or inbox for ~60 seconds
         max_wait = 60
         interval = 2
         elapsed = 0
@@ -283,10 +283,7 @@ class OwaBackend:
 
         raise BackendError(
             f"OWA login timed out after {max_wait}s without detecting MFA code. "
-            "Microsoft may be blocking headless browsers. Try: "
-            "1) Run 'email login --account work' again, or "
-            "2) Use Graph backend: 'email accounts add --name work --provider m365 "
-            "--email dan.smart@alexandra.dk --backend graph'"
+            "Enter your credentials on the login page, wait for MFA code to appear."
         )
 
     # -- request plumbing ----------------------------------------------------

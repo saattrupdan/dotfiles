@@ -110,9 +110,9 @@ email login --complete            # verify and save session after MFA
 
 The login flow uses a two-step process for MFA-enabled accounts:
 
-1. **`email login`** — opens a headless browser to the Outlook sign-in page and navigates
-   through the login flow. When MFA is triggered, the CLI extracts the 2-digit code from
-   the page and displays it in the terminal. The user enters this code in their Microsoft
+1. **`email login`** — opens a browser to the Outlook sign-in page. Enter your
+   credentials when prompted; when MFA triggers, the CLI extracts the 2-digit code from
+   the page and displays it in the terminal. Enter this code in your Microsoft
    Authenticator app to approve. The browser session remains open.
 2. **`email login --complete`** — verifies the MFA approval and saves the session. Once
    complete, the session is cached to `~/.email/<account>.owa-state.json` and reused on
