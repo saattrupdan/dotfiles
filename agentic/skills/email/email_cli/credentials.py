@@ -24,10 +24,17 @@ def _get_from_keychain(service: str, key: str) -> str | None:
     if shutil.which("security") is None:
         return None
     account = f"skill.{service}.{key}"
-    return _run_command([
-        "security", "find-generic-password", "-s", "skill-credentials",
-        "-a", account, "-w",
-    ])
+    return _run_command(
+        [
+            "security",
+            "find-generic-password",
+            "-s",
+            "skill-credentials",
+            "-a",
+            account,
+            "-w",
+        ]
+    )
 
 
 def _get_from_bw(service: str, key: str) -> str | None:
@@ -35,7 +42,9 @@ def _get_from_bw(service: str, key: str) -> str | None:
     if shutil.which("bw") is None:
         return None
     try:
-        result = subprocess.run(["bw", "status"], capture_output=True, text=True, timeout=5)
+        result = subprocess.run(
+            ["bw", "status"], capture_output=True, text=True, timeout=5
+        )
         if result.returncode != 0:
             return None
         status = json.loads(result.stdout)
