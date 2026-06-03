@@ -96,21 +96,26 @@ automatically via macOS Keychain, Bitwarden, 1Password, `pass`, or `lpass`. See
 ```bash
 email login                       # default account
 email login --account work        # Microsoft 365
-email login --complete            # verify and save session after MFA
 ```
 
-The login flow uses a two-step process for MFA-enabled accounts:
+The login flow is fully automated:
 
-1. **`email login`** — opens a browser to the Outlook sign-in page. Enter your
-   credentials when prompted; when MFA triggers, the CLI extracts the 2-digit code from
-   the page and displays it in the terminal. Enter this code in your Microsoft
-   Authenticator app to approve. The browser session remains open.
-2. **`email login --complete`** — verifies the MFA approval and saves the session. Once
-   complete, the session is cached to `~/.email/<account>.owa-state.json` and reused on
-   later commands; you only re-login when it expires.
+1. **`email login`** — opens a headless browser and performs the complete login:
+   - Gets your password from macOS Keychain (service: `outlook`, key: `password`)
+   - Navigates to Outlook and fills in your email and password
+   - Selects Microsoft Authenticator for MFA
+   - Extracts the 2-digit MFA code and displays it in the terminal
+   - Waits for you to approve in Microsoft Authenticator
+   - Handles the "Stay signed in?" prompt
+   - Saves the session to `~/.email/<account>.owa-state.json`
 
-- **m365 with `--backend graph`:** device-code flow — visit the printed URL, enter the
-  code, approve. The token is cached and refreshed silently.
+**First-time setup:** Add your password to Keychain:
+```bash
+security add-generic-password -s 'outlook' -a 'password' -w 'YOUR_PASSWORD'
+```
+
+**m365 with `--backend graph`:** device-code flow — visit the printed URL, enter the
+   code, approve. The token is cached and refreshed silently.
 - **gmail/imap:** validates the app password by opening an IMAP connection.
 
 ## Read
