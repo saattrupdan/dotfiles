@@ -134,9 +134,7 @@ class _EventListParser(HTMLParser):
         self._capture: str | None = None  # which field we are accumulating
         self._buf: list[str] = []
 
-    def handle_starttag(
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         a = dict(attrs)
         cls = a.get("class") or ""
         if tag == "div" and a.get("data-arrnr"):
@@ -189,9 +187,7 @@ class _EventListParser(HTMLParser):
         self._buf = []
 
     def _finish(self) -> None:
-        if self._cur is not None and (
-            self._cur.get("title") or self._cur.get("arrnr")
-        ):
+        if self._cur is not None and (self._cur.get("title") or self._cur.get("arrnr")):
             self.events.append(self._cur)
         self._cur = None
         self._capture = None
@@ -274,9 +270,7 @@ def cmd_events(args: argparse.Namespace) -> None:
 
 def cmd_event(args: argparse.Namespace) -> None:
     """Fetch a single event's detail page (/perl/arrmore?ArrNr=N)."""
-    body = _request(
-        _type_path("arrmore", args.lang), {"ArrNr": str(args.arrnr)}
-    )
+    body = _request(_type_path("arrmore", args.lang), {"ArrNr": str(args.arrnr)})
     if args.raw:
         print(body)
         return
@@ -302,9 +296,7 @@ def _parse_event_detail(body: str) -> dict[str, str]:
     """
     detail: dict[str, str] = {}
     title = ""
-    m = re.search(
-        r'<meta[^>]+property="og:title"[^>]+content="([^"]*)"', body
-    )
+    m = re.search(r'<meta[^>]+property="og:title"[^>]+content="([^"]*)"', body)
     if m and _clean(m.group(1)):
         title = _clean(m.group(1))
     if not title:
@@ -316,9 +308,7 @@ def _parse_event_detail(body: str) -> dict[str, str]:
     if title:
         detail["title"] = title
     for prop in ('property="og:description"', 'name="description"'):
-        md = re.search(
-            rf"<meta[^>]+{prop}[^>]+content=\"([^\"]*)\"", body
-        )
+        md = re.search(rf"<meta[^>]+{prop}[^>]+content=\"([^\"]*)\"", body)
         if md and _clean(md.group(1)):
             detail["description"] = _clean(md.group(1))
             break
@@ -346,9 +336,7 @@ def cmd_films(args: argparse.Namespace) -> None:
     seen: set[str] = set()
     films: list[dict[str, str]] = []
     for sted, titel in _FILM_LINK_RE.findall(body):
-        title = _clean(
-            html.unescape(urllib.parse.unquote(titel, encoding=ENCODING))
-        )
+        title = _clean(html.unescape(urllib.parse.unquote(titel, encoding=ENCODING)))
         key = title.lower()
         if not title or key in seen:
             continue
@@ -403,9 +391,7 @@ def _parse_rss(body: str) -> list[dict[str, str]]:
     for chunk in re.findall(r"<item\b[^>]*>(.*?)</item>", body, re.S | re.I):
 
         def field(name: str) -> str:
-            m = re.search(
-                rf"<{name}\b[^>]*>(.*?)</{name}>", chunk, re.S | re.I
-            )
+            m = re.search(rf"<{name}\b[^>]*>(.*?)</{name}>", chunk, re.S | re.I)
             return _clean(m.group(1)) if m else ""
 
         title = field("title")
@@ -453,12 +439,8 @@ def main() -> None:
         help='geography filter, e.g. "8000 Aarhus C", '
         '"Region Hovedstaden", "Hele Danmark"',
     )
-    p.add_argument(
-        "--periode", help="time period, e.g. 1=today, 30=upcoming month"
-    )
-    p.add_argument(
-        "--genre", help="event genre, e.g. Musik, Jazz, Udstilling"
-    )
+    p.add_argument("--periode", help="time period, e.g. 1=today, 30=upcoming month")
+    p.add_argument("--genre", help="event genre, e.g. Musik, Jazz, Udstilling")
     p.add_argument("--order", help='sort, e.g. "Rating" for most popular')
     _add_global(p)
     p.set_defaults(func=cmd_events)
