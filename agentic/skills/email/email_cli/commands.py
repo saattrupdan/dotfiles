@@ -112,7 +112,13 @@ def do_login(args) -> None:
     config = load_config()
     name, account = resolve_account(config, args.account)
     backend = get_backend(name, account)
-    print(backend.login())
+
+    if args.complete:
+        # Step 2: Complete login after MFA approval
+        print(backend.verify_and_save_session())
+    else:
+        # Step 1: Extract and display MFA code
+        print(backend.login())
 
 
 # -- read --------------------------------------------------------------------

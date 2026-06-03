@@ -32,6 +32,18 @@ class Backend(Protocol):
         """
         ...
 
+    def verify_and_save_session(self) -> str:
+        """Complete the second step of a two-factor login flow.
+
+        Returns:
+            A short human-readable confirmation (e.g. session saved).
+
+        Raises:
+            BackendError:
+                If verification fails or times out.
+        """
+        ...
+
     def list_messages(
         self,
         *,

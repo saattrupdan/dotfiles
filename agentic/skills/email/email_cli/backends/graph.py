@@ -116,6 +116,10 @@ class GraphBackend:
             )
         return f"Signed in to Microsoft 365 as {self._email}."
 
+    def verify_and_save_session(self) -> str:
+        """No-op for Graph which authenticates directly via device-code flow."""
+        return "Microsoft Graph does not use two-step login."
+
     # -- HTTP ----------------------------------------------------------------
 
     def _request(

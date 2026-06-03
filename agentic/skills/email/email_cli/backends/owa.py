@@ -163,7 +163,7 @@ class OwaBackend:
         except Exception:
             return None
 
-    def _verify_and_save_session(self, *, timeout: int = 120) -> str:
+    def verify_and_save_session(self, *, timeout: int = 120) -> str:
         """Poll for inbox URL + X-OWA-CANARY cookie, then save session.
 
         Args:
@@ -255,7 +255,7 @@ class OwaBackend:
 
             # Already logged in - complete verification immediately
             if is_inbox and has_canary:
-                return self._verify_and_save_session(timeout=max_wait - elapsed)
+                return self.verify_and_save_session(timeout=max_wait - elapsed)
 
             # Try to extract MFA code from the page
             mfa_code = self._extract_mfa_code()

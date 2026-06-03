@@ -74,7 +74,9 @@ def build_parser() -> argparse.ArgumentParser:
     # -- login ---------------------------------------------------------------
     login = sub.add_parser("login", help="Authenticate an account.")
     _add_account_flag(login)
-    login.add_argument('--complete', action='store_true', help='Complete login after MFA approval')
+    login.add_argument(
+        "--complete", action="store_true", help="Complete login after MFA approval"
+    )
 
     # -- list ----------------------------------------------------------------
     lst = sub.add_parser("list", help="List messages in a folder.")

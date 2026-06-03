@@ -127,6 +127,10 @@ class ImapSmtpBackend:
             pass
         return f"IMAP login OK for {self._email}."
 
+    def verify_and_save_session(self) -> str:
+        """No-op for IMAP/SMTP which authenticates directly."""
+        return "IMAP/SMTP does not use two-step login."
+
     def list_messages(
         self, *, folder: str, query: str | None, unread_only: bool, limit: int
     ) -> list[Message]:
