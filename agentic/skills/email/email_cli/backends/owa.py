@@ -481,15 +481,10 @@ class OwaBackend:
         # Extract structured fields
         subject = ""
         sender_name = ""
-        sender_email = ""
         to_recipients = []
         date_str = ""
         body_paragraphs = []
-        thread_messages = []
-        
         in_message_body = False
-        in_thread = False
-        current_thread = {}
         
         for line in lines:
             # Subject/headers - level 3 headings in reading pane
@@ -507,8 +502,8 @@ class OwaBackend:
                     elif re.match(r'\w{3}\s+\d{2}/\d{2}/\d{4}', text) and not date_str:
                         date_str = text
                     # Subject heading (appears in header bar with "Research Remove" actions)
-                    elif not subject and 'Research' in text:
-                        # Clean up: "DeployAI Kopenhagen Meeting Research Research Remove Research"
+                    elif not subject and 'Research' in text and 'Remove' in text:
+                        # Clean up: "Subject Research Research Remove Research"
                         subject = text.replace(' Research', '').replace(' Remove', '').strip()
                     # Fallback: plain subject without Research/Remove
                     elif not subject and 'Research' not in text and 'Remove' not in text and 'From:' not in text and 'To:' not in text:
@@ -518,10 +513,8 @@ class OwaBackend:
             # Document body section
             if 'document' in line and 'Message body' in line:
                 in_message_body = True
-                in_thread = False
-            elif 'Show message history' in line or 'button' in line and 'ref=e' in line:
+            elif 'Show message history' in line:
                 if in_message_body:
-                    # Started seeing buttons after body, may be entering thread
                     in_message_body = False
             
             # Collect body paragraphs - skip signature and thread headers
@@ -531,45 +524,11 @@ class OwaBackend:
                 match = re.search(r'StaticText\s+"([^"]*)"', line)
                 if match:
                     text = match.group(1).strip()
-                    # Skip signature lines and thread headers
-                    skip_patterns = ['---', 'Von:', 'Datum:', 'An:', 'Betreff:', 'Gesendet', 
-                                     'Best regards', 'Maren Brandt', 'Project Management',
-                                     'Fraunhofer', 'Phone +', '@iais.fraunhofer', 'www.iais',
-                                     'Register of associations', 'Authorized recipient']
+                    # Skip signature lines and thread headers (generic patterns)
+                    skip_patterns = ['---', 'Von:', 'Datum:', 'An:', 'Betreff:', 'Gesendet',
+                                     'Phone +', 'Register of associations', 'Authorized recipient']
                     if text and not any(p.lower() in text.lower() for p in skip_patterns):
                         body_paragraphs.append(text)
-            
-            # Thread message detection (Von:/Datum:/An:/Betreff German format)
-            if 'Von:' in line:
-                in_thread = True
-                current_thread = {'from': '', 'date': '', 'to': '', 'subject': '', 'body': []}
-                match = re.search(r'Von:\s*"?([^"]+)"?', line)
-                if match:
-                    current_thread['from'] = match.group(1).strip()
-            elif in_thread and 'Datum:' in line:
-                match = re.search(r'Datum:\s*[^"]*\s+(.*?)(?:\s+um|$)', line)
-                if match:
-                    current_thread['date'] = match.group(1).strip()
-            elif in_thread and 'An:' in line:
-                match = re.search(r'An:\s*(.+?)(?:\s+Ai|$)', line)  # Up to "An:" part
-                if match:
-                    current_thread['to'] = match.group(1).strip()
-            elif in_thread and 'Betreff:' in line:
-                match = re.search(r'Betreff:\s*(.+)', line)
-                if match:
-                    current_thread['subject'] = match.group(1).strip()
-            elif in_thread and 'StaticText' in line and current_thread.get('from'):
-                match = re.search(r'StaticText\s+"([^"]*)"', line)
-                if match:
-                    text = match.group(1).strip()
-                    if text and not text.startswith('Von:') and not text.startswith('Datum:'):
-                        current_thread['body'].append(text)
-            
-            # Thread message ends when we see next "Von:" or "Gesendet" signature
-            if 'Gesendet' in line and current_thread.get('from'):
-                thread_messages.append(current_thread.copy())
-                current_thread = {}
-                in_thread = False
         
         body_text = "\n\n".join(body_paragraphs) if body_paragraphs else ""
         
