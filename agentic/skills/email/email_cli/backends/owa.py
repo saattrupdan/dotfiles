@@ -18,6 +18,7 @@ capture the exact request the real OWA UI sends (to copy its shape) is to wrap
 
 from __future__ import annotations
 
+import re
 import time
 
 from ..browser import BrowserSession
@@ -451,22 +452,16 @@ class OwaBackend:
     def get_message(self, *, msg_id: str, mark_read: bool) -> Message:
         """Fetch a single message by parsing the reading pane.
         
-        Since we can't use the EWS API (requires HTTP-only X-OWA-CANARY),
-        we click on the email and parse content from the DOM.
+        Extracts structured data: subject, from, to, date, body, and thread messages.
         """
-        # The msg_id from DOM parsing is just "dom_N" - we need to navigate to inbox
-        # and click on the Nth email
+        import re
+        
+        # Navigate to inbox and click on the email
         if msg_id.startswith("dom_"):
             index = int(msg_id.replace("dom_", ""))
-            
-            # Navigate to inbox
             self._navigate_to_folder("inbox")
             
-            # Get snapshot and find the email ref
             snapshot = self._browser._run("snapshot", timeout=30)
-            
-            # Find option refs (email entries)
-            import re
             options = re.findall(r'option.*?\[ref=e(\d+)\]', snapshot, re.IGNORECASE)
             
             if index < len(options):
@@ -479,50 +474,117 @@ class OwaBackend:
             else:
                 raise BackendError(f"Message index {index} not found")
         
-        # Parse email content from reading pane
+        # Parse structured email content
         snapshot = self._browser._run("snapshot", timeout=30)
-        
-        # Extract email details from snapshot
-        # Looking for patterns like:
-        # - heading "Subject line" [level=1]
-        # - "From: Name <email>"
-        # - "Date: ..."
-        # - email body content
-        
-        subject = ""
-        sender = ""
-        date = ""
-        body_text = ""
-        
         lines = snapshot.split("\n") if snapshot else []
-        in_body = False
+        
+        # Extract structured fields
+        subject = ""
+        sender_name = ""
+        sender_email = ""
+        to_recipients = []
+        date_str = ""
+        body_paragraphs = []
+        thread_messages = []
+        
+        in_message_body = False
+        in_thread = False
+        current_thread = {}
         
         for line in lines:
-            if "heading" in line.lower() and "level=1" in line:
+            # Subject/headers - level 3 headings in reading pane
+            if 'heading' in line and 'level=3' in line:
                 match = re.search(r'heading\s+"([^"]+)"', line)
                 if match:
-                    subject = match.group(1)
+                    text = match.group(1)
+                    # Capture the first occurrence of each header type
+                    if text.startswith('From:') and not sender_name:
+                        sender_name = text[5:].strip()
+                    elif text.startswith('To:') and not to_recipients:
+                        # Extract recipients
+                        to_text = text[3:].strip()
+                        to_recipients = [r.strip() for r in to_text.split(',') if r.strip()]
+                    elif re.match(r'\w{3}\s+\d{2}/\d{2}/\d{4}', text) and not date_str:
+                        date_str = text
+                    # Subject heading (appears in header bar with "Research Remove" actions)
+                    elif not subject and 'Research' in text:
+                        # Clean up: "DeployAI Kopenhagen Meeting Research Research Remove Research"
+                        subject = text.replace(' Research', '').replace(' Remove', '').strip()
+                    # Fallback: plain subject without Research/Remove
+                    elif not subject and 'Research' not in text and 'Remove' not in text and 'From:' not in text and 'To:' not in text:
+                        if not re.match(r'\w{3}\s+\d{2}/\d{2}/\d{4}', text):  # Not a date
+                            subject = text[:80]
             
-            if "From:" in line or "from" in line.lower():
-                match = re.search(r'[Ff]rom:\s*([^\n]+)', line)
+            # Document body section
+            if 'document' in line and 'Message body' in line:
+                in_message_body = True
+                in_thread = False
+            elif 'Show message history' in line or 'button' in line and 'ref=e' in line:
+                if in_message_body:
+                    # Started seeing buttons after body, may be entering thread
+                    in_message_body = False
+            
+            # Collect body paragraphs - skip signature and thread headers
+            if in_message_body and 'paragraph' in line:
+                continue
+            if in_message_body and 'StaticText' in line:
+                match = re.search(r'StaticText\s+"([^"]*)"', line)
                 if match:
-                    sender = match.group(1).strip()
+                    text = match.group(1).strip()
+                    # Skip signature lines and thread headers
+                    skip_patterns = ['---', 'Von:', 'Datum:', 'An:', 'Betreff:', 'Gesendet', 
+                                     'Best regards', 'Maren Brandt', 'Project Management',
+                                     'Fraunhofer', 'Phone +', '@iais.fraunhofer', 'www.iais',
+                                     'Register of associations', 'Authorized recipient']
+                    if text and not any(p.lower() in text.lower() for p in skip_patterns):
+                        body_paragraphs.append(text)
             
-            # Collect body text (simplified - would need better parsing in production)
-            if in_body and line.strip():
-                body_text += line.strip() + "\n"
+            # Thread message detection (Von:/Datum:/An:/Betreff German format)
+            if 'Von:' in line:
+                in_thread = True
+                current_thread = {'from': '', 'date': '', 'to': '', 'subject': '', 'body': []}
+                match = re.search(r'Von:\s*"?([^"]+)"?', line)
+                if match:
+                    current_thread['from'] = match.group(1).strip()
+            elif in_thread and 'Datum:' in line:
+                match = re.search(r'Datum:\s*[^"]*\s+(.*?)(?:\s+um|$)', line)
+                if match:
+                    current_thread['date'] = match.group(1).strip()
+            elif in_thread and 'An:' in line:
+                match = re.search(r'An:\s*(.+?)(?:\s+Ai|$)', line)  # Up to "An:" part
+                if match:
+                    current_thread['to'] = match.group(1).strip()
+            elif in_thread and 'Betreff:' in line:
+                match = re.search(r'Betreff:\s*(.+)', line)
+                if match:
+                    current_thread['subject'] = match.group(1).strip()
+            elif in_thread and 'StaticText' in line and current_thread.get('from'):
+                match = re.search(r'StaticText\s+"([^"]*)"', line)
+                if match:
+                    text = match.group(1).strip()
+                    if text and not text.startswith('Von:') and not text.startswith('Datum:'):
+                        current_thread['body'].append(text)
             
-            if "body" in line.lower() or "content" in line.lower():
-                in_body = True
+            # Thread message ends when we see next "Von:" or "Gesendet" signature
+            if 'Gesendet' in line and current_thread.get('from'):
+                thread_messages.append(current_thread.copy())
+                current_thread = {}
+                in_thread = False
         
+        body_text = "\n\n".join(body_paragraphs) if body_paragraphs else ""
+        
+        # Format sender (skip if it's the same as what appears in subject line)
+        sender = sender_name.strip() if sender_name else "Unknown"
+        
+        # Format for Message object
         message = Message(
             id=msg_id,
-            date=date,
+            date=date_str,
             sender=sender,
-            subject=subject,
-            unread=False,  # Opening marks as read in OWA
-            to=[],
-            body_text=body_text.strip() if body_text else "",
+            subject=subject if subject else "No subject",
+            unread=False,
+            to=to_recipients,
+            body_text=body_text,
         )
         
         return message
