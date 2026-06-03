@@ -283,7 +283,10 @@ class OwaBackend:
 
         raise BackendError(
             f"OWA login timed out after {max_wait}s without detecting MFA code. "
-            "Retry or check that the account uses number-match MFA."
+            "Microsoft may be blocking headless browsers. Try: "
+            "1) Run 'email login --account work' again, or "
+            "2) Use Graph backend: 'email accounts add --name work --provider m365 "
+            "--email dan.smart@alexandra.dk --backend graph'"
         )
 
     # -- request plumbing ----------------------------------------------------

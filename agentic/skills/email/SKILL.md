@@ -68,7 +68,7 @@ pipx install -e <path-to-email-skill>
   (requires 2-Step Verification) and ensure IMAP is enabled in Gmail settings.
 - **Microsoft 365 (default OWA backend):** requires the **`agent-browser`** CLI
   (`which agent-browser` — install via the agent-browser skill). No API consent or app
-  registration needed; you just sign in once in a real browser window.
+  registration needed; login is fully automated and headless.
 - **Microsoft 365 with `--backend graph`:** no app registration in tenants that allow it
   — the default OAuth client is the public "Microsoft Graph Command Line Tools" app. If
   login fails with a consent / `AADSTS` error, the tenant blocks it; either use the
@@ -110,9 +110,10 @@ email login --complete            # verify and save session after MFA
 
 The login flow uses a two-step process for MFA-enabled accounts:
 
-1. **`email login`** — opens the browser to the Outlook sign-in page. Enter your
-   credentials; when prompted, an MFA code is displayed in the terminal. Approve the
-   request in your Authenticator app. The browser session remains open.
+1. **`email login`** — opens a headless browser to the Outlook sign-in page and navigates
+   through the login flow. When MFA is triggered, the CLI extracts the 2-digit code from
+   the page and displays it in the terminal. The user enters this code in their Microsoft
+   Authenticator app to approve. The browser session remains open.
 2. **`email login --complete`** — verifies the MFA approval and saves the session. Once
    complete, the session is cached to `~/.email/<account>.owa-state.json` and reused on
    later commands; you only re-login when it expires.
