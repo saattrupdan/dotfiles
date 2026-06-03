@@ -90,12 +90,10 @@ email accounts list             # show accounts (* marks the default)
 email accounts remove --name X
 ```
 
-For an `imap`/`gmail` account, put its app password in the environment variable the
-CLI prints (default `EMAIL_<NAME>_APP_PASSWORD`), e.g. in a `.env` in `./` or `~/`:
-
-```
-EMAIL_GMAIL_APP_PASSWORD=abcd efgh ijkl mnop
-```
+For an `imap`/`gmail` account, store the app password in a password manager under
+the service name `gmail` (or the account name) with key `password`. The CLI will
+fetch it automatically via macOS Keychain, Bitwarden, 1Password, `pass`, or `lpass`.
+See `credentials.py` for the supported backends.
 
 ## Login
 
@@ -159,7 +157,8 @@ user has explicitly approved the exact message.
 
 ## Error handling
 
-- **`No app password found …`** — set the named env var (or add it to `.env`) and retry.
+- **`No app password found …`** — add the password to your password manager under
+  service `gmail` (or account name) with key `password`.
 - **`IMAP/SMTP login failed`** — wrong app password, or IMAP disabled in Gmail
   settings. Regenerate the app password.
 - **`Not signed in …`** — run `email login --account NAME` (Graph token or OWA
@@ -180,7 +179,9 @@ user has explicitly approved the exact message.
 
 - Email is sensitive. Never paste message contents, addresses, tokens, or app
   passwords into external services, logs, or other models.
-- App passwords, OAuth tokens, and the OWA browser session stay in `~/.email/`
-  (0600) and env/`.env` — never write them into `accounts.json` or commit them.
+- App passwords live in your password manager (Keychain, Bitwarden, 1Password,
+  `pass`, `lpass`), OAuth tokens in `~/.email/<account>.msal.json`, and the OWA
+  browser session in `~/.email/<account>.owa-state.json` (0600).
+  Never write secrets into `accounts.json` or commit them.
 - Don't bulk-send or hammer the providers; respect rate limits.
 - Re-confirm every send with the user before it goes out.
