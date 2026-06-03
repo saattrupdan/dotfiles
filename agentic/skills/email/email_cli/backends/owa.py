@@ -19,7 +19,7 @@ capture the exact request the real OWA UI sends (to copy its shape) is to wrap
 from __future__ import annotations
 
 import json
-import sys
+import time
 
 from ..browser import BrowserSession
 from ..config import CONFIG_DIR
@@ -107,31 +107,173 @@ class OwaBackend:
 
     # -- login ---------------------------------------------------------------
 
+    def _extract_mfa_code(self) -> str | None:
+        """Extract MFA code from Microsoft login page using browser eval.
+
+        Tries multiple strategies to find the 2-3 digit code displayed on the
+        MFA challenge page. Returns the code if found, None otherwise.
+        """
+        # Strategy 1: Look for elements containing 2-3 digit numbers
+        js_extract = r"""
+        (() => {
+            // Scan all text nodes for 2-3 digit patterns near MFA-related text
+            const walker = document.createTreeWalker(
+                document.body,
+                NodeFilter.SHOW_TEXT,
+                null
+            );
+            const mfaPattern = /(?:enter|match|code|number)[:\s]*(\d{2,3})/i;
+            let node;
+            while ((node = walker.nextNode())) {
+                const text = node.textContent || '';
+                const match = text.match(mfaPattern);
+                if (match) return match[1];
+            }
+            
+            // Strategy 2: Look for standalone 2-3 digit numbers in likely elements
+            const selectors = [
+                'span', 'div', 'p', 'h1', 'h2', 'h3',
+                '[role="heading"]', '[aria-label*="number"]',
+                '.number', '#number', '[data-type="number"]'
+            ];
+            const standalonePattern = /^\s*(\d{2,3})\s*$/;
+            for (const sel of selectors) {
+                const els = document.querySelectorAll(sel);
+                for (const el of els) {
+                    const text = el.textContent || '';
+                    const match = text.match(standalonePattern);
+                    if (match) return match[1];
+                }
+            }
+            
+            // Strategy 3: Generic scan for any 2-3 digit number in visible text
+            const allText = document.body.innerText || '';
+            const numbers = allText.match(/\b(\d{2,3})\b/g);
+            if (numbers && numbers.length > 0) {
+                return numbers[0];
+            }
+            
+            return null;
+        })()
+        """
+        try:
+            js_wrapper = "JSON.stringify((async()=>(" + js_extract + "))())"
+            eval_result = self._browser.eval_json(js_wrapper)
+            return eval_result if eval_result else None
+        except Exception:
+            return None
+
+    def _verify_and_save_session(self, *, timeout: int = 120) -> str:
+        """Poll for inbox URL + X-OWA-CANARY cookie, then save session.
+
+        Args:
+            timeout:
+                Maximum seconds to wait for login completion. Defaults to 120.
+
+        Returns:
+            Success message with elapsed time.
+
+        Raises:
+            BackendError:
+                If login times out.
+        """
+        interval = 2
+        elapsed = 0
+
+        while elapsed < timeout:
+            time.sleep(interval)
+            elapsed += interval
+
+            probe = self._browser.eval_json(
+                "(async()=>JSON.stringify({"
+                "url:location.href,"
+                "canary:/X-OWA-CANARY=/.test(document.cookie),"
+                "inbox:/mail/i.test(location.href)"
+                "}))()"
+            )
+            url = (probe or {}).get("url", "")
+            has_canary = (probe or {}).get("canary", False)
+            is_inbox = (probe or {}).get("inbox", False)
+
+            # Success: inbox loaded + canary present
+            if is_inbox and has_canary:
+                self._browser.state_save()
+                return f"Signed in to Outlook on the web as {self._email} ({elapsed}s, session saved)."
+
+            # Still on login page - keep waiting
+            if "login.microsoftonline.com" in url:
+                continue
+
+            # On some other page (e.g., redirect in progress) - keep waiting
+            if not has_canary:
+                continue
+
+        raise BackendError(
+            f"OWA login timed out after {timeout}s. "
+            "Check the browser window for errors or try again."
+        )
+
     def login(self) -> str:
-        """Open Outlook headed, let the user sign in, then persist the session."""
-        if not sys.stdin.isatty():
-            raise BackendError(
-                "OWA login is interactive. Run `email login --account "
-                f"{self._name}` in a terminal to sign in to Outlook."
-            )
+        """Open Outlook headed and poll for MFA code or inbox.
+
+        Two-step flow:
+        1. Opens browser headed and tries to extract MFA code from the page.
+        2. If MFA code found: prints it and returns instructions.
+        3. If already logged in (inbox detected): completes verification immediately.
+        4. If timeout without MFA code: raises BackendError.
+
+        Returns:
+            Message with MFA code or session saved confirmation.
+
+        Raises:
+            BackendError:
+                If timeout occurs without detecting MFA code or inbox.
+        """
         self._browser.open(_MAIL_URL, headed=True)
-        input(
-            "\nA browser window has opened at Outlook. Complete the Microsoft "
-            "sign-in (including MFA), wait until your inbox is visible, then press "
-            "Enter here to finish… "
-        )
-        probe = self._browser.eval_json(
-            "(async()=>JSON.stringify({url:location.href,"
-            "canary:/X-OWA-CANARY=/.test(document.cookie)}))()"
-        )
-        url = (probe or {}).get("url", "")
-        if "login.microsoftonline.com" in url or not (probe or {}).get("canary"):
-            raise BackendError(
-                "Sign-in does not look complete (still on the login page or no "
-                "session cookie). Finish logging in, then re-run login."
+        print("\nOpening Outlook...")
+
+        # Poll for MFA code or inbox for ~30 seconds
+        max_wait = 30
+        interval = 2
+        elapsed = 0
+
+        while elapsed < max_wait:
+            time.sleep(interval)
+            elapsed += interval
+
+            # Check if already at inbox (already logged in)
+            probe = self._browser.eval_json(
+                "(async()=>JSON.stringify({"
+                "url:location.href,"
+                "canary:/X-OWA-CANARY=/.test(document.cookie),"
+                "inbox:/mail/i.test(location.href)"
+                "}))()"
             )
-        self._browser.state_save()
-        return f"Signed in to Outlook on the web as {self._email} (session saved)."
+            url = (probe or {}).get("url", "")
+            has_canary = (probe or {}).get("canary", False)
+            is_inbox = (probe or {}).get("inbox", False)
+
+            # Already logged in - complete verification immediately
+            if is_inbox and has_canary:
+                return self._verify_and_save_session(timeout=max_wait - elapsed)
+
+            # Try to extract MFA code from the page
+            mfa_code = self._extract_mfa_code()
+            if mfa_code:
+                print(f"\nMFA code: {mfa_code}")
+                return (
+                    f"Enter code {mfa_code} in Authenticator, "
+                    f"then run: email login --complete"
+                )
+
+            # Still on login page - keep polling
+            if "login.microsoftonline.com" in url:
+                continue
+
+        raise BackendError(
+            f"OWA login timed out after {max_wait}s without detecting MFA code. "
+            "Check the browser window for errors or try again."
+        )
 
     # -- request plumbing ----------------------------------------------------
 
