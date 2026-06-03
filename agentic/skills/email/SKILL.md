@@ -100,12 +100,18 @@ See `credentials.py` for the supported backends.
 ```bash
 email login                       # default account
 email login --account work        # Microsoft 365
+email login --complete            # verify and save session after MFA
 ```
 
-- **m365 (OWA, default):** opens a real Outlook browser window. Sign in (incl. MFA),
-  wait for your inbox to appear, then press Enter in the terminal. The session is
-  saved to `~/.email/<account>.owa-state.json` and reused on later commands; you
-  only re-login when it expires. **Must be run interactively** (a TTY).
+The login flow uses a two-step process for MFA-enabled accounts:
+
+1. **`email login`** — opens the browser to the Outlook sign-in page. Enter your
+   credentials; when prompted, an MFA code is displayed in the terminal. Approve
+   the request in your Authenticator app. The browser session remains open.
+2. **`email login --complete`** — verifies the MFA approval and saves the session.
+   Once complete, the session is cached to `~/.email/<account>.owa-state.json`
+   and reused on later commands; you only re-login when it expires.
+
 - **m365 with `--backend graph`:** device-code flow — visit the printed URL, enter
   the code, approve. The token is cached and refreshed silently.
 - **gmail/imap:** validates the app password by opening an IMAP connection.
