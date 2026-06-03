@@ -94,6 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
     # -- read ----------------------------------------------------------------
     read = sub.add_parser("read", help="Read a single message in full.")
     _add_account_flag(read)
+    read.add_argument("--folder", default="inbox", help="Folder/mailbox (default inbox).")
     read.add_argument("--id", required=True, help="Message id (from `list`).")
     read.add_argument(
         "--mark-read", action="store_true", help="Mark the message as read."

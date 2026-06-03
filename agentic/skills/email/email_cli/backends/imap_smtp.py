@@ -193,10 +193,10 @@ class ImapSmtpBackend:
                 by_uid[uid] = msg
         return [by_uid[u.decode()] for u in uids if u.decode() in by_uid]
 
-    def get_message(self, *, msg_id: str, mark_read: bool) -> Message:
+    def get_message(self, *, msg_id: str, mark_read: bool, folder: str = "inbox") -> Message:
         conn = self._imap()
         try:
-            self._select(conn, "inbox", readonly=not mark_read)
+            self._select(conn, folder, readonly=not mark_read)
             typ, data = conn.uid("fetch", msg_id, "(RFC822)")
             if typ != "OK" or not data or not isinstance(data[0], tuple):
                 raise BackendError(f"Message '{msg_id}' not found.")

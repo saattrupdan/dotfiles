@@ -59,7 +59,7 @@ class Backend(Protocol):
         """
         ...
 
-    def get_message(self, *, msg_id: str, mark_read: bool) -> Message:
+    def get_message(self, *, msg_id: str, mark_read: bool, folder: str = "inbox") -> Message:
         """Fetch a single message in full, optionally marking it read."""
         ...
 

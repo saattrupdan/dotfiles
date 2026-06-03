@@ -445,17 +445,18 @@ class OwaBackend:
         
         return messages[:limit]
 
-    def get_message(self, *, msg_id: str, mark_read: bool) -> Message:
+    def get_message(self, *, msg_id: str, mark_read: bool, folder: str = "inbox") -> Message:
         """Fetch a single message by parsing the reading pane.
         
         Extracts structured data: subject, from, to, date, body, and thread messages.
         """
         import re
         
-        # Navigate to inbox and click on the email
+        # Navigate to folder and click on the email
         if msg_id.startswith("dom_"):
             index = int(msg_id.replace("dom_", ""))
-            self._navigate_to_folder("inbox")
+            # Navigate to the specified folder (not just inbox)
+            self._navigate_to_folder(folder)
             
             snapshot = self._browser._run("snapshot", timeout=30)
             options = re.findall(r'option.*?\[ref=e(\d+)\]', snapshot, re.IGNORECASE)

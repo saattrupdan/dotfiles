@@ -202,10 +202,12 @@ class GraphBackend:
             body_text=body if body is not None else None,
         )
 
-    def get_message(self, *, msg_id: str, mark_read: bool) -> Message:
+    def get_message(self, *, msg_id: str, mark_read: bool, folder: str = "inbox") -> Message:
+        mailbox = _FOLDER_ALIASES.get(folder.lower(), folder)
+        folder_path = f"/me/mailFolders/{mailbox}/messages/{urllib.parse.quote(msg_id)}"
         item = self._request(
             "GET",
-            f"/me/messages/{urllib.parse.quote(msg_id)}",
+            folder_path,
             params={
                 "$select": "id,subject,from,toRecipients,receivedDateTime,isRead,body,hasAttachments"
             },

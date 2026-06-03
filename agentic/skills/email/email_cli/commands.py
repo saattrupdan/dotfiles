@@ -140,7 +140,8 @@ def do_read(args) -> None:
     config = load_config()
     name, account = resolve_account(config, args.account)
     backend = get_backend(name, account)
-    message = backend.get_message(msg_id=args.id, mark_read=args.mark_read)
+    
+    message = backend.get_message(msg_id=args.id, mark_read=args.mark_read, folder=args.folder)
     if args.raw:
         emit_raw(message.to_dict())
         return
