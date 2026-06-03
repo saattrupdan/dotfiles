@@ -489,7 +489,8 @@ class OwaBackend:
         for line in lines:
             # Subject/headers - level 3 headings in reading pane
             if 'heading' in line and 'level=3' in line:
-                match = re.search(r'heading\s+"([^"]+)"', line)
+                # Extract text between first quote and ' [' (before metadata)
+                match = re.search(r'heading\s+"(.+?)"\s+\[level=', line)
                 if match:
                     text = match.group(1)
                     # Capture the first occurrence of each header type
@@ -505,17 +506,19 @@ class OwaBackend:
                     elif not subject and 'Research' in text and 'Remove' in text:
                         # Clean up: "Subject Research Research Remove Research"
                         subject = text.replace(' Research', '').replace(' Remove', '').strip()
+                        # Clean up escaped quotes in subject
+                        subject = subject.replace('\\"', '"')
                     # Fallback: plain subject without Research/Remove
                     elif not subject and 'Research' not in text and 'Remove' not in text and 'From:' not in text and 'To:' not in text:
                         if not re.match(r'\w{3}\s+\d{2}/\d{2}/\d{4}', text):  # Not a date
-                            subject = text[:80]
+                            subject = text[:80].replace('\\"', '"')
             
             # Document body section
             if 'document' in line and 'Message body' in line:
                 in_message_body = True
-            elif 'Show message history' in line:
+            elif 'Show message history' in line or ('toolbar' in line and in_message_body):
                 if in_message_body:
-                    in_message_body = False
+                    in_message_body = False  # End of message body
             
             # Collect body paragraphs - stop at thread markers, skip signatures
             if in_message_body and 'paragraph' in line:
@@ -539,10 +542,12 @@ class OwaBackend:
                     if re.search(r'^(From:|Sent:|To:|Cc:|Subject:|On\s+\w+\s+\d+)', text, re.IGNORECASE):
                         in_message_body = False  # Stop at quoted header
                         continue
-                    # Skip signature lines
+                    # Skip signature lines and UI text
                     skip_patterns = ['---', 'Phone +', 'Register of associations', 
-                                     'Authorized recipient']
-                    if text and not any(p.lower() in text.lower() for p in skip_patterns):
+                                     'Authorized recipient', 'This email is generated',
+                                     r'Reply\b', r'Reply all', r'Forward\b',
+                                     'This invite will only work', r'Open\s*$']
+                    if text and not any(re.search(p, text, re.IGNORECASE) for p in skip_patterns):
                         body_paragraphs.append(text)
         
         body_text = "\n\n".join(body_paragraphs) if body_paragraphs else ""
