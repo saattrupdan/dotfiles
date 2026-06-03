@@ -23,6 +23,7 @@ import time
 
 from ..browser import BrowserSession
 from ..config import CONFIG_DIR
+from ..credentials import get_outlook_credentials
 from ..models import Message
 from .base import BackendError
 
@@ -108,16 +109,9 @@ class OwaBackend:
     # -- login ---------------------------------------------------------------
 
     def _extract_mfa_code(self) -> str | None:
-        """Extract MFA code from Microsoft login page using browser eval.
-
-        Tries multiple strategies to find the 2-digit code displayed on the
-        MFA challenge page (Microsoft number-match). Returns the code if found, None otherwise.
-        """
-        # Strategy: Generic scan for any 2-digit number that appears standalone
-        # Microsoft shows it prominently like "Enter 42" or just "42"
+        """Extract MFA code from Microsoft login page using browser eval."""
         js_extract = r"""
         (() => {
-            // Get all visible text and look for 2-digit numbers
             const allText = (document.body.innerText || '').trim();
             const lines = allText.split(/\n/).map(l => l.trim()).filter(l => l);
             
@@ -126,37 +120,7 @@ class OwaBackend:
                 if (/^\d{2}$/.test(line)) return line;
             }
             
-            // Strategy 2: Look for "Enter XX" or "Code XX" patterns
-            const patterns = [
-                /enter\s+(\d{2})/i,
-                /code\s*:?\s*(\d{2})/i,
-                /number\s*:?\s*(\d{2})/i,
-                /match\s*:?\s*(\d{2})/i,
-            ];
-            for (const pattern of patterns) {
-                const match = allText.match(pattern);
-                if (match) return match[1];
-            }
-            
-            // Strategy 3: Look for 2-digit numbers in prominent elements
-            const prominentSelectors = [
-                'h1', 'h2', 'h3', 'h4',
-                '[role="heading"]',
-                '.text-body-strong', '.text-body-large',
-                'p:has-child(:not(span))'
-            ];
-            for (const sel of prominentSelectors) {
-                try {
-                    const els = document.querySelectorAll(sel);
-                    for (const el of els) {
-                        const text = el.textContent || '';
-                        const numMatch = text.match(/\b(\d{2})\b/);
-                        if (numMatch) return numMatch[1];
-                    }
-                } catch (e) {}
-            }
-            
-            // Fallback: any 2-digit number in the page
+            // Fallback: any 2-digit number
             const allNumbers = allText.match(/\b(\d{2})\b/g);
             if (allNumbers) return allNumbers[0];
             
@@ -169,6 +133,18 @@ class OwaBackend:
             return eval_result if eval_result else None
         except Exception:
             return None
+
+    def _wait_for_snapshot(self, *, interval: float = 2.0, timeout: int = 30) -> None:
+        """Wait for page to load by polling snapshot."""
+        start = time.time()
+        while time.time() - start < timeout:
+            time.sleep(interval)
+            try:
+                snapshot = self._browser._run("snapshot", "-i")
+                if snapshot and snapshot.strip():
+                    return
+            except Exception:
+                pass
 
     def verify_and_save_session(self, *, timeout: int = 120) -> str:
         """Poll for inbox URL + X-OWA-CANARY cookie, then save session.
@@ -221,24 +197,100 @@ class OwaBackend:
         )
 
     def login(self) -> str:
-        """Check if already logged in, if not instruct user to login manually.
+        """Perform complete automated login flow.
 
-        This method opens a headless browser to check auth state:
-        - If already logged in (has X-OWA-CANARY cookie): saves session and returns success
-        - If not logged in: returns instructions for manual login
-
-        For first-time login, user should:
-        1. Open https://outlook.office.com in their browser
-        2. Log in with credentials and MFA
-        3. Run: email login --complete
+        1. Gets credentials from keychain
+        2. Navigates to Outlook and fills login form
+        3. Completes MFA with number-match
+        4. Saves session state
 
         Returns:
-            Success message or instructions for manual login.
-        """
-        self._browser.open(_MAIL_URL, headed=False)
-        self._browser.wait_load("networkidle")
+            Success message with account email.
 
-        # Check if already logged in
+        Raises:
+            BackendError: If login fails at any step.
+        """
+        # Get credentials
+        username, password = get_outlook_credentials()
+        if not username:
+            username = self._email
+        if not password:
+            raise BackendError(
+                f"No password found for {self._email}. "
+                "Add it to macOS Keychain: security add-generic-password -s 'outlook' -a 'password' -w 'YOUR_PASSWORD'"
+            )
+
+        # Navigate to Outlook
+        self._browser.open(_MAIL_URL, headed=False)
+        self._wait_for_snapshot(timeout=10)
+
+        # Step 1: Enter email
+        self._browser._run("fill", "@e6", username)
+        self._browser._run("click", "@e9")
+        self._wait_for_snapshot(timeout=10)
+
+        # Step 2: Enter password
+        self._browser._run("fill", "@e6", password)
+        self._browser._run("click", "@e9")
+        self._wait_for_snapshot(timeout=10)
+
+        # Step 3: Select MFA method (Microsoft Authenticator)
+        self._browser._run("click", "@e10")  # "Approve a request on my Microsoft Authenticator app"
+        self._wait_for_snapshot(timeout=10)
+
+        # Step 4: Extract MFA code
+        mfa_code = None
+        for _ in range(15):  # Poll for 30 seconds
+            time.sleep(2)
+            mfa_code = self._extract_mfa_code()
+            if mfa_code:
+                break
+
+        if not mfa_code:
+            raise BackendError(
+                "MFA code not detected. Make sure your account uses number-match MFA."
+            )
+
+        # Tell user to approve
+        print(f"\nMFA code: {mfa_code}")
+        print("Enter this code in Microsoft Authenticator and approve the request.")
+        print("Once approved, the login will complete automatically...")
+
+        # Step 5: Wait for MFA approval
+        max_wait = 120
+        interval = 2
+        elapsed = 0
+
+        while elapsed < max_wait:
+            time.sleep(interval)
+            elapsed += interval
+
+            probe = self._browser.eval_json(
+                "(async()=>JSON.stringify({"
+                "url:location.href,"
+                "canary:/X-OWA-CANARY=/.test(document.cookie),"
+                "inbox:/mail/i.test(location.href)"
+                "}))()"
+            )
+            has_canary = (probe or {}).get("canary", False)
+            is_inbox = (probe or {}).get("inbox", False)
+
+            # MFA approved - check for "Stay signed in?" prompt
+            if is_inbox or has_canary:
+                break
+
+            # Check if we're on "Stay signed in?" page
+            snapshot = self._browser._run("snapshot", "-i")
+            if "Stay signed in" in snapshot:
+                # Click Yes to stay signed in
+                try:
+                    self._browser._run("click", "@e8")
+                    time.sleep(3)
+                    break
+                except Exception:
+                    pass
+
+        # Final check and save
         probe = self._browser.eval_json(
             "(async()=>JSON.stringify({"
             "url:location.href,"
@@ -246,22 +298,27 @@ class OwaBackend:
             "inbox:/mail/i.test(location.href)"
             "}))()"
         )
-        url = (probe or {}).get("url", "")
         has_canary = (probe or {}).get("canary", False)
         is_inbox = (probe or {}).get("inbox", False)
 
-        # Already logged in - save session
-        if is_inbox and has_canary:
-            self._browser.state_save()
-            return f"Signed in to Outlook on the web as {self._email} (session saved)."
+        if not (is_inbox or has_canary):
+            raise BackendError(
+                f"Login timed out after {elapsed}s. MFA may not have been approved."
+            )
 
-        # Not logged in - instruct user to login manually
-        return (
-            "Not logged in to Outlook. To set up your work email:\n"
-            "1. Open https://outlook.office.com in your browser\n"
-            "2. Log in with dan.smart@alexandra.dk and complete MFA\n"
-            "3. Once logged in, run: email login --complete --account work"
-        )
+        # Handle "Stay signed in?" if still showing
+        snapshot = self._browser._run("snapshot", "-i")
+        if "Stay signed in" in snapshot:
+            try:
+                self._browser._run("click", "@e8")
+                time.sleep(3)
+            except Exception:
+                pass
+
+        # Save session
+        self._browser.state_save()
+
+        return f"Signed in to Outlook on the web as {self._email} (session saved)."
 
     # -- request plumbing ----------------------------------------------------
 
