@@ -329,7 +329,7 @@ def _rent_print_item(item: dict) -> None:
     print(
         f"{item.get('id', '')}\t{item.get('title', '')}\t"
         f"{_num(item.get('rooms')) or item.get('rooms', '')} vær\t"
-        f"{_num(item.get('size_m2')) or item.get('size_m2', '')} m2\t"
+        f"{_num(item.get('size_m2')) or item.get('size_m2', '')} m²\t"
         f"{_num(item.get('monthly_rent')) or item.get('monthly_rent', '')} kr\t"
         f"{item.get('city', '')}\t{RENT_BASE}{item.get('url', '')}"
     )
@@ -499,7 +499,7 @@ def cmd_rent_search(args: argparse.Namespace) -> None:
                         cache_dirty = True
 
         else:
-            # No keyword search - add passing items up to limit
+            # No keyword search — add passing items up to limit
             needed = args.limit - len(results)
             results.extend(candidates[:needed])
 
@@ -649,8 +649,8 @@ def _buy_case_params(args: argparse.Namespace) -> list[tuple[str, str]]:
     """Build the ``/search/cases`` query params from search args.
 
     Geography is filtered by ``cities`` / ``municipalities`` (place slugs, e.g.
-    ``frederiksberg``, ``københavn``) and ``zipCodes`` - all repeatable. Note
-    that whole big cities (København, Aarhus, ...) are *municipalities*, while
+    ``frederiksberg``, ``københavn``) and ``zipCodes`` — all repeatable. Note
+    that whole big cities (København, Aarhus, …) are *municipalities*, while
     ``--city`` takes a place/district slug (``frederiksberg``, ``aarhus c``).
     """
     params: list[tuple[str, str]] = []
@@ -675,7 +675,7 @@ def _buy_case_params(args: argparse.Namespace) -> list[tuple[str, str]]:
     if args.max_rooms:
         params.append(("numberOfRoomsMax", args.max_rooms))
     # Floor (stueetage / ground floor == 0). Use `is not None` so floor 0 isn't
-    # dropped as falsy. floorMax alone - especially =0 - 400s, so default
+    # dropped as falsy. floorMax alone — especially =0 — 400s, so default
     # floorMin to 0 when only an upper bound is given (floors start at ground).
     min_floor, max_floor = args.min_floor, args.max_floor
     if max_floor is not None and min_floor is None:
@@ -703,48 +703,43 @@ def cmd_buy_cases(args: argparse.Namespace) -> None:
 
     if args.keyword:
         cases, scanned, fetched, cached = _buy_cases_by_keyword(args, base)
-    else:
-        # Auto-paginate until we have enough results or run out of pages
-        cases: list[dict] = []
-        page = 1
-        per_page = min(args.limit, 50)  # API default is 50
-        while len(cases) < args.limit:
-            params = base + [("page", str(page)), ("per_page", str(per_page))]
-            resp = _buy_get("/search/cases", params)
-            page_cases = resp.get("cases") or []
-            if not page_cases:
-                break
-            cases.extend(page_cases)
-            if len(page_cases) < per_page:  # Last page
-                break
-            page += 1
-
-        # Trim to limit
-        cases = cases[: args.limit]
-
         if args.raw:
-            _emit({"cases": cases, "totalHits": len(cases)}, raw=True)
+            _emit(cases, raw=True)
             return
-
-        print(f"# {len(cases)} listing(s)")
+        deep = f", {fetched} deep fetch(es), {cached} cached" if args.deep else ""
+        print(
+            f"# {len(cases)} match(es) for "
+            f"{args.match}({', '.join(args.keyword)}) "
+            f"after scanning {scanned} listing(s){deep}"
+        )
         for case in cases:
             _buy_print_case(case)
         return
 
-    # Keyword search path - print results with scan stats
+    # Auto-paginate until we have enough results or run out of pages
+    cases: list[dict] = []
+    page = 1
+    per_page = min(args.limit, 50)  # API default is 50
+    while len(cases) < args.limit:
+        params = base + [("page", str(page)), ("per_page", str(per_page))]
+        resp = _buy_get("/search/cases", params)
+        page_cases = resp.get("cases") or []
+        if not page_cases:
+            break
+        cases.extend(page_cases)
+        if len(page_cases) < per_page:  # Last page
+            break
+        page += 1
+
+    # Trim to limit
+    cases = cases[: args.limit]
+
     if args.raw:
         _emit({"cases": cases, "totalHits": len(cases)}, raw=True)
         return
 
-    if args.deep:
-        stats = f", {fetched} fetch(es), {cached} cached"
-    else:
-        stats = f", {fetched} fetch(es)"
-    print(
-        f"# {len(cases)} match(es) for "
-        f"{args.match}({', '.join(args.keyword)}) "
-        f"after scanning {scanned} listing(s){stats}"
-    )
+    total = resp.get("totalHits", 0)  # From last response
+    print(f"# {total} total, showing {len(cases)}")
     for case in cases:
         _buy_print_case(case)
 
@@ -804,13 +799,13 @@ def _buy_fetch_full_text(url: str) -> str | None:
     Cloudflare-gated, but each case's ``caseUrl`` redirects to the realtor's own
     listing page, which carries the full text and is not gated. Rather than keep
     the whole page (agencies differ and new ones keep appearing), we pull only
-    the standard description fields - JSON-LD ``description``, then
-    ``og:``/``meta`` description - which are agency-agnostic. Only if neither
+    the standard description fields — JSON-LD ``description``, then
+    ``og:``/``meta`` description — which are agency-agnostic. Only if neither
     exists do we fall back to the few longest visible text blocks. Both the
     download and the kept text are capped.
 
     Returns the extracted text (possibly ``""`` if the page has no usable
-    server-side text - e.g. JS-rendered), or ``None`` on a fetch error so the
+    server-side text — e.g. JS-rendered), or ``None`` on a fetch error so the
     caller can choose not to cache it and retry later.
     """
     req = urllib.request.Request(
@@ -958,7 +953,7 @@ def _buy_print_case(case: dict) -> None:
         f"{addr.get('cityName', '?')} {addr.get('zipCode', '?')}\t"
         f"{case.get('addressType', '?')}\t"
         f"{case.get('numberOfRooms', '?')} værelser\t"
-        f"{case.get('housingArea', '?')} m2\t"
+        f"{case.get('housingArea', '?')} m²\t"
         f"{price:,.0f} kr\t"
         f"{case.get('descriptionTitle') or 'Uden titel'}\t"
         f"{url}"
@@ -1059,8 +1054,8 @@ def _add_rent_filters(p: argparse.ArgumentParser) -> None:
         choices=["apartment", "room", "house", "townhouse", "student"],
         help="property type",
     )
-    p.add_argument("--min-area", dest="min_area", help="minimum area in m2")
-    p.add_argument("--max-area", dest="max_area", help="maximum area in m2")
+    p.add_argument("--min-area", dest="min_area", help="minimum area in m²")
+    p.add_argument("--max-area", dest="max_area", help="maximum area in m²")
     p.add_argument("--min-rooms", dest="min_rooms", help="minimum rooms")
     p.add_argument("--max-rooms", dest="max_rooms", help="maximum rooms")
     p.add_argument("--min-price", dest="min_price", help="minimum price DKK")
@@ -1118,7 +1113,7 @@ def _add_keyword_opts(p: argparse.ArgumentParser, default_scan: int) -> None:
 
 def _build_rent_parser(sub: t.Any) -> None:
     """Register the ``rent`` (boligportal.dk) command group."""
-    rent = sub.add_parser("rent", help="boligportal.dk - rental housing marketplace")
+    rent = sub.add_parser("rent", help="boligportal.dk — rental housing marketplace")
     rsub = rent.add_subparsers(dest="cmd", required=True)
 
     p = rsub.add_parser(
@@ -1185,7 +1180,7 @@ def _add_buy_common(p: argparse.ArgumentParser) -> None:
 
 def _build_buy_parser(sub: t.Any) -> None:
     """Register the ``buy`` (boligsiden.dk) command group."""
-    buy = sub.add_parser("buy", help="boligsiden.dk - for-sale listing aggregator")
+    buy = sub.add_parser("buy", help="boligsiden.dk — for-sale listing aggregator")
     bsub = buy.add_subparsers(dest="cmd", required=True)
 
     p = bsub.add_parser("cases", help="search for-sale property listings")
@@ -1201,8 +1196,8 @@ def _build_buy_parser(sub: t.Any) -> None:
         dest="max_monthly_fee",
         help="maximum monthly owner expense (ejerudgift) in DKK",
     )
-    p.add_argument("--min-area", dest="min_area", help="minimum area in m2")
-    p.add_argument("--max-area", dest="max_area", help="maximum area in m2")
+    p.add_argument("--min-area", dest="min_area", help="minimum area in m²")
+    p.add_argument("--max-area", dest="max_area", help="maximum area in m²")
     p.add_argument("--min-rooms", dest="min_rooms", help="minimum rooms")
     p.add_argument("--max-rooms", dest="max_rooms", help="maximum rooms")
     p.add_argument(
@@ -1236,7 +1231,7 @@ def _build_buy_parser(sub: t.Any) -> None:
         "--type",
         action="append",
         help="property type, Danish or English (repeatable): lejlighed, villa, "
-        "rækkehus, andelsbolig, sommerhus, ...",
+        "rækkehus, andelsbolig, sommerhus, …",
     )
     _add_buy_common(p)
     _add_keyword_opts(p, default_scan=50)
@@ -1244,7 +1239,7 @@ def _build_buy_parser(sub: t.Any) -> None:
         "--deep",
         action="store_true",
         help="for -k: also fetch each candidate's full description from the "
-        "agency page (the API body is capped at ~500 chars). Slower - one "
+        "agency page (the API body is capped at ~500 chars). Slower — one "
         "request per non-matching candidate, bounded by --max-scan.",
     )
     p.add_argument(
