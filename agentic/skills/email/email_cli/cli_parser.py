@@ -27,7 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     """Build the top-level argument parser."""
     parser = argparse.ArgumentParser(
         prog="email",
-        description="Read and send email across Gmail (IMAP/SMTP) and Microsoft 365 (Graph).",
+        description="Read and send email across Gmail (IMAP/SMTP) and Microsoft 365 (Outlook on the web).",
     )
     sub = parser.add_subparsers(dest="resource", required=True)
 
@@ -41,7 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--provider",
         required=True,
         choices=["gmail", "m365", "imap"],
-        help="gmail (IMAP/SMTP preset), m365 (Microsoft Graph), or imap (custom hosts).",
+        help="gmail (IMAP/SMTP preset), m365 (Outlook on the web), or imap (custom hosts).",
     )
     add.add_argument("--email", required=True, help="The account's email address.")
     add.add_argument("--username", help="Login username if it differs from --email.")
@@ -59,9 +59,8 @@ def build_parser() -> argparse.ArgumentParser:
     add.add_argument("--client-id", help="Custom Azure app client id for m365.")
     add.add_argument(
         "--backend",
-        choices=["imap", "graph", "owa"],
-        help="Override the backend (m365 defaults to owa; use graph if your "
-        "tenant grants OAuth consent).",
+        choices=["imap", "owa"],
+        help="Override the backend (m365 defaults to owa).",
     )
     add.add_argument(
         "--default", action="store_true", help="Make this the default account."

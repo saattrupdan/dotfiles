@@ -221,69 +221,46 @@ class OwaBackend:
         )
 
     def login(self) -> str:
-        """Navigate to Outlook and poll for MFA code or inbox.
+        """Check if already logged in, if not instruct user to login manually.
 
-        Two-step flow:
-        1. Opens browser and navigates to Outlook login.
-        2. Waits for page to load, then polls for MFA code.
-        3. If MFA code found: returns it for user to enter in Authenticator.
-        4. If already logged in (inbox detected): completes verification immediately.
-        5. If timeout without MFA code: raises BackendError.
+        This method opens a headless browser to check auth state:
+        - If already logged in (has X-OWA-CANARY cookie): saves session and returns success
+        - If not logged in: returns instructions for manual login
+
+        For first-time login, user should:
+        1. Open https://outlook.office.com in their browser
+        2. Log in with credentials and MFA
+        3. Run: email login --complete
 
         Returns:
-            Message with MFA code or session saved confirmation.
-
-        Raises:
-            BackendError:
-                If timeout occurs without detecting MFA code or inbox.
+            Success message or instructions for manual login.
         """
-        self._browser.open(_MAIL_URL, headed=True)  # Headed: user needs to enter credentials
+        self._browser.open(_MAIL_URL, headed=False)
         self._browser.wait_load("networkidle")
 
-        # Poll for MFA code or inbox for ~60 seconds
-        max_wait = 60
-        interval = 2
-        elapsed = 0
+        # Check if already logged in
+        probe = self._browser.eval_json(
+            "(async()=>JSON.stringify({"
+            "url:location.href,"
+            "canary:/X-OWA-CANARY=/.test(document.cookie),"
+            "inbox:/mail/i.test(location.href)"
+            "}))()"
+        )
+        url = (probe or {}).get("url", "")
+        has_canary = (probe or {}).get("canary", False)
+        is_inbox = (probe or {}).get("inbox", False)
 
-        while elapsed < max_wait:
-            time.sleep(interval)
-            elapsed += interval
+        # Already logged in - save session
+        if is_inbox and has_canary:
+            self._browser.state_save()
+            return f"Signed in to Outlook on the web as {self._email} (session saved)."
 
-            # Check if already at inbox (already logged in)
-            probe = self._browser.eval_json(
-                "(async()=>JSON.stringify({"
-                "url:location.href,"
-                "canary:/X-OWA-CANARY=/.test(document.cookie),"
-                "inbox:/mail/i.test(location.href)"
-                "}))()"
-            )
-            url = (probe or {}).get("url", "")
-            has_canary = (probe or {}).get("canary", False)
-            is_inbox = (probe or {}).get("inbox", False)
-
-            # Already logged in - complete verification immediately
-            if is_inbox and has_canary:
-                return self.verify_and_save_session(timeout=max_wait - elapsed)
-
-            # Try to extract MFA code from the page
-            mfa_code = self._extract_mfa_code()
-            if mfa_code:
-                return (
-                    f"MFA code: {mfa_code}. Enter in Authenticator, "
-                    f"then run: email login --complete"
-                )
-
-            # Still on login page - keep polling
-            if "login.microsoftonline.com" in url:
-                continue
-
-            # On some other page (redirect in progress) - keep waiting
-            if not has_canary:
-                continue
-
-        raise BackendError(
-            f"OWA login timed out after {max_wait}s without detecting MFA code. "
-            "Enter your credentials on the login page, wait for MFA code to appear."
+        # Not logged in - instruct user to login manually
+        return (
+            "Not logged in to Outlook. To set up your work email:\n"
+            "1. Open https://outlook.office.com in your browser\n"
+            "2. Log in with dan.smart@alexandra.dk and complete MFA\n"
+            "3. Once logged in, run: email login --complete --account work"
         )
 
     # -- request plumbing ----------------------------------------------------

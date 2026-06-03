@@ -33,14 +33,10 @@ Each account has a **backend**, chosen by its provider:
 
 - **`gmail` / `imap`** → IMAP for reading, SMTP for sending, authenticated with a Google
   **app password** (not your normal password). Standard-library only.
-- **`m365` (default → `owa` backend)** → drives **Outlook on the web** through
-  `agent-browser`, reusing your own logged-in Microsoft session. Mailbox operations run
-  as same-origin calls inside the authenticated `outlook.office.com` page, so **no
-  API/OAuth consent is needed** — important because many corporate tenants (incl.
-  alexandra.dk) block the Graph consent flow entirely.
-- **`m365` with `--backend graph`** → **Microsoft Graph** with OAuth (MSAL device-code
-  flow). Cleaner and faster, but only works if your tenant grants consent for
-  `Mail.Read`/`Mail.Send`/`Mail.ReadWrite`.
+- **`m365`** → drives **Outlook on the web** through `agent-browser`, reusing your own
+  logged-in Microsoft session. Mailbox operations run as same-origin calls inside the
+  authenticated `outlook.office.com` page, so **no API/OAuth consent is needed** —
+  important because many corporate tenants block the Graph consent flow entirely.
 
 Config lives in `~/.email/accounts.json`. **Secrets are never stored there:** IMAP app
 passwords come from an environment variable; Graph tokens live in a private MSAL cache
@@ -66,14 +62,9 @@ pipx install -e <path-to-email-skill>
 
 - **Gmail:** create an **app password** at <https://myaccount.google.com/apppasswords>
   (requires 2-Step Verification) and ensure IMAP is enabled in Gmail settings.
-- **Microsoft 365 (default OWA backend):** requires the **`agent-browser`** CLI
-  (`which agent-browser` — install via the agent-browser skill). No API consent or app
-  registration needed; login is fully automated and headless.
-- **Microsoft 365 with `--backend graph`:** no app registration in tenants that allow it
-  — the default OAuth client is the public "Microsoft Graph Command Line Tools" app. If
-  login fails with a consent / `AADSTS` error, the tenant blocks it; either use the
-  default OWA backend instead, or register an Azure app with delegated
-  `Mail.Read`/`Mail.Send`/`Mail.ReadWrite` and pass `--client-id`.
+- **Microsoft 365:** requires the **`agent-browser`** CLI (`which agent-browser` —
+  install via the agent-browser skill). No API consent or app registration needed; login
+  is fully automated and headless.
 
 ## Configure accounts
 
