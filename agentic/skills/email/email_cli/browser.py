@@ -80,17 +80,23 @@ class BrowserSession:
     # -- scripting -----------------------------------------------------------
 
     def eval_json(self, js: str, *, timeout: int = 90):
-        """Evaluate ``js`` in the page and JSON-parse its (string) result.
+        """Evaluate ``js`` in the page and JSON-parse its result.
 
-        The script's last expression must resolve to a JSON string (typically an
-        ``async`` IIFE returning ``JSON.stringify(...)``); ``agent-browser eval``
-        prints that string verbatim, which we parse here.
+        The script's last expression should resolve to an object/array; ``agent-browser
+        eval`` outputs JSON, which we parse here. If the JS explicitly returns
+        ``JSON.stringify(...)``, the output will be double-encoded, so we parse twice
+        when the first parse yields a string.
         """
         out = self._run("eval", "--stdin", stdin=js, timeout=timeout).strip()
         if not out:
             return None
         try:
-            return json.loads(out)
+            result = json.loads(out)
+            # If JS returned JSON.stringify(...), agent-browser wraps it in quotes,
+            # so the first parse gives us a string that needs a second parse.
+            if isinstance(result, str):
+                result = json.loads(result)
+            return result
         except json.JSONDecodeError as exc:
             raise BackendError(
                 "Could not parse agent-browser eval output as JSON "

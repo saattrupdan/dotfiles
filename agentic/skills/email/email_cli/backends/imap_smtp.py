@@ -138,7 +138,7 @@ class ImapSmtpBackend:
         try:
             self._select(conn, folder, readonly=True)
             criteria = self._search_criteria(query, unread_only)
-            typ, data = conn.uid("search", None, *criteria)
+            typ, data = conn.uid("search", "", *criteria)
             if typ != "OK":
                 raise BackendError(f"IMAP search failed: {data!r}")
             uids = data[0].split()

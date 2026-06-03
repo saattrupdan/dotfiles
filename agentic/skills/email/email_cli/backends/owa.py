@@ -210,14 +210,14 @@ class OwaBackend:
 
         raise BackendError(
             f"OWA login timed out after {timeout}s. "
-            "Check the browser window for errors or try again."
+            "Retry or check that MFA was approved."
         )
 
     def login(self) -> str:
-        """Open Outlook headed and poll for MFA code or inbox.
+        """Open Outlook headless and poll for MFA code or inbox.
 
         Two-step flow:
-        1. Opens browser headed and tries to extract MFA code from the page.
+        1. Opens browser headless and tries to extract MFA code from the page.
         2. If MFA code found: prints it and returns instructions.
         3. If already logged in (inbox detected): completes verification immediately.
         4. If timeout without MFA code: raises BackendError.
@@ -229,8 +229,7 @@ class OwaBackend:
             BackendError:
                 If timeout occurs without detecting MFA code or inbox.
         """
-        self._browser.open(_MAIL_URL, headed=True)
-        print("\nOpening Outlook...")
+        self._browser.open(_MAIL_URL, headed=False)
 
         # Poll for MFA code or inbox for ~30 seconds
         max_wait = 30
@@ -260,9 +259,8 @@ class OwaBackend:
             # Try to extract MFA code from the page
             mfa_code = self._extract_mfa_code()
             if mfa_code:
-                print(f"\nMFA code: {mfa_code}")
                 return (
-                    f"Enter code {mfa_code} in Authenticator, "
+                    f"MFA code: {mfa_code}. Enter in Authenticator, "
                     f"then run: email login --complete"
                 )
 
@@ -272,7 +270,7 @@ class OwaBackend:
 
         raise BackendError(
             f"OWA login timed out after {max_wait}s without detecting MFA code. "
-            "Check the browser window for errors or try again."
+            "Retry or check that the account uses number-match MFA."
         )
 
     # -- request plumbing ----------------------------------------------------

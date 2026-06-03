@@ -2,7 +2,7 @@
 name: pi-extension
 description: Conventions and hard-won gotchas for writing pi (pi-coding-agent) extensions. Use when creating, editing, or debugging a pi extension, or when asked to change pi's behaviour — pi is changed by extending it, never by editing the installed package.
 tagline: Writing pi-coding-agent extensions — anatomy, events, ctx API, rendering limits
-last-updated: 2026-05-31
+last-updated: 2026-06-03
 autoload:
   tools:
     - read
@@ -30,7 +30,12 @@ Docs: <https://pi.dev/docs/latest/extensions>
 - One extension = a subdirectory of pi's **extensions directory** containing `index.ts`.
   That directory is `$PI_CODING_AGENT_DIR/extensions` (default `~/.pi/agent/extensions/`).
   Extensions are **auto-discovered** — no registration in `settings.json`.
-- `_`-prefixed dirs (e.g. `_outliner`, `_types`) are shared libs, **not** loaded as extensions.
+- Shared-lib dirs (conventionally `_`-prefixed, e.g. `_outliner`, `_types`) hold code reused
+  across extensions. **Discovery keys on the presence of `index.ts`, NOT the `_` prefix** — pi
+  loads any `<dir>/index.ts` as an extension factory and throws "does not export a valid factory
+  function" if it isn't one. So a shared lib's entry file must be named anything **but** `index.ts`
+  (convention here: `_outliner/outliner.ts`, `_question_protocol/protocol.ts`, `_lid_state/lid.ts`);
+  import it by that explicit filename.
 - TypeScript, loaded directly (no build step). Match the repo's style — typically tabs for
   indentation, `import type` for type-only imports, and a top-of-file doc comment.
 - Common lint (typescript-eslint recommended): unused handler args must be `_`-prefixed; avoid `any`.
@@ -94,5 +99,10 @@ export default function (pi: ExtensionAPI) {
   `<pkg>/dist/core/extensions/types.d.ts` (locate `<pkg>` via `npm root -g`/`@earendil-works/pi-coding-agent`,
   or next to the `pi` binary). When docs are thin, read the compiled `dist/` for real behaviour.
 - Interactive/TUI behaviour must be confirmed live (needs the TUI + a running model).
+- **Always smoke-test the loaded extension by running `pi -p "<prompt>"`** (print/headless
+  mode) before considering a change done. This actually loads every extension — so it catches
+  load-time failures (bad factory export, broken imports, the `index.ts` gotcha above) that a
+  transpile check misses — and lets you exercise the behaviour against a real prompt. A clean
+  run with no "Failed to load extension …" errors confirms discovery succeeded.
 
 See `README.md` for the full event list, `ctx.ui` surface, and worked examples.

@@ -17,6 +17,10 @@
  * dialogs are bridged to the parent — the parent's own listeners already
  * see those, so subagent-side notifications would just duplicate noise.
  *
+ * Non-interactive mode: when Pi runs with `-p` (print/headless mode), there
+ * is no UI and notifications are suppressed to avoid unwanted noise in
+ * scripted / CI contexts.
+ *
  * macOS-only. On other platforms the extension loads but does nothing.
  */
 
@@ -40,6 +44,7 @@ const SOUND_FAILED = "Basso";
 const MIN_GAP_MS = 400;
 
 let lastNotifyAt = 0;
+let hasUI = false;
 
 function escapeForAppleScript(s: string): string {
 	return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -47,6 +52,7 @@ function escapeForAppleScript(s: string): string {
 
 function notify(title: string, body: string, sound: string): void {
 	if (!IS_MACOS) return;
+	if (!hasUI) return;
 	const now = Date.now();
 	if (now - lastNotifyAt < MIN_GAP_MS) return;
 	lastNotifyAt = now;
@@ -73,6 +79,12 @@ export default function (pi: ExtensionAPI) {
 	// that actually matter to the human.
 	if (process.env.PI_SUBAGENT_CHILD === "1") return;
 	if (!IS_MACOS) return;
+
+	pi.on("session_start", (_event, ctx) => {
+		// In non-interactive / print mode (pi -p "..."), there's no UI and
+		// notifications would be unwanted noise. Gate on ctx.hasUI.
+		hasUI = ctx.hasUI;
+	});
 
 	pi.on("tool_call", async (event) => {
 		if (event.toolName !== "question") return;

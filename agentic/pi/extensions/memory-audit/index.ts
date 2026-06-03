@@ -17,6 +17,10 @@
  *    A memory is injected at most once per session (deduped via a per-session
  *    file so it survives extension hot-reloads). Memories without triggers are
  *    never auto-injected.
+ *
+ * Non-interactive mode: when Pi runs with `-p` (print/headless mode), there
+ * is no UI and all memory audit / injection is suppressed to avoid overhead
+ * in scripted / CI contexts.
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { writeFileSync, existsSync, readFileSync, mkdirSync } from "node:fs";
@@ -113,6 +117,13 @@ function formatMemories(mems: MemoryDoc[], blocked = false): string {
 }
 
 export default function (pi: ExtensionAPI) {
+	// In non-interactive / print mode (pi -p "..."), there's no UI and
+	// background memory audit is unnecessary overhead.
+	let hasUI = false;
+	pi.on("session_start", (_event, ctx) => {
+		hasUI = ctx.hasUI;
+	});
+
 	// In-memory mirror of the current session's injected set.
 	const injected = new Set<string>();
 	// Snapshot of memory keys that existed at session start — new memories saved
@@ -192,6 +203,7 @@ export default function (pi: ExtensionAPI) {
 
 	// Background memory audit — fires after each turn.
 	pi.on("turn_end", async () => {
+		if (!hasUI) return;
 		if (!touchCooldown()) return;
 		const { exec } = await import("node:child_process");
 		exec(`nohup bash -c '${AUDIT_SCRIPT}' </dev/null >/dev/null 2>&1 &`, () => {});
@@ -200,6 +212,7 @@ export default function (pi: ExtensionAPI) {
 	// Auto-inject on user input: startup + pattern triggers (matched against the
 	// message text). Prepended so the memories precede the user's request.
 	pi.on("input", async (event, ctx) => {
+		if (!hasUI) return { action: "continue" };
 		const query = event.text;
 		if (!query || query.trim().length < 3) {
 			return { action: "continue" };
@@ -219,6 +232,7 @@ export default function (pi: ExtensionAPI) {
 	// `pattern` is wired here — a bare `tool` trigger would block the first use of
 	// that tool every session, which is noise.
 	pi.on("tool_call", async (event, ctx) => {
+		if (!hasUI) return undefined;
 		const block = collect(
 			ctx,
 			{ tool_calls: [event.toolName], tool_input: JSON.stringify(event.input ?? {}) },
@@ -243,6 +257,7 @@ export default function (pi: ExtensionAPI) {
 	// tool name and its textual output). Appended to the tool result content so
 	// pattern triggers can fire on what a tool actually produced.
 	pi.on("tool_result", async (event, ctx) => {
+		if (!hasUI) return undefined;
 		const output = event.content
 			.filter((c): c is { type: "text"; text: string } => c.type === "text")
 			.map((c) => c.text)

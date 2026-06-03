@@ -37,6 +37,10 @@
  * Orchestrator-only: a subagent reports back to its parent rather than going
  * idle in front of the user, so a self-nudge there is just wasted tokens — and
  * the parent's own run already brackets the subagent's work.
+ *
+ * Non-interactive mode: when Pi runs with `-p` (print/headless mode), there
+ * is no UI and the double-check nudge is suppressed to avoid unwanted delay
+ * in scripted / CI contexts.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -127,6 +131,13 @@ export default function (pi: ExtensionAPI) {
 	// user; the parent's run already covers their work.
 	if (process.env.PI_SUBAGENT_CHILD === "1") return;
 
+	// In non-interactive / print mode (pi -p "..."), there's no UI and the
+	// double-check nudge would just add unwanted delay. Gate on ctx.hasUI.
+	let hasUI = false;
+	pi.on("session_start", (_event, ctx) => {
+		hasUI = ctx.hasUI;
+	});
+
 	// Arm on the start of a genuine run; the injected loop's own start is
 	// skipped so it can never re-arm itself.
 	pi.on("agent_start", async () => {
@@ -145,6 +156,7 @@ export default function (pi: ExtensionAPI) {
 		armed = false;
 
 		if (!sessionEnabled) return;
+		if (!hasUI) return;
 		// Only nudge when the run stopped mid-task (ended on a tool call or a
 		// bare thinking block), not when it gave a real answer.
 		if (!endedMidTask((event.messages ?? []) as MessageLike[])) return;

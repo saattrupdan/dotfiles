@@ -207,6 +207,7 @@ function startWatcher(): void {
 
 function engage(ctx: ExtensionContext): void {
 	if (!IS_MACOS || !sessionEnabled || engaged) return;
+	if (!ctx.hasUI) return;
 
 	// Clean up any stale hot-marker left from a prior crashed session.
 	fs.rmSync(HOT_MARKER_PATH, { force: true });
