@@ -517,16 +517,16 @@ class OwaBackend:
                 if in_message_body:
                     in_message_body = False
             
-            # Collect body paragraphs - skip signature and thread headers
+            # Collect body paragraphs - skip signature lines
             if in_message_body and 'paragraph' in line:
                 continue
             if in_message_body and 'StaticText' in line:
                 match = re.search(r'StaticText\s+"([^"]*)"', line)
                 if match:
                     text = match.group(1).strip()
-                    # Skip signature lines and thread headers (generic patterns)
-                    skip_patterns = ['---', 'Von:', 'Datum:', 'An:', 'Betreff:', 'Gesendet',
-                                     'Phone +', 'Register of associations', 'Authorized recipient']
+                    # Skip signature lines (generic patterns, language-agnostic)
+                    skip_patterns = ['---', 'Phone +', 'Register of associations', 
+                                     'Authorized recipient']
                     if text and not any(p.lower() in text.lower() for p in skip_patterns):
                         body_paragraphs.append(text)
         
