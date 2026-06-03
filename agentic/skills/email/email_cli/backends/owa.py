@@ -237,7 +237,7 @@ class OwaBackend:
             BackendError:
                 If timeout occurs without detecting MFA code or inbox.
         """
-        self._browser.open(_MAIL_URL, headed=False)
+        self._browser.open(_MAIL_URL, headed=True)  # Headed: Microsoft blocks headless
         self._browser.wait_load("networkidle")
 
         # Poll for MFA code or inbox for ~60 seconds (gives time for MFA prompt to appear)

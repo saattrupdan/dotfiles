@@ -68,7 +68,7 @@ pipx install -e <path-to-email-skill>
   (requires 2-Step Verification) and ensure IMAP is enabled in Gmail settings.
 - **Microsoft 365 (default OWA backend):** requires the **`agent-browser`** CLI
   (`which agent-browser` — install via the agent-browser skill). No API consent or app
-  registration needed; login is fully automated and headless.
+  registration needed; login opens a browser which the agent controls automatically.
 - **Microsoft 365 with `--backend graph`:** no app registration in tenants that allow it
   — the default OAuth client is the public "Microsoft Graph Command Line Tools" app. If
   login fails with a consent / `AADSTS` error, the tenant blocks it; either use the
@@ -110,7 +110,7 @@ email login --complete            # verify and save session after MFA
 
 The login flow uses a two-step process for MFA-enabled accounts:
 
-1. **`email login`** — opens a headless browser to the Outlook sign-in page and navigates
+1. **`email login`** — opens a browser to the Outlook sign-in page and navigates
    through the login flow. When MFA is triggered, the CLI extracts the 2-digit code from
    the page and displays it in the terminal. The user enters this code in their Microsoft
    Authenticator app to approve. The browser session remains open.
@@ -174,7 +174,7 @@ explicitly approved the exact message.
 - **`IMAP/SMTP login failed`** — wrong app password, or IMAP disabled in Gmail settings.
   Regenerate the app password.
 - **`Not signed in …`** — run `email login --account NAME` (Graph token or OWA session
-  missing/expired). The OWA backend uses a headless browser for MFA approval.
+  missing/expired). The OWA backend uses a browser for automated MFA approval.
 - **`agent-browser is not installed …`** — the OWA backend needs the `agent-browser`
   CLI; install it via the agent-browser skill.
 - **Graph login `AADSTS` / consent error** — the tenant blocks OAuth. Use the default
