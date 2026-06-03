@@ -313,100 +313,96 @@ class OwaBackend:
         self._wait_for_snapshot(timeout=10)
 
     def _parse_email_list_from_dom(self, limit: int) -> list[Message]:
-        """Parse email list from the DOM accessibility tree."""
+        """Parse email list from the DOM accessibility tree.
+        
+        Extracts sender/subject from option element text using heuristics.
+        """
+        import re
         snapshot = self._browser._run("snapshot", timeout=30)
         
         messages = []
         lines = snapshot.split("\n") if snapshot else []
-        import re
+        
+        def parse_sender_subject(text: str) -> tuple[str, str]:
+            """Parse 'Sender Subject' from list view text."""
+            # 1. Handle email sender
+            if '@' in text:
+                match = re.search(r'[\w.-]+@[\w.-]+\.[a-z]{2,}', text, re.IGNORECASE)
+                if match:
+                    sender = text[:match.end()].strip()
+                    subject = text[match.end():].strip()
+                    return sender, subject
+            
+            # 2. Handle multi-sender (semicolons)
+            if ';' in text:
+                sender = text.split(';')[0].strip()
+                rest = text.split(';', 1)[1] if ';' in text else ''
+                # Find subject: skip additional senders
+                parts = rest.split(';')
+                last_part = parts[-1].strip() if parts else ''
+                if ',' in last_part:
+                    subject_match = re.search(r',\s*[A-Za-zÀ-ÿ]+\s+(.+)', last_part)
+                    if subject_match:
+                        return sender, subject_match.group(1).strip()
+                return sender, last_part
+            
+            # 3. Handle repeated name (e.g. "Torben Blach Torben Blach shared...")
+            words = text.split()
+            for i in range(2, len(words) // 2 + 1):
+                first = ' '.join(words[:i])
+                second = ' '.join(words[i:i*2])
+                if first == second:
+                    return first, ' '.join(words[i:])
+            
+            # 4. Check for "Last, First" pattern
+            if ',' in text and len(words) >= 3:
+                if re.match(r'^[A-Z][a-z]+,\s+[A-Z]', text):
+                    for i in range(2, len(words)):
+                        if words[i].isalpha() and words[i][0].isupper() and len(words[i]) < 15:
+                            continue
+                        return ' '.join(words[:i]), ' '.join(words[i:])
+                    return ' '.join(words[:3]), ' '.join(words[3:])
+            
+            # 5. Check for hyphenated surname
+            for i, word in enumerate(words[:3]):
+                if '-' in word:
+                    name_end = i + 1
+                    return ' '.join(words[:name_end]), ' '.join(words[name_end:])
+            
+            # 6. Default to 2 words as name
+            if len(words) >= 3:
+                return ' '.join(words[:2]), ' '.join(words[2:])
+            elif len(words) == 2:
+                return words[0], words[1]
+            
+            return text, ""
         
         idx = 0
         for line in lines:
             if len(messages) >= limit:
                 break
             
-            # Look for option elements which represent emails in the list
-            # Format: option "Collapsed Has attachments Pinned SenderName Subject time preview..." [ref=e123]
-            match = re.search(r'option\s+"(.+?)"\s+\[ref=e(\d+)\]', line)
+            # Look for option elements
+            match = re.search(r'option\s+"(.+?)"\s+\[', line)
             if match:
                 text = match.group(1)
                 is_unread = "unread" in line.lower()
                 
-                # Remove status prefixes (can be multiple)
+                # Remove status prefixes
                 prefixes = r'(Collapsed|Has attachments|Pinned|Replied|New)'
-                while re.match(rf'^{prefixes}\s+', text):
-                    text = re.sub(rf'^{prefixes}\s+', '', text)
+                while re.match(rf'^{prefixes}\s+', text, re.IGNORECASE):
+                    text = re.sub(rf'^{prefixes}\s+', '', text, flags=re.IGNORECASE)
                 
-                # Look for time pattern (HH:MM) - this marks start of preview
+                # Find time pattern - it separates metadata from preview
                 time_match = re.search(r'\b(\d{1,2}:\d{2})\b', text)
                 if time_match:
                     before_time = text[:time_match.start()].strip()
-                    
-                    # Remove trailing day abbreviation if present (Mon, Tue, Wed, etc.)
+                    # Remove trailing day abbreviation
                     before_time = re.sub(r'\s+(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s*$', '', before_time)
                     
-                    # Sender typically ends where subject begins
-                    # For most emails: "Sender Subject" where Subject often starts with a capital word or is short
-                    # Parse backwards from time: the last capitalized word(s) before time is usually subject
-                    words = before_time.split()
-                    
-                    # Subject is usually 1-3 words before time, sender is before that
-                    # Look for email @ or semicolon for multi-sender
-                    if "@" in before_time or ";" in before_time:
-                        # Has email or semicolon - use as splitting point
-                        if ";" in before_time:
-                            parts = before_time.split(";")
-                            sender = parts[0].strip()
-                            subject = ";".join(parts[1:]).strip()
-                        elif "@" in before_time:
-                            # Email address present - find it
-                            email_match = re.search(r'[\w.+-]+@[\w.-]+\.[a-z]{2,}', before_time)
-                            if email_match:
-                                if email_match.start() == 0:
-                                    # Email at start - sender is the email, rest is subject
-                                    sender = email_match.group()
-                                    subject = before_time[email_match.end():].strip()
-                                elif email_match.end() == len(before_time):
-                                    # Email at end - everything before is sender
-                                    sender = before_time[:email_match.start()].strip()
-                                    subject = ""
-                                else:
-                                    # Email in middle
-                                    sender = before_time[:email_match.start()].strip()
-                                    subject = before_time[email_match.end():].strip()
-                            else:
-                                sender = before_time[:40]
-                                subject = before_time[40:]
-                        else:
-                            sender = before_time
-                            subject = ""
-                    else:
-                        # No email/semicolon - guess based on word patterns
-                        if len(words) <= 2:
-                            # Very short - probably just sender or just subject
-                            sender = before_time
-                            subject = ""
-                        elif len(words) <= 4:
-                            # 3-4 words: could be "FirstName LastName Subject" or "Sender Subject"
-                            # If any word has hyphen and looks like surname, assume "First Last Subject"
-                            has_hyphenated = any('-' in w for w in words[:2])
-                            if has_hyphenated:
-                                # Likely "FirstName LastName Subject"
-                                sender = " ".join(words[:2])
-                                subject = " ".join(words[2:])
-                            else:
-                                # Default: first 2 words sender, rest subject
-                                sender = " ".join(words[:2])
-                                subject = " ".join(words[2:])
-                        else:
-                            # More words: first 2-3 are sender, rest is subject
-                            sender_end = min(3, max(2, len(words) // 3))
-                            sender = " ".join(words[:sender_end])
-                            subject = " ".join(words[sender_end:])
+                    sender, subject = parse_sender_subject(before_time)
                 else:
-                    # No time found - use fallback
-                    sender = text[:50]
-                    subject = text[50:100] if len(text) > 50 else ""
+                    sender, subject = text[:50], text[50:100] if len(text) > 50 else ""
                 
                 messages.append(Message(
                     id=f"dom_{idx}",
