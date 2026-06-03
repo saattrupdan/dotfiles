@@ -502,16 +502,19 @@ class OwaBackend:
                         to_recipients = [r.strip() for r in to_text.split(',') if r.strip()]
                     elif re.match(r'\w{3}\s+\d{2}/\d{2}/\d{4}', text) and not date_str:
                         date_str = text
-                    # Subject heading (appears in header bar with "Research Remove" actions)
-                    elif not subject and 'Research' in text and 'Remove' in text:
-                        # Clean up: "Subject Research Research Remove Research"
-                        subject = text.replace(' Research', '').replace(' Remove', '').strip()
-                        # Clean up escaped quotes in subject
-                        subject = subject.replace('\\"', '"')
-                    # Fallback: plain subject without Research/Remove
-                    elif not subject and 'Research' not in text and 'Remove' not in text and 'From:' not in text and 'To:' not in text:
+                    # Subject heading (appears in header bar with action buttons)
+                    # Pattern: "Subject Action Action Remove Action [Extra]"
+                    if not subject and 'Remove' in text:
+                        # Match pattern: word repeated 3x with Remove in middle
+                        match = re.search(r'^(.+?)\s+\w+\s+\w+\s+Remove\s+\w+', text)
+                        if match:
+                            subject = match.group(1)
+                        else:
+                            subject = text[:80]
+                    # Fallback: plain subject without Remove action
+                    elif not subject and 'Remove' not in text and 'From:' not in text and 'To:' not in text:
                         if not re.match(r'\w{3}\s+\d{2}/\d{2}/\d{4}', text):  # Not a date
-                            subject = text[:80].replace('\\"', '"')
+                            subject = text[:80]
             
             # Document body section
             if 'document' in line and 'Message body' in line:
@@ -543,17 +546,33 @@ class OwaBackend:
                         in_message_body = False  # Stop at quoted header
                         continue
                     # Skip signature lines and UI text
-                    skip_patterns = ['---', 'Phone +', 'Register of associations', 
-                                     'Authorized recipient', 'This email is generated',
-                                     r'Reply\b', r'Reply all', r'Forward\b',
-                                     'This invite will only work', r'Open\s*$']
+                    skip_patterns = [r'---', r'Phone \+', r'Register of associations', 
+                                     r'Authorized recipient', r'This email is generated',
+                                     r'^Reply\s*$', r'^Reply all\s*$', r'^Forward\s*$',  # UI buttons (exact match)
+                                     r'This invite will only work', r'Open\s*$',
+                                     r'^Følg os', r'Abonner på', r'^[A-Z][A-Z\s]{20,}$',  # ALL CAPS (20+ chars)
+                                     r'^_{10,}',  # Underscore lines
+                                     r'^Mobil\b', r'^Hovednr\.?\b', r'^E-mail\b', r'^Web\b',
+                                     r'^\+?\s*\d{2,4}\s+\d{2,4}\s+\d{2,4}\s+\d{2,4}$',  # Phone numbers
+                                     r'^\d{4}\s+[A-Z]',  # Addresses like "2100 København Ø"
+                                     r'^RESTRICTED$', r'^CONFIDENTIAL$', r'^INTERNAL$']  # Classification banners
                     if text and not any(re.search(p, text, re.IGNORECASE) for p in skip_patterns):
+                        # Check for signature markers
+                        if text.startswith('Med venlig hilsen') or text.startswith('Best regards') or \
+                           text.startswith('Venlig hilsen') or text.startswith('Kind regards') or \
+                           text.startswith('Mvh ') or (re.match(r'^[A-Z\s/]+$', text) and len(text) > 5):  # ALL CAPS names
+                            in_message_body = False
+                            continue
                         body_paragraphs.append(text)
         
         body_text = "\n\n".join(body_paragraphs) if body_paragraphs else ""
         
         # Format sender (skip if it's the same as what appears in subject line)
         sender = sender_name.strip() if sender_name else "Unknown"
+        
+        # Clean up subject - unescape any remaining escape sequences
+        if subject:
+            subject = subject.replace('\\"', '"').replace("\\'", "'").replace('\\n', '\n')
         
         # Format for Message object
         message = Message(
