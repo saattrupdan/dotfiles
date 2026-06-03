@@ -319,18 +319,16 @@ class OwaBackend:
         lines = snapshot.split("\n") if snapshot else []
         import re
         
+        idx = 0
         for line in lines:
             if len(messages) >= limit:
                 break
             
             # Look for option elements which represent emails in the list
             # Format: option "Collapsed Has attachments Pinned SenderName Subject time preview..." [ref=e123]
-            match = re.search(r'option\s+"([^"]+)"\s+\[ref=e(\d+)\]', line)
+            match = re.search(r'option\s+"(.+?)"\s+\[ref=e(\d+)\]', line)
             if match:
                 text = match.group(1)
-                ref = match.group(2)
-                
-                # Check if unread
                 is_unread = "unread" in line.lower()
                 
                 # Remove status prefixes (can be multiple)
@@ -410,13 +408,14 @@ class OwaBackend:
                     subject = text[50:100] if len(text) > 50 else ""
                 
                 messages.append(Message(
-                    id=f"dom_{ref}",
+                    id=f"dom_{idx}",
                     date="",
                     sender=sender.strip() if sender else "Unknown",
                     subject=subject.strip() if subject else (text[:50] if text else "No subject"),
                     unread=is_unread,
                     to=[],
                 ))
+                idx += 1
         
         return messages[:limit]
 
