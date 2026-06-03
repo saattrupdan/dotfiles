@@ -1,0 +1,7 @@
+{
+  "name": "@pi/lid-state",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared library for detecting macOS lid state"
+}

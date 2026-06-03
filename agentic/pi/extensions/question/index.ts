@@ -41,6 +41,8 @@ import type { ExtensionAPI, ExtensionContext, ExtensionUIContext } from "@earend
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
+import { isLidClosed } from "../_lid_state/lid.ts";
+
 import {
 	encodeRequest,
 	tryParseResponse,
@@ -249,6 +251,17 @@ export async function dispatchAsk(
 				"Pick the approach you think is best and state your assumption.",
 		};
 	}
+
+	// Lid closed → no interactive UI is possible (screen is off).
+	// Refuse with a clear error so the model picks a default.
+	if (isLidClosed()) {
+		return {
+			error:
+				"Lid is closed — interactive questions are unavailable. " +
+				"Open the lid or pick a sensible default and proceed.",
+		};
+	}
+
 	if (ctx.hasUI) {
 		return askLocally(ctx.ui, questions, signal);
 	}
