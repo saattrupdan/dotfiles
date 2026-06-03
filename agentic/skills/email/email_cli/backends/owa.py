@@ -313,53 +313,112 @@ class OwaBackend:
 
     def _parse_email_list_from_dom(self, limit: int) -> list[Message]:
         """Parse email list from the DOM accessibility tree."""
-        snapshot = self._browser._run("snapshot", "-i", timeout=30)
+        snapshot = self._browser._run("snapshot", timeout=30)
         
         messages = []
         lines = snapshot.split("\n") if snapshot else []
+        import re
         
         for line in lines:
             if len(messages) >= limit:
                 break
             
-            # Look for email entries - they typically have sender name, subject, date
-            # Pattern: "Research TB Torben Blach Torben Blach shared ..."
-            # Or: "SI Signe Ingholt-Gaarde LUMA faktura"
-            
-            # Extract from snapshot entries like:
-            # - listitem "Mail from John Doe: Subject line" [ref=e123] unread
-            
-            if "listitem" in line and ("Mail" in line or "@" in line):
-                # Parse the message entry
-                import re
+            # Look for option elements which represent emails in the list
+            # Format: option "Collapsed Has attachments Pinned SenderName Subject time preview..." [ref=e123]
+            match = re.search(r'option\s+"([^"]+)"\s+\[ref=e(\d+)\]', line)
+            if match:
+                text = match.group(1)
+                ref = match.group(2)
                 
-                # Try to extract sender, subject, and unread status
-                match = re.search(r'listitem\s+"([^"]+)".*?(unread)?', line, re.IGNORECASE)
-                if match:
-                    text = match.group(1)
-                    is_unread = "unread" in line.lower()
+                # Check if unread
+                is_unread = "unread" in line.lower()
+                
+                # Remove status prefixes (can be multiple)
+                prefixes = r'(Collapsed|Has attachments|Pinned|Replied|New)'
+                while re.match(rf'^{prefixes}\s+', text):
+                    text = re.sub(rf'^{prefixes}\s+', '', text)
+                
+                # Look for time pattern (HH:MM) - this marks start of preview
+                time_match = re.search(r'\b(\d{1,2}:\d{2})\b', text)
+                if time_match:
+                    before_time = text[:time_match.start()].strip()
                     
-                    # Parse "Mail from X: Y" format or similar
-                    if ":" in text:
-                        parts = text.split(":", 1)
-                        sender = parts[0].replace("Mail from", "").strip()
-                        subject = parts[1].strip() if len(parts) > 1 else ""
+                    # Remove trailing day abbreviation if present (Mon, Tue, Wed, etc.)
+                    before_time = re.sub(r'\s+(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s*$', '', before_time)
+                    
+                    # Sender typically ends where subject begins
+                    # For most emails: "Sender Subject" where Subject often starts with a capital word or is short
+                    # Parse backwards from time: the last capitalized word(s) before time is usually subject
+                    words = before_time.split()
+                    
+                    # Subject is usually 1-3 words before time, sender is before that
+                    # Look for email @ or semicolon for multi-sender
+                    if "@" in before_time or ";" in before_time:
+                        # Has email or semicolon - use as splitting point
+                        if ";" in before_time:
+                            parts = before_time.split(";")
+                            sender = parts[0].strip()
+                            subject = ";".join(parts[1:]).strip()
+                        elif "@" in before_time:
+                            # Email address present - find it
+                            email_match = re.search(r'[\w.+-]+@[\w.-]+\.[a-z]{2,}', before_time)
+                            if email_match:
+                                if email_match.start() == 0:
+                                    # Email at start - sender is the email, rest is subject
+                                    sender = email_match.group()
+                                    subject = before_time[email_match.end():].strip()
+                                elif email_match.end() == len(before_time):
+                                    # Email at end - everything before is sender
+                                    sender = before_time[:email_match.start()].strip()
+                                    subject = ""
+                                else:
+                                    # Email in middle
+                                    sender = before_time[:email_match.start()].strip()
+                                    subject = before_time[email_match.end():].strip()
+                            else:
+                                sender = before_time[:40]
+                                subject = before_time[40:]
+                        else:
+                            sender = before_time
+                            subject = ""
                     else:
-                        # Try to parse from first few words
-                        words = text.split()
-                        sender = " ".join(words[:2]) if len(words) > 2 else text[:30]
-                        subject = text[30:] if len(text) > 30 else ""
-                    
-                    messages.append(Message(
-                        id=f"dom_{len(messages)}",
-                        date="",
-                        sender=sender,
-                        subject=subject,
-                        unread=is_unread,
-                        to=[],
-                    ))
+                        # No email/semicolon - guess based on word patterns
+                        if len(words) <= 2:
+                            # Very short - probably just sender or just subject
+                            sender = before_time
+                            subject = ""
+                        elif len(words) <= 4:
+                            # 3-4 words: could be "FirstName LastName Subject" or "Sender Subject"
+                            # If any word has hyphen and looks like surname, assume "First Last Subject"
+                            has_hyphenated = any('-' in w for w in words[:2])
+                            if has_hyphenated:
+                                # Likely "FirstName LastName Subject"
+                                sender = " ".join(words[:2])
+                                subject = " ".join(words[2:])
+                            else:
+                                # Default: first 2 words sender, rest subject
+                                sender = " ".join(words[:2])
+                                subject = " ".join(words[2:])
+                        else:
+                            # More words: first 2-3 are sender, rest is subject
+                            sender_end = min(3, max(2, len(words) // 3))
+                            sender = " ".join(words[:sender_end])
+                            subject = " ".join(words[sender_end:])
+                else:
+                    # No time found - use fallback
+                    sender = text[:50]
+                    subject = text[50:100] if len(text) > 50 else ""
+                
+                messages.append(Message(
+                    id=f"dom_{ref}",
+                    date="",
+                    sender=sender.strip() if sender else "Unknown",
+                    subject=subject.strip() if subject else (text[:50] if text else "No subject"),
+                    unread=is_unread,
+                    to=[],
+                ))
         
-        return messages
+        return messages[:limit]
 
     def list_messages(
         self,
@@ -405,14 +464,14 @@ class OwaBackend:
             self._navigate_to_folder("inbox")
             
             # Get snapshot and find the email ref
-            snapshot = self._browser._run("snapshot", "-i", timeout=30)
+            snapshot = self._browser._run("snapshot", timeout=30)
             
-            # Find listitem refs (email entries)
+            # Find option refs (email entries)
             import re
-            listitems = re.findall(r'listitem.*?\[ref=e(\d+)\]', snapshot, re.IGNORECASE)
+            options = re.findall(r'option.*?\[ref=e(\d+)\]', snapshot, re.IGNORECASE)
             
-            if index < len(listitems):
-                ref = f"@e{listitems[index]}"
+            if index < len(options):
+                ref = f"@e{options[index]}"
                 try:
                     self._browser._run("click", ref)
                     self._wait_for_snapshot(timeout=5)

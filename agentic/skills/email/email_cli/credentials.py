@@ -5,13 +5,17 @@ from __future__ import annotations
 
 import subprocess
 
-import security
-
 
 def get_credential(service: str, key: str) -> str | None:
     """Get a credential from macOS Keychain."""
     try:
-        return security.find_generic_password(service, key)
+        result = subprocess.run(
+            ["security", "find-generic-password", "-s", service, "-a", key, "-w"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout.strip()
     except subprocess.CalledProcessError:
         return None
 
