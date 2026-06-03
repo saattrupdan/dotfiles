@@ -110,48 +110,55 @@ class OwaBackend:
     def _extract_mfa_code(self) -> str | None:
         """Extract MFA code from Microsoft login page using browser eval.
 
-        Tries multiple strategies to find the 2-3 digit code displayed on the
-        MFA challenge page. Returns the code if found, None otherwise.
+        Tries multiple strategies to find the 2-digit code displayed on the
+        MFA challenge page (Microsoft number-match). Returns the code if found, None otherwise.
         """
-        # Strategy 1: Look for elements containing 2-3 digit numbers
+        # Strategy: Generic scan for any 2-digit number that appears standalone
+        # Microsoft shows it prominently like "Enter 42" or just "42"
         js_extract = r"""
         (() => {
-            // Scan all text nodes for 2-3 digit patterns near MFA-related text
-            const walker = document.createTreeWalker(
-                document.body,
-                NodeFilter.SHOW_TEXT,
-                null
-            );
-            const mfaPattern = /(?:enter|match|code|number)[:\s]*(\d{2,3})/i;
-            let node;
-            while ((node = walker.nextNode())) {
-                const text = node.textContent || '';
-                const match = text.match(mfaPattern);
+            // Get all visible text and look for 2-digit numbers
+            const allText = (document.body.innerText || '').trim();
+            const lines = allText.split(/\n/).map(l => l.trim()).filter(l => l);
+            
+            // Strategy 1: Look for lines that are just 2-digit numbers
+            for (const line of lines) {
+                if (/^\d{2}$/.test(line)) return line;
+            }
+            
+            // Strategy 2: Look for "Enter XX" or "Code XX" patterns
+            const patterns = [
+                /enter\s+(\d{2})/i,
+                /code\s*:?\s*(\d{2})/i,
+                /number\s*:?\s*(\d{2})/i,
+                /match\s*:?\s*(\d{2})/i,
+            ];
+            for (const pattern of patterns) {
+                const match = allText.match(pattern);
                 if (match) return match[1];
             }
             
-            // Strategy 2: Look for standalone 2-3 digit numbers in likely elements
-            const selectors = [
-                'span', 'div', 'p', 'h1', 'h2', 'h3',
-                '[role="heading"]', '[aria-label*="number"]',
-                '.number', '#number', '[data-type="number"]'
+            // Strategy 3: Look for 2-digit numbers in prominent elements
+            const prominentSelectors = [
+                'h1', 'h2', 'h3', 'h4',
+                '[role="heading"]',
+                '.text-body-strong', '.text-body-large',
+                'p:has-child(:not(span))'
             ];
-            const standalonePattern = /^\s*(\d{2,3})\s*$/;
-            for (const sel of selectors) {
-                const els = document.querySelectorAll(sel);
-                for (const el of els) {
-                    const text = el.textContent || '';
-                    const match = text.match(standalonePattern);
-                    if (match) return match[1];
-                }
+            for (const sel of prominentSelectors) {
+                try {
+                    const els = document.querySelectorAll(sel);
+                    for (const el of els) {
+                        const text = el.textContent || '';
+                        const numMatch = text.match(/\b(\d{2})\b/);
+                        if (numMatch) return numMatch[1];
+                    }
+                } catch (e) {}
             }
             
-            // Strategy 3: Generic scan for any 2-3 digit number in visible text
-            const allText = document.body.innerText || '';
-            const numbers = allText.match(/\b(\d{2,3})\b/g);
-            if (numbers && numbers.length > 0) {
-                return numbers[0];
-            }
+            // Fallback: any 2-digit number in the page
+            const allNumbers = allText.match(/\b(\d{2})\b/g);
+            if (allNumbers) return allNumbers[0];
             
             return null;
         })()
@@ -217,10 +224,11 @@ class OwaBackend:
         """Open Outlook headless and poll for MFA code or inbox.
 
         Two-step flow:
-        1. Opens browser headless and tries to extract MFA code from the page.
-        2. If MFA code found: prints it and returns instructions.
-        3. If already logged in (inbox detected): completes verification immediately.
-        4. If timeout without MFA code: raises BackendError.
+        1. Opens browser headless and navigates to Outlook login.
+        2. Waits for page to load, then polls for MFA code.
+        3. If MFA code found: returns it for user to enter in Authenticator.
+        4. If already logged in (inbox detected): completes verification immediately.
+        5. If timeout without MFA code: raises BackendError.
 
         Returns:
             Message with MFA code or session saved confirmation.
@@ -230,9 +238,10 @@ class OwaBackend:
                 If timeout occurs without detecting MFA code or inbox.
         """
         self._browser.open(_MAIL_URL, headed=False)
+        self._browser.wait_load("networkidle")
 
-        # Poll for MFA code or inbox for ~30 seconds
-        max_wait = 30
+        # Poll for MFA code or inbox for ~60 seconds (gives time for MFA prompt to appear)
+        max_wait = 60
         interval = 2
         elapsed = 0
 
@@ -266,6 +275,10 @@ class OwaBackend:
 
             # Still on login page - keep polling
             if "login.microsoftonline.com" in url:
+                continue
+
+            # On some other page (redirect in progress) - keep waiting
+            if not has_canary:
                 continue
 
         raise BackendError(
