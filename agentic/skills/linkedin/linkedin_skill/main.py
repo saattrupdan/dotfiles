@@ -21,6 +21,7 @@ import logging
 import re
 import subprocess
 import sys
+import typing as t
 from pathlib import Path
 
 SESSION_FILE = Path.home() / ".linkedin-session.json"
@@ -367,9 +368,11 @@ def cmd_posts(args: argparse.Namespace) -> int:
     ab("wait", "--load", "networkidle", check=False)
 
     keep = "true" if args.include_reposts else "false"
-    extract = lambda limit: ab_eval(  # noqa: E731
-        TOPLEVEL_JS.replace("LIMIT", str(limit)).replace("KEEP", keep)
-    ) or []
+
+    def extract(limit: int) -> list[dict[str, t.Any]]:
+        """Extract posts from LinkedIn feed using JS evaluation."""
+        result = ab_eval(TOPLEVEL_JS.replace("LIMIT", str(limit)).replace("KEEP", keep))
+        return result or []
 
     # Lazy-load until we have enough qualifying posts (or stop making progress).
     last = -1
@@ -407,7 +410,11 @@ def cmd_posts(args: argparse.Namespace) -> int:
         if p.get("repost"):
             tag = " [repost +commentary]" if p.get("commentary") else " [bare repost]"
         first_line = (p["text"].splitlines() or [""])[0]
-        body = p["text"] if args.full else (first_line[:100] + ("…" if len(first_line) > 100 else ""))
+        body = (
+            p["text"]
+            if args.full
+            else (first_line[:100] + ("…" if len(first_line) > 100 else ""))
+        )
         if not body:
             body = "[no text]"
         logger.info(
@@ -434,7 +441,11 @@ def cmd_posts(args: argparse.Namespace) -> int:
 # control absorb wording/locale changes (English + Danish) and minor relabels;
 # "contains" matching tolerates extra words. If LinkedIn renames something, add
 # a candidate here rather than touching the command logic.
-EDITOR_NAMES = ("text editor for creating content", "editor", "what do you want to talk about")
+EDITOR_NAMES = (
+    "text editor for creating content",
+    "editor",
+    "what do you want to talk about",
+)
 SHARE_TRIGGER = ("start a post", "opret et opslag", "start indl\u00e6g")
 BTN_POST = ("post", "opsl\u00e5", "del")
 BTN_CLOSE = ("close", "dismiss", "luk")
@@ -458,13 +469,15 @@ def parse_nodes(lines: list[str] | None = None) -> list[dict]:
         nm = NODE_RE.search(line)
         rm = REF_RE.search(line)
         if nm and rm:
-            nodes.append({
-                "role": nm.group("role").lower(),
-                "name": nm.group("name").strip(),
-                "ref": rm.group(1),
-                "disabled": "disabled" in line.lower(),
-                "line": line.strip(),
-            })
+            nodes.append(
+                {
+                    "role": nm.group("role").lower(),
+                    "name": nm.group("name").strip(),
+                    "ref": rm.group(1),
+                    "disabled": "disabled" in line.lower(),
+                    "line": line.strip(),
+                }
+            )
     return nodes
 
 
@@ -494,7 +507,9 @@ def find_node(
     return None
 
 
-def click_node(names, role: str | None = None, exact: bool = False, required: bool = True) -> bool:
+def click_node(
+    names, role: str | None = None, exact: bool = False, required: bool = True
+) -> bool:
     n = find_node(names, role=role, exact=exact)
     if not n:
         if required:
@@ -620,25 +635,46 @@ def cmd_drafts(args):
 # CLI
 # --------------------------------------------------------------------------- #
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="linkedin", description=__doc__.strip().splitlines()[0])
+    p = argparse.ArgumentParser(
+        prog="linkedin", description=__doc__.strip().splitlines()[0]
+    )
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sp = sub.add_parser("login", help="log in (saves session; --code for 2FA stage 2)")
     sp.add_argument("--code", help="authenticator code for stage 2 of login")
-    sp.add_argument("--force", action="store_true", help="re-login even if a session exists")
-    sp.add_argument("--wait-push", type=int, default=18, help="seconds to wait for an app-push approval before asking for a code")
+    sp.add_argument(
+        "--force", action="store_true", help="re-login even if a session exists"
+    )
+    sp.add_argument(
+        "--wait-push",
+        type=int,
+        default=18,
+        help="seconds to wait for an app-push approval before asking for a code",
+    )
     sp.set_defaults(func=cmd_login)
 
     sp = sub.add_parser("posts", help="fetch recent posts with engagement stats")
-    sp.add_argument("-n", "--number", type=int, default=10, help="how many posts (default 10)")
-    sp.add_argument("--full", action="store_true", help="print full post text, not just the first line")
-    sp.add_argument("--include-reposts", action="store_true", help="include bare reposts (reshares with no commentary of your own)")
+    sp.add_argument(
+        "-n", "--number", type=int, default=10, help="how many posts (default 10)"
+    )
+    sp.add_argument(
+        "--full",
+        action="store_true",
+        help="print full post text, not just the first line",
+    )
+    sp.add_argument(
+        "--include-reposts",
+        action="store_true",
+        help="include bare reposts (reshares with no commentary of your own)",
+    )
     sp.add_argument("--json", action="store_true", help="output JSON")
     sp.set_defaults(func=cmd_posts)
 
     sp = sub.add_parser("post", help="publish a post now")
     sp.add_argument("text", help="the full post text")
-    sp.add_argument("--yes", action="store_true", help="actually publish (otherwise dry run)")
+    sp.add_argument(
+        "--yes", action="store_true", help="actually publish (otherwise dry run)"
+    )
     sp.set_defaults(func=cmd_post)
 
     sp = sub.add_parser("draft", help="save a post as a draft")

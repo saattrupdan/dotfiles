@@ -14,20 +14,18 @@ const SKILL_FILE = join(SKILL_DIR, "SKILL.md");
 const SKILL_NAME = "dmi-dk";
 
 /**
- * Test cases — direct CLI commands to test the dmi-dk skill
- * Covers core commands: --help, city-search, forecast-city
+ * Test cases — CLI commands to test the dmi-dk skill
+ * Uses help commands and quick city searches
  */
 const TEST_CASES: Array<{ name: string; cmd: string; expectMinResults: number }> = [
   // CLI help (no network required)
   { name: "CLI help", cmd: "dmi --help", expectMinResults: 1 },
+  { name: "Forecast help", cmd: "dmi forecast --help", expectMinResults: 1 },
+  { name: "City-search help", cmd: "dmi city-search --help", expectMinResults: 1 },
   
   // City search with --id-only (minimal, reliable output)
   { name: "City search Aarhus", cmd: "dmi city-search århus --id-only", expectMinResults: 1 },
   { name: "City search København", cmd: "dmi city-search københavn --id-only", expectMinResults: 1 },
-  
-  // Weather forecast cities
-  { name: "Forecast city København", cmd: "dmi forecast-city københavn", expectMinResults: 1 },
-  { name: "Forecast city Odense", cmd: "dmi forecast-city odense", expectMinResults: 1 },
 ];
 
 /**

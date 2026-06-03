@@ -19,7 +19,7 @@ const SKILL_NAME = "linkedin";
  */
 const TEST_CASES: Array<{ name: string; cmd: string; expectMinResults: number }> = [
   { name: "Main help", cmd: "linkedin --help", expectMinResults: 0 },
-  { name: "Fetch help", cmd: "linkedin fetch --help", expectMinResults: 0 },
+  { name: "Posts help", cmd: "linkedin posts --help", expectMinResults: 0 },
   { name: "Post help", cmd: "linkedin post --help", expectMinResults: 0 },
   { name: "Draft help", cmd: "linkedin draft --help", expectMinResults: 0 },
 ];
@@ -73,10 +73,10 @@ async function preflightChecks(): Promise<{ ok: boolean; errors: string[] }> {
  */
 async function runCommand(cmd: string): Promise<{ ok: boolean; output: string }> {
   try {
-    const result = await $`${cmd}`.quiet();
-    return { ok: true, output: result.stdout.toString() };
+    const result = await $`bash -c ${cmd}`.text();
+    return { ok: true, output: result.trim() };
   } catch (error: any) {
-    return { ok: false, output: error.stderr?.toString() || error.message };
+    return { ok: false, output: error.stdout?.toString() || error.message };
   }
 }
 
