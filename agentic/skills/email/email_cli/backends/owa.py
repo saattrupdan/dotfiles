@@ -517,14 +517,29 @@ class OwaBackend:
                 if in_message_body:
                     in_message_body = False
             
-            # Collect body paragraphs - skip signature lines
+            # Collect body paragraphs - stop at thread markers, skip signatures
             if in_message_body and 'paragraph' in line:
                 continue
             if in_message_body and 'StaticText' in line:
-                match = re.search(r'StaticText\s+"([^"]*)"', line)
+                # Extract text - handle quoted strings with possible embedded quotes
+                match = re.search(r'StaticText\s+(.+)$', line)
                 if match:
                     text = match.group(1).strip()
-                    # Skip signature lines (generic patterns, language-agnostic)
+                    # Remove outer quotes if present
+                    if text.startswith('"') and text.endswith('"'):
+                        text = text[1:-1]
+                    text = text.strip()
+                    
+                    # Stop collecting at thread/reply markers (generic patterns)
+                    # Matches email addresses in quoted headers: "From: X <x@y.com>"
+                    if re.search(r'\b[A-Za-z._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', text):
+                        in_message_body = False  # Stop at thread
+                        continue
+                    # Matches: "From:", "Sent:", "On [date] wrote:", etc.
+                    if re.search(r'^(From:|Sent:|To:|Cc:|Subject:|On\s+\w+\s+\d+)', text, re.IGNORECASE):
+                        in_message_body = False  # Stop at quoted header
+                        continue
+                    # Skip signature lines
                     skip_patterns = ['---', 'Phone +', 'Register of associations', 
                                      'Authorized recipient']
                     if text and not any(p.lower() in text.lower() for p in skip_patterns):
