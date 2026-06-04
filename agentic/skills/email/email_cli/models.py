@@ -35,6 +35,8 @@ class Message:
             The full HTML body when present, populated by ``get_message``.
         attachments:
             Filenames of attachments (names only — content is not downloaded).
+        pinned:
+            ``True`` when the message has been pinned/flagged for importance.
     """
 
     id: str
@@ -47,6 +49,7 @@ class Message:
     body_text: str | None = None
     body_html: str | None = None
     attachments: list[str] = field(default_factory=list)
+    pinned: bool = False
 
     def to_dict(self) -> dict:
         """Return a JSON-serialisable representation (for ``--raw``)."""
@@ -61,4 +64,5 @@ class Message:
             "body_text": self.body_text,
             "body_html": self.body_html,
             "attachments": self.attachments,
+            "pinned": self.pinned,
         }
