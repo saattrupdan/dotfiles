@@ -1003,7 +1003,7 @@ class OwaBackend:
 
             # Check for "Message sent" toast
             toast_check = self._browser.eval_json(
-                "(() => JSON.stringify({toast:/Message sent/i.test(document.body.innerText)})())"  # noqa: E501
+                '(() => JSON.stringify({toast:document.body.innerText.includes("Message sent")}))()'  # noqa: E501
             )
             if (toast_check or {}).get("toast"):
                 return  # Success
