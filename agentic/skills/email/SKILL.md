@@ -72,11 +72,8 @@ pipx install -e <path-to-email-skill>
 # Personal Gmail (fills in imap/smtp hosts automatically); make it the default
 email accounts add --name gmail --provider gmail --email you@gmail.com --default
 
-# Corporate Microsoft 365 (defaults to the browser/OWA backend — no consent needed)
+# Corporate Microsoft 365 (defaults to the browser/OWA backend)
 email accounts add --name work --provider m365 --email you@company.com
-
-# Microsoft 365 via Graph/OAuth instead (only if your tenant grants consent)
-email accounts add --name work --provider m365 --email you@company.com --backend graph
 
 # A non-Gmail IMAP/SMTP provider
 email accounts add --name fast --provider imap --email you@fastmail.com \
@@ -114,8 +111,6 @@ The login flow is fully automated:
 security add-generic-password -s 'outlook' -a 'password' -w 'YOUR_PASSWORD'
 ```
 
-**m365 with `--backend graph`:** device-code flow — visit the printed URL, enter the
-   code, approve. The token is cached and refreshed silently.
 - **gmail/imap:** validates the app password by opening an IMAP connection.
 
 ## Read
@@ -163,8 +158,7 @@ email list --pinned --limit 10
 ```
 
 **Backend support:**
-- **Graph API (m365 with `--backend graph`)**: Native pinning via extended properties
-- **OWA (m365 with `--backend owa`)**: DOM-based pinning via `agent-browser`
+- **OWA (m365)**: DOM-based pinning via `agent-browser`
 - **IMAP/SMTP**: Not supported (raises `BackendError`)
 
 Pinning uses the `PidNameImportant` extended property in Microsoft Graph, which
@@ -203,10 +197,8 @@ explicitly approved the exact message.
   missing/expired). The OWA backend uses a headless browser for MFA approval.
 - **`agent-browser is not installed …`** — the OWA backend needs the `agent-browser`
   CLI; install it via the agent-browser skill.
-- **Graph login `AADSTS` / consent error** — the tenant blocks OAuth. Use the default
-  OWA backend (`--backend owa`, the m365 default), or register an Azure app (delegated
-  `Mail.Read`, `Mail.Send`, `Mail.ReadWrite`) and re-add with
-  `--backend graph --client-id <id>` (and `--tenant <tenant-id>` if needed).
+- **OWA login failed** — the browser session expired or the DOM structure changed.
+  Re-run `email login --account work`. If that fails, the OWA backend needs adjustment.
 - **`OWA <action> failed …` / unexpected response shape** — OWA's internal API is
   undocumented and version-sensitive; the raw response is included in the error. This is
   the signal to adjust the EWS-JSON request in `backends/owa.py`.

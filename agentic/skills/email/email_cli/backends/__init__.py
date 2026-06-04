@@ -3,7 +3,6 @@
 Each account is served by exactly one backend, chosen by its ``backend`` field:
 
 - ``imap`` — :class:`~email_cli.backends.imap_smtp.ImapSmtpBackend` (Gmail etc.)
-- ``graph`` — :class:`~email_cli.backends.graph.GraphBackend` (Microsoft 365, OAuth)
 - ``owa`` — :class:`~email_cli.backends.owa.OwaBackend` (Microsoft 365 via browser)
 """
 
@@ -33,10 +32,6 @@ def get_backend(name: str, account: dict) -> Backend:
         from .imap_smtp import ImapSmtpBackend
 
         return ImapSmtpBackend(name=name, account=account)
-    if kind == "graph":
-        from .graph import GraphBackend
-
-        return GraphBackend(name=name, account=account)
     if kind == "owa":
         from .owa import OwaBackend
 
