@@ -59,8 +59,8 @@ pipx install -e <path-to-email-skill>
 ## Configure accounts
 
 ```bash
-# Corporate Microsoft 365 (OWA backend)
-email accounts add --name work --provider m365 --email you@company.com
+# Microsoft 365 account (OWA backend)
+email accounts add --name work --email you@company.com
 
 email accounts list           # show accounts (* marks the default)
 email accounts remove --name X

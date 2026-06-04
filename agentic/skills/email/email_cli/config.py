@@ -1,9 +1,8 @@
 """Account configuration and ``.env`` loading.
 
-Accounts live in ``~/.email/accounts.json``. Secrets never go in this file:
-IMAP/SMTP app passwords are read from an environment variable (named per account)
-and Graph OAuth tokens live in a separate MSAL cache file. The directory is also
-where backends keep their token caches.
+Accounts live in ``~/.email/accounts.json``. Authentication is handled via
+``agent-browser`` with Microsoft Authenticator MFA. The directory stores OWA
+session state files.
 """
 
 from __future__ import annotations
@@ -117,6 +116,4 @@ def token_cache_path(name: str) -> Path:
     return CONFIG_DIR / f"{name}.msal.json"
 
 
-def default_password_env(name: str) -> str:
-    """Default env-var name holding an IMAP account's app password."""
-    return f"EMAIL_{name.upper()}_APP_PASSWORD"
+# Password env vars removed - OWA uses browser session authentication only

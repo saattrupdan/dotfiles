@@ -180,11 +180,11 @@ class OwaBackend:
         username, stored_password = get_outlook_credentials()
         if not username:
             username = self._email
-        
+
         # Use provided password if given, otherwise use stored one
         if password is None:
             password = stored_password
-        
+
         if not password:
             raise BackendError(
                 f"No password found for {self._email}. "
@@ -207,7 +207,9 @@ class OwaBackend:
         self._wait_for_snapshot(timeout=10)
 
         # Step 3: Select MFA method (Microsoft Authenticator)
-        self._browser._run("click", "@e10")  # "Approve a request on my Microsoft Authenticator app"
+        self._browser._run(
+            "click", "@e10"
+        )  # "Approve a request on my Microsoft Authenticator app"
         self._wait_for_snapshot(timeout=10)
 
         # Step 4: Extract MFA code
@@ -308,113 +310,123 @@ class OwaBackend:
         }
         path = folder_paths.get(folder.lower(), f"/mail/{folder.lower()}")
         url = f"https://outlook.office.com{path}"
-        
+
         self._browser.open(url, headed=False)
         self._wait_for_snapshot(timeout=10)
 
     def _parse_email_list_from_dom(self, limit: int) -> list[Message]:
         """Parse email list from the DOM accessibility tree.
-        
+
         Extracts sender/subject from option element text using heuristics.
         """
         snapshot = self._browser._run("snapshot", timeout=30)
-        
+
         messages = []
         lines = snapshot.split("\n") if snapshot else []
-        
+
         def parse_sender_subject(text: str) -> tuple[str, str]:
             """Parse 'Sender Subject' from list view text."""
             # 1. Handle email sender
-            if '@' in text:
-                match = re.search(r'[\w.-]+@[\w.-]+\.[a-z]{2,}', text, re.IGNORECASE)
+            if "@" in text:
+                match = re.search(r"[\w.-]+@[\w.-]+\.[a-z]{2,}", text, re.IGNORECASE)
                 if match:
-                    sender = text[:match.end()].strip()
-                    subject = text[match.end():].strip()
+                    sender = text[: match.end()].strip()
+                    subject = text[match.end() :].strip()
                     return sender, subject
-            
+
             # 2. Handle multi-sender (semicolons)
-            if ';' in text:
-                sender = text.split(';')[0].strip()
-                rest = text.split(';', 1)[1] if ';' in text else ''
+            if ";" in text:
+                sender = text.split(";")[0].strip()
+                rest = text.split(";", 1)[1] if ";" in text else ""
                 # Find subject: skip additional senders
-                parts = rest.split(';')
-                last_part = parts[-1].strip() if parts else ''
-                if ',' in last_part:
-                    subject_match = re.search(r',\s*[A-Za-zÀ-ÿ]+\s+(.+)', last_part)
+                parts = rest.split(";")
+                last_part = parts[-1].strip() if parts else ""
+                if "," in last_part:
+                    subject_match = re.search(r",\s*[A-Za-zÀ-ÿ]+\s+(.+)", last_part)
                     if subject_match:
                         return sender, subject_match.group(1).strip()
                 return sender, last_part
-            
+
             # 3. Handle repeated name (e.g. "Torben Blach Torben Blach shared...")
             words = text.split()
             for i in range(2, len(words) // 2 + 1):
-                first = ' '.join(words[:i])
-                second = ' '.join(words[i:i*2])
+                first = " ".join(words[:i])
+                second = " ".join(words[i : i * 2])
                 if first == second:
-                    return first, ' '.join(words[i:])
-            
+                    return first, " ".join(words[i:])
+
             # 4. Check for "Last, First" pattern
-            if ',' in text and len(words) >= 3:
-                if re.match(r'^[A-Z][a-z]+,\s+[A-Z]', text):
+            if "," in text and len(words) >= 3:
+                if re.match(r"^[A-Z][a-z]+,\s+[A-Z]", text):
                     for i in range(2, len(words)):
-                        if words[i].isalpha() and words[i][0].isupper() and len(words[i]) < 15:
+                        if (
+                            words[i].isalpha()
+                            and words[i][0].isupper()
+                            and len(words[i]) < 15
+                        ):
                             continue
-                        return ' '.join(words[:i]), ' '.join(words[i:])
-                    return ' '.join(words[:3]), ' '.join(words[3:])
-            
+                        return " ".join(words[:i]), " ".join(words[i:])
+                    return " ".join(words[:3]), " ".join(words[3:])
+
             # 5. Check for hyphenated surname
             for i, word in enumerate(words[:3]):
-                if '-' in word:
+                if "-" in word:
                     name_end = i + 1
-                    return ' '.join(words[:name_end]), ' '.join(words[name_end:])
-            
+                    return " ".join(words[:name_end]), " ".join(words[name_end:])
+
             # 6. Default to 2 words as name
             if len(words) >= 3:
-                return ' '.join(words[:2]), ' '.join(words[2:])
+                return " ".join(words[:2]), " ".join(words[2:])
             elif len(words) == 2:
                 return words[0], words[1]
-            
+
             return text, ""
-        
+
         idx = 0
         for line in lines:
             if len(messages) >= limit:
                 break
-            
+
             # Look for option elements
             match = re.search(r'option\s+"(.+?)"\s+\[', line)
             if match:
                 text = match.group(1)
                 is_unread = "unread" in line.lower()
                 is_pinned = "pinned" in line.lower()
-                
+
                 # Remove status prefixes
-                prefixes = r'(Collapsed|Has attachments|Pinned|Replied|New)'
-                while re.match(rf'^{prefixes}\s+', text, re.IGNORECASE):
-                    text = re.sub(rf'^{prefixes}\s+', '', text, flags=re.IGNORECASE)
-                
+                prefixes = r"(Collapsed|Has attachments|Pinned|Replied|New)"
+                while re.match(rf"^{prefixes}\s+", text, re.IGNORECASE):
+                    text = re.sub(rf"^{prefixes}\s+", "", text, flags=re.IGNORECASE)
+
                 # Find time pattern - it separates metadata from preview
-                time_match = re.search(r'\b(\d{1,2}:\d{2})\b', text)
+                time_match = re.search(r"\b(\d{1,2}:\d{2})\b", text)
                 if time_match:
-                    before_time = text[:time_match.start()].strip()
+                    before_time = text[: time_match.start()].strip()
                     # Remove trailing day abbreviation
-                    before_time = re.sub(r'\s+(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s*$', '', before_time)
-                    
+                    before_time = re.sub(
+                        r"\s+(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s*$", "", before_time
+                    )
+
                     sender, subject = parse_sender_subject(before_time)
                 else:
                     sender, subject = text[:50], text[50:100] if len(text) > 50 else ""
-                
-                messages.append(Message(
-                    id=f"dom_{idx}",
-                    date="",
-                    sender=sender.strip() if sender else "Unknown",
-                    subject=subject.strip() if subject else (text[:50] if text else "No subject"),
-                    unread=is_unread,
-                    to=[],
-                    pinned=is_pinned,
-                ))
+
+                messages.append(
+                    Message(
+                        id=f"dom_{idx}",
+                        date="",
+                        sender=sender.strip() if sender else "Unknown",
+                        subject=subject.strip()
+                        if subject
+                        else (text[:50] if text else "No subject"),
+                        unread=is_unread,
+                        to=[],
+                        pinned=is_pinned,
+                    )
+                )
                 idx += 1
-        
+
         return messages[:limit]
 
     def list_messages(
@@ -427,9 +439,9 @@ class OwaBackend:
         limit: int,
     ) -> list[Message]:
         """Return the most recent messages in ``folder`` (newest first).
-        
+
         Uses DOM parsing since the EWS API requires HTTP-only X-OWA-CANARY cookie.
-        
+
         Args:
             folder:
                 Folder to list messages from.
@@ -444,23 +456,23 @@ class OwaBackend:
         """
         # Navigate to folder
         self._navigate_to_folder(folder)
-        
+
         # Apply pinned filter if requested
         if pinned_only:
             self._click_filter_button("Pinned")
-        
+
         # Filter unread if needed
         if unread_only:
             self._click_filter_button("Unread")
-        
+
         # Parse emails from DOM
         messages = self._parse_email_list_from_dom(limit)
-        
+
         return messages[:limit]
-    
+
     def _click_filter_button(self, filter_name: str) -> None:
         """Click a filter button in the mail toolbar.
-        
+
         Args:
             filter_name:
                 Name of the filter to click (e.g., "Pinned", "Unread").
@@ -469,10 +481,13 @@ class OwaBackend:
         if filter_name in snapshot:
             # Parse snapshot to find the ref for the filter button
             import re
+
             # Look for button with the filter name in aria-label or text
             for line in snapshot.split("\n"):
-                if filter_name.lower() in line.lower() and ("button" in line.lower() or "checkbox" in line.lower()):
-                    ref_match = re.search(r'\[ref=(e\d+)\]', line)
+                if filter_name.lower() in line.lower() and (
+                    "button" in line.lower() or "checkbox" in line.lower()
+                ):
+                    ref_match = re.search(r"\[ref=(e\d+)\]", line)
                     if ref_match:
                         ref = f"@{ref_match.group(1)}"
                         try:
@@ -484,7 +499,7 @@ class OwaBackend:
 
     def pin_message(self, msg_id: str, folder: str = "inbox") -> None:
         """Pin a message by clicking the Pin button.
-        
+
         Args:
             msg_id:
                 Message ID to pin. Can be a dom_ index or backend-specific ID.
@@ -493,23 +508,23 @@ class OwaBackend:
         """
         # Navigate to folder
         self._navigate_to_folder(folder)
-        
+
         # Find and select the message
         if msg_id.startswith("dom_"):
             index = int(msg_id.replace("dom_", ""))
             snapshot = self._browser._run("snapshot", timeout=30)
-            options = re.findall(r'option.*?\[ref=e(\d+)\]', snapshot, re.IGNORECASE)
-            
+            options = re.findall(r"option.*?\[ref=e(\d+)\]", snapshot, re.IGNORECASE)
+
             if index < len(options):
                 ref = f"@e{options[index]}"
                 self._browser._run("click", ref)
                 self._wait_for_snapshot(timeout=5)
-        
+
         # Click the Pin button - look for it in the toolbar
         snapshot = self._browser._run("snapshot", "-i")
         for line in snapshot.split("\n"):
             if "pin" in line.lower() and "button" in line.lower():
-                ref_match = re.search(r'\[ref=(e\d+)\]', line)
+                ref_match = re.search(r"\[ref=(e\d+)\]", line)
                 if ref_match:
                     ref = f"@{ref_match.group(1)}"
                     try:
@@ -518,12 +533,12 @@ class OwaBackend:
                         return
                     except Exception:
                         pass
-        
+
         raise BackendError(f"Pin button not found for message {msg_id}")
 
     def unpin_message(self, msg_id: str, folder: str = "inbox") -> None:
         """Unpin a message by clicking the Unpin button.
-        
+
         Args:
             msg_id:
                 Message ID to unpin. Can be a dom_ index or backend-specific ID.
@@ -532,23 +547,23 @@ class OwaBackend:
         """
         # Navigate to folder
         self._navigate_to_folder(folder)
-        
+
         # Find and select the message
         if msg_id.startswith("dom_"):
             index = int(msg_id.replace("dom_", ""))
             snapshot = self._browser._run("snapshot", timeout=30)
-            options = re.findall(r'option.*?\[ref=e(\d+)\]', snapshot, re.IGNORECASE)
-            
+            options = re.findall(r"option.*?\[ref=e(\d+)\]", snapshot, re.IGNORECASE)
+
             if index < len(options):
                 ref = f"@e{options[index]}"
                 self._browser._run("click", ref)
                 self._wait_for_snapshot(timeout=5)
-        
+
         # Click the Unpin button - look for it in the toolbar
         snapshot = self._browser._run("snapshot", "-i")
         for line in snapshot.split("\n"):
             if "unpin" in line.lower() and "button" in line.lower():
-                ref_match = re.search(r'\[ref=(e\d+)\]', line)
+                ref_match = re.search(r"\[ref=(e\d+)\]", line)
                 if ref_match:
                     ref = f"@{ref_match.group(1)}"
                     try:
@@ -557,25 +572,27 @@ class OwaBackend:
                         return
                     except Exception:
                         pass
-        
+
         raise BackendError(f"Unpin button not found for message {msg_id}")
 
-    def get_message(self, *, msg_id: str, mark_read: bool, folder: str = "inbox") -> Message:
+    def get_message(
+        self, *, msg_id: str, mark_read: bool, folder: str = "inbox"
+    ) -> Message:
         """Fetch a single message by parsing the reading pane.
-        
+
         Extracts structured data: subject, from, to, date, body, and thread messages.
         """
         import re
-        
+
         # Navigate to folder and click on the email
         if msg_id.startswith("dom_"):
             index = int(msg_id.replace("dom_", ""))
             # Navigate to the specified folder (not just inbox)
             self._navigate_to_folder(folder)
-            
+
             snapshot = self._browser._run("snapshot", timeout=30)
-            options = re.findall(r'option.*?\[ref=e(\d+)\]', snapshot, re.IGNORECASE)
-            
+            options = re.findall(r"option.*?\[ref=e(\d+)\]", snapshot, re.IGNORECASE)
+
             if index < len(options):
                 ref = f"@e{options[index]}"
                 try:
@@ -585,11 +602,11 @@ class OwaBackend:
                     raise BackendError(f"Could not open message {index}")
             else:
                 raise BackendError(f"Message index {index} not found")
-        
+
         # Parse structured email content
         snapshot = self._browser._run("snapshot", timeout=30)
         lines = snapshot.split("\n") if snapshot else []
-        
+
         # Extract structured fields
         subject = ""
         sender_name = ""
@@ -597,95 +614,136 @@ class OwaBackend:
         date_str = ""
         body_paragraphs = []
         in_message_body = False
-        
+
         for line in lines:
             # Subject/headers - level 3 headings in reading pane
-            if 'heading' in line and 'level=3' in line:
+            if "heading" in line and "level=3" in line:
                 # Extract text between first quote and ' [' (before metadata)
                 match = re.search(r'heading\s+"(.+?)"\s+\[level=', line)
                 if match:
                     text = match.group(1)
                     # Capture the first occurrence of each header type
-                    if text.startswith('From:') and not sender_name:
+                    if text.startswith("From:") and not sender_name:
                         sender_name = text[5:].strip()
-                    elif text.startswith('To:') and not to_recipients:
+                    elif text.startswith("To:") and not to_recipients:
                         # Extract recipients
                         to_text = text[3:].strip()
-                        to_recipients = [r.strip() for r in to_text.split(',') if r.strip()]
-                    elif re.match(r'\w{3}\s+\d{2}/\d{2}/\d{4}', text) and not date_str:
+                        to_recipients = [
+                            r.strip() for r in to_text.split(",") if r.strip()
+                        ]
+                    elif re.match(r"\w{3}\s+\d{2}/\d{2}/\d{4}", text) and not date_str:
                         date_str = text
                     # Subject heading (appears in header bar with action buttons)
                     # Pattern: "Subject Action Action Remove Action [Extra]"
-                    if not subject and 'Remove' in text:
+                    if not subject and "Remove" in text:
                         # Match pattern: word repeated 3x with Remove in middle
-                        match = re.search(r'^(.+?)\s+\w+\s+\w+\s+Remove\s+\w+', text)
+                        match = re.search(r"^(.+?)\s+\w+\s+\w+\s+Remove\s+\w+", text)
                         if match:
                             subject = match.group(1)
                         else:
                             subject = text[:80]
                     # Fallback: plain subject without Remove action
-                    elif not subject and 'Remove' not in text and 'From:' not in text and 'To:' not in text:
-                        if not re.match(r'\w{3}\s+\d{2}/\d{2}/\d{4}', text):  # Not a date
+                    elif (
+                        not subject
+                        and "Remove" not in text
+                        and "From:" not in text
+                        and "To:" not in text
+                    ):
+                        if not re.match(
+                            r"\w{3}\s+\d{2}/\d{2}/\d{4}", text
+                        ):  # Not a date
                             subject = text[:80]
-            
+
             # Document body section
-            if 'document' in line and 'Message body' in line:
+            if "document" in line and "Message body" in line:
                 in_message_body = True
-            elif 'Show message history' in line or ('toolbar' in line and in_message_body):
+            elif "Show message history" in line or (
+                "toolbar" in line and in_message_body
+            ):
                 if in_message_body:
                     in_message_body = False  # End of message body
-            
+
             # Collect body paragraphs - stop at thread markers, skip signatures
-            if in_message_body and 'paragraph' in line:
+            if in_message_body and "paragraph" in line:
                 continue
-            if in_message_body and 'StaticText' in line:
+            if in_message_body and "StaticText" in line:
                 # Extract text - handle quoted strings with possible embedded quotes
-                match = re.search(r'StaticText\s+(.+)$', line)
+                match = re.search(r"StaticText\s+(.+)$", line)
                 if match:
                     text = match.group(1).strip()
                     # Remove outer quotes if present
                     if text.startswith('"') and text.endswith('"'):
                         text = text[1:-1]
                     text = text.strip()
-                    
+
                     # Stop collecting at thread/reply markers (generic patterns)
                     # Matches email addresses in quoted headers: "From: X <x@y.com>"
-                    if re.search(r'\b[A-Za-z._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', text):
+                    if re.search(
+                        r"\b[A-Za-z._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b", text
+                    ):
                         in_message_body = False  # Stop at thread
                         continue
                     # Matches: "From:", "Sent:", "On [date] wrote:", etc.
-                    if re.search(r'^(From:|Sent:|To:|Cc:|Subject:|On\s+\w+\s+\d+)', text, re.IGNORECASE):
+                    if re.search(
+                        r"^(From:|Sent:|To:|Cc:|Subject:|On\s+\w+\s+\d+)",
+                        text,
+                        re.IGNORECASE,
+                    ):
                         in_message_body = False  # Stop at quoted header
                         continue
                     # Skip signature lines and UI text
-                    skip_patterns = [r'---', r'Phone \+', r'Register of associations', 
-                                     r'Authorized recipient', r'This email is generated',
-                                     r'^Reply\s*$', r'^Reply all\s*$', r'^Forward\s*$',  # UI buttons (exact match)
-                                     r'This invite will only work', r'Open\s*$',
-                                     r'^Følg os', r'Abonner på', r'^[A-Z][A-Z\s]{20,}$',  # ALL CAPS (20+ chars)
-                                     r'^_{10,}',  # Underscore lines
-                                     r'^Mobil\b', r'^Hovednr\.?\b', r'^E-mail\b', r'^Web\b',
-                                     r'^\+?\s*\d{2,4}\s+\d{2,4}\s+\d{2,4}\s+\d{2,4}$',  # Phone numbers
-                                     r'^\d{4}\s+[A-Z]',  # Addresses like "2100 København Ø"
-                                     r'^RESTRICTED$', r'^CONFIDENTIAL$', r'^INTERNAL$']  # Classification banners
-                    if text and not any(re.search(p, text, re.IGNORECASE) for p in skip_patterns):
+                    skip_patterns = [
+                        r"---",
+                        r"Phone \+",
+                        r"Register of associations",
+                        r"Authorized recipient",
+                        r"This email is generated",
+                        r"^Reply\s*$",
+                        r"^Reply all\s*$",
+                        r"^Forward\s*$",  # UI buttons (exact match)
+                        r"This invite will only work",
+                        r"Open\s*$",
+                        r"^Følg os",
+                        r"Abonner på",
+                        r"^[A-Z][A-Z\s]{20,}$",  # ALL CAPS (20+ chars)
+                        r"^_{10,}",  # Underscore lines
+                        r"^Mobil\b",
+                        r"^Hovednr\.?\b",
+                        r"^E-mail\b",
+                        r"^Web\b",
+                        r"^\+?\s*\d{2,4}\s+\d{2,4}\s+\d{2,4}\s+\d{2,4}$",  # Phone numbers
+                        r"^\d{4}\s+[A-Z]",  # Addresses like "2100 København Ø"
+                        r"^RESTRICTED$",
+                        r"^CONFIDENTIAL$",
+                        r"^INTERNAL$",
+                    ]  # Classification banners
+                    if text and not any(
+                        re.search(p, text, re.IGNORECASE) for p in skip_patterns
+                    ):
                         # Check for signature markers
-                        if text.startswith('Med venlig hilsen') or text.startswith('Best regards') or \
-                           text.startswith('Venlig hilsen') or text.startswith('Kind regards') or \
-                           text.startswith('Mvh ') or (re.match(r'^[A-Z\s/]+$', text) and len(text) > 5):  # ALL CAPS names
+                        if (
+                            text.startswith("Med venlig hilsen")
+                            or text.startswith("Best regards")
+                            or text.startswith("Venlig hilsen")
+                            or text.startswith("Kind regards")
+                            or text.startswith("Mvh ")
+                            or (re.match(r"^[A-Z\s/]+$", text) and len(text) > 5)
+                        ):  # ALL CAPS names
                             in_message_body = False
                             continue
                         body_paragraphs.append(text)
-        
+
         body_text = "\n\n".join(body_paragraphs) if body_paragraphs else ""
-        
+
         # Format sender (skip if it's the same as what appears in subject line)
         sender = sender_name.strip() if sender_name else "Unknown"
-        
+
         # Clean up subject - unescape any remaining escape sequences
         if subject:
-            subject = subject.replace('\\"', '"').replace("\\'", "'").replace('\\n', '\n')
-        
+            subject = (
+                subject.replace('\\"', '"').replace("\\'", "'").replace("\\n", "\n")
+            )
+
         # Format for Message object
         message = Message(
             id=msg_id,
@@ -696,7 +754,7 @@ class OwaBackend:
             to=to_recipients,
             body_text=body_text,
         )
-        
+
         return message
 
     # -- send (not implemented - requires EWS API with X-OWA-CANARY) --------
@@ -717,11 +775,11 @@ class OwaBackend:
         attachments: list[str],
     ) -> None:
         """Send email - not implemented for OWA backend.
-        
-        The OWA backend doesn't support sending yet. Use a Gmail/IMAP account
-        for sending emails, or use the Graph backend if your tenant allows it.
+
+        Sending via OWA requires automating the Outlook web UI or using the
+        undocumented EWS-JSON endpoint. This is planned for a future release.
         """
         raise BackendError(
             "The OWA backend does not support sending emails. "
-            "Use a Gmail/IMAP account for sending, or configure the Graph backend."
+            "This feature is planned for a future release using agent-browser automation."
         )

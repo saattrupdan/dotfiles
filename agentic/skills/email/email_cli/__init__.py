@@ -1,1 +1,1 @@
-"""email — read and send email across Gmail (IMAP/SMTP) and Microsoft 365 (Graph)."""
+"""email — read email from Microsoft 365 via Outlook on the Web."""

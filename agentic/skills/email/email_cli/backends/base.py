@@ -1,4 +1,4 @@
-"""Backend protocol shared by the IMAP/SMTP and Graph implementations."""
+"""Backend protocol for the OWA implementation."""
 
 from __future__ import annotations
 
@@ -79,7 +79,9 @@ class Backend(Protocol):
         """
         ...
 
-    def get_message(self, *, msg_id: str, mark_read: bool, folder: str = "inbox") -> Message:
+    def get_message(
+        self, *, msg_id: str, mark_read: bool, folder: str = "inbox"
+    ) -> Message:
         """Fetch a single message in full, optionally marking it read.
 
         Args:

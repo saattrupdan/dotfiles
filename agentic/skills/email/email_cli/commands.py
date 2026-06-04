@@ -153,7 +153,7 @@ def do_send(args) -> None:
     if args.attach and account.get("backend") == "owa":
         raise BackendError(
             "The OWA (browser) backend does not support attachments yet. Send "
-            "without --attach, or use a Gmail/IMAP account for attachments."
+            "at this time. Attachments are not yet supported in the OWA backend."
         )
 
     to = _split_addrs(args.to)

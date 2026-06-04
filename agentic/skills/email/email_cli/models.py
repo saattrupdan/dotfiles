@@ -1,7 +1,6 @@
 """Transport-agnostic data model shared by all backends.
 
-Every backend (IMAP/SMTP, Graph) returns :class:`Message` objects so the CLI and
-display layers never need to know which provider produced them.
+The OWA backend returns :class:`Message` objects for display and CLI consumption.
 """
 
 from __future__ import annotations
@@ -15,8 +14,8 @@ class Message:
 
     Attributes:
         id:
-            Backend-specific opaque identifier (IMAP UID or Graph message id).
-            Stable enough to pass back to ``read``/``mark-read`` within a folder.
+            OWA DOM index (e.g. ``dom_0``, ``dom_1``).
+            Stable for list/read operations within a session.
         date:
             Human-readable send/receipt date as reported by the backend.
         sender:
