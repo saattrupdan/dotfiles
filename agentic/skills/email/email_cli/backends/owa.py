@@ -773,16 +773,130 @@ class OwaBackend:
         body: str,
         attachments: list[str],
     ) -> None:
-        """Send email - not implemented for OWA backend.
+        """Send an email via Outlook on the web compose dialog.
 
-        Browser automation for sending proved unreliable due to dynamic
-        recipient resolution, validation state, and dialog lifecycle issues.
+        Args:
+            to:
+                List of primary recipient email addresses.
+            cc:
+                List of CC recipient email addresses.
+            bcc:
+                List of BCC recipient email addresses.
+            subject:
+                Email subject line. Must be non-empty.
+            body:
+                Email body content.
+            attachments:
+                List of file paths to attach. Not supported - will raise error.
 
-        Use Outlook Web UI (outlook.office.com) or Microsoft Graph API instead.
+        Raises:
+            BackendError:
+                If attachments provided, subject is empty, or send fails.
         """
+        # Reject attachments - not supported
+        if attachments:
+            raise BackendError(
+                "The OWA backend does not support attachments. "
+                "Send without attachments or use a different backend."
+            )
+
+        # Validate subject - OWA silently fails with empty subject
+        if not subject or not subject.strip():
+            raise BackendError(
+                "Subject is required. OWA does not allow sending emails without a subject."
+            )
+
+        # Ensure authenticated session
+        self._browser.open(_MAIL_URL, headed=False)
+        time.sleep(2)  # Allow page to stabilise
+
+        # Open compose dialog via eval_json
+        new_message_js = """
+        (() => {
+            // OWA's New message button - triggers compose dialog
+            const button = document.querySelector('[aria-label="New message"]');
+            if (!button) {
+                return { error: "New message button not found" };
+            }
+            button.click();
+            return { success: true };
+        })()
+        """
+        result = self._browser.eval_json(new_message_js)
+        if result.get("error"):
+            raise BackendError(
+                f"Failed to open compose dialog: {result['error']}"
+            )
+
+        # Wait for compose dialog to appear
+        time.sleep(3)
+
+        # Fill recipients using helper method
+        if to:
+            self._fill_recipient_field("To", to)
+        if cc:
+            self._fill_recipient_field("Cc", cc)
+        if bcc:
+            self._fill_recipient_field("Bcc", bcc)
+
+        # Fill subject and body using helper method
+        self._fill_subject_and_body(subject, body)
+
+        # Click Send via eval_json
+        send_js = """
+        (() => {
+            const sendButton = document.querySelector('button[aria-label*="Send"]');
+            if (!sendButton) {
+                return { error: "Send button not found" };
+            }
+            sendButton.click();
+            return { success: true };
+        })()
+        """
+        send_result = self._browser.eval_json(send_js)
+        if send_result.get("error"):
+            raise BackendError(f"Failed to click Send: {send_result['error']}")
+
+        # Wait up to 60 seconds for "Message sent" toast or compose dialog to close
+        start = time.time()
+        timeout = 60
+        interval = 2
+
+        while time.time() - start < timeout:
+            time.sleep(interval)
+
+            # Check for "Message sent" toast
+            toast_check = self._browser.eval_json(
+                '(async()=>JSON.stringify({toast:/Message sent/i.test(document.body.innerText)}))()'
+            )
+            if (toast_check or {}).get("toast"):
+                return  # Success
+
+            # Check if compose dialog is closed
+            compose_check = self._browser.eval_json(
+                '(async()=>JSON.stringify({compose:!!document.querySelector(\'[role="dialog"][aria-label*="New message"]\')}))()'
+            )
+            if not (compose_check or {}).get("compose"):
+                return  # Dialog closed = success
+
+            # Check for validation errors
+            validation_errors = self._check_validation_errors()
+            if validation_errors:
+                raise BackendError(
+                    f"Send failed with validation errors: {validation_errors}"
+                )
+
+            # Check compose state (might indicate why send was blocked)
+            compose_state = self._check_compose_state()
+            if compose_state.get("send_blocked"):
+                raise BackendError(
+                    f"Send blocked: {compose_state.get('reason', 'Unknown reason')}"
+                )
+
+        # Timeout - send did not complete
         raise BackendError(
-            "The OWA backend does not support sending. "
-            "Use Outlook Web (outlook.office.com) or Microsoft Graph API instead."
+            "Send operation timed out after 60 seconds. "
+            "The compose dialog may still be open or the message was not sent."
         )
 
     def _fill_recipient_field(self, field_name: str, recipients: list[str]) -> None:
