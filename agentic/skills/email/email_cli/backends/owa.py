@@ -823,13 +823,16 @@ class OwaBackend:
             raise BackendError(f"Failed to open compose: {compose_result['error']}")
         time.sleep(2)  # Wait for compose dialog to open
 
-        # Step 2: Fill recipient fields
+        # Step 2: Fill recipient fields with delays for autocompletion
         if to:
             self._fill_recipient_field("To", to)
+            time.sleep(1.5)  # Wait for recipient resolution
         if cc:
             self._fill_recipient_field("Cc", cc)
+            time.sleep(1.0)
         if bcc:
             self._fill_recipient_field("Bcc", bcc)
+            time.sleep(1.0)
 
         # Step 3: Fill subject
         subject_result = self._browser.eval_json(
@@ -867,18 +870,39 @@ class OwaBackend:
 
         time.sleep(1)
 
-        # Step 5: Click Send button
-        send_js = """
+        # Step 5: Send using Cmd+Enter shortcut (more reliable than clicking Send button)
+        send_shortcut = """
         (() => {
-            const el = document.querySelector('[aria-label="Send"]');
-            if (!el) return { error: "Send button not found" };
-            el.click();
+            const body = document.querySelector('[aria-label="Message body"][role="textbox"]');
+            if (!body) return { error: "Message body not found for focus" };
+            body.focus();
+            body.dispatchEvent(new KeyboardEvent('keydown', {
+                key: 'Enter',
+                metaKey: true,
+                ctrlKey: true,
+                bubbles: true
+            }));
             return { success: true };
         })()
         """
-        send_result = self._browser.eval_json(send_js)
-        if send_result.get("error"):
-            raise BackendError(f"Failed to click Send: {send_result['error']}")
+        shortcut_result = self._browser.eval_json(send_shortcut)
+        if shortcut_result.get("error"):
+            # Fallback: try clicking Send button if it's enabled
+            fallback = self._browser.eval_json(
+                """
+                (() => {
+                    const btn = document.querySelector('[aria-label="Send"]');
+                    if (!btn) return { error: "Send button not found" };
+                    if (btn.getAttribute('aria-disabled') === 'true') {
+                        return { error: "Send button disabled" };
+                    }
+                    btn.click();
+                    return { success: true };
+                })()
+                """
+            )
+            if fallback.get("error"):
+                raise BackendError(f"Failed to send: {fallback['error']}")
 
         # Step 6: Wait for send confirmation (compose dialog should close)
         max_wait = 30
@@ -977,4 +1001,5 @@ class OwaBackend:
             )
 
         # Wait for autocomplete bubbles to form
-        time.sleep(2)
+        # Visual chips need time to resolve
+        time.sleep(3)
