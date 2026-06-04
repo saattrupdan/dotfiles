@@ -1003,14 +1003,14 @@ class OwaBackend:
 
             # Check for "Message sent" toast
             toast_check = self._browser.eval_json(
-                "(async()=>JSON.stringify({toast:/Message sent/i.test(document.body.innerText)}))()"  # noqa: E501
+                "(() => JSON.stringify({toast:/Message sent/i.test(document.body.innerText)})())"  # noqa: E501
             )
             if (toast_check or {}).get("toast"):
                 return  # Success
 
             # Check if compose dialog is closed
             compose_check = self._browser.eval_json(
-                """(async()=>JSON.stringify({compose:!!document.querySelector('[role="dialog"][aria-label*="New email"]')}))()"""  # noqa: E501
+                '(() => JSON.stringify({compose:!!document.querySelector("[aria-label*=\\"New email\\"][role=\\"dialog\\"]")}))()'  # noqa: E501
             )
             if not (compose_check or {}).get("compose"):
                 return  # Dialog closed = success
