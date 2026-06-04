@@ -804,8 +804,9 @@ class OwaBackend:
                 "Attachments are not yet supported in the OWA send implementation."
             )
 
-        # Open Outlook and wait for inbox to load
-        self._browser.open(_MAIL_URL, headed=False)
+        # Navigate explicitly to inbox page to ensure compose works correctly
+        # Using /mail/inbox path ensures the New email button exists
+        self._browser.open(_MAIL_URL.rstrip("/") + "/inbox", headed=False)
         self._wait_for_snapshot(timeout=10)
 
         # Step 1: Click "New email" button to open compose dialog
