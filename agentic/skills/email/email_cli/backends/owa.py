@@ -106,6 +106,143 @@ class OwaBackend:
             except Exception:
                 pass
 
+    def _check_validation_errors(self) -> dict:
+        """Check for inline validation errors in compose form.
+
+        Scans the compose dialog for validation error indicators:
+        - Invalid/unresolved recipients (aria-invalid="true")
+        - Error message containers near recipient fields
+        - Missing subject validation
+        - Network/permission error banners
+
+        Returns:
+            Dict with "has_errors" bool and "errors" list of strings.
+        """
+        check_js = r"""
+        (() => {
+            const errors = [];
+            
+            // Check for aria-invalid="true" on any input
+            const invalidFields = document.querySelectorAll('[aria-invalid="true"]');
+            invalidFields.forEach(field => {
+                const label = field.getAttribute('aria-label') || field.placeholder || 'Field';
+                errors.push(`Invalid field: ${label}`);
+            });
+            
+            // Check for error message containers (common OWA error selectors)
+            const errorMessages = document.querySelectorAll(
+                '.error-message, [data-autoid*="error"], .ms-Text--error, \
+                [role="alert"], .validation-error, .recipient-error'
+            );
+            errorMessages.forEach(el => {
+                const text = el.textContent?.trim();
+                if (text && !errors.includes(text)) {
+                    errors.push(text);
+                }
+            });
+            
+            // Check for unresolved recipients (red underline or error styling)
+            const unresolvedRecipients = document.querySelectorAll(
+                '.recipient-token-unresolved, [class*="unresolved"], \
+                [class*="invalid-recipient"]'
+            );
+            unresolvedRecipients.forEach(el => {
+                const text = el.textContent?.trim() || 'unresolved recipient';
+                errors.push(`Unresolved recipient: ${text}`);
+            });
+            
+            // Check for network/permission error banners
+            const errorBanners = document.querySelectorAll(
+                '.ms-MessageBanner--error, [data-autoid*="error-banner"], \
+                .error-banner, .notification-error'
+            );
+            errorBanners.forEach(banner => {
+                const text = banner.textContent?.trim();
+                if (text && !errors.includes(text)) {
+                    errors.push(text);
+                }
+            });
+            
+            return { has_errors: errors.length > 0, errors };
+        })()
+        """
+        try:
+            js_wrapper = "JSON.stringify((async()=>(" + check_js + "))())"
+            result = self._browser.eval_json(js_wrapper)
+            return result if result else {"has_errors": False, "errors": []}
+        except Exception:
+            return {"has_errors": False, "errors": []}
+
+    def _check_compose_state(self) -> dict:
+        """Check compose dialog and send status.
+
+        Checks:
+        - Whether compose dialog is still open
+        - Whether "Message sent" toast notification appeared
+
+        Returns:
+            Dict with "compose_open" bool, "message_sent" bool, and "error" str or None.
+        """
+        state_js = r"""
+        (() => {
+            const result = {
+                compose_open: false,
+                message_sent: false,
+                error: null
+            };
+            
+            // Check if compose dialog exists (OWA compose window selectors)
+            const composeDialog = document.querySelector(
+                '[role="dialog"][aria-label*="New message"], \
+                [data-autoid*="compose"], .compose-window, \
+                [class*="compose"], form[aria-label*="Message"]'
+            );
+            result.compose_open = composeDialog !== null;
+            
+            // Check for "Message sent" toast notification
+            const toastNotifications = document.querySelectorAll(
+                '.ms-Toast, [data-autoid*="toast"], .notification-toast, \
+                [role="status"], .ms-MessageBanner'
+            );
+            for (const toast of toastNotifications) {
+                const text = toast.textContent?.toLowerCase() || '';
+                if (text.includes('message sent') || text.includes('sent')) {
+                    result.message_sent = true;
+                    break;
+                }
+            }
+            
+            // Check for error toasts as well
+            const errorToasts = document.querySelectorAll(
+                '.ms-Toast--error, [class*="error-toast"], \
+                .toast-error, .notification-error'
+            );
+            for (const toast of errorToasts) {
+                const text = toast.textContent?.trim();
+                if (text) {
+                    result.error = text;
+                    break;
+                }
+            }
+            
+            return result;
+        })()
+        """
+        try:
+            js_wrapper = "JSON.stringify((async()=>(" + state_js + "))())"
+            result = self._browser.eval_json(js_wrapper)
+            return result if result else {
+                "compose_open": False,
+                "message_sent": False,
+                "error": None
+            }
+        except Exception:
+            return {
+                "compose_open": False,
+                "message_sent": False,
+                "error": "Failed to check compose state"
+            }
+
     def verify_and_save_session(self, *, timeout: int = 120) -> str:
         """Poll for inbox URL + X-OWA-CANARY cookie, then save session.
 
