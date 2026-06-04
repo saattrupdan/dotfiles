@@ -126,7 +126,7 @@ class OwaBackend:
             // Check for aria-invalid="true" on any input
             const invalidFields = document.querySelectorAll('[aria-invalid="true"]');
             invalidFields.forEach(field => {
-                const label = field.getAttribute('aria-label') || field.placeholder || 'Field';
+                const label = field.getAttribute('aria-label') || field.placeholder || 'Field';  # noqa: E501
                 errors.push(`Invalid field: ${label}`);
             });
             
@@ -232,16 +232,16 @@ class OwaBackend:
         try:
             js_wrapper = "JSON.stringify((async()=>(" + state_js + "))())"
             result = self._browser.eval_json(js_wrapper)
-            return result if result else {
-                "compose_open": False,
-                "message_sent": False,
-                "error": None
-            }
+            return (
+                result
+                if result
+                else {"compose_open": False, "message_sent": False, "error": None}
+            )
         except Exception:
             return {
                 "compose_open": False,
                 "message_sent": False,
-                "error": "Failed to check compose state"
+                "error": "Failed to check compose state",
             }
 
     def verify_and_save_session(self, *, timeout: int = 120) -> str:
@@ -279,7 +279,7 @@ class OwaBackend:
             # Success: inbox loaded + canary present
             if is_inbox and has_canary:
                 self._browser.state_save()
-                return f"Signed in to Outlook on the web as {self._email} ({elapsed}s, session saved)."
+                return f"Signed in to Outlook on the web as {self._email} ({elapsed}s, session saved)."  # noqa: E501
 
             # Still on login page - keep waiting
             if "login.microsoftonline.com" in url:
@@ -326,7 +326,7 @@ class OwaBackend:
             raise BackendError(
                 f"No password found for {self._email}. "
                 "Add it to macOS Keychain: "
-                "security add-generic-password -s 'outlook' -a 'password' -w 'YOUR_PASSWORD'"
+                "security add-generic-password -s 'outlook' -a 'password' -w 'YOUR_PASSWORD'"  # noqa: E501
             )
 
         # Navigate to Outlook - will redirect to login if not authenticated
@@ -848,7 +848,7 @@ class OwaBackend:
                         r"^Hovednr\.?\b",
                         r"^E-mail\b",
                         r"^Web\b",
-                        r"^\+?\s*\d{2,4}\s+\d{2,4}\s+\d{2,4}\s+\d{2,4}$",  # Phone numbers
+                        r"^\+?\s*\d{2,4}\s+\d{2,4}\s+\d{2,4}\s+\d{2,4}$",  # Phone numbers  # noqa: E501
                         r"^\d{4}\s+[A-Z]",  # Addresses like "2100 København Ø"
                         r"^RESTRICTED$",
                         r"^CONFIDENTIAL$",
@@ -941,7 +941,7 @@ class OwaBackend:
         # Validate subject - OWA silently fails with empty subject
         if not subject or not subject.strip():
             raise BackendError(
-                "Subject is required. OWA does not allow sending emails without a subject."
+                "Subject is required. OWA does not allow sending emails without a subject."  # noqa: E501
             )
 
         # Ensure authenticated session
@@ -962,9 +962,7 @@ class OwaBackend:
         """
         result = self._browser.eval_json(new_message_js)
         if result.get("error"):
-            raise BackendError(
-                f"Failed to open compose dialog: {result['error']}"
-            )
+            raise BackendError(f"Failed to open compose dialog: {result['error']}")
 
         # Wait for compose dialog to appear
         time.sleep(3)
@@ -1005,14 +1003,14 @@ class OwaBackend:
 
             # Check for "Message sent" toast
             toast_check = self._browser.eval_json(
-                '(async()=>JSON.stringify({toast:/Message sent/i.test(document.body.innerText)}))()'
+                "(async()=>JSON.stringify({toast:/Message sent/i.test(document.body.innerText)}))()"  # noqa: E501
             )
             if (toast_check or {}).get("toast"):
                 return  # Success
 
             # Check if compose dialog is closed
             compose_check = self._browser.eval_json(
-                '(async()=>JSON.stringify({compose:!!document.querySelector(\'[role="dialog"][aria-label*="New message"]\')}))()'
+                '(async()=>JSON.stringify({compose:!!document.querySelector(\'[role="dialog"][aria-label*="New message"]\')}))()'  # noqa: E501
             )
             if not (compose_check or {}).get("compose"):
                 return  # Dialog closed = success
@@ -1063,7 +1061,7 @@ class OwaBackend:
         # Find the contenteditable recipient field
         field_js = f"""
         (() => {{
-            const el = document.querySelector('[aria-label="{aria_label}"][contenteditable="true"]');
+            const el = document.querySelector('[aria-label="{aria_label}"][contenteditable="true"]');  # noqa: E501
             if (!el) return {{ error: "{field_name} field not found" }};
             return {{ success: true }};
         }})()
@@ -1073,12 +1071,12 @@ class OwaBackend:
             raise BackendError(f"Failed to find {field_name} field: {check['error']}")
 
         # Type all recipients as comma-separated, then trigger autocomplete
-        # Use _json.dumps() for proper JS string escaping (handles quotes, newlines, etc.)
+        # Use _json.dumps() for proper JS string escaping (handles quotes, newlines, etc.)  # noqa: E501
         recipients_str = ", ".join(recipients)
         recipients_escaped = _json.dumps(recipients_str)
         type_js = f"""
         (async () => {{
-            const el = document.querySelector('[aria-label="{aria_label}"][contenteditable="true"]');
+            const el = document.querySelector('[aria-label="{aria_label}"][contenteditable="true"]');  # noqa: E501
             if (!el) return {{ error: "Field not found" }};
             el.focus();
             
@@ -1153,7 +1151,7 @@ class OwaBackend:
         body_js = f"""
         (async () => {{
             // Find the body contenteditable div - look for the main editor area
-            const bodyEl = document.querySelector('div[aria-label][contenteditable="true"]');
+            const bodyEl = document.querySelector('div[aria-label][contenteditable="true"]');  # noqa: E501
             if (!bodyEl) return {{ error: "Body field not found" }};
             
             bodyEl.focus();
