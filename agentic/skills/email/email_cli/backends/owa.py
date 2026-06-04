@@ -773,12 +773,193 @@ class OwaBackend:
         body: str,
         attachments: list[str],
     ) -> None:
-        """Send email - not implemented for OWA backend.
+        """Send email by automating the Outlook web compose form.
 
-        Sending via OWA requires automating the Outlook web UI or using the
-        undocumented EWS-JSON endpoint. This is planned for a future release.
+        Uses agent-browser to drive the Outlook UI:
+        1. Opens compose dialog via "New email" button
+        2. Fills To, Cc, Bcc recipient fields
+        3. Fills subject and message body
+        4. Clicks Send and waits for confirmation
+
+        Args:
+            to:
+                List of primary recipient email addresses.
+            cc:
+                List of CC recipient email addresses.
+            bcc:
+                List of BCC recipient email addresses.
+            subject:
+                Email subject line.
+            body:
+                Email body text (HTML not yet supported).
+            attachments:
+                List of file paths to attach (not yet implemented).
+
+        Raises:
+            BackendError:
+                If any step fails (recipient invalid, send timeout, etc.).
         """
-        raise BackendError(
-            "The OWA backend does not support sending emails. "
-            "This feature is planned for a future release using agent-browser automation."
+        if attachments:
+            raise BackendError(
+                "Attachments are not yet supported in the OWA send implementation."
+            )
+
+        # Open Outlook and wait for inbox to load
+        self._browser.open(_MAIL_URL, headed=False)
+        self._wait_for_snapshot(timeout=10)
+
+        # Step 1: Click "New email" button to open compose dialog
+        self._browser._run("click", '@aria="New email"')
+        time.sleep(2)  # Wait for compose dialog to open
+
+        # Step 2: Fill recipient fields
+        if to:
+            self._fill_recipient_field("To", to)
+        if cc:
+            self._fill_recipient_field("Cc", cc)
+        if bcc:
+            self._fill_recipient_field("Bcc", bcc)
+
+        # Step 3: Fill subject
+        subject_result = self._browser.eval_json(
+            f"""
+            (() => {{
+                const el = document.querySelector('[aria-label="Subject"]');
+                if (!el) return {{ error: "Subject field not found" }};
+                el.focus();
+                el.value = '{subject.replace("'", "\\'")}';
+                el.dispatchEvent(new InputEvent('input', {{ bubbles: true }}));
+                return {{ success: true }};
+            }})()
+            """
         )
+        if subject_result.get("error"):
+            raise BackendError(f"Failed to fill subject: {subject_result['error']}")
+
+        time.sleep(1)
+
+        # Step 4: Fill message body
+        body_escaped = body.replace("'", "\\'").replace("\n", "<br>").replace("\r", "")
+        body_js = f"""
+        (() => {{
+            const el = document.querySelector('[aria-label="Message body"][role="textbox"]');
+            if (!el) return {{ error: "Message body field not found" }};
+            el.focus();
+            el.innerHTML = '{body_escaped}';
+            el.dispatchEvent(new InputEvent('input', {{ bubbles: true }}));
+            return {{ success: true }};
+        }})()
+        """
+        body_result = self._browser.eval_json(body_js)
+        if body_result.get("error"):
+            raise BackendError(f"Failed to fill body: {body_result['error']}")
+
+        time.sleep(1)
+
+        # Step 5: Click Send button
+        send_js = """
+        (() => {
+            const el = document.querySelector('[aria-label="Send"]');
+            if (!el) return { error: "Send button not found" };
+            el.click();
+            return { success: true };
+        })()
+        """
+        send_result = self._browser.eval_json(send_js)
+        if send_result.get("error"):
+            raise BackendError(f"Failed to click Send: {send_result['error']}")
+
+        # Step 6: Wait for send confirmation (compose dialog should close)
+        max_wait = 30
+        interval = 2
+        elapsed = 0
+
+        while elapsed < max_wait:
+            time.sleep(interval)
+            elapsed += interval
+
+            # Check if compose dialog is gone (send succeeded)
+            compose_check = self._browser.eval_json(
+                """
+                (() => {
+                    const compose = document.querySelector('[role="dialog"]');
+                    return { hasCompose: !!compose };
+                })()
+                """
+            )
+            if not compose_check.get("hasCompose", True):
+                return  # Send succeeded
+
+        # If we get here, compose dialog is still open - check for error indicators
+        error_check = self._browser.eval_json(
+            """
+            (() => {
+                const errors = document.querySelectorAll('[aria-invalid="true"], .error-text');
+                return { hasErrors: errors.length > 0 };
+            })()
+            """
+        )
+        if error_check.get("hasErrors"):
+            raise BackendError(
+                "Sending failed - validation errors detected in compose form."
+            )
+
+        raise BackendError(f"Sending timed out after {max_wait}s - compose dialog still open.")
+
+    def _fill_recipient_field(self, field_name: str, recipients: list[str]) -> None:
+        """Fill a recipient field and wait for autocomplete bubbles to form.
+
+        Args:
+            field_name:
+                Name of the field ("To", "Cc", or "Bcc").
+            recipients:
+                List of email addresses to add.
+
+        Raises:
+            BackendError:
+                If field not found or recipients invalid.
+        """
+        # Map field names to aria-labels
+        aria_labels = {
+            "To": "To",
+            "Cc": "Cc",
+            "Bcc": "Bcc",
+        }
+        aria_label = aria_labels.get(field_name)
+        if not aria_label:
+            raise BackendError(f"Unknown recipient field: {field_name}")
+
+        # Find the contenteditable recipient field
+        field_js = f"""
+        (() => {{
+            const el = document.querySelector('[aria-label="{aria_label}"][contenteditable="true"]');
+            if (!el) return {{ error: "{field_name} field not found" }};
+            return {{ success: true }};
+        }})()
+        """
+        check = self._browser.eval_json(field_js)
+        if check.get("error"):
+            raise BackendError(f"Failed to find {field_name} field: {check['error']}")
+
+        # Type all recipients as comma-separated, then trigger autocomplete
+        recipients_str = ", ".join(recipients)
+        type_js = f"""
+        (() => {{
+            const el = document.querySelector('[aria-label="{aria_label}"][contenteditable="true"]');
+            if (!el) return {{ error: "Field not found" }};
+            el.focus();
+            
+            // Insert text using execCommand for better compatibility
+            document.execCommand('insertText', false, '{recipients_str.replace("'", "\\'")}');
+            
+            // Trigger input event
+            el.dispatchEvent(new InputEvent('input', {{ bubbles: true }}));
+            return {{ success: true }};
+        }})()
+        """
+        result = self._browser.eval_json(type_js)
+        if result.get("error"):
+            raise BackendError(f"Failed to type recipients in {field_name}: {result['error']}")
+
+        # Wait for autocomplete bubbles to form
+        time.sleep(2)
