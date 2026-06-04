@@ -27,7 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     """Build the top-level argument parser."""
     parser = argparse.ArgumentParser(
         prog="email",
-        description="Read and send email across Gmail (IMAP/SMTP) and Microsoft 365 (Outlook on the web).",
+        description="Read and send email via Microsoft 365 (Outlook on the web).",
     )
     sub = parser.add_subparsers(dest="resource", required=True)
 
@@ -37,31 +37,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     add = acc_sub.add_parser("add", help="Add or update an account.")
     add.add_argument("--name", required=True, help="Local name for the account.")
-    add.add_argument(
-        "--provider",
-        required=True,
-        choices=["gmail", "m365", "imap"],
-        help="gmail (IMAP/SMTP preset), m365 (Outlook on the web), or imap (custom hosts).",
-    )
     add.add_argument("--email", required=True, help="The account's email address.")
-    add.add_argument("--username", help="Login username if it differs from --email.")
-    add.add_argument("--imap-host", help="IMAP host (imap provider).")
-    add.add_argument("--imap-port", type=int, help="IMAP port (default 993).")
-    add.add_argument("--smtp-host", help="SMTP host (imap provider).")
-    add.add_argument("--smtp-port", type=int, help="SMTP port (default 587).")
     add.add_argument(
-        "--password-env",
-        help="Env var holding the app password (default EMAIL_<NAME>_APP_PASSWORD).",
+        "--tenant", help="Azure tenant (default 'organizations')."
     )
-    add.add_argument(
-        "--tenant", help="Azure tenant for m365 (default 'organizations')."
-    )
-    add.add_argument("--client-id", help="Custom Azure app client id for m365.")
-    add.add_argument(
-        "--backend",
-        choices=["imap", "owa"],
-        help="Override the backend (m365 defaults to owa).",
-    )
+    add.add_argument("--client-id", help="Custom Azure app client id.")
     add.add_argument(
         "--default", action="store_true", help="Make this the default account."
     )
@@ -95,7 +75,9 @@ def build_parser() -> argparse.ArgumentParser:
     # -- read ----------------------------------------------------------------
     read = sub.add_parser("read", help="Read a single message in full.")
     _add_account_flag(read)
-    read.add_argument("--folder", default="inbox", help="Folder/mailbox (default inbox).")
+    read.add_argument(
+        "--folder", default="inbox", help="Folder/mailbox (default inbox)."
+    )
     read.add_argument("--id", required=True, help="Message id (from `list`).")
     read.add_argument(
         "--mark-read", action="store_true", help="Mark the message as read."
@@ -127,13 +109,17 @@ def build_parser() -> argparse.ArgumentParser:
     # -- pin -----------------------------------------------------------------
     pin = sub.add_parser("pin", help="Pin a message to the top of its folder.")
     _add_account_flag(pin)
-    pin.add_argument("--folder", default="inbox", help="Folder/mailbox (default inbox).")
+    pin.add_argument(
+        "--folder", default="inbox", help="Folder/mailbox (default inbox)."
+    )
     pin.add_argument("--id", required=True, help="Message id (from `list`).")
 
     # -- unpin ---------------------------------------------------------------
     unpin = sub.add_parser("unpin", help="Remove a pin from a message.")
     _add_account_flag(unpin)
-    unpin.add_argument("--folder", default="inbox", help="Folder/mailbox (default inbox).")
+    unpin.add_argument(
+        "--folder", default="inbox", help="Folder/mailbox (default inbox)."
+    )
     unpin.add_argument("--id", required=True, help="Message id (from `list`).")
 
     return parser

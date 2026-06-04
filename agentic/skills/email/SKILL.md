@@ -157,12 +157,8 @@ email list --pinned
 email list --pinned --limit 10
 ```
 
-**Backend support:**
-- **OWA (m365)**: DOM-based pinning via `agent-browser`
-- **IMAP/SMTP**: Not supported (raises `BackendError`)
-
-Pinning uses the `PidNameImportant` extended property in Microsoft Graph, which
-is the standard way to mark emails as important/pinned in Microsoft 365.
+Pinning is implemented via DOM-based interaction using `agent-browser` to click
+the pin button in Outlook on the web (OWA).
 
 
 ## Send

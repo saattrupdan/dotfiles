@@ -5,7 +5,7 @@ Loads ``.env`` files, parses arguments, dispatches to a command handler, and
 reports backend/config errors to stderr with a non-zero exit code.
 
 Usage:
-    email accounts add --name N --provider {gmail|m365|imap} --email E [--default]
+    email accounts add --name N --email E [--default]
     email accounts list
     email accounts remove --name N
     email login [--account N]

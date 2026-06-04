@@ -12,27 +12,11 @@ import sys
 from .backends import BackendError, get_backend
 from .config import (
     ConfigError,
-    default_password_env,
     load_config,
     resolve_account,
     save_config,
 )
 from .display import emit_raw, render_message, render_message_list
-
-# Per-provider connection presets applied by `accounts add`.
-_PROVIDER_PRESETS = {
-    "gmail": {
-        "backend": "imap",
-        "imap_host": "imap.gmail.com",
-        "imap_port": 993,
-        "smtp_host": "smtp.gmail.com",
-        "smtp_port": 587,
-    },
-    "imap": {"backend": "imap"},
-    # Browser-driven OWA is the default M365 path because most tenants block the
-    # OAuth/Graph flow with mandatory admin consent. `--backend graph` opts back in.
-    "m365": {"backend": "owa", "tenant": "organizations"},
-}
 
 
 # -- accounts ----------------------------------------------------------------
@@ -41,20 +25,16 @@ _PROVIDER_PRESETS = {
 def do_accounts_add(args) -> None:
     """Create or update an account in the config."""
     config = load_config()
-    preset = _PROVIDER_PRESETS[args.provider]
-    account: dict = {"provider": args.provider, "email": args.email, **preset}
+    account: dict = {
+        "provider": "m365",
+        "backend": "owa",
+        "email": args.email,
+        "tenant": args.tenant or "organizations",
+    }
     if args.username:
         account["username"] = args.username
-    for key in ("imap_host", "smtp_host", "imap_port", "smtp_port", "tenant"):
-        value = getattr(args, key, None)
-        if value is not None:
-            account[key] = value
     if args.client_id:
         account["client_id"] = args.client_id
-    if getattr(args, "backend", None):
-        account["backend"] = args.backend
-    if account["backend"] == "imap":
-        account["password_env"] = args.password_env or default_password_env(args.name)
 
     config.setdefault("accounts", {})[args.name] = account
     if args.default or config.get("default") is None:
@@ -62,19 +42,11 @@ def do_accounts_add(args) -> None:
     save_config(config)
 
     where = "default account" if config["default"] == args.name else "account"
-    print(f"Saved {where} '{args.name}' ({args.email}, {account['backend']} backend).")
-    if account["backend"] == "imap":
-        print(
-            f"Set the app password in {account['password_env']} "
-            "(env var or a .env file), then: email login --account " + args.name
-        )
-    elif account["backend"] == "owa":
-        print(
-            "Sign in (opens an Outlook browser window for a one-time login) with: "
-            f"email login --account {args.name}"
-        )
-    else:
-        print(f"Sign in with: email login --account {args.name}")
+    print(f"Saved {where} '{args.name}' ({args.email}, OWA backend).")
+    print(
+        "Sign in (opens an Outlook browser window for a one-time login) with: "
+        f"email login --account {args.name}"
+    )
 
 
 def do_accounts_list(_args) -> None:
@@ -141,8 +113,10 @@ def do_read(args) -> None:
     config = load_config()
     name, account = resolve_account(config, args.account)
     backend = get_backend(name, account)
-    
-    message = backend.get_message(msg_id=args.id, mark_read=args.mark_read, folder=args.folder)
+
+    message = backend.get_message(
+        msg_id=args.id, mark_read=args.mark_read, folder=args.folder
+    )
     if args.raw:
         emit_raw(message.to_dict())
         return
