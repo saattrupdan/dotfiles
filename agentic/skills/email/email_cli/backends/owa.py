@@ -126,7 +126,7 @@ class OwaBackend:
             // Check for aria-invalid="true" on any input
             const invalidFields = document.querySelectorAll('[aria-invalid="true"]');
             invalidFields.forEach(field => {
-                const label = field.getAttribute('aria-label') || field.placeholder || 'Field';  # noqa: E501
+                const label = field.getAttribute('aria-label') || field.placeholder || 'Field';
                 errors.push(`Invalid field: ${label}`);
             });
             
@@ -888,6 +888,15 @@ class OwaBackend:
         """Mark message as read by clicking on it (already done when opening)."""
         # Opening an email in OWA automatically marks it as read
         pass
+
+
+    def _check_logged_in(self) -> bool:
+        """Check if we are on a logged-in OWA page (not login redirect)."""
+        try:
+            location = self._browser.eval_json('location.href')
+            return "login.microsoftonline" not in str(location)
+        except Exception:
+            return False
 
     def send_message(
         self,
