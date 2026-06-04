@@ -17,6 +17,7 @@ capture the exact request the real OWA UI sends (to copy its shape) is to wrap
 
 from __future__ import annotations
 
+import json as _json
 import re
 import time
 
@@ -1072,18 +1073,29 @@ class OwaBackend:
             raise BackendError(f"Failed to find {field_name} field: {check['error']}")
 
         # Type all recipients as comma-separated, then trigger autocomplete
+        # Use _json.dumps() for proper JS string escaping (handles quotes, newlines, etc.)
         recipients_str = ", ".join(recipients)
+        recipients_escaped = _json.dumps(recipients_str)
         type_js = f"""
-        (() => {{
+        (async () => {{
             const el = document.querySelector('[aria-label="{aria_label}"][contenteditable="true"]');
             if (!el) return {{ error: "Field not found" }};
             el.focus();
             
-            // Insert text using execCommand for better compatibility
-            document.execCommand('insertText', false, '{recipients_str.replace("'", "\\'")}');
+            // Wait for focus to settle
+            await new Promise(r => setTimeout(r, 100));
             
-            // Trigger input event
+            // Insert text into contenteditable element
+            const sel = window.getSelection();
+            if (sel && sel.rangeCount > 0) {{
+                const range = sel.getRangeAt(0);
+                range.deleteContents();
+                range.insertNode(document.createTextNode({recipients_escaped}));
+            }}
+            
+            // Trigger input event so OWA knows the field changed
             el.dispatchEvent(new InputEvent('input', {{ bubbles: true }}));
+            
             return {{ success: true }};
         }})()
         """
@@ -1093,6 +1105,72 @@ class OwaBackend:
                 f"Failed to type recipients in {field_name}: {result['error']}"
             )
 
-        # Wait for autocomplete bubbles to form
-        # Visual chips need time to resolve
-        time.sleep(3)
+        # Wait for autocomplete bubbles to form and resolve to chips
+        # OWA needs time to validate recipients and show visual chips
+        time.sleep(2)
+
+    def _fill_subject_and_body(self, subject: str, body: str) -> None:
+        """Fill subject and body fields in the compose dialog.
+
+        Args:
+            subject:
+                Email subject line.
+            body:
+                Email body content (plain text or HTML).
+
+        Raises:
+            BackendError:
+                If subject or body field not found.
+        """
+        # Fill subject field - input with aria-label="Add a subject"
+        subject_escaped = _json.dumps(subject)
+        subject_js = f"""
+        (async () => {{
+            const el = document.querySelector('[aria-label="Add a subject"]');
+            if (!el) return {{ error: "Subject field not found" }};
+            
+            el.focus();
+            await new Promise(r => setTimeout(r, 100));
+            
+            // Clear existing value and set new one
+            el.value = '';
+            el.dispatchEvent(new InputEvent('input', {{ bubbles: true }}));
+            
+            // Insert subject text
+            el.value = {subject_escaped};
+            el.dispatchEvent(new InputEvent('input', {{ bubbles: true }}));
+            
+            return {{ success: true }};
+        }})()
+        """
+        result = self._browser.eval_json(subject_js)
+        if result.get("error"):
+            raise BackendError(f"Failed to fill subject field: {result['error']}")
+
+        # Fill body field - contenteditable div with aria-label for message body
+        # Use _json.dumps() for proper escaping of quotes, newlines, etc.
+        body_escaped = _json.dumps(body)
+        body_js = f"""
+        (async () => {{
+            // Find the body contenteditable div - look for the main editor area
+            const bodyEl = document.querySelector('div[aria-label][contenteditable="true"]');
+            if (!bodyEl) return {{ error: "Body field not found" }};
+            
+            bodyEl.focus();
+            await new Promise(r => setTimeout(r, 100));
+            
+            // Clear existing content
+            bodyEl.innerHTML = '';
+            
+            // Insert body text - preserve newlines by using textContent
+            bodyEl.textContent = {body_escaped};
+            
+            // Trigger input event so OWA knows the content changed
+            bodyEl.dispatchEvent(new InputEvent('input', {{ bubbles: true }}));
+            
+            return {{ success: true }};
+        }})()
+        """
+        body_result = self._browser.eval_json(body_js)
+        if body_result.get("error"):
+            raise BackendError(f"Failed to fill body field: {body_result['error']}")
