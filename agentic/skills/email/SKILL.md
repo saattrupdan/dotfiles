@@ -121,10 +121,11 @@ security add-generic-password -s 'outlook' -a 'password' -w 'YOUR_PASSWORD'
 ## Read
 
 ```bash
-# List the inbox (newest first) — markdown table: # | unread | Date | From | Subject | Id
+# List the inbox (newest first) — markdown table: # | 📌 / ✉ | Date | From | Subject | Id
 email list
 email list --account work --limit 10
 email list --unread                       # only unread
+email list --pinned                       # only pinned messages
 email list --folder sent                  # inbox|sent|drafts|spam|trash|all (or a raw name)
 email list --query badekar                # free-text search
 email list --query "from:boss@company.com"
@@ -140,6 +141,35 @@ email read --id 12345 --raw               # JSON
 
 `--query` accepts a `from:`/`to:`/`subject:` prefix or plain free text. IDs are
 per-account and stable within a folder; always take them from a fresh `list`.
+
+
+## Pin and Unpin
+
+Pinning a message marks it as important and keeps it at the top of your inbox.
+Pinned messages show a 📌 icon in the message list.
+
+```bash
+# Pin a message
+email pin --id 12345
+email pin --account work --id AAMk... --folder inbox
+
+# Unpin a message
+email unpin --id 12345
+email unpin --account work --id AAMk...
+
+# List only pinned messages
+email list --pinned
+email list --pinned --limit 10
+```
+
+**Backend support:**
+- **Graph API (m365 with `--backend graph`)**: Native pinning via extended properties
+- **OWA (m365 with `--backend owa`)**: DOM-based pinning via `agent-browser`
+- **IMAP/SMTP**: Not supported (raises `BackendError`)
+
+Pinning uses the `PidNameImportant` extended property in Microsoft Graph, which
+is the standard way to mark emails as important/pinned in Microsoft 365.
+
 
 ## Send
 
