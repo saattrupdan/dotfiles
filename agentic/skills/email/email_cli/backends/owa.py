@@ -317,7 +317,6 @@ class OwaBackend:
         
         Extracts sender/subject from option element text using heuristics.
         """
-        import re
         snapshot = self._browser._run("snapshot", timeout=30)
         
         messages = []
@@ -387,6 +386,7 @@ class OwaBackend:
             if match:
                 text = match.group(1)
                 is_unread = "unread" in line.lower()
+                is_pinned = "pinned" in line.lower()
                 
                 # Remove status prefixes
                 prefixes = r'(Collapsed|Has attachments|Pinned|Replied|New)'
@@ -411,6 +411,7 @@ class OwaBackend:
                     subject=subject.strip() if subject else (text[:50] if text else "No subject"),
                     unread=is_unread,
                     to=[],
+                    pinned=is_pinned,
                 ))
                 idx += 1
         
@@ -422,28 +423,142 @@ class OwaBackend:
         folder: str,
         query: str | None,
         unread_only: bool,
+        pinned_only: bool = False,
         limit: int,
     ) -> list[Message]:
         """Return the most recent messages in ``folder`` (newest first).
         
         Uses DOM parsing since the EWS API requires HTTP-only X-OWA-CANARY cookie.
+        
+        Args:
+            folder:
+                Folder to list messages from.
+            query:
+                Optional search query (not yet implemented).
+            unread_only:
+                If True, filter to unread messages only.
+            pinned_only:
+                If True, filter to pinned messages only by clicking the Pinned filter.
+            limit:
+                Maximum number of messages to return.
         """
         # Navigate to folder
         self._navigate_to_folder(folder)
         
+        # Apply pinned filter if requested
+        if pinned_only:
+            self._click_filter_button("Pinned")
+        
         # Filter unread if needed
         if unread_only:
-            # Click on "Unread" filter if available
-            snapshot = self._browser._run("snapshot", "-i")
-            if "Unread" in snapshot:
-                # Find and click the unread filter button
-                # This is a simplification - full implementation would need ref tracking
-                pass
+            self._click_filter_button("Unread")
         
         # Parse emails from DOM
         messages = self._parse_email_list_from_dom(limit)
         
         return messages[:limit]
+    
+    def _click_filter_button(self, filter_name: str) -> None:
+        """Click a filter button in the mail toolbar.
+        
+        Args:
+            filter_name:
+                Name of the filter to click (e.g., "Pinned", "Unread").
+        """
+        snapshot = self._browser._run("snapshot", "-i")
+        if filter_name in snapshot:
+            # Parse snapshot to find the ref for the filter button
+            import re
+            # Look for button with the filter name in aria-label or text
+            for line in snapshot.split("\n"):
+                if filter_name.lower() in line.lower() and ("button" in line.lower() or "checkbox" in line.lower()):
+                    ref_match = re.search(r'\[ref=(e\d+)\]', line)
+                    if ref_match:
+                        ref = f"@{ref_match.group(1)}"
+                        try:
+                            self._browser._run("click", ref)
+                            self._wait_for_snapshot(timeout=5)
+                            return
+                        except Exception:
+                            pass
+
+    def pin_message(self, msg_id: str, folder: str = "inbox") -> None:
+        """Pin a message by clicking the Pin button.
+        
+        Args:
+            msg_id:
+                Message ID to pin. Can be a dom_ index or backend-specific ID.
+            folder:
+                Folder containing the message. Defaults to "inbox".
+        """
+        # Navigate to folder
+        self._navigate_to_folder(folder)
+        
+        # Find and select the message
+        if msg_id.startswith("dom_"):
+            index = int(msg_id.replace("dom_", ""))
+            snapshot = self._browser._run("snapshot", timeout=30)
+            options = re.findall(r'option.*?\[ref=e(\d+)\]', snapshot, re.IGNORECASE)
+            
+            if index < len(options):
+                ref = f"@e{options[index]}"
+                self._browser._run("click", ref)
+                self._wait_for_snapshot(timeout=5)
+        
+        # Click the Pin button - look for it in the toolbar
+        snapshot = self._browser._run("snapshot", "-i")
+        for line in snapshot.split("\n"):
+            if "pin" in line.lower() and "button" in line.lower():
+                ref_match = re.search(r'\[ref=(e\d+)\]', line)
+                if ref_match:
+                    ref = f"@{ref_match.group(1)}"
+                    try:
+                        self._browser._run("click", ref)
+                        self._wait_for_snapshot(timeout=3)
+                        return
+                    except Exception:
+                        pass
+        
+        raise BackendError(f"Pin button not found for message {msg_id}")
+
+    def unpin_message(self, msg_id: str, folder: str = "inbox") -> None:
+        """Unpin a message by clicking the Unpin button.
+        
+        Args:
+            msg_id:
+                Message ID to unpin. Can be a dom_ index or backend-specific ID.
+            folder:
+                Folder containing the message. Defaults to "inbox".
+        """
+        # Navigate to folder
+        self._navigate_to_folder(folder)
+        
+        # Find and select the message
+        if msg_id.startswith("dom_"):
+            index = int(msg_id.replace("dom_", ""))
+            snapshot = self._browser._run("snapshot", timeout=30)
+            options = re.findall(r'option.*?\[ref=e(\d+)\]', snapshot, re.IGNORECASE)
+            
+            if index < len(options):
+                ref = f"@e{options[index]}"
+                self._browser._run("click", ref)
+                self._wait_for_snapshot(timeout=5)
+        
+        # Click the Unpin button - look for it in the toolbar
+        snapshot = self._browser._run("snapshot", "-i")
+        for line in snapshot.split("\n"):
+            if "unpin" in line.lower() and "button" in line.lower():
+                ref_match = re.search(r'\[ref=(e\d+)\]', line)
+                if ref_match:
+                    ref = f"@{ref_match.group(1)}"
+                    try:
+                        self._browser._run("click", ref)
+                        self._wait_for_snapshot(timeout=3)
+                        return
+                    except Exception:
+                        pass
+        
+        raise BackendError(f"Unpin button not found for message {msg_id}")
 
     def get_message(self, *, msg_id: str, mark_read: bool, folder: str = "inbox") -> Message:
         """Fetch a single message by parsing the reading pane.
