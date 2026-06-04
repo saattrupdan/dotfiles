@@ -1119,11 +1119,11 @@ class OwaBackend:
             BackendError:
                 If subject or body field not found.
         """
-        # Fill subject field - input with aria-label="Add a subject"
+        # Fill subject field - input with aria-label="Subject"
         subject_escaped = _json.dumps(subject)
         subject_js = f"""
         (async () => {{
-            const el = document.querySelector('[aria-label="Add a subject"]');
+            const el = document.querySelector('[aria-label="Subject"]');
             if (!el) return {{ error: "Subject field not found" }};
             
             el.focus();
@@ -1150,7 +1150,7 @@ class OwaBackend:
         body_js = f"""
         (async () => {{
             // Find the body contenteditable div - look for the main editor area
-            const bodyEl = document.querySelector('div[aria-label][contenteditable="true"]');  # noqa: E501
+            const bodyEl = document.querySelector('div[contenteditable="true"][aria-label]');
             if (!bodyEl) return {{ error: "Body field not found" }};
             
             bodyEl.focus();
