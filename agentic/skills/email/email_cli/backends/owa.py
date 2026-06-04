@@ -809,7 +809,18 @@ class OwaBackend:
         self._wait_for_snapshot(timeout=10)
 
         # Step 1: Click "New email" button to open compose dialog
-        self._browser._run("click", '@aria="New email"')
+        compose_js = """
+        (() => {
+            const btn = document.querySelector('button[aria-label="New email"]');
+            if (!btn) return { error: "New email button not found" };
+            btn.scrollIntoView();
+            btn.click();
+            return { success: true };
+        })()
+        """
+        compose_result = self._browser.eval_json(compose_js)
+        if compose_result.get("error"):
+            raise BackendError(f"Failed to open compose: {compose_result['error']}")
         time.sleep(2)  # Wait for compose dialog to open
 
         # Step 2: Fill recipient fields
@@ -904,7 +915,9 @@ class OwaBackend:
                 "Sending failed - validation errors detected in compose form."
             )
 
-        raise BackendError(f"Sending timed out after {max_wait}s - compose dialog still open.")
+        raise BackendError(
+            f"Sending timed out after {max_wait}s - compose dialog still open."
+        )
 
     def _fill_recipient_field(self, field_name: str, recipients: list[str]) -> None:
         """Fill a recipient field and wait for autocomplete bubbles to form.
@@ -959,7 +972,9 @@ class OwaBackend:
         """
         result = self._browser.eval_json(type_js)
         if result.get("error"):
-            raise BackendError(f"Failed to type recipients in {field_name}: {result['error']}")
+            raise BackendError(
+                f"Failed to type recipients in {field_name}: {result['error']}"
+            )
 
         # Wait for autocomplete bubbles to form
         time.sleep(2)
