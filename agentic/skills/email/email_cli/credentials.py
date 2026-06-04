@@ -20,12 +20,6 @@ def get_credential(service: str, key: str) -> str | None:
         return None
 
 
-def get_gmail_credentials() -> tuple[str | None, str | None]:
-    """Get Gmail credentials from Keychain."""
-    password = get_credential("gmail", "password")
-    return (None, password)
-
-
 def get_outlook_credentials() -> tuple[str | None, str | None]:
     """Get Outlook/M365 credentials from Keychain."""
     username = get_credential("outlook", "username")

@@ -38,9 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
     add = acc_sub.add_parser("add", help="Add or update an account.")
     add.add_argument("--name", required=True, help="Local name for the account.")
     add.add_argument("--email", required=True, help="The account's email address.")
-    add.add_argument(
-        "--tenant", help="Azure tenant (default 'organizations')."
-    )
+    add.add_argument("--tenant", help="Azure tenant (default 'organizations').")
     add.add_argument("--client-id", help="Custom Azure app client id.")
     add.add_argument(
         "--default", action="store_true", help="Make this the default account."

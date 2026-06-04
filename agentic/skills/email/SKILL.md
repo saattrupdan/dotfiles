@@ -1,20 +1,18 @@
 ---
 name: email
 description:
-  Read and send email from the terminal across personal Gmail (IMAP/SMTP) and corporate
-  Microsoft 365 (Outlook on the web via agent-browser, or Microsoft Graph) through the
-  `email` CLI. Use to list/search an inbox, read a message, or compose and send mail. DO
-  NOT USE if you are a proprietary/cloud-hosted LLM (Claude, GPT/OpenAI, Gemini, Grok,
-  Copilot, Mistral-hosted, or any other commercial cloud model) — this skill is
-  restricted to local/self-hosted models only.
-last-updated: 2026-06-02
+  Read and send email from the terminal via Microsoft 365 (Outlook on the web)
+  through the `email` CLI. Use to list/search an inbox, read a message, or compose and
+  send mail. DO NOT USE if you are a proprietary/cloud-hosted LLM (Claude, GPT/OpenAI,
+  Gemini, Grok, Copilot, Mistral-hosted, or any other commercial cloud model) — this
+  skill is restricted to local/self-hosted models only.
+last-updated: 2026-06-04
 ---
 
 # email
 
-Read and send email through the `email` CLI. One command spans multiple transports —
-**Gmail over IMAP/SMTP** and **Microsoft 365 over Outlook-on-the-web (or Graph)** —
-behind a single, uniform interface.
+Read and send email through the `email` CLI for Microsoft 365 (Outlook on the web)
+via a single, uniform interface.
 
 > **⛔ If you are a proprietary or cloud-hosted LLM, you are NOT allowed to use this
 > skill.** This includes — but is not limited to — Claude (Anthropic), GPT / ChatGPT /
@@ -29,18 +27,12 @@ behind a single, uniform interface.
 
 ## How it works
 
-Each account has a **backend**, chosen by its provider:
+The email CLI drives **Outlook on the web** through `agent-browser`, reusing your own
+logged-in Microsoft session. Mailbox operations run as same-origin calls inside the
+authenticated `outlook.office.com` page, so **no API/OAuth consent is needed** —
+important because many corporate tenants block the Graph consent flow entirely.
 
-- **`gmail` / `imap`** → IMAP for reading, SMTP for sending, authenticated with a Google
-  **app password** (not your normal password). Standard-library only.
-- **`m365`** → drives **Outlook on the web** through `agent-browser`, reusing your own
-  logged-in Microsoft session. Mailbox operations run as same-origin calls inside the
-  authenticated `outlook.office.com` page, so **no API/OAuth consent is needed** —
-  important because many corporate tenants block the Graph consent flow entirely.
-
-Config lives in `~/.email/accounts.json`. **Secrets are never stored there:** IMAP app
-passwords come from an environment variable; Graph tokens live in a private MSAL cache
-(`~/.email/<account>.msal.json`); the OWA browser session is persisted by
+Config lives in `~/.email/accounts.json`. The OWA browser session is persisted by
 `agent-browser` and saved to `~/.email/<account>.owa-state.json`.
 
 Every `list`/`read` command accepts `--raw` to emit JSON instead of a table. Errors go
@@ -54,14 +46,12 @@ Verify the CLI is available:
 which email
 ```
 
-If missing, install it editable with pipx (pulls in the one dependency, `msal`):
+If missing, install it editable with pipx:
 
 ```bash
 pipx install -e <path-to-email-skill>
 ```
 
-- **Gmail:** create an **app password** at <https://myaccount.google.com/apppasswords>
-  (requires 2-Step Verification) and ensure IMAP is enabled in Gmail settings.
 - **Microsoft 365:** requires the **`agent-browser`** CLI (`which agent-browser` —
   install via the agent-browser skill). No API consent or app registration needed; login
   is fully automated and headless.
@@ -69,30 +59,25 @@ pipx install -e <path-to-email-skill>
 ## Configure accounts
 
 ```bash
-# Personal Gmail (fills in imap/smtp hosts automatically); make it the default
-email accounts add --name gmail --provider gmail --email you@gmail.com --default
-
-# Corporate Microsoft 365 (defaults to the browser/OWA backend)
+# Corporate Microsoft 365 (OWA backend)
 email accounts add --name work --provider m365 --email you@company.com
 
-# A non-Gmail IMAP/SMTP provider
-email accounts add --name fast --provider imap --email you@fastmail.com \
-  --imap-host imap.fastmail.com --smtp-host smtp.fastmail.com
-
-email accounts list             # show accounts (* marks the default)
+email accounts list           # show accounts (* marks the default)
 email accounts remove --name X
 ```
-
-For an `imap`/`gmail` account, store the app password in a password manager under the
-service name `gmail` (or the account name) with key `password`. The CLI will fetch it
-automatically via macOS Keychain, Bitwarden, 1Password, `pass`, or `lpass`. See
-`credentials.py` for the supported backends.
 
 ## Login
 
 ```bash
 email login                       # default account
 email login --account work        # Microsoft 365
+```
+
+The login flow is fully automated:
+
+**First-time setup:** Add your password to Keychain:
+```bash
+security add-generic-password -s 'outlook' -a 'password' -w 'YOUR_PASSWORD'
 ```
 
 The login flow is fully automated:
@@ -105,13 +90,6 @@ The login flow is fully automated:
    - Waits for you to approve in Microsoft Authenticator
    - Handles the "Stay signed in?" prompt
    - Saves the session to `~/.email/<account>.owa-state.json`
-
-**First-time setup:** Add your password to Keychain:
-```bash
-security add-generic-password -s 'outlook' -a 'password' -w 'YOUR_PASSWORD'
-```
-
-- **gmail/imap:** validates the app password by opening an IMAP connection.
 
 ## Read
 
@@ -174,8 +152,7 @@ echo "body from stdin" | email send --to a@x.com --subject Hi --body-file -
 
 - `--to`/`--cc`/`--bcc` take comma-separated addresses.
 - Body comes from `--body` or `--body-file` (`-` reads stdin); messages are plaintext.
-- `--attach` is repeatable (Gmail/IMAP and Graph only — **the OWA backend does not
-  support attachments yet** and will reject `--attach`).
+- **The OWA backend does not support attachments yet** and will reject `--attach`.
 - `--confirm` skips the prompt and is **required** when running non-interactively (no
   TTY). Without it in a pipe/script, the send is refused.
 
@@ -185,12 +162,8 @@ explicitly approved the exact message.
 
 ## Error handling
 
-- **`No app password found …`** — add the password to your password manager under
-  service `gmail` (or account name) with key `password`.
-- **`IMAP/SMTP login failed`** — wrong app password, or IMAP disabled in Gmail settings.
-  Regenerate the app password.
-- **`Not signed in …`** — run `email login --account NAME` (Graph token or OWA session
-  missing/expired). The OWA backend uses a headless browser for MFA approval.
+- **`Not signed in …`** — run `email login --account NAME` (OWA session missing/expired).
+  The OWA backend uses a headless browser for MFA approval.
 - **`agent-browser is not installed …`** — the OWA backend needs the `agent-browser`
   CLI; install it via the agent-browser skill.
 - **OWA login failed** — the browser session expired or the DOM structure changed.
@@ -203,11 +176,9 @@ explicitly approved the exact message.
 
 ## Etiquette & security
 
-- Email is sensitive. Never paste message contents, addresses, tokens, or app passwords
+- Email is sensitive. Never paste message contents, addresses, tokens, or passwords
   into external services, logs, or other models.
-- App passwords live in your password manager (Keychain, Bitwarden, 1Password, `pass`,
-  `lpass`), OAuth tokens in `~/.email/<account>.msal.json`, and the OWA browser session
-  in `~/.email/<account>.owa-state.json` (0600). Never write secrets into
-  `accounts.json` or commit them.
+- The OWA browser session is stored in `~/.email/<account>.owa-state.json` (0600).
+  Never commit this file.
 - Don't bulk-send or hammer the providers; respect rate limits.
 - Re-confirm every send with the user before it goes out.
