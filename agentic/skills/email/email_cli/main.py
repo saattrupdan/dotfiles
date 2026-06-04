@@ -9,9 +9,11 @@ Usage:
     email accounts list
     email accounts remove --name N
     email login [--account N]
-    email list [--account N] [--folder F] [--query Q] [--unread] [--limit N] [--raw]
+    email list [--account N] [--folder F] [--query Q] [--unread] [--pinned] [--limit N] [--raw]
     email read [--account N] --id ID [--mark-read] [--html] [--raw]
     email send [--account N] --to A,B --subject S (--body T | --body-file F) [--confirm]
+    email pin [--account N] --id ID [--folder F]
+    email unpin [--account N] --id ID [--folder F]
 """
 
 from __future__ import annotations
@@ -41,6 +43,8 @@ def main() -> None:
         ("list", None): commands.do_list,
         ("read", None): commands.do_read,
         ("send", None): commands.do_send,
+        ("pin", None): commands.do_pin,
+        ("unpin", None): commands.do_unpin,
     }
 
     handler = dispatch.get((resource, operation))

@@ -86,6 +86,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Search: free text, or from:/to:/subject: prefix.",
     )
     lst.add_argument("--unread", action="store_true", help="Only unread messages.")
+    lst.add_argument("--pinned", action="store_true", help="Only pinned messages.")
     lst.add_argument(
         "--limit", "-n", type=int, default=20, help="Max messages (default 20)."
     )
@@ -122,5 +123,17 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip the confirmation prompt (required when non-interactive).",
     )
+
+    # -- pin -----------------------------------------------------------------
+    pin = sub.add_parser("pin", help="Pin a message to the top of its folder.")
+    _add_account_flag(pin)
+    pin.add_argument("--folder", default="inbox", help="Folder/mailbox (default inbox).")
+    pin.add_argument("--id", required=True, help="Message id (from `list`).")
+
+    # -- unpin ---------------------------------------------------------------
+    unpin = sub.add_parser("unpin", help="Remove a pin from a message.")
+    _add_account_flag(unpin)
+    unpin.add_argument("--folder", default="inbox", help="Folder/mailbox (default inbox).")
+    unpin.add_argument("--id", required=True, help="Message id (from `list`).")
 
     return parser

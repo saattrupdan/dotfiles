@@ -132,7 +132,7 @@ class ImapSmtpBackend:
         return "IMAP/SMTP does not use two-step login."
 
     def list_messages(
-        self, *, folder: str, query: str | None, unread_only: bool, limit: int
+        self, *, folder: str, query: str | None, unread_only: bool, pinned_only: bool = False, limit: int
     ) -> list[Message]:
         conn = self._imap()
         try:
@@ -303,3 +303,43 @@ class ImapSmtpBackend:
             ) from exc
         except (smtplib.SMTPException, OSError) as exc:
             raise BackendError(f"SMTP send failed via {host}:{port}: {exc}") from exc
+
+    def pin_message(self, *, msg_id: str, folder: str) -> None:
+        """Pin a message to the top of its folder.
+
+        IMAP/SMTP does not support pinning messages. This method raises an error.
+
+        Args:
+            msg_id:
+                The message ID to pin.
+            folder:
+                The folder containing the message.
+
+        Raises:
+            BackendError:
+                Pinning is not supported by this backend.
+        """
+        raise BackendError(
+            "Pinning is not supported for IMAP/SMTP accounts. "
+            "Use a Microsoft 365 or Outlook Web Access account instead."
+        )
+
+    def unpin_message(self, *, msg_id: str, folder: str) -> None:
+        """Remove a pin from a message.
+
+        IMAP/SMTP does not support pinning messages. This method raises an error.
+
+        Args:
+            msg_id:
+                The message ID to unpin.
+            folder:
+                The folder containing the message.
+
+        Raises:
+            BackendError:
+                Pinning is not supported by this backend.
+        """
+        raise BackendError(
+            "Pinning is not supported for IMAP/SMTP accounts. "
+            "Use a Microsoft 365 or Outlook Web Access account instead."
+        )

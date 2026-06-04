@@ -164,33 +164,52 @@ class GraphBackend:
         return f"{name} <{addr}>" if name and name != addr else addr
 
     def list_messages(
-        self, *, folder: str, query: str | None, unread_only: bool, limit: int
+        self, *, folder: str, query: str | None, unread_only: bool, limit: int, pinned_only: bool = False
     ) -> list[Message]:
         mailbox = _FOLDER_ALIASES.get(folder.lower(), folder)
         params: dict[str, str] = {
             "$top": str(limit),
-            "$select": "id,subject,from,toRecipients,receivedDateTime,isRead,bodyPreview",
+            "$select": "id,subject,from,toRecipients,receivedDateTime,isRead,bodyPreview,singleValueLegacyExtendedProperty",
+            "$expand": "singleValueLegacyExtendedProperty($filter=id eq '{http://schemas.microsoft.com/mapi/proptag/0x0031}')",
         }
+        filters = []
+        if unread_only:
+            filters.append("isRead eq false")
+        if pinned_only:
+            # Filter for messages with PidNameImportant set to "true"
+            filters.append("singleValueLegacyExtendedProperty/id eq '{http://schemas.microsoft.com/mapi/proptag/0x0031}' and singleValueLegacyExtendedProperty/value eq 'true'")
+        if filters:
+            params["$filter"] = " and ".join(filters)
         if query:
-            # $search cannot be combined with $orderby; otherwise sort newest first.
+            # $search cannot be combined with $orderby or $filter; use client-side filtering.
             params["$search"] = f'"{query}"'
+            del params["$orderby"]
+            if "$filter" in params:
+                del params["$filter"]
         else:
             params["$orderby"] = "receivedDateTime desc"
-            if unread_only:
-                params["$filter"] = "isRead eq false"
         data = self._request(
             "GET", f"/me/mailFolders/{mailbox}/messages", params=params
         )
         messages = []
         for item in data.get("value", []):
-            if query and unread_only and item.get("isRead", True):
-                continue  # client-side filter when $search blocked $filter
             messages.append(self._to_message(item))
         return messages
 
     def _to_message(self, item: dict, *, body: str | None = None) -> Message:
         received = item.get("receivedDateTime", "")
         date = received.replace("T", " ")[:16] if received else ""
+        # Extract pinned status from singleValueLegacyExtendedProperty
+        pinned = False
+        ext_props = item.get("singleValueLegacyExtendedProperty")
+        if ext_props:
+            # Can be a single dict or a list depending on query
+            props = ext_props if isinstance(ext_props, list) else [ext_props]
+            for prop in props:
+                prop_id = prop.get("id", "")
+                if "0x0031" in prop_id:  # PidNameImportant
+                    pinned = prop.get("value", "").lower() == "true"
+                    break
         return Message(
             id=item.get("id", ""),
             date=date,
@@ -200,6 +219,7 @@ class GraphBackend:
             to=[self._addr(r) for r in item.get("toRecipients", [])],
             preview=item.get("bodyPreview", ""),
             body_text=body if body is not None else None,
+            pinned=pinned,
         )
 
     def get_message(self, *, msg_id: str, mark_read: bool, folder: str = "inbox") -> Message:
@@ -235,6 +255,53 @@ class GraphBackend:
             )
             message.unread = False
         return message
+
+    def pin_message(self, *, msg_id: str, folder: str) -> None:
+        """Mark a message as important/pinned using extended properties.
+
+        Sets the PidNameImportant extended property to "true" via the
+        singleValueLegacyExtendedProperty API.
+
+        Args:
+            msg_id:
+                The message ID to pin.
+            folder:
+                The folder containing the message (used for validation only;
+                Graph's message IDs are globally unique).
+        """
+        self._request(
+            "PATCH",
+            f"/me/messages/{urllib.parse.quote(msg_id)}",
+            body={
+                "singleValueLegacyExtendedProperty": {
+                    "id": "{http://schemas.microsoft.com/mapi/proptag/0x0031}",
+                    "value": "true",
+                }
+            },
+        )
+
+    def unpin_message(self, *, msg_id: str, folder: str) -> None:
+        """Remove the important/pinned flag from a message.
+
+        Clears the PidNameImportant extended property by setting it to null.
+
+        Args:
+            msg_id:
+                The message ID to unpin.
+            folder:
+                The folder containing the message (used for validation only;
+                Graph's message IDs are globally unique).
+        """
+        self._request(
+            "PATCH",
+            f"/me/messages/{urllib.parse.quote(msg_id)}",
+            body={
+                "singleValueLegacyExtendedProperty": {
+                    "id": "{http://schemas.microsoft.com/mapi/proptag/0x0031}",
+                    "value": None,
+                }
+            },
+        )
 
     # -- send ----------------------------------------------------------------
 

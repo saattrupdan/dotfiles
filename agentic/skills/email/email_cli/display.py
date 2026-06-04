@@ -45,6 +45,8 @@ def render_message_list(messages: list[Message]) -> str:
     rows = []
     for i, m in enumerate(messages, start=1):
         flag = "✉" if m.unread else ""
+        pin = "📌" if m.pinned else ""
+        flag = f"{pin}{flag}" if pin or flag else ""
         rows.append([str(i), flag, m.date, m.sender, m.subject, m.id])
     return _md_table(
         headers=["#", "", "Date", "From", "Subject", "Id"],

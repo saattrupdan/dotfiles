@@ -127,6 +127,7 @@ def do_list(args) -> None:
         folder=args.folder,
         query=args.query,
         unread_only=args.unread,
+        pinned_only=args.pinned,
         limit=args.limit,
     )
     if args.raw:
@@ -221,3 +222,21 @@ def do_send(args) -> None:
         attachments=args.attach,
     )
     print(f"Sent to {', '.join(to)}.")
+
+
+def do_pin(args) -> None:
+    """Pin a message to the top of its folder."""
+    config = load_config()
+    name, account = resolve_account(config, args.account)
+    backend = get_backend(name, account)
+    backend.pin_message(msg_id=args.id, folder=args.folder)
+    print(f"Pinned message {args.id} in {args.folder}.")
+
+
+def do_unpin(args) -> None:
+    """Remove a pin from a message."""
+    config = load_config()
+    name, account = resolve_account(config, args.account)
+    backend = get_backend(name, account)
+    backend.unpin_message(msg_id=args.id, folder=args.folder)
+    print(f"Unpinned message {args.id} in {args.folder}.")
