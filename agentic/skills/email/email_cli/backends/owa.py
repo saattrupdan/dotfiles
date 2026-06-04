@@ -951,10 +951,10 @@ class OwaBackend:
         # Open compose dialog via eval_json
         new_message_js = """
         (() => {
-            // OWA's New message button - triggers compose dialog
-            const button = document.querySelector('[aria-label="New message"]');
+            // OWA's New email button - triggers compose dialog
+            const button = document.querySelector('[aria-label="New email"]');
             if (!button) {
-                return { error: "New message button not found" };
+                return { error: "New email button not found" };
             }
             button.click();
             return { success: true };
@@ -1010,7 +1010,7 @@ class OwaBackend:
 
             # Check if compose dialog is closed
             compose_check = self._browser.eval_json(
-                '(async()=>JSON.stringify({compose:!!document.querySelector(\'[role="dialog"][aria-label*="New message"]\')}))()'  # noqa: E501
+                '(async()=>JSON.stringify({compose:!!document.querySelector(\'[role="dialog"][aria-label*="New email"]\')}))()'  # noqa: E501
             )
             if not (compose_check or {}).get("compose"):
                 return  # Dialog closed = success
