@@ -1010,7 +1010,7 @@ class OwaBackend:
 
             # Check if compose dialog is closed
             compose_check = self._browser.eval_json(
-                '(async()=>JSON.stringify({compose:!!document.querySelector(\'[role="dialog"][aria-label*="New email"]\')}))()'  # noqa: E501
+                """(async()=>JSON.stringify({compose:!!document.querySelector('[role="dialog"][aria-label*="New email"]')}))()"""  # noqa: E501
             )
             if not (compose_check or {}).get("compose"):
                 return  # Dialog closed = success
