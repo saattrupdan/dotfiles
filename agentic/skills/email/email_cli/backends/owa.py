@@ -1,12 +1,11 @@
 """Outlook-on-the-web backend driven through ``agent-browser``.
 
-Used for Microsoft 365 accounts whose tenant blocks OAuth/Graph user consent
-(e.g. alexandra.dk). Instead of an API token, it reuses the user's own
-authenticated ``outlook.office.com`` browser session: every mailbox operation is
-a same-origin ``fetch()`` to OWA's internal EWS-JSON endpoint
-(``/owa/service.svc``), executed *inside* the logged-in page via
-``agent-browser eval`` so the session cookies and ``X-OWA-CANARY`` CSRF token are
-applied automatically.
+Used for Microsoft 365 accounts (e.g. alexandra.dk). Instead of API access, it
+reuses the user's own authenticated ``outlook.office.com`` browser session:
+every mailbox operation is a same-origin ``fetch()`` to OWA's internal
+EWS-JSON endpoint (``/owa/service.svc``), executed *inside* the logged-in page
+via ``agent-browser eval`` so the session cookies and ``X-OWA-CANARY`` CSRF
+token are applied automatically.
 
 ⚠️  The EWS-JSON request shapes below are based on OWA's undocumented internal
 protocol and are version-sensitive. They are a best-effort starting point and may

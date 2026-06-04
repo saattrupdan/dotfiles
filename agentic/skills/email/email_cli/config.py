@@ -112,8 +112,8 @@ def resolve_account(config: dict, name: str | None) -> tuple[str, dict]:
 
 
 def token_cache_path(name: str) -> Path:
-    """Path to the MSAL token cache for a Graph account."""
-    return CONFIG_DIR / f"{name}.msal.json"
+    """Path to the OWA session state file for an account."""
+    return CONFIG_DIR / f"{name}.owa.json"
 
 
 # Password env vars removed - OWA uses browser session authentication only
