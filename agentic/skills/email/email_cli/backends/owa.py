@@ -89,7 +89,7 @@ class OwaBackend:
         })()
         """
         try:
-            js_wrapper = "JSON.stringify((async()=>(" + js_extract + "))())"
+            js_wrapper = "js_extract  # IIFE returns directly
             eval_result = self._browser.eval_json(js_wrapper)
             return eval_result if eval_result else None
         except Exception:
@@ -168,7 +168,7 @@ class OwaBackend:
         })()
         """
         try:
-            js_wrapper = "JSON.stringify((async()=>(" + check_js + "))())"
+            js_wrapper = "check_js  # IIFE returns directly
             result = self._browser.eval_json(js_wrapper)
             return result if result else {"has_errors": False, "errors": []}
         except Exception:
@@ -230,7 +230,7 @@ class OwaBackend:
         })()
         """
         try:
-            js_wrapper = "JSON.stringify((async()=>(" + state_js + "))())"
+            js_wrapper = "state_js  # IIFE returns directly
             result = self._browser.eval_json(js_wrapper)
             return (
                 result

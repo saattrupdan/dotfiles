@@ -109,6 +109,12 @@ export default function (pi: ExtensionAPI) {
 			}
 		}
 		if (stopReason === "error" || stopReason === "aborted") {
+			// Skip notifications for transient errors that don't break the session:
+			// - "terminated" = Node.js version mismatch (Node 26 undici bug), auto-recovers
+			// - 429 = rate limit, Pi retries automatically
+			// Only notify if generation actually stopped with a real error.
+			const msg = errorMessage?.toLowerCase() ?? "";
+			if (msg === "terminated" || msg.includes("429")) return;
 			const detail = errorMessage ? truncate(errorMessage) : stopReason;
 			notify("Pi failed", detail, SOUND_FAILED);
 		} else {
