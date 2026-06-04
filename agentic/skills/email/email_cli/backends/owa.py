@@ -89,7 +89,7 @@ class OwaBackend:
         })()
         """
         try:
-            js_wrapper = "js_extract  # IIFE returns directly
+            js_wrapper = js_extract  # Direct IIFE
             eval_result = self._browser.eval_json(js_wrapper)
             return eval_result if eval_result else None
         except Exception:
@@ -168,7 +168,7 @@ class OwaBackend:
         })()
         """
         try:
-            js_wrapper = "check_js  # IIFE returns directly
+            js_wrapper = check_js  # Direct IIFE
             result = self._browser.eval_json(js_wrapper)
             return result if result else {"has_errors": False, "errors": []}
         except Exception:
@@ -230,7 +230,7 @@ class OwaBackend:
         })()
         """
         try:
-            js_wrapper = "state_js  # IIFE returns directly
+            js_wrapper = state_js  # Direct IIFE
             result = self._browser.eval_json(js_wrapper)
             return (
                 result
@@ -266,11 +266,7 @@ class OwaBackend:
             elapsed += interval
 
             probe = self._browser.eval_json(
-                "(async()=>JSON.stringify({"
-                "url:location.href,"
-                "canary:/X-OWA-CANARY=/.test(document.cookie),"
-                "inbox:/mail/i.test(location.href)"
-                "}))()"
+                "{url:location.href,canary:/X-OWA-CANARY=/.test(document.cookie),inbox:/mail/i.test(location.href)}"
             )
             url = (probe or {}).get("url", "")
             has_canary = (probe or {}).get("canary", False)
@@ -377,11 +373,7 @@ class OwaBackend:
             elapsed += interval
 
             probe = self._browser.eval_json(
-                "(async()=>JSON.stringify({"
-                "url:location.href,"
-                "canary:/X-OWA-CANARY=/.test(document.cookie),"
-                "inbox:/mail/i.test(location.href)"
-                "}))()"
+                "{url:location.href,canary:/X-OWA-CANARY=/.test(document.cookie),inbox:/mail/i.test(location.href)}"
             )
             has_canary = (probe or {}).get("canary", False)
             is_inbox = (probe or {}).get("inbox", False)
@@ -403,11 +395,7 @@ class OwaBackend:
 
         # Final check and save
         probe = self._browser.eval_json(
-            "(async()=>JSON.stringify({"
-            "url:location.href,"
-            "canary:/X-OWA-CANARY=/.test(document.cookie),"
-            "inbox:/mail/i.test(location.href)"
-            "}))()"
+            "{url:location.href,canary:/X-OWA-CANARY=/.test(document.cookie),inbox:/mail/i.test(location.href)}"
         )
         has_canary = (probe or {}).get("canary", False)
         is_inbox = (probe or {}).get("inbox", False)
