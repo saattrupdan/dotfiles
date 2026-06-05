@@ -231,8 +231,15 @@ export default function (pi: ExtensionAPI) {
 	// it fires at most once, after which the same call proceeds untouched. Only
 	// `pattern` is wired here — a bare `tool` trigger would block the first use of
 	// that tool every session, which is noise.
+	//
+	// Memory tools are exempt from blocking — they're the mechanism for reading
+	// memories, so blocking them would create deadlocks.
 	pi.on("tool_call", async (event, ctx) => {
 		if (!hasUI) return undefined;
+		// Skip blocking for memory access tools to avoid deadlocks
+		if (event.toolName === "memory_read" || event.toolName === "memory_index" || event.toolName === "memory_suggest") {
+			return undefined;
+		}
 		const block = collect(
 			ctx,
 			{ tool_calls: [event.toolName], tool_input: JSON.stringify(event.input ?? {}) },
