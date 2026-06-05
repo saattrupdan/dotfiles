@@ -19,6 +19,11 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    _open_owa()
+    if 'statictext "outlook"' in _snapshot():
+        print("Already logged in!")
+        return
+
     if not args.mfa_code_approved:
         code = get_mfa_code()
         print(f"Your MFA code is {code}")
@@ -33,7 +38,6 @@ def get_mfa_code() -> int:
     Returns:
         int: The MFA code.
     """
-    _open_owa()
     _login()
     _get_to_mfa()
     while (mfa_code := _extract_code()) is None:
