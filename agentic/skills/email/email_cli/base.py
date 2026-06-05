@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from ..models import Message
+from .models import Message
 
 
 class BackendError(Exception):

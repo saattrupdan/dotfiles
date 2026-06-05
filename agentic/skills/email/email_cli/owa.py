@@ -21,13 +21,13 @@ import json as _json
 import re
 import time
 
-from ..browser import BrowserSession
-from ..config import CONFIG_DIR
-from ..credentials import get_outlook_credentials
-from ..models import Message
+from .browser import BrowserSession
+from .config import CONFIG_DIR
+from .credentials import get_outlook_credentials
+from .models import Message
 from .base import BackendError
 
-_MAIL_URL = "https://outlook.office.com/mail/"
+_MAIL_URL = "https://outlook.office.com/mail/inbox"  # Must end with /mail/inbox
 
 # Folder aliases → EWS distinguished folder ids.
 _FOLDER_ALIASES = {
@@ -69,31 +69,83 @@ class OwaBackend:
 
     # -- login ---------------------------------------------------------------
 
-    def _extract_mfa_code(self) -> str | None:
-        """Extract MFA code from Microsoft login page using browser eval."""
-        js_extract = r"""
-        (() => {
-            const allText = (document.body.innerText || '').trim();
-            const lines = allText.split(/\n/).map(l => l.trim()).filter(l => l);
-            
-            // Strategy 1: Look for lines that are just 2-digit numbers
-            for (const line of lines) {
-                if (/^\d{2}$/.test(line)) return line;
-            }
-            
-            // Fallback: any 2-digit number
-            const allNumbers = allText.match(/\b(\d{2})\b/g);
-            if (allNumbers) return allNumbers[0];
-            
-            return null;
-        })()
+    def _snapshot(self) -> str:
+        """Take a snapshot of the current browser page.
+
+        Returns:
+            Lowercase snapshot text from agent-browser.
         """
-        try:
-            js_wrapper = js_extract  # Direct IIFE
-            eval_result = self._browser.eval_json(js_wrapper)
-            return eval_result if eval_result else None
-        except Exception:
+        return self._browser._run("snapshot", "-c").strip().lower()
+
+    def _wait(self, milliseconds: int = 500) -> None:
+        """Wait for some time."""
+        self._browser._run("wait", str(milliseconds))
+
+    def _get_username_click_refs(self) -> tuple[str, str] | None:
+        """Get refs for username input and submit button."""
+        snapshot = self._snapshot()
+        input_ref = re.search(
+            r"enter your email.* \[required, ref=([a-z]+[0-9]+)\]", snapshot
+        )
+        if input_ref is None:
             return None
+        submit_ref = re.search(r'"next" \[ref=([a-z]+[0-9]+)\]', snapshot)
+        if submit_ref is None:
+            return None
+        return ("@" + input_ref.group(1), "@" + submit_ref.group(1))
+
+    def _get_account_click_ref(self) -> str | None:
+        """Get ref for previously used account button."""
+        snapshot = self._snapshot()
+        ref = re.search(r"sign in with.* \[ref=([a-z]+[0-9]+)\]", snapshot)
+        if ref is None:
+            return None
+        return "@" + ref.group(1)
+
+    def _get_password_click_refs(self) -> tuple[str, str] | None:
+        """Get refs for password input and submit button."""
+        snapshot = self._snapshot()
+        input_ref = re.search(
+            r"enter the password.* \[required, ref=([a-z]+[0-9]+)\]", snapshot
+        )
+        if input_ref is None:
+            return None
+        submit_ref = re.search(r'"sign in" \[ref=([a-z]+[0-9]+)\]', snapshot)
+        if submit_ref is None:
+            return None
+        return ("@" + input_ref.group(1), "@" + submit_ref.group(1))
+
+    def _get_first_mfa_click_ref(self) -> str | None:
+        """Get ref for first MFA step button."""
+        snapshot = self._snapshot()
+        ref = re.search(r"sign in another way.* \[ref=([a-z]+[0-9]+)\]", snapshot)
+        if ref is None:
+            return None
+        return "@" + ref.group(1)
+
+    def _get_second_mfa_click_ref(self) -> str | None:
+        """Get ref for Microsoft Authenticator option."""
+        snapshot = self._snapshot()
+        ref = re.search(r"microsoft authenticator.* \[ref=([a-z]+[0-9]+)\]", snapshot)
+        if ref is None:
+            return None
+        return "@" + ref.group(1)
+
+    def _extract_code(self) -> int | None:
+        """Extract MFA code from snapshot using regex."""
+        snapshot = self._snapshot()
+        code_match = re.search(r"approve the request.*([0-9]{2})\"", snapshot)
+        if code_match is None:
+            return None
+        return int(code_match.group(1))
+
+    def _get_finish_click_ref(self) -> str | None:
+        """Get ref for 'Yes' button to finish login."""
+        snapshot = self._snapshot()
+        ref = re.search(r'button "yes".* \[ref=([a-z]+[0-9]+)\]', snapshot)
+        if ref is None:
+            return None
+        return "@" + ref.group(1)
 
     def _wait_for_snapshot(self, *, interval: float = 2.0, timeout: int = 30) -> None:
         """Wait for page to load by polling snapshot."""
@@ -266,7 +318,8 @@ class OwaBackend:
             elapsed += interval
 
             probe = self._browser.eval_json(
-                "{url:location.href,canary:/X-OWA-CANARY=/.test(document.cookie),inbox:/mail/i.test(location.href)}"
+                "{url:location.href,canary:/X-OWA-CANARY=/.test(document.cookie),"
+                "inbox:/mail/i.test(location.href)}"
             )
             url = (probe or {}).get("url", "")
             has_canary = (probe or {}).get("canary", False)
@@ -275,7 +328,10 @@ class OwaBackend:
             # Success: inbox loaded + canary present
             if is_inbox and has_canary:
                 self._browser.state_save()
-                return f"Signed in to Outlook on the web as {self._email} ({elapsed}s, session saved)."  # noqa: E501
+                return (
+                    f"Signed in to Outlook on the web as {self._email} "
+                    f"({elapsed}s, session saved)."
+                )
 
             # Still on login page - keep waiting
             if "login.microsoftonline.com" in url:
@@ -290,11 +346,69 @@ class OwaBackend:
             "Retry or check that MFA was approved."
         )
 
+    def _open_owa(self) -> None:
+        """Open Microsoft OWA in the session."""
+        self._browser._run("close")
+        try:
+            self._browser.open(_MAIL_URL, headed=False)
+        except BackendError as exc:
+            raise BackendError(
+                "Failed to open Microsoft OWA - internet is probably down."
+            ) from exc
+        self._wait()
+
+    def _login(self, username: str, password: str) -> None:
+        """Enter username and password."""
+        while (username_refs := self._get_username_click_refs()) is None and (
+            account_ref := self._get_account_click_ref()
+        ) is None:
+            self._wait()
+
+        # If we have previously logged in, we can skip the username + password
+        if account_ref is not None:
+            self._browser._run("click", account_ref)
+            self._wait()
+            return
+
+        assert username_refs is not None
+
+        # Username
+        self._browser._run("type", username_refs[0], username)
+        self._browser._run("click", username_refs[1])
+        self._wait()
+
+        # Password
+        while (password_refs := self._get_password_click_refs()) is None:
+            self._wait()
+        self._browser._run("type", password_refs[0], password)
+        self._browser._run("click", password_refs[1])
+        self._wait()
+
+    def _get_to_mfa(self) -> None:
+        """Navigate through MFA selection."""
+        while (first_mfa_click_ref := self._get_first_mfa_click_ref()) is None:
+            self._wait()
+        self._browser._run("click", first_mfa_click_ref)
+        self._wait()
+
+        while (second_mfa_click_ref := self._get_second_mfa_click_ref()) is None:
+            self._wait()
+        self._browser._run("click", second_mfa_click_ref)
+        self._wait()
+
+    def _finish_login(self) -> None:
+        """Finish the login process by clicking 'Yes' button."""
+        while (finish_ref := self._get_finish_click_ref()) is None:
+            self._wait()
+        self._browser._run("click", finish_ref)
+        self._wait()
+
     def login(self, password: str | None = None) -> str:
         """Perform complete automated login flow.
 
         1. Gets credentials from keychain (or uses provided password)
-        2. Navigates to Outlook and fills login form
+        2. Navigates to Outlook and fills login form using robust snapshot-based
+           selectors
         3. Completes MFA with number-match
         4. Saves session state
 
@@ -322,97 +436,36 @@ class OwaBackend:
             raise BackendError(
                 f"No password found for {self._email}. "
                 "Add it to macOS Keychain: "
-                "security add-generic-password -s 'outlook' -a 'password' -w 'YOUR_PASSWORD'"  # noqa: E501
+                "security add-generic-password -s 'outlook' -a 'password' -w"
+                " 'YOUR_PASSWORD'"
             )
 
-        # Navigate to Outlook - will redirect to login if not authenticated
-        self._browser.open(_MAIL_URL, headed=False)
-        self._wait_for_snapshot(timeout=10)
+        # Open OWA
+        self._open_owa()
+        if 'statictext "outlook"' in self._snapshot():
+            self._browser.state_save()
+            return (
+                f"Already signed in to Outlook on the web as "
+                f"{self._email} (session saved)."
+            )
 
-        # Step 1: Enter email/username
-        self._browser._run("fill", "@e6", username)
-        self._browser._run("click", "@e9")
-        self._wait_for_snapshot(timeout=10)
+        # Login with credentials
+        self._login(username, password)
+        self._get_to_mfa()
 
-        # Step 2: Enter password
-        self._browser._run("fill", "@e6", password)
-        self._browser._run("click", "@e9")
-        self._wait_for_snapshot(timeout=10)
-
-        # Step 3: Select MFA method (Microsoft Authenticator)
-        self._browser._run(
-            "click", "@e10"
-        )  # "Approve a request on my Microsoft Authenticator app"
-        self._wait_for_snapshot(timeout=10)
-
-        # Step 4: Extract MFA code
+        # Extract MFA code
         mfa_code = None
-        for _ in range(15):  # Poll for 30 seconds
-            time.sleep(2)
-            mfa_code = self._extract_mfa_code()
-            if mfa_code:
-                break
+        while (mfa_code := self._extract_code()) is None:
+            self._wait()
 
-        if not mfa_code:
-            raise BackendError(
-                "MFA code not detected. Make sure your account uses number-match MFA."
-            )
-
-        # Tell user to approve
+        # Display MFA code for user
         print(f"\nMFA code: {mfa_code}")
         print("Enter this code in Microsoft Authenticator and approve the request.")
         print("Once approved, the login will complete automatically...")
 
-        # Step 5: Wait for MFA approval
-        max_wait = 120
-        interval = 2
-        elapsed = 0
-
-        while elapsed < max_wait:
-            time.sleep(interval)
-            elapsed += interval
-
-            probe = self._browser.eval_json(
-                "{url:location.href,canary:/X-OWA-CANARY=/.test(document.cookie),inbox:/mail/i.test(location.href)}"
-            )
-            has_canary = (probe or {}).get("canary", False)
-            is_inbox = (probe or {}).get("inbox", False)
-
-            # MFA approved - check for "Stay signed in?" prompt
-            if is_inbox or has_canary:
-                break
-
-            # Check if we're on "Stay signed in?" page
-            snapshot = self._browser._run("snapshot", "-i")
-            if "Stay signed in" in snapshot:
-                # Click Yes to stay signed in
-                try:
-                    self._browser._run("click", "@e8")
-                    time.sleep(3)
-                    break
-                except Exception:
-                    pass
-
-        # Final check and save
-        probe = self._browser.eval_json(
-            "{url:location.href,canary:/X-OWA-CANARY=/.test(document.cookie),inbox:/mail/i.test(location.href)}"
-        )
-        has_canary = (probe or {}).get("canary", False)
-        is_inbox = (probe or {}).get("inbox", False)
-
-        if not (is_inbox or has_canary):
-            raise BackendError(
-                f"Login timed out after {elapsed}s. MFA may not have been approved."
-            )
-
-        # Handle "Stay signed in?" if still showing
-        snapshot = self._browser._run("snapshot", "-i")
-        if "Stay signed in" in snapshot:
-            try:
-                self._browser._run("click", "@e8")
-                time.sleep(3)
-            except Exception:
-                pass
+        # Finish login (click "Yes" after MFA approval)
+        self._finish_login()
+        self._wait()
 
         # Save session
         self._browser.state_save()
@@ -889,11 +942,10 @@ class OwaBackend:
         # Opening an email in OWA automatically marks it as read
         pass
 
-
     def _check_logged_in(self) -> bool:
         """Check if we are on a logged-in OWA page (not login redirect)."""
         try:
-            location = self._browser.eval_json('location.href')
+            location = self._browser.eval_json("location.href")
             return "login.microsoftonline" not in str(location)
         except Exception:
             return False
@@ -1000,13 +1052,16 @@ class OwaBackend:
 
             # Check for "Message sent" toast
             toast_check = self._browser.eval_json(
-                '(() => JSON.stringify({toast:document.body.innerText.includes("Message sent")}))()'  # noqa: E501
+                "() => ({toast:document.body.innerText.includes(`Message sent`)})"
             )
             if (toast_check or {}).get("toast"):
                 return  # Success
 
             # Check if compose dialog is closed
-            compose_check_js = '''(() => JSON.stringify({compose:!!document.querySelector('[aria-label*="New email"][role="dialog"]')})())'''
+            compose_check_js = (
+                "() => ({compose:!!document.querySelector("
+                "\"[aria-label*='New email'][role='dialog']\")})"
+            )
             compose_check = self._browser.eval_json(compose_check_js)
             if not (compose_check or {}).get("compose"):
                 return  # Dialog closed = success

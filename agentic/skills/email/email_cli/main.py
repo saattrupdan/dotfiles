@@ -9,7 +9,8 @@ Usage:
     email accounts list
     email accounts remove --name N
     email login [--account N]
-    email list [--account N] [--folder F] [--query Q] [--unread] [--pinned] [--limit N] [--raw]
+    email list [--account N] [--folder F] [--query Q] [--unread] [--pinned]
+        [--limit N] [--raw]
     email read [--account N] --id ID [--mark-read] [--html] [--raw]
     email send [--account N] --to A,B --subject S (--body T | --body-file F) [--confirm]
     email pin [--account N] --id ID [--folder F]
@@ -21,7 +22,7 @@ from __future__ import annotations
 import sys
 
 from . import commands
-from .backends import BackendError
+from .backend import BackendError
 from .cli_parser import build_parser
 from .config import ConfigError, load_dotenvs
 

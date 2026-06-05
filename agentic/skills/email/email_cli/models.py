@@ -1,4 +1,4 @@
-"""Transport-agnostic data model shared by all backends.
+"""Email data model for the OWA backend.
 
 The OWA backend returns :class:`Message` objects for display and CLI consumption.
 """

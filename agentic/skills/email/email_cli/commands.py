@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import sys
 
-from .backends import BackendError, get_backend
+from .backend import BackendError, get_backend
 from .config import (
     ConfigError,
     load_config,

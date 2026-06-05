@@ -7,7 +7,7 @@ same-origin ``fetch()`` calls inside the logged-in ``outlook.office.com`` page v
 ``eval``.
 
 This module only knows how to talk to the CLI; OWA specifics live in
-``backends/owa.py``.
+:mod:`email_cli.owa`.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from .backends.base import BackendError
+from .base import BackendError
 
 _CLI = "agent-browser"
 

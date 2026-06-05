@@ -1,13 +1,9 @@
-"""Email transport backends.
-
-Each account is served by exactly one backend, chosen by its ``backend`` field:
-
-- ``owa`` — :class:`~email_cli.backends.owa.OwaBackend` (Microsoft 365 via browser)
-"""
+"""Email backend for OWA (Microsoft 365 via browser)."""
 
 from __future__ import annotations
 
 from .base import Backend, BackendError
+from .owa import OwaBackend
 
 
 def get_backend(name: str, account: dict) -> Backend:
@@ -28,10 +24,8 @@ def get_backend(name: str, account: dict) -> Backend:
     """
     kind = account.get("backend")
     if kind == "owa":
-        from .owa import OwaBackend
-
         return OwaBackend(name=name, account=account)
     raise BackendError(f"Unknown backend '{kind}' for account '{name}'.")
 
 
-__all__ = ["Backend", "BackendError", "get_backend"]
+__all__ = ["Backend", "BackendError", "get_backend", "OwaBackend"]
