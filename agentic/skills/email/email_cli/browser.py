@@ -27,6 +27,9 @@ class BrowserSession:
     def __init__(self, *, session_name: str, state_path: Path) -> None:
         self._session = session_name
         self._state = state_path
+        # Load saved state if it exists (must happen before any open() call)
+        if state_path.exists():
+            self._run("state", "load", str(state_path), timeout=30)
 
     def _run(
         self,
