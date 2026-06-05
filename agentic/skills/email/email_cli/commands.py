@@ -31,8 +31,6 @@ def do_accounts_add(args) -> None:
         "email": args.email,
         "tenant": args.tenant or "organizations",
     }
-    if args.username:
-        account["username"] = args.username
     if args.client_id:
         account["client_id"] = args.client_id
 
@@ -80,11 +78,22 @@ def do_accounts_remove(args) -> None:
 
 
 def do_login(args) -> None:
-    """Authenticate the selected account."""
+    """Authenticate the selected account.
+
+    Two-step flow:
+    1. Without --mfa-code: Shows MFA code and exits (user approves in Authenticator)
+    2. With --mfa-code: Finishes login by clicking the confirm button
+    """
     config = load_config()
     name, account = resolve_account(config, args.account)
     backend = get_backend(name, account)
-    print(backend.login())
+
+    if args.mfa_code:
+        # Step 2: finish login
+        print(backend.finish_login())
+    else:
+        # Step 1: get MFA code
+        print(backend.get_mfa_code())
 
 
 # -- read --------------------------------------------------------------------

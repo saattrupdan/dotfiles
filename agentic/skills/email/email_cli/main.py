@@ -8,7 +8,8 @@ Usage:
     email accounts add --name N --email E [--default]
     email accounts list
     email accounts remove --name N
-    email login [--account N]
+    email login [--account N]              # Step 1: shows MFA code
+    email login --mfa-code [--account N]   # Step 2: finish login
     email list [--account N] [--folder F] [--query Q] [--unread] [--pinned]
         [--limit N] [--raw]
     email read [--account N] --id ID [--mark-read] [--html] [--raw]

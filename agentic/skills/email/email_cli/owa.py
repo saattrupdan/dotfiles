@@ -472,6 +472,88 @@ class OwaBackend:
 
         return f"Signed in to Outlook on the web as {self._email} (session saved)."
 
+    def get_mfa_code(self, password: str | None = None) -> str:
+        """Perform login up to MFA code display (step 1 of 2).
+
+        1. Gets credentials from keychain (or uses provided password)
+        2. Navigates to Outlook and fills login form
+        3. Completes MFA selection
+        4. Extracts and displays MFA code
+        5. Waits for user to approve in Microsoft Authenticator
+
+        Args:
+            password:
+                Optional password provided directly. If not provided,
+                fetched from password manager.
+
+        Returns:
+            Message with the MFA code and instructions.
+
+        Raises:
+            BackendError: If login fails before MFA code extraction.
+        """
+        # Get credentials
+        username, stored_password = get_outlook_credentials()
+        if not username:
+            username = self._email
+
+        # Use provided password if given, otherwise use stored one
+        if password is None:
+            password = stored_password
+
+        if not password:
+            raise BackendError(
+                f"No password found for {self._email}. "
+                "Add it to macOS Keychain: "
+                "security add-generic-password -s 'outlook' -a 'password' -w"
+                " 'YOUR_PASSWORD'"
+            )
+
+        # Open OWA
+        self._open_owa()
+        if 'statictext "outlook"' in self._snapshot():
+            self._browser.state_save()
+            return (
+                f"Already signed in to Outlook on the web as "
+                f"{self._email} (session saved)."
+            )
+
+        # Login with credentials
+        self._login(username, password)
+        self._get_to_mfa()
+
+        # Extract MFA code
+        mfa_code = None
+        while (mfa_code := self._extract_code()) is None:
+            self._wait()
+
+        return (
+            f"\nMFA code: {mfa_code}\n"
+            f"Enter this code in Microsoft Authenticator and approve the request.\n"
+            f"Once approved, run: email login --mfa-code"
+        )
+
+    def finish_login(self) -> str:
+        """Finish login by clicking the confirm button (step 2 of 2).
+
+        Assumes step 1 (get_mfa_code) was already run and the user has
+        approved the MFA request in Microsoft Authenticator.
+
+        Returns:
+            Success message with account email.
+
+        Raises:
+            BackendError: If the finish login fails.
+        """
+        # Finish login (click "Yes" after MFA approval)
+        self._finish_login()
+        self._wait()
+
+        # Save session
+        self._browser.state_save()
+
+        return f"Signed in to Outlook on the web as {self._email} (session saved)."
+
     # -- DOM-based email reading --------------------------------------------
 
     def _navigate_to_folder(self, folder: str) -> None:

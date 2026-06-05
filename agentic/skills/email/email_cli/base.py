@@ -48,6 +48,30 @@ class Backend(Protocol):
         """
         ...
 
+    def get_mfa_code(self) -> str:
+        """Perform login up to MFA code display (step 1 of 2).
+
+        Returns:
+            Message with the MFA code and instructions.
+
+        Raises:
+            BackendError:
+                If login fails before MFA code extraction.
+        """
+        ...
+
+    def finish_login(self) -> str:
+        """Finish login by clicking the confirm button (step 2 of 2).
+
+        Returns:
+            Success message with account email.
+
+        Raises:
+            BackendError:
+                If the finish login fails.
+        """
+        ...
+
     def list_messages(
         self,
         *,
