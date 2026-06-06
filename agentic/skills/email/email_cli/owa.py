@@ -1607,7 +1607,7 @@ class OwaBackend:
     def _check_logged_in(self) -> bool:
         """Check if we are on a logged-in OWA page (not login redirect)."""
         try:
-            location = self._browser.eval_json("location.href")
+            location = self._browser.eval_json("({url:location.href}).url")
             return "login.microsoftonline" not in str(location)
         except Exception:
             return False
