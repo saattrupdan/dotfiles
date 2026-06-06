@@ -667,7 +667,29 @@ export function reconcileIndex(
  * Recursively list all files in a directory tree, skipping VCS, dependency, and
  * build/cache directories that would otherwise flood the index with noise.
  */
+/**
+ * Recursively list all files in a repo, respecting .gitignore.
+ * Uses `git ls-files` when available (fast, respects .gitignore),
+ * falls back to manual walk for non-git directories.
+ */
 export function listFiles(repoRoot: string): string[] {
+	// Try git ls-files first - it respects .gitignore automatically
+	try {
+		const result = spawnSync("git", ["ls-files"], {
+			cwd: repoRoot,
+			encoding: "utf-8",
+			maxBuffer: 128 * 1024 * 1024,
+		});
+		if (result.status === 0) {
+			return result.stdout
+				.split("\n")
+				.filter((line) => line.trim() !== "");
+		}
+	} catch {
+		// Git not available or not a git repo - fall through to manual walk
+	}
+
+	// Fallback: manual walk with basic skips
 	const results: string[] = [];
 	const skipDirs = new Set([
 		".git",
