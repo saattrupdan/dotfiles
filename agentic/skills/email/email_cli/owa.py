@@ -613,7 +613,12 @@ class OwaBackend:
     # -- DOM-based email reading --------------------------------------------
 
     def _navigate_to_folder(self, folder: str) -> None:
-        """Navigate to a mail folder and wait for it to load."""
+        """Navigate to a mail folder and wait for it to load.
+
+        For standard folders (inbox, sent, drafts, etc.), navigates by URL.
+        For custom folders (Needs Action, Waiting for Reply, etc.), clicks the
+        folder in the navigation tree.
+        """
         folder_paths = {
             "inbox": "/mail/inbox",
             "sent": "/mail/sentitems",
@@ -624,11 +629,66 @@ class OwaBackend:
             "deleted": "/mail/deleteditems",
             "archive": "/mail/archive",
         }
-        path = folder_paths.get(folder.lower(), f"/mail/{folder.lower()}")
-        url = f"https://outlook.office.com{path}"
 
-        self._browser.open(url, headed=False)
-        self._wait_for_snapshot(timeout=10)
+        # Check if it's a standard folder
+        if folder.lower() in folder_paths:
+            path = folder_paths[folder.lower()]
+            url = f"https://outlook.office.com{path}"
+            self._browser.open(url, headed=False)
+            self._wait_for_snapshot(timeout=10)
+        else:
+            # Custom folder - need to click it in the navigation tree
+            # First navigate to inbox to ensure we're on the mail page
+            self._browser.open("https://outlook.office.com/mail/inbox", headed=False)
+            time.sleep(3)
+
+            # Custom folders are under the email account, which needs to be expanded
+            # First, check if already expanded by looking for the custom folder directly
+            snapshot = self._browser._run("snapshot", "-i", timeout=30)
+            folder_lower = folder.lower()
+
+            # Search for the folder
+            folder_ref = None
+            for line in snapshot.split("\n"):
+                if "treeitem" in line.lower():
+                    match = re.search(r'treeitem\s+"([^"]+)"', line, re.IGNORECASE)
+                    if match and folder_lower in match.group(1).lower():
+                        ref_match = re.search(r"ref=(\w+)", line)
+                        if ref_match:
+                            folder_ref = "@" + ref_match.group(1)
+                            break
+
+            # If not found, expand the account folder and search again
+            if not folder_ref:
+                for line in snapshot.split("\n"):
+                    if (
+                        "alexandra.dk" in line.lower() or "outlook.com" in line.lower()
+                    ) and "treeitem" in line.lower():
+                        match = re.search(r"ref=(\w+)", line)
+                        if match:
+                            self._browser._run("click", "@" + match.group(1))
+                            time.sleep(3)
+                            break
+
+                # Search again after expansion
+                snapshot = self._browser._run("snapshot", "-i", timeout=30)
+                for line in snapshot.split("\n"):
+                    if "treeitem" in line.lower():
+                        match = re.search(r'treeitem\s+"([^"]+)"', line, re.IGNORECASE)
+                        if match and folder_lower in match.group(1).lower():
+                            ref_match = re.search(r"ref=(\w+)", line)
+                            if ref_match:
+                                folder_ref = "@" + ref_match.group(1)
+                                break
+
+            if not folder_ref:
+                raise BackendError(
+                    f"Custom folder '{folder}' not found in navigation tree. "
+                    "Available folders can be viewed in Outlook's left sidebar."
+                )
+
+            self._browser._run("click", folder_ref)
+            time.sleep(3)
 
     def _parse_email_list_from_dom(self, limit: int) -> list[Message]:
         """Parse email list from the DOM accessibility tree.
@@ -1120,6 +1180,18 @@ class OwaBackend:
 
         self._browser._run("click", folder_ref)
         time.sleep(2)
+
+        # Click the "Move" button to confirm the move
+        snapshot = self._browser._run("snapshot", "-i", timeout=30)
+        for line in snapshot.split("\n"):
+            if '"Move"' in line and "button" in line.lower():
+                if "disabled" not in line.lower():
+                    match = re.search(r"ref=(\w+)", line)
+                    if match:
+                        self._browser._run("click", "@" + match.group(1))
+                        time.sleep(2)
+                        break
+                break
 
     def unpin_message(self, msg_id: str, folder: str = "inbox") -> None:
         """Unpin a message by clicking the Unpin button.
