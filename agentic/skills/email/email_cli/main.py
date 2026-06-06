@@ -16,6 +16,7 @@ Usage:
     email send [--account N] --to A,B --subject S (--body T | --body-file F) [--confirm]
     email pin [--account N] --id ID [--folder F]
     email unpin [--account N] --id ID [--folder F]
+    email unread next [--account N] [--folder F] [--mark-read] [--html] [--raw]
 """
 
 from __future__ import annotations
@@ -47,6 +48,7 @@ def main() -> None:
         ("send", None): commands.do_send,
         ("pin", None): commands.do_pin,
         ("unpin", None): commands.do_unpin,
+        ("unread", "next"): commands.do_unread_next,
     }
 
     handler = dispatch.get((resource, operation))

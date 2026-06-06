@@ -223,3 +223,33 @@ def do_unpin(args) -> None:
     backend = get_backend(name, account)
     backend.unpin_message(msg_id=args.id, folder=args.folder)
     print(f"Unpinned message {args.id} in {args.folder}.")
+
+
+# -- unread ------------------------------------------------------------------
+
+
+def do_unread_next(args) -> None:
+    """Get the next unread email and optionally mark it as read.
+    
+    This combines list + read into one atomic operation for workflow efficiency.
+    Fetches the first unread email from the specified folder (oldest first for
+    inbox-zero approach), displays it in full, and can mark it as read.
+    """
+    config = load_config()
+    name, account = resolve_account(config, args.account)
+    backend = get_backend(name, account)
+    
+    message = backend.get_next_unread(
+        folder=args.folder,
+        mark_read=args.mark_read,
+    )
+    
+    if message is None:
+        print("No unread emails found.")
+        return
+    
+    if args.raw:
+        emit_raw(message.to_dict())
+        return
+    
+    print(render_message(message, want_html=args.html))

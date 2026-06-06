@@ -178,3 +178,51 @@ class Backend(Protocol):
                 If the operation fails or pinning is not supported.
         """
         ...
+
+    def get_next_unread(self, *, folder: str, mark_read: bool) -> Message | None:
+        """Fetch the next unread message, optionally marking it read.
+
+        Args:
+            folder:
+                Folder to fetch unread from.
+            mark_read:
+                Whether to mark the message as read after fetching.
+
+        Returns:
+            The next unread Message, or None if no unread emails exist.
+        """
+        ...
+
+    def copy_message(self, *, msg_id: str, from_folder: str, to_folder: str) -> None:
+        """Copy a message to another folder.
+
+        Args:
+            msg_id:
+                Provider-specific message identifier.
+            from_folder:
+                Source folder containing the message.
+            to_folder:
+                Destination folder to copy to.
+
+        Raises:
+            BackendError:
+                If the operation fails.
+        """
+        ...
+
+    def move_message(self, *, msg_id: str, from_folder: str, to_folder: str) -> None:
+        """Move a message to another folder (copy + delete from source).
+
+        Args:
+            msg_id:
+                Provider-specific message identifier.
+            from_folder:
+                Source folder containing the message.
+            to_folder:
+                Destination folder to move to.
+
+        Raises:
+            BackendError:
+                If the operation fails.
+        """
+        ...

@@ -115,6 +115,30 @@ email read --id 12345 --raw               # JSON
 `--query` accepts a `from:`/`to:`/`subject:` prefix or plain free text. IDs are
 per-account and stable within a folder; always take them from a fresh `list`.
 
+## Unread
+
+Workflow for processing unread emails one at a time:
+
+```bash
+# Fetch the next unread email (oldest first)
+email unread next
+email unread next --account work
+email unread next --folder inbox --mark-read
+email unread next --raw                     # JSON output
+```
+
+This is designed for an interactive workflow:
+
+1. Run `email unread next` to fetch the first unread email
+2. Review the email content
+3. Choose an action:
+   - **Draft a reply** — use `email send` to reply, then the email is marked read
+   - **Copy to folder** — move to "Needs Action", "Waiting for Reply", or "For Future Reference"
+   - **Other** — archive, delete, or custom handling
+
+The command opens the email in the reading pane (which marks it as read in OWA),
+so subsequent calls will fetch the next unread email in the queue.
+
 
 ## Pin and Unpin
 

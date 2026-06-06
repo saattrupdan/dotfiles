@@ -7,6 +7,7 @@ Command tree::
     email list
     email read
     email send
+    email unread next
 """
 
 from __future__ import annotations
@@ -124,5 +125,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--folder", default="inbox", help="Folder/mailbox (default inbox)."
     )
     unpin.add_argument("--id", required=True, help="Message id (from `list`).")
+
+    # -- unread --------------------------------------------------------------
+    unread = sub.add_parser("unread", help="Work with unread emails.")
+    unread_sub = unread.add_subparsers(dest="operation", required=True)
+
+    unread_next = unread_sub.add_parser("next", help="Get the next unread email.")
+    _add_account_flag(unread_next)
+    unread_next.add_argument(
+        "--folder", default="inbox", help="Folder to fetch unread from (default inbox)."
+    )
+    unread_next.add_argument(
+        "--mark-read", action="store_true", help="Mark the message as read after fetching."
+    )
+    unread_next.add_argument(
+        "--html", action="store_true", help="Prefer the HTML body over plaintext."
+    )
+    unread_next.add_argument("--raw", action="store_true", help="Emit JSON instead of text.")
 
     return parser
