@@ -85,15 +85,17 @@ class OwaBackend:
     def _is_logged_in(self) -> bool:
         """Check if already logged in by probing URL and cookies."""
         try:
+            # Check URL and cookie presence
             probe = self._browser.eval_json(
-                "{url:location.href,canary:/X-OWA-CANARY=/.test(document.cookie),"
-                "inbox:/mail/i.test(location.href)}",
+                "({url:location.href,hasCookies:document.cookie.length>100})",
                 timeout=10,
             )
             url = (probe or {}).get("url", "")
-            has_canary = (probe or {}).get("canary", False)
-            is_inbox = (probe or {}).get("inbox", False)
-            return is_inbox and has_canary and "login.microsoftonline.com" not in url
+            has_cookies = (probe or {}).get("hasCookies", False)
+            # Consider logged in if: inbox URL + substantial cookies + not on login page
+            is_inbox = "/mail/" in url
+            is_login = "login.microsoftonline.com" in url or "login.live.com" in url
+            return is_inbox and has_cookies and not is_login
         except Exception:
             return False
 
@@ -1036,53 +1038,88 @@ class OwaBackend:
         """
         # Navigate to inbox (where the email currently is)
         self._navigate_to_folder("inbox")
+        time.sleep(2)
 
         # Find and select the message
-        if msg_id.startswith("dom_"):
-            index = int(msg_id.replace("dom_", ""))
-            snapshot = self._browser._run("snapshot", timeout=30)
-            options = re.findall(r"option.*?\[ref=e(\d+)\]", snapshot, re.IGNORECASE)
+        snapshot = self._browser._run("snapshot", "-i", timeout=30)
+        msg_ref = None
+        for line in snapshot.split("\n"):
+            if (
+                re.search(r"option.*ref=\w+", line, re.IGNORECASE)
+                and "button" not in line.lower()
+            ):
+                match = re.search(r"ref=(\w+)", line)
+                if match:
+                    msg_ref = "@" + match.group(1)
+                    break
 
-            if index < len(options):
-                ref = f"@e{options[index]}"
-                self._browser._run("click", ref)
-                self._wait_for_snapshot(timeout=5)
+        if not msg_ref:
+            raise BackendError(f"Message {msg_id} not found in list")
+
+        self._browser._run("click", msg_ref)
+        time.sleep(3)
 
         # Click the "Move to" button in the toolbar
-        snapshot = self._browser._run("snapshot", "-i")
+        snapshot = self._browser._run("snapshot", "-i", timeout=30)
         move_ref = None
         for line in snapshot.split("\n"):
-            if "move to" in line.lower() and "button" in line.lower():
-                ref_match = re.search(r"\[ref=(e\d+)\]", line)
-                if ref_match:
-                    move_ref = f"@{ref_match.group(1)}"
+            if '"Move to"' in line and "disabled" not in line.lower():
+                match = re.search(r"ref=(\w+)", line)
+                if match:
+                    move_ref = "@" + match.group(1)
                     break
 
         if not move_ref:
-            raise BackendError(f"Move to button not found for message {msg_id}")
+            raise BackendError(
+                "Move to button not found - make sure an email is selected"
+            )
 
         self._browser._run("click", move_ref)
-        self._wait(500)
+        time.sleep(2)
 
-        # Find the folder in the dropdown menu (menuitem elements)
-        snapshot = self._browser._run("snapshot", "-i")
+        # First, try to find folder in top-level dropdown menu
+        snapshot = self._browser._run("snapshot", "-i", timeout=30)
         folder_ref = None
         folder_lower = folder.lower()
 
         for line in snapshot.split("\n"):
             if "menuitem" in line.lower():
-                # Check if this menu item matches the folder name
                 if folder_lower in line.lower():
-                    ref_match = re.search(r"\[ref=(e\d+)\]", line)
-                    if ref_match:
-                        folder_ref = f"@{ref_match.group(1)}"
+                    match = re.search(r"ref=(\w+)", line)
+                    if match:
+                        folder_ref = "@" + match.group(1)
                         break
 
+        # If not found in top-level menu, click "Move to a different folder..."
         if not folder_ref:
-            raise BackendError(f"Folder '{folder}' not found in Move to menu")
+            for line in snapshot.split("\n"):
+                if "different folder" in line.lower() and "menuitem" in line.lower():
+                    match = re.search(r"ref=(\w+)", line)
+                    if match:
+                        self._browser._run("click", "@" + match.group(1))
+                        time.sleep(3)
+                        break
+
+            # Now search in the folder tree dialog
+            snapshot = self._browser._run("snapshot", "-i", timeout=30)
+            for line in snapshot.split("\n"):
+                if "treeitem" in line.lower():
+                    # Extract folder name from treeitem
+                    match = re.search(r'treeitem\s+"([^"]+)"', line, re.IGNORECASE)
+                    if match and folder_lower in match.group(1).lower():
+                        ref_match = re.search(r"ref=(\w+)", line)
+                        if ref_match:
+                            folder_ref = "@" + ref_match.group(1)
+                            break
+
+        if not folder_ref:
+            raise BackendError(
+                f"Folder '{folder}' not found. Available: Needs Action, Waiting for Reply, "
+                "For Future Reference, Archive, Deleted Items, etc."
+            )
 
         self._browser._run("click", folder_ref)
-        self._wait_for_snapshot(timeout=5)
+        time.sleep(2)
 
     def unpin_message(self, msg_id: str, folder: str = "inbox") -> None:
         """Unpin a message by clicking the Unpin button.
