@@ -638,9 +638,11 @@ class OwaBackend:
             self._wait_for_snapshot(timeout=10)
         else:
             # Custom folder - need to click it in the navigation tree
-            # First navigate to inbox to ensure we're on the mail page
+            # First open mail view
             self._browser.open("https://outlook.office.com/mail/inbox", headed=False)
-            time.sleep(3)
+            # Wait for full page render
+            self._browser.wait_load("networkidle")
+            time.sleep(8)
 
             # Custom folders are under the email account, which needs to be expanded
             # First, check if already expanded by looking for the custom folder directly
@@ -688,6 +690,8 @@ class OwaBackend:
                 )
 
             self._browser._run("click", folder_ref)
+            # Wait for folder contents to load (virtual rendering + network)
+            self._browser.wait_load("networkidle")
             time.sleep(3)
 
     def _parse_email_list_from_dom(self, limit: int) -> list[Message]:
@@ -763,7 +767,8 @@ class OwaBackend:
                 break
 
             # Look for option elements with ref for unique ID
-            match = re.search(r'option\s+"(.+?)"\s+\[ref=([^\]]+)\]', line)
+            # Handle format: option "text" [level=N, ref=XXX] or option "text" [ref=XXX]
+            match = re.search(r'option\s+"([^"]+)"\s+\[.*?ref=(\w+)', line)
             if match:
                 text = match.group(1)
                 ref = match.group(2)
@@ -854,21 +859,8 @@ class OwaBackend:
         # Wait for initial render
         time.sleep(1.5)
 
-        # Collapse the pinned section to reveal non-pinned emails below
-        # Outlook groups pinned emails in an expandable section that blocks visibility
-        if not pinned_only:
-            try:
-                snapshot = self._browser._run("snapshot", timeout=30)
-                for line in snapshot.split("\n"):
-                    match = re.search(
-                        r'button\s+"Pinned"\s+\[expanded=true,\s*ref=([^\]]+)\]', line
-                    )
-                    if match:
-                        self._browser._run("click", f"@{match.group(1)}")
-                        time.sleep(0.5)
-                        break
-            except Exception:
-                pass  # Continue even if collapse fails
+        # NOTE: Pinned section collapse is disabled - clicking the Pinned button breaks the list view
+        # The keyboard navigation will scroll through pinned/unpinned emails automatically
 
         # Collect emails using keyboard navigation
         # Pressing Down navigates through emails and triggers virtual loading
@@ -905,7 +897,8 @@ class OwaBackend:
                 try:
                     snapshot = self._browser._run("snapshot", timeout=30)
                     for line in snapshot.split("\n"):
-                        match = re.search(r'option\s+".+?"\s+\[ref=([^\]]+)\]', line)
+                        # Match option with ref, handling [level=N, ref=XXX] format
+                        match = re.search(r'option\s+".+?"\s+\[.*?ref=(\w+)', line)
                         if match:
                             self._browser._run("click", f"@{match.group(1)}")
                             time.sleep(0.3)
