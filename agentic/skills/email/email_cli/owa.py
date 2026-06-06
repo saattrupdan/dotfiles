@@ -1079,6 +1079,7 @@ class OwaBackend:
                     try:
                         self._browser._run("click", ref)
                         self._wait_for_snapshot(timeout=3)
+                        self._browser.state_save()
                         return
                     except Exception:
                         pass
@@ -1189,9 +1190,14 @@ class OwaBackend:
                     match = re.search(r"ref=(\w+)", line)
                     if match:
                         self._browser._run("click", "@" + match.group(1))
-                        time.sleep(2)
+                        # Wait for the move operation to complete on the server
+                        self._browser.wait_load("networkidle")
+                        time.sleep(3)
                         break
                 break
+
+        # Persist the session state so the move survives across CLI invocations
+        self._browser.state_save()
 
     def unpin_message(self, msg_id: str, folder: str = "inbox") -> None:
         """Unpin a message by clicking the Unpin button.
@@ -1226,6 +1232,7 @@ class OwaBackend:
                     try:
                         self._browser._run("click", ref)
                         self._wait_for_snapshot(timeout=3)
+                        self._browser.state_save()
                         return
                     except Exception:
                         pass
