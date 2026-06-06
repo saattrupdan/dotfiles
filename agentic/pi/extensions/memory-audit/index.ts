@@ -81,7 +81,7 @@ function memKey(m: MemoryDoc): string {
 
 function formatMemories(mems: MemoryDoc[], blocked = false): string {
 	const lines = mems.map(
-		(m) => `- \`${m.scope}/${m.name}\`${m.description ? ` — ${m.description}` : ""}`,
+		(m) => `- \`${m.scope}/${m.name}\``,
 	);
 	const plural = mems.length > 1;
 	const refEach = plural ? "each one" : "it";
@@ -98,7 +98,7 @@ function formatMemories(mems: MemoryDoc[], blocked = false): string {
 			`below applies to it and you have not read ${refEach} yet.\n\n` +
 			`Do NOT retry this call as-is. Required steps, in order:\n` +
 			`1. Call \`memory_read\` on ${refEach} listed below to load the full body ` +
-			`(the name + description here is not enough to act on).\n` +
+			`(the name shown here is not enough to act on).\n` +
 			`2. Change your approach so it honors the ${memWord}.\n` +
 			`3. Only then issue the corrected tool call.\n\n` +
 			`${lines.join("\n")}`
@@ -111,7 +111,7 @@ function formatMemories(mems: MemoryDoc[], blocked = false): string {
 		`that apply to what you're doing right now and reflect how the user expects you to work.\n\n` +
 		`Before you respond, call \`memory_read\` on ${refEach} below to load the ` +
 		`full body, then actually apply what you learn — let it shape your answer, your plan, and the ` +
-		`commands you run. Only the name + description are shown here, which is not enough to act on:\n\n` +
+		`commands you run. Only the name is shown here, which is not enough to act on:\n\n` +
 		`${lines.join("\n")}`
 	);
 }
@@ -233,11 +233,24 @@ export default function (pi: ExtensionAPI) {
 	// that tool every session, which is noise.
 	//
 	// Memory tools are exempt from blocking — they're the mechanism for reading
-	// memories, so blocking them would create deadlocks.
+	// memories, so blocking them would create deadlocks. However, we do track
+	// memory_read calls to mark those memories as "already seen" so they won't
+	// be auto-injected later in the same session.
 	pi.on("tool_call", async (event, ctx) => {
 		if (!hasUI) return undefined;
-		// Skip blocking for memory access tools to avoid deadlocks
-		if (event.toolName === "memory_read" || event.toolName === "memory_index" || event.toolName === "memory_suggest") {
+		// Track memory_read calls to prevent later auto-injection of already-read memories
+		if (event.toolName === "memory_read") {
+			const sessionId = ctx.sessionManager?.getSessionId() ?? "unknown";
+			ensureLoaded(sessionId, ctx.cwd);
+			const args = event.input as { scope?: string; name?: string } | undefined;
+			if (args?.scope && args?.name) {
+				const key = `${args.scope}/${args.name}`;
+				injected.add(key);
+				persist(sessionId);
+			}
+			return undefined;
+		}
+		if (event.toolName === "memory_index" || event.toolName === "memory_suggest") {
 			return undefined;
 		}
 		const block = collect(
