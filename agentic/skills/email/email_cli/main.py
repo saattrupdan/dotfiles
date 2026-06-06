@@ -17,6 +17,7 @@ Usage:
     email pin [--account N] --id ID [--folder F]
     email unpin [--account N] --id ID [--folder F]
     email unread next [--account N] [--folder F] [--mark-read] [--html] [--raw]
+    email copy-to-folder [--account N] --id ID --to-folder F
 """
 
 from __future__ import annotations
@@ -49,6 +50,7 @@ def main() -> None:
         ("pin", None): commands.do_pin,
         ("unpin", None): commands.do_unpin,
         ("unread", "next"): commands.do_unread_next,
+        ("copy-to-folder", None): commands.do_copy_to_folder,
     }
 
     handler = dispatch.get((resource, operation))

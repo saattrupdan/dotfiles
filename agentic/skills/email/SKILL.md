@@ -163,6 +163,57 @@ Pinning is implemented via DOM-based interaction using `agent-browser` to click
 the pin button in Outlook on the web (OWA).
 
 
+## Copy to Folder (Move)
+
+Move a message to another folder — useful for inbox-zero workflows where you
+process emails and file them away.
+
+```bash
+# Move a message to a custom folder
+email copy-to-folder --id 12345 --to-folder "Needs Action"
+email copy-to-folder --account work --id AAMk... --to-folder "Waiting for Reply"
+email copy-to-folder --id 12345 --to-folder "For Future Reference"
+
+# Move to standard folders
+email copy-to-folder --id 12345 --to-folder "archive"
+email copy-to-folder --id 12345 --to-folder "deleted items"
+```
+
+**Supported folders**:
+
+- **Custom folders:** "Needs Action", "Waiting for Reply", "For Future Reference"
+- **Standard folders:** inbox, sent items, drafts, archive, deleted items
+
+**Interactive workflow with `question` tool**:
+
+When processing unread emails, use an interactive loop:
+
+1. Run `email unread next` to fetch the next unread email
+2. Review the content
+3. Ask the user what to do:
+   - "Reply to this email?" → draft a reply with `email send`
+   - "Move to folder?" → offer choices: "Needs Action", "Waiting for Reply", "For Future Reference", "Archive", "Delete"
+   - "Other action?" → let the user specify
+
+Example interaction:
+```
+You: [displays email content]
+     What would you like to do with this email?
+     1. Reply
+     2. Move to "Needs Action"
+     3. Move to "Waiting for Reply"
+     4. Move to "For Future Reference"
+     5. Archive
+     6. Delete
+     [User selects option 2]
+You: email copy-to-folder --id 12345 --to-folder "Needs Action"
+     Moved message 12345 to 'Needs Action'.
+```
+
+This pattern keeps your inbox at zero while ensuring important emails are
+filed appropriately for later action.
+
+
 ## Send
 
 Sending **confirms first** — it prints the drafted message and waits for `y/N`:
