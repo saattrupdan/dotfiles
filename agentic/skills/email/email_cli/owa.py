@@ -373,12 +373,18 @@ class OwaBackend:
             ) from exc
         self._browser.wait_load("networkidle")
 
-    def _login(self, username: str, password: str) -> None:
+    def _login(self, username: str, password: str, *, timeout: int = 60) -> None:
         """Enter username and password."""
-        while (username_refs := self._get_username_click_refs()) is None and (
-            account_ref := self._get_account_click_ref()
-        ) is None:
-            self._wait()
+        start = time.time()
+        username_refs = None
+        account_ref = None
+        while username_refs is None and account_ref is None:
+            if time.time() - start > timeout:
+                raise BackendError(f"Login page timed out after {timeout}s")
+            username_refs = self._get_username_click_refs()
+            account_ref = self._get_account_click_ref()
+            if username_refs is None and account_ref is None:
+                self._wait()
 
         # If we have previously logged in, we can skip the username + password
         if account_ref is not None:
@@ -394,21 +400,37 @@ class OwaBackend:
         self._wait()
 
         # Password
-        while (password_refs := self._get_password_click_refs()) is None:
-            self._wait()
+        password_refs = None
+        while password_refs is None:
+            if time.time() - start > timeout:
+                raise BackendError(f"Password page timed out after {timeout}s")
+            password_refs = self._get_password_click_refs()
+            if password_refs is None:
+                self._wait()
         self._browser._run("type", password_refs[0], password)
         self._browser._run("click", password_refs[1])
         self._wait()
 
-    def _get_to_mfa(self) -> None:
+    def _get_to_mfa(self, *, timeout: int = 60) -> None:
         """Navigate through MFA selection."""
-        while (first_mfa_click_ref := self._get_first_mfa_click_ref()) is None:
-            self._wait()
+        start = time.time()
+        first_mfa_click_ref = None
+        while first_mfa_click_ref is None:
+            if time.time() - start > timeout:
+                raise BackendError(f"MFA selection timed out after {timeout}s")
+            first_mfa_click_ref = self._get_first_mfa_click_ref()
+            if first_mfa_click_ref is None:
+                self._wait()
         self._browser._run("click", first_mfa_click_ref)
         self._wait()
 
-        while (second_mfa_click_ref := self._get_second_mfa_click_ref()) is None:
-            self._wait()
+        second_mfa_click_ref = None
+        while second_mfa_click_ref is None:
+            if time.time() - start > timeout:
+                raise BackendError(f"MFA selection timed out after {timeout}s")
+            second_mfa_click_ref = self._get_second_mfa_click_ref()
+            if second_mfa_click_ref is None:
+                self._wait()
         self._browser._run("click", second_mfa_click_ref)
         self._wait()
 
@@ -471,8 +493,16 @@ class OwaBackend:
 
         # Extract MFA code
         mfa_code = None
-        while (mfa_code := self._extract_code()) is None:
-            self._wait()
+        start = time.time()
+        code_timeout = 60
+        while mfa_code is None:
+            if time.time() - start > code_timeout:
+                raise BackendError(
+                    f"MFA code extraction timed out after {code_timeout}s"
+                )
+            mfa_code = self._extract_code()
+            if mfa_code is None:
+                self._wait()
 
         # Display MFA code for user
         print(f"\nMFA code: {mfa_code}")
@@ -540,8 +570,16 @@ class OwaBackend:
 
         # Extract MFA code
         mfa_code = None
-        while (mfa_code := self._extract_code()) is None:
-            self._wait()
+        start = time.time()
+        code_timeout = 60
+        while mfa_code is None:
+            if time.time() - start > code_timeout:
+                raise BackendError(
+                    f"MFA code extraction timed out after {code_timeout}s"
+                )
+            mfa_code = self._extract_code()
+            if mfa_code is None:
+                self._wait()
 
         return (
             f"\nMFA code: {mfa_code}\n"
