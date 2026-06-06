@@ -127,18 +127,84 @@ email unread next --folder inbox --mark-read
 email unread next --raw                     # JSON output
 ```
 
-This is designed for an interactive workflow:
+This is designed for an interactive triage workflow. Below is a complete example.
 
-1. Run `email unread next` to fetch the first unread email
-2. Review the email content
-3. Choose an action:
-   - **Draft a reply** — use `email send` to reply, then the email is marked read
-   - **Copy to folder** — move to "Needs Action", "Waiting for Reply", or "For Future Reference"
-   - **Other** — archive, delete, or custom handling
+## Interactive workflow example
 
-The command opens the email in the reading pane (which marks it as read in OWA),
-so subsequent calls will fetch the next unread email in the queue.
+**Agent**: Fetching next unread email...
 
+You have an email from **Plamen Getsov** about **Comadso Feature Specification**.
+
+What do you want to do?
+- Draft a reply
+- Copy to folder
+- Mark as read and move on
+- Other
+
+### Drafting a reply
+
+If the user chooses "Draft a reply", get their input and draft a response:
+
+```bash
+email send --to plamen@alexandra.dk --subject "Re: Comadso Feature Specification" \
+  --body "Hi Plamen, thanks for the detailed answers! [rest of reply]"
+```
+
+**Important**: Always show the draft to the user for approval before sending. Get their
+explicit "yes, send it" before running `email send`. After sending, the original email
+is considered handled (marked read by virtue of being opened).
+
+### Copying to folder
+
+If the user chooses "Copy to folder", present the available folders:
+
+Which folder should I move this to?
+- **Needs Action** — emails requiring a reply from you
+- **Waiting for Reply** — threads where you need a reply from them
+- **For Future Reference** — important emails needed later (tickets, confirmations)
+- I changed my mind (go back to previous menu)
+
+When a folder is selected:
+
+```bash
+email copy-to-folder --id <id-from-unread-next> --to-folder "Needs Action"
+```
+
+This moves the email to the folder and marks it as read.
+
+**Note**: The `--id` can be obtained from `email unread next --raw` which returns JSON
+with the message ID, or by keeping track of which email was just fetched.
+
+### Other actions
+
+- **Archive**: `email copy-to-folder --id <id> --to-folder archive`
+- **Delete**: Use OWA UI or email client directly
+- **Custom handling**: Agent can apply custom logic as requested
+
+## Copy to folder (reference)
+
+Move an email to a different folder:
+
+```bash
+# Move to custom folder
+email copy-to-folder --id AAMk... --to-folder "Needs Action"
+email copy-to-folder --id AAMk... --to-folder "Waiting for Reply"
+email copy-to-folder --id AAMk... --to-folder "For Future Reference"
+
+# Move to standard folder
+email copy-to-folder --id AAMk... --to-folder inbox
+email copy-to-folder --id AAMk... --to-folder archive
+email copy-to-folder --id AAMk... --to-folder "deleted items"
+
+# Move from specific folder
+email copy-to-folder --folder sent --id AAMk... --to-folder archive
+```
+
+**Supported folders**:
+- Custom: `"Needs Action"`, `"Waiting for Reply"`, `"For Future Reference"`
+- Standard: `inbox`, `sent items`, `drafts`, `archive`, `deleted items`
+
+The email is marked as read after moving.
 
 ## Pin and Unpin
 
