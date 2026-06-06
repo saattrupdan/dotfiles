@@ -1023,6 +1023,67 @@ class OwaBackend:
 
         raise BackendError(f"Pin button not found for message {msg_id}")
 
+    def move_to_folder(self, msg_id: str, folder: str) -> None:
+        """Move a message to another folder by using the Move to dropdown.
+
+        Args:
+            msg_id:
+                Message ID to move. Can be a dom_ index or backend-specific ID.
+            folder:
+                Destination folder name. Supports standard folders (inbox, sent items,
+                drafts, archive, deleted items) and custom folders (Needs Action,
+                Waiting for Reply, For Future Reference).
+        """
+        # Navigate to inbox (where the email currently is)
+        self._navigate_to_folder("inbox")
+
+        # Find and select the message
+        if msg_id.startswith("dom_"):
+            index = int(msg_id.replace("dom_", ""))
+            snapshot = self._browser._run("snapshot", timeout=30)
+            options = re.findall(r"option.*?\[ref=e(\d+)\]", snapshot, re.IGNORECASE)
+
+            if index < len(options):
+                ref = f"@e{options[index]}"
+                self._browser._run("click", ref)
+                self._wait_for_snapshot(timeout=5)
+
+        # Click the "Move to" button in the toolbar
+        snapshot = self._browser._run("snapshot", "-i")
+        move_ref = None
+        for line in snapshot.split("\n"):
+            if "move to" in line.lower() and "button" in line.lower():
+                ref_match = re.search(r"\[ref=(e\d+)\]", line)
+                if ref_match:
+                    move_ref = f"@{ref_match.group(1)}"
+                    break
+
+        if not move_ref:
+            raise BackendError(f"Move to button not found for message {msg_id}")
+
+        self._browser._run("click", move_ref)
+        self._wait(500)
+
+        # Find the folder in the dropdown menu (menuitem elements)
+        snapshot = self._browser._run("snapshot", "-i")
+        folder_ref = None
+        folder_lower = folder.lower()
+
+        for line in snapshot.split("\n"):
+            if "menuitem" in line.lower():
+                # Check if this menu item matches the folder name
+                if folder_lower in line.lower():
+                    ref_match = re.search(r"\[ref=(e\d+)\]", line)
+                    if ref_match:
+                        folder_ref = f"@{ref_match.group(1)}"
+                        break
+
+        if not folder_ref:
+            raise BackendError(f"Folder '{folder}' not found in Move to menu")
+
+        self._browser._run("click", folder_ref)
+        self._wait_for_snapshot(timeout=5)
+
     def unpin_message(self, msg_id: str, folder: str = "inbox") -> None:
         """Unpin a message by clicking the Unpin button.
 

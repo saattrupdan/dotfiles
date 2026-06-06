@@ -136,11 +136,28 @@ def build_parser() -> argparse.ArgumentParser:
         "--folder", default="inbox", help="Folder to fetch unread from (default inbox)."
     )
     unread_next.add_argument(
-        "--mark-read", action="store_true", help="Mark the message as read after fetching."
+        "--mark-read",
+        action="store_true",
+        help="Mark the message as read after fetching.",
     )
     unread_next.add_argument(
         "--html", action="store_true", help="Prefer the HTML body over plaintext."
     )
-    unread_next.add_argument("--raw", action="store_true", help="Emit JSON instead of text.")
+    unread_next.add_argument(
+        "--raw", action="store_true", help="Emit JSON instead of text."
+    )
+
+    # -- copy-to-folder -------------------------------------------------------
+    copy_to_folder = sub.add_parser(
+        "copy-to-folder", help="Move a message to another folder."
+    )
+    _add_account_flag(copy_to_folder)
+    copy_to_folder.add_argument(
+        "--folder", default="inbox", help="Source folder (default inbox)."
+    )
+    copy_to_folder.add_argument("--id", required=True, help="Message id (from `list`).")
+    copy_to_folder.add_argument(
+        "--to-folder", required=True, help="Destination folder name."
+    )
 
     return parser

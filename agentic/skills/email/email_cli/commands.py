@@ -230,7 +230,7 @@ def do_unpin(args) -> None:
 
 def do_unread_next(args) -> None:
     """Get the next unread email and optionally mark it as read.
-    
+
     This combines list + read into one atomic operation for workflow efficiency.
     Fetches the first unread email from the specified folder (oldest first for
     inbox-zero approach), displays it in full, and can mark it as read.
@@ -238,18 +238,39 @@ def do_unread_next(args) -> None:
     config = load_config()
     name, account = resolve_account(config, args.account)
     backend = get_backend(name, account)
-    
+
     message = backend.get_next_unread(
         folder=args.folder,
         mark_read=args.mark_read,
     )
-    
+
     if message is None:
         print("No unread emails found.")
         return
-    
+
     if args.raw:
         emit_raw(message.to_dict())
         return
-    
+
     print(render_message(message, want_html=args.html))
+
+
+# -- copy-to-folder ----------------------------------------------------------
+
+
+def do_copy_to_folder(args) -> None:
+    """Move a message to another folder.
+
+    This is designed for an interactive workflow where you:
+    1. List or read an email
+    2. Decide it needs to be moved to a different folder
+    3. Run copy-to-folder with the message ID and destination folder
+
+    Supports standard folders (inbox, sent items, drafts, archive, deleted items)
+    and custom folders (Needs Action, Waiting for Reply, For Future Reference).
+    """
+    config = load_config()
+    name, account = resolve_account(config, args.account)
+    backend = get_backend(name, account)
+    backend.move_to_folder(msg_id=args.id, folder=args.to_folder)
+    print(f"Moved message {args.id} to '{args.to_folder}'.")
