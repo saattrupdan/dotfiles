@@ -6,15 +6,13 @@ download on first run.
 
 ## Installation
 
-The extension requires Python dependencies to be installed before use. Run from
-the extension directory:
+Install the Ideogram 4 package via pipx (recommended for isolation):
 
 ```bash
-cd ~/.pi/agent/extensions/image-generate
-pip install -r requirements.txt
+pipx install git+https://github.com/ideogram-oss/ideogram4.git
 ```
 
-Or with uv (recommended):
+Alternatively install with uv from the extension directory:
 
 ```bash
 cd ~/.pi/agent/extensions/image-generate
@@ -45,7 +43,7 @@ available by asking Pi to list its tools or by using it in a prompt.
    - [ideogram-ai/ideogram-4-fp8](https://huggingface.co/ideogram-ai/ideogram-4-fp8) (recommended, works on all devices)
    - [ideogram-ai/ideogram-4-nf4](https://huggingface.co/ideogram-ai/ideogram-4-nf4) (CUDA-only, faster on NVIDIA GPUs)
 
-2. **Authenticate** — Create a Hugging Face access token and log in:
+2. **Authenticate** — Log in to Hugging Face:
    ```bash
    hf auth login
    ```
@@ -53,13 +51,6 @@ available by asking Pi to list its tools or by using it in a prompt.
    ```bash
    export HF_TOKEN="hf_..."
    ```
-
-3. **Optional: Magic Prompt API key** — For automatic prompt expansion, get a free API key at
-   [https://developer.ideogram.ai/](https://developer.ideogram.ai/) and set:
-   ```bash
-   export IDEOGRAM_API_KEY="your_key_here"
-   ```
-   Without this, the model runs with your raw prompt (still works, just less refined).
 
 ## Model options
 
@@ -81,13 +72,22 @@ The `image_generate` tool accepts the following parameters:
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `prompt` | string | Yes | — | Text description of the image to generate |
+| `prompt` | string | Yes | — | Text prompt or structured JSON caption describing the image |
 | `width` | number | No | `1024` | Output image width in pixels (multiples of 16, max 2048) |
 | `height` | number | No | `1024` | Output image height in pixels (multiples of 16, max 2048) |
 | `quantization` | string | No | `"fp8"` | Model quantization: `"fp8"` (universal) or `"nf4"` (CUDA-only) |
 | `sampler_preset` | string | No | `"V4_QUALITY_48"` | Quality/speed preset (see sampler presets below) |
 | `seed` | number | No | `0` | Random seed for reproducibility |
-| `magic_prompt_key` | string | No | From env | API key for prompt expansion (or set IDEOGRAM_API_KEY env var) |
+
+### Prompt format
+
+Ideogram 4 was trained on **structured JSON captions**. For best results, use
+your agent to expand simple prompts into the full JSON caption schema before
+calling `image_generate`. See the
+[Ideogram prompting guide](https://github.com/ideogram-oss/ideogram4/blob/main/PROMPTING.md)
+for the complete schema documentation.
+
+Plain text prompts also work directly — the model handles them gracefully.
 
 ### Sampler presets
 
@@ -132,12 +132,8 @@ uv run generate.py "cyberpunk city at night" \
   --quantization fp8 \
   --sampler-preset V4_QUALITY_48
 
-# With magic prompt API key
-export IDEOGRAM_API_KEY="your_key"
-uv run generate.py "a cat wearing a tiny wizard hat" --magic-prompt-key "$IDEOGRAM_API_KEY"
-
-# Disable magic prompt (use prompt verbatim)
-uv run generate.py "exact prompt here" --no-magic-prompt
+# With structured JSON caption
+uv run generate.py '{"subjects": [{"prompt": "a cat", "bounding_box": [0.2, 0.3, 0.8, 0.9]}], "background": {"prompt": "cozy living room"}}'
 ```
 
 Generated images are saved to `~/.pi/agent/generated-images/` by default.
@@ -210,16 +206,8 @@ uv run python -c "from ideogram4 import Ideogram4Pipeline; print('OK')"
 If this fails, reinstall:
 
 ```bash
-uv pip install -r requirements.txt --force-reinstall
+pipx install git+https://github.com/ideogram-oss/ideogram4.git --force
 ```
-
-### Magic prompt not working
-
-Without an API key, magic prompt expansion falls back gracefully — your plain
-prompt is used verbatim. To enable expansion:
-
-1. Get a free API key at https://developer.ideogram.ai/
-2. Set `export IDEOGRAM_API_KEY="your_key"` or pass `--magic-prompt-key`
 
 ### macOS performance
 
@@ -248,8 +236,8 @@ export PYTORCH_CUDA_ALLOC_CONF=garbage_collection_threshold:0.6,max_split_size_m
 - The TypeScript frontend (`index.ts`) registers the `image_generate` tool with
   Pi's extension API
 - Images are saved as PNG files in the configured output directory
-- Magic prompt expansion uses Ideogram's hosted API (free) when API key is provided
 - Model weights are gated and require Hugging Face authentication
+- Prompt expansion should be handled by your agent before calling (no built-in magic prompt)
 
 ## Model architecture
 
