@@ -259,7 +259,7 @@ export default function (pi: ExtensionAPI) {
 		// Check 2: Paths outside allowed directories
 		const pathPattern = command.match(/(?:^|\s)(\/[\w/.-]+|\~\/[\w/.-]+|\.\/[\w/.-]+)/g);
 		if (pathPattern) {
-			const blockedPaths = pathPattern.filter(p => {
+			const blockedPaths = pathPattern.filter((p: string) => {
 				const pPath = p.trim();
 				return !isPathAllowed(pPath);
 			});
