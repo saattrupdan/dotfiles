@@ -30,6 +30,7 @@ interface ImageGenerateArgs {
 export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: 'image_generate',
+		label: 'image_generate',
 		description:
 			'Generate an image from a text prompt using Stable Diffusion. Returns the path to the generated image.',
 		parameters: {
@@ -78,53 +79,92 @@ export default function (pi: ExtensionAPI) {
 				pythonArgs.push('--model', args.model);
 			}
 
-			return new Promise<{ success: boolean; result?: string; error?: string }>(
-				(resolve) => {
-					let stdout = '';
-					let stderr = '';
+			return new Promise<{ content: Array<{ type: 'text'; text: string }> }>((resolve) => {
+				let stdout = '';
+				let stderr = '';
 
-					const proc = spawn('uv', ['run', ...pythonArgs], {
-						cwd: __dirname,
-						stdio: ['ignore', 'pipe', 'pipe'],
-					});
+				// Set a longer timeout for model downloads (up to 30 minutes for ~4GB)
+				const TIMEOUT_MS = 30 * 60 * 1000;
+				let timeoutHandle: NodeJS.Timeout | null = null;
 
-					proc.stdout.on('data', (data) => {
-						stdout += data.toString('utf8');
-					});
+				const resetTimeout = () => {
+					if (timeoutHandle) {
+						clearTimeout(timeoutHandle);
+					}
+					timeoutHandle = setTimeout(() => {
+						proc.kill('SIGTERM');
+						resolve({
+							content: [{
+								type: 'text',
+								text: 'Image generation timed out after 30 minutes. This may be due to a slow model download. Try again with a smaller model or check your network connection.',
+							}],
+						});
+					}, TIMEOUT_MS);
+				};
 
-					proc.stderr.on('data', (data) => {
-						stderr += data.toString('utf8');
-					});
+				const proc = spawn('uv', ['run', ...pythonArgs], {
+					cwd: __dirname,
+					stdio: ['ignore', 'pipe', 'pipe'],
+				});
 
-					proc.on('close', (code) => {
-						if (code === 0) {
-							// Python script logs the output path on success
-							// Extract it from stdout
-							const match = stdout.match(/Image saved to: (.+)$/m);
-							if (match) {
-								resolve({ success: true, result: match[1].trim() });
-							} else {
-								resolve({
-									success: false,
-									error: 'Image generation succeeded but output path not found in response',
-								});
-							}
+				// Reset timeout on any output (indicates progress)
+				proc.stdout.on('data', (data) => {
+					stdout += data.toString('utf8');
+					resetTimeout();
+				});
+
+				proc.stderr.on('data', (data) => {
+					stderr += data.toString('utf8');
+					resetTimeout();
+				});
+
+				resetTimeout(); // Start initial timeout
+
+				proc.on('close', (code) => {
+					if (timeoutHandle) {
+						clearTimeout(timeoutHandle);
+					}
+					if (code === 0) {
+						// Python script logs the output path on success
+						// Extract it from stdout
+						const match = stdout.match(/Image saved to: (.+)$/m);
+						if (match) {
+							resolve({
+								content: [{
+									type: 'text',
+									text: `Image generated successfully: ${match[1].trim()}`,
+								}],
+							});
 						} else {
 							resolve({
-								success: false,
-								error: `Image generation failed (exit code ${code}): ${stderr.trim() || stdout.trim()}`,
+								content: [{
+									type: 'text',
+									text: 'Image generation succeeded but output path not found in response',
+								}],
 							});
 						}
-					});
-
-					proc.on('error', (err) => {
+					} else {
 						resolve({
-							success: false,
-							error: `Failed to spawn Python process: ${err.message}`,
+							content: [{
+								type: 'text',
+								text: `Image generation failed (exit code ${code}): ${stderr.trim() || stdout.trim()}`,
+							}],
 						});
+					}
+				});
+
+				proc.on('error', (err) => {
+					if (timeoutHandle) {
+						clearTimeout(timeoutHandle);
+					}
+					resolve({
+						content: [{
+							type: 'text',
+							text: `Failed to spawn Python process: ${err.message}`,
+						}],
 					});
-				},
-			);
+				});
+			});
 		},
 	});
 }

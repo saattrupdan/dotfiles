@@ -60,21 +60,16 @@ The `image_generate` tool accepts the following parameters:
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `prompt` | string | Yes | — | Text description of the image to generate |
-| `model` | string | No | (default) | HuggingFace model identifier |
-| `size` | string | No | `1024x1024` | Output dimensions: `256x256`, `512x512`, `768x768`, `1024x1024`, `1024x768`, `768x1024`, `1280x720`, `1920x1080` |
-| `steps` | integer | No | `30` | Inference steps (1–150); higher = better quality, slower |
-| `guidance_scale` | number | No | `7.5` | CFG scale (1–20); higher = stronger prompt adherence |
-| `negative_prompt` | string | No | (none) | What to avoid in the generated image |
-| `output_path` | string | No | (temp) | Output file path (relative or absolute) |
-| `seed` | integer | No | (random) | Random seed for reproducibility |
+| `model` | string | No | `runwayml/stable-diffusion-v1-5` | HuggingFace model identifier |
+| `width` | number | No | `512` | Output image width in pixels |
+| `height` | number | No | `512` | Output image height in pixels |
+| `steps` | number | No | `50` | Number of inference steps; higher = better quality, slower |
 
 ### Example agent prompt
 
 ```
 Generate a concept art image of a cyberpunk city at night with neon signs and
 flying cars, using the stable-diffusion-xl model, 1920x1080 resolution, 50 steps.
-Save it to ./concept-art.png with a negative prompt to avoid blurry or
-low-quality output.
 ```
 
 The agent will call:
@@ -85,11 +80,9 @@ The agent will call:
   "arguments": {
     "prompt": "cyberpunk city at night with neon signs and flying cars",
     "model": "stabilityai/stable-diffusion-xl-base-1.0",
-    "size": "1920x1080",
-    "steps": 50,
-    "guidance_scale": 7.5,
-    "negative_prompt": "blurry, low quality, distorted, watermark",
-    "output_path": "./concept-art.png"
+    "width": 1920,
+    "height": 1080,
+    "steps": 50
   }
 }
 ```
@@ -106,22 +99,10 @@ uv run generate.py "a serene mountain landscape at sunset"
 uv run generate.py "portrait of a cat" \
   --model runwayml/stable-diffusion-v1-5 \
   --width 768 --height 768 \
-  --steps 40 \
-  --guidance-scale 8.0
-
-# With negative prompt
-uv run generate.py "medieval castle" \
-  --negative_prompt "modern buildings, cars, people"
-
-# Specify output path
-uv run generate.py "abstract art" --output ./abstract.png
-
-# Set random seed for reproducibility
-uv run generate.py "fantasy forest" --seed 42
+  --steps 40
 ```
 
-Generated images are saved to `~/.pi/agent/generated-images/` by default, or to
-the specified `--output` path.
+Generated images are saved to `~/.pi/agent/generated-images/` by default.
 
 ## GPU/CPU requirements and performance
 
