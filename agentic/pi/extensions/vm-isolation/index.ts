@@ -109,7 +109,10 @@ export default function (pi: ExtensionAPI) {
 
 		try {
 			const { stdout } = await execAsync(`${FILE_PROTECTOR_PATH} snapshot`);
-			const result = JSON.parse(stdout);
+			// tmutil outputs a NOTE message to stdout before the JSON, so extract only the JSON line
+			const jsonLine = stdout.trim().split('\n').find(line => line.startsWith('{'));
+			if (!jsonLine) return null;
+			const result = JSON.parse(jsonLine);
 			if (result.status === 'success') {
 				return result.snapshotName;
 			}
@@ -126,7 +129,10 @@ export default function (pi: ExtensionAPI) {
 	async function listSnapshots(): Promise<string[]> {
 		try {
 			const { stdout } = await execAsync(`${FILE_PROTECTOR_PATH} list-snapshots`);
-			const result = JSON.parse(stdout);
+			// Extract JSON line from output (tmutil may prepend NOTE messages)
+			const jsonLine = stdout.trim().split('\n').find(line => line.startsWith('{'));
+			if (!jsonLine) return [];
+			const result = JSON.parse(jsonLine);
 			return result.snapshots || [];
 		} catch (_error) {
 			return [];
@@ -143,7 +149,10 @@ export default function (pi: ExtensionAPI) {
 	}> {
 		try {
 			const { stdout } = await execAsync(`${FILE_PROTECTOR_PATH} check-command ${command}`);
-			const result = JSON.parse(stdout);
+			// Extract JSON line from output (tmutil may prepend NOTE messages)
+			const jsonLine = stdout.trim().split('\n').find(line => line.startsWith('{'));
+			if (!jsonLine) return { safe: true, severity: 'none' };
+			const result = JSON.parse(jsonLine);
 
 			if (result.shouldBlock) {
 				return { safe: false, severity: 'critical', reason: 'Blocked destructive command' };
@@ -151,19 +160,18 @@ export default function (pi: ExtensionAPI) {
 
 			if (result.critical.length > 0) {
 				return { safe: false, severity: 'critical', reason: 'Critical pattern detected' };
-			}
-			if (result.high.length > 0) {
-				return { safe: false, severity: 'high', reason: 'High-risk pattern detected' };
-			}
-			if (result.medium.length > 0) {
-				return { safe: true, severity: 'medium', reason: 'Medium-risk pattern - proceed with caution' };
-			}
-
-			return { safe: true, severity: 'none' };
-		} catch (_error) {
-			// On error, assume safe to avoid blocking legitimate work
-			return { safe: true, severity: 'none' };
+			}		if (result.high?.length > 0) {
+			return { safe: false, severity: 'high', reason: 'High-risk pattern detected' };
 		}
+		if (result.medium?.length > 0) {
+			return { safe: true, severity: 'medium', reason: 'Medium-risk pattern - proceed with caution' };
+		}
+
+		return { safe: true, severity: 'none' };
+	} catch (error: any) {
+		// Fail-secure: if we can't check, block the command
+		return { safe: false, severity: 'high', reason: 'Safety check unavailable - command blocked' };
+	}
 	}
 
 	/**
@@ -216,26 +224,28 @@ export default function (pi: ExtensionAPI) {
 		} catch (_error) {
 			ctx.ui.setStatus('file-protection', '⚠️ Protection inactive');
 		}
-	});
-
-	pi.on('agent_end', async (_event, ctx) => {
+	});		pi.on('agent_end', async (_event, ctx) => {
 		const agentId = ctx.sessionManager.getLeafEntry()?.id;
 		if (!agentId || !activeProtections.has(agentId)) return;
 
 		activeProtections.delete(agentId);
+		// Cleanup old snapshots (keep last 10)
+		try { await execAsync(`${FILE_PROTECTOR_PATH} cleanup`); } catch (_e) {}
 		ctx.ui.setStatus('file-protection', undefined);
 	});
 
 	// Intercept bash tool calls to check for dangerous commands
 	pi.on('tool_execution_start', async (event, ctx) => {
 		if (!config.enabled || !config.blockCriticalCommands) return;
-		if (event.toolCall.name !== 'bash') return;
+		const toolCall = event?.toolCall;
+		if (!toolCall || toolCall.name !== 'bash') return;
 
 		const agentId = ctx.sessionManager.getLeafEntry()?.id;
 		const protection = agentId ? activeProtections.get(agentId) : null;
 		if (!protection) return;
 
-		const command = event.toolCall.arguments.command || '';
+		const command = toolCall.arguments?.command || '';
+		if (!command) return;
 		
 		// Check 1: Dangerous command patterns
 		const safetyCheck = await checkCommandSafety(command);
@@ -327,10 +337,20 @@ export default function (pi: ExtensionAPI) {
 						return;
 					}
 					try {
-						await execAsync(`${FILE_PROTECTOR_PATH} rollback --name ${snapshotName}`);
-						ctx.ui.setStatus('file-protection', `✅ Rolled back to ${snapshotName}`);
+						const { stdout } = await execAsync(`${FILE_PROTECTOR_PATH} rollback ${snapshotName}`);
+						const result = JSON.parse(stdout);
+						if (result.status === 'success') {
+							ctx.ui.setStatus('file-protection', `✅ ${result.message}`);
+						} else {
+							ctx.ui.setStatus('file-protection', `❌ ${result.error}`);
+						}
 					} catch (error: any) {
-						ctx.ui.setStatus('file-protection', `❌ Rollback failed: ${error.message}`);
+						if (error.stdout) {
+							const result = JSON.parse(error.stdout);
+							ctx.ui.setStatus('file-protection', `❌ ${result.error}. Available: ${result.available?.join(', ') || 'none'}`);
+						} else {
+							ctx.ui.setStatus('file-protection', `❌ Rollback failed: ${error.message}`);
+						}
 					}
 					break;
 				}
