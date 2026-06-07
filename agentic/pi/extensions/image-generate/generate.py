@@ -21,6 +21,12 @@ OUTPUT_DIR = Path.home() / ".pi" / "agent" / "generated-images"
 # Default model quantization
 DEFAULT_QUANTIZATION = "fp8"
 
+# Mapping from quantization type to Hugging Face weights repo
+QUANTIZATION_REPOS = {
+    "nf4": "ideogram-ai/ideogram-4-nf4",
+    "fp8": "ideogram-ai/ideogram-4-fp8",
+}
+
 # Logging setup
 logging.basicConfig(
     level=logging.INFO,
@@ -90,7 +96,10 @@ def generate_image(
     )
 
     # Configure pipeline
-    config = Ideogram4PipelineConfig(quantization=quantization)
+    config = Ideogram4PipelineConfig(
+        quantization=quantization,
+        weights_repo=QUANTIZATION_REPOS[quantization],
+    )
 
     logger.info("Loading Ideogram 4 model (this may take time on first run)...")
     pipeline = Ideogram4Pipeline.from_pretrained(
