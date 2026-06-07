@@ -376,15 +376,4 @@ export default function (pi: ExtensionAPI) {
 			}
 		},
 	});
-
-	// Initial status
-	const initCheck = async () => {
-		if (config.enabled) {
-			const supported = await checkSystemSupport();
-			if (supported.supported) {
-				pi.ui?.setStatus('file-protection', '🛡️ Ready');
-			}
-		}
-	};
-	initCheck();
 }
