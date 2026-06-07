@@ -97,7 +97,6 @@ def generate_image(
 
     # Configure pipeline
     config = Ideogram4PipelineConfig(
-        quantization=quantization,
         weights_repo=QUANTIZATION_REPOS[quantization],
     )
 
