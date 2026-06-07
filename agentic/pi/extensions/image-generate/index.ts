@@ -1,5 +1,5 @@
 /**
- * Image generation tool — wires to Python Stable Diffusion backend.
+ * Image generation tool — wires to Python Ideogram 4 backend.
  *
  * Spawns `generate.py` as a subprocess with prompt and optional parameters,
  * captures stdout/stderr, and returns the generated image path on success.
@@ -17,14 +17,18 @@ const __dirname = dirname(__filename);
 interface ImageGenerateArgs {
 	/** Text prompt describing the image to generate */
 	prompt: string;
-	/** Output image width in pixels (default: 512) */
+	/** Output image width in pixels (default: 1024, multiples of 16, max 2048) */
 	width?: number;
-	/** Output image height in pixels (default: 512) */
+	/** Output image height in pixels (default: 1024, multiples of 16, max 2048) */
 	height?: number;
-	/** Number of inference steps (default: 50) */
-	steps?: number;
-	/** HuggingFace model identifier (default: stable-diffusion-2-1-base) */
-	model?: string;
+	/** Model quantization: "fp8" (universal) or "nf4" (CUDA-only, default: "fp8") */
+	quantization?: 'fp8' | 'nf4';
+	/** Sampler preset for quality/speed tradeoff (default: "V4_QUALITY_48") */
+	sampler_preset?: string;
+	/** Random seed for reproducibility (default: 0) */
+	seed?: number;
+	/** API key for magic prompt expansion (optional, uses IDEOGRAM_API_KEY env var if not provided) */
+	magic_prompt_key?: string;
 }
 
 export default function (pi: ExtensionAPI) {
@@ -32,7 +36,7 @@ export default function (pi: ExtensionAPI) {
 		name: 'image_generate',
 		label: 'image_generate',
 		description:
-			'Generate an image from a text prompt using Stable Diffusion. Returns the path to the generated image.',
+			'Generate an image from a text prompt using Ideogram 4. Returns the path to the generated image. Model requires Hugging Face authentication (HF_TOKEN) and license acceptance.',
 		parameters: {
 			type: 'object',
 			properties: {
@@ -42,20 +46,28 @@ export default function (pi: ExtensionAPI) {
 				},
 				width: {
 					type: 'number',
-					description: 'Output image width in pixels (default: 512)',
+					description: 'Output image width in pixels (default: 1024, multiples of 16, max 2048)',
 				},
 				height: {
 					type: 'number',
-					description: 'Output image height in pixels (default: 512)',
+					description: 'Output image height in pixels (default: 1024, multiples of 16, max 2048)',
 				},
-				steps: {
-					type: 'number',
-					description: 'Number of inference steps (default: 50)',
-				},
-				model: {
+				quantization: {
 					type: 'string',
-					description:
-						'HuggingFace model identifier (default: stable-diffusion-2-1-base)',
+					enum: ['fp8', 'nf4'],
+					description: 'Model quantization: fp8 (all devices) or nf4 (CUDA-only, default: fp8)',
+				},
+				sampler_preset: {
+					type: 'string',
+					description: 'Sampler preset: V4_QUALITY_48 (default), V4_BALANCED_32, V4_SPEED_20',
+				},
+				seed: {
+					type: 'number',
+					description: 'Random seed for reproducibility (default: 0)',
+				},
+				magic_prompt_key: {
+					type: 'string',
+					description: 'API key for magic prompt expansion (optional, uses IDEOGRAM_API_KEY env var if not provided)',
 				},
 			},
 			required: ['prompt'],
@@ -72,18 +84,24 @@ export default function (pi: ExtensionAPI) {
 			if (args.height !== undefined) {
 				pythonArgs.push('--height', String(args.height));
 			}
-			if (args.steps !== undefined) {
-				pythonArgs.push('--steps', String(args.steps));
+			if (args.quantization !== undefined) {
+				pythonArgs.push('--quantization', args.quantization);
 			}
-			if (args.model !== undefined) {
-				pythonArgs.push('--model', args.model);
+			if (args.sampler_preset !== undefined) {
+				pythonArgs.push('--sampler-preset', args.sampler_preset);
+			}
+			if (args.seed !== undefined) {
+				pythonArgs.push('--seed', String(args.seed));
+			}
+			if (args.magic_prompt_key !== undefined) {
+				pythonArgs.push('--magic-prompt-key', args.magic_prompt_key);
 			}
 
 			return new Promise<{ content: Array<{ type: 'text'; text: string }> }>((resolve) => {
 				let stdout = '';
 				let stderr = '';
 
-				// Set a longer timeout for model downloads (up to 30 minutes for ~4GB)
+				// Set a longer timeout for model downloads (up to 30 minutes)
 				const TIMEOUT_MS = 30 * 60 * 1000;
 				let timeoutHandle: NodeJS.Timeout | null = null;
 
@@ -96,7 +114,7 @@ export default function (pi: ExtensionAPI) {
 						resolve({
 							content: [{
 								type: 'text',
-								text: 'Image generation timed out after 30 minutes. This may be due to a slow model download. Try again with a smaller model or check your network connection.',
+								text: 'Image generation timed out after 30 minutes. This may be due to a slow model download. Try again or check your network connection.',
 							}],
 						});
 					}, TIMEOUT_MS);

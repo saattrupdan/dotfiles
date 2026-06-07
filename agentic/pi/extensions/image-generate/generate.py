@@ -1,25 +1,24 @@
 #!/usr/bin/env python3
-"""Stable Diffusion image generation script using diffusers.
+"""Ideogram 4 image generation script.
 
-Generates images from text prompts with configurable parameters.
+Generates images from text prompts using the Ideogram 4 model.
 Automatically detects GPU/CPU and handles model download on first run.
 """
 
 import argparse
 import logging
-import platform
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
 
 import torch
-from diffusers import StableDiffusionPipeline
 
 # Output directory for generated images
 OUTPUT_DIR = Path.home() / ".pi" / "agent" / "generated-images"
 
-# Default model
-DEFAULT_MODEL = "runwayml/stable-diffusion-v1-5"
+# Default model quantization
+DEFAULT_QUANTIZATION = "fp8"
 
 # Logging setup
 logging.basicConfig(
@@ -29,95 +28,102 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def detect_device() -> torch.device:
+def detect_device() -> str:
     """Detect and return the best available device for inference.
 
     Returns:
-        torch.device: CUDA if GPU available, MPS if Mac with Apple Silicon, else CPU.
+        Device string: "cuda" if GPU available, "mps" if Mac with Apple Silicon, else "cpu".
     """
     if torch.cuda.is_available():
         logger.info("GPU detected: %s", torch.cuda.get_device_name(0))
-        return torch.device("cuda")
-    if platform.system() == "Darwin" and torch.backends.mps.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available():
         logger.info("Apple Silicon MPS detected")
-        return torch.device("mps")
+        return "mps"
     logger.info("No GPU detected, using CPU")
-    return torch.device("cpu")
-
-
-def load_model(model_name: str, device: torch.device) -> StableDiffusionPipeline:
-    """Load Stable Diffusion model, downloading if necessary.
-
-    Args:
-        model_name:
-            HuggingFace model identifier.
-        device:
-            Target device for inference.
-
-    Returns:
-        Loaded StableDiffusionPipeline ready for generation.
-    """
-    logger.info("Loading model: %s", model_name)
-
-    # Load model with automatic download on first run
-    pipeline = StableDiffusionPipeline.from_pretrained(
-        model_name,
-        torch_dtype=torch.float16 if device.type != "cpu" else torch.float32,
-        use_safetensors=True,
-    )
-
-    # Move to device
-    pipeline = pipeline.to(device)
-
-    # Enable memory optimizations for GPU
-    if device.type == "cuda":
-        try:
-            pipeline.enable_attention_slicing()
-            logger.info("Enabled attention slicing for memory efficiency")
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("Could not enable attention slicing: %s", exc)
-
-    logger.info("Model loaded successfully")
-    return pipeline
+    return "cpu"
 
 
 def generate_image(
-    pipeline: StableDiffusionPipeline,
     prompt: str,
-    device: torch.device,
-    width: int = 512,
-    height: int = 512,
-    num_inference_steps: int = 50,
+    device: str,
+    quantization: str = DEFAULT_QUANTIZATION,
+    width: int = 1024,
+    height: int = 1024,
+    sampler_preset: str = "V4_QUALITY_48",
+    seed: int = 0,
+    magic_prompt: bool = True,
+    magic_prompt_key: str | None = None,
 ) -> Path:
-    """Generate an image from a text prompt.
+    """Generate an image from a text prompt using Ideogram 4.
 
     Args:
-        pipeline:
-            Loaded StableDiffusionPipeline.
         prompt:
             Text description of the image to generate.
         device:
-            Device used for inference.
+            Device string for inference ("cuda", "mps", or "cpu").
+        quantization:
+            Model quantization ("fp8" or "nf4"). Default: fp8.
         width:
-            Output image width in pixels.
+            Output image width in pixels. Default: 1024.
         height:
-            Output image height in pixels.
-        num_inference_steps:
-            Number of denoising steps (higher = better quality, slower).
+            Output image height in pixels. Default: 1024.
+        sampler_preset:
+            Sampler preset for generation. Default: V4_QUALITY_48.
+        seed:
+            Random seed for reproducibility. Default: 0.
+        magic_prompt:
+            Whether to expand prompt using magic prompt LLM. Default: True.
+        magic_prompt_key:
+            API key for magic prompt expansion. Optional.
 
     Returns:
         Path to the saved image file.
-    """
-    logger.info("Generating image for prompt: %s", prompt)
-    logger.info("Parameters: %dx%d, %d steps", width, height, num_inference_steps)
 
-    # Generate image
-    image = pipeline(
+    Raises:
+        ImportError: If ideogram4 package is not installed.
+        RuntimeError: If model loading or generation fails.
+    """
+    try:
+        from ideogram4 import (
+            PRESETS,
+            Ideogram4Pipeline,
+            Ideogram4PipelineConfig,
+        )
+    except ImportError as exc:
+        logger.error("ideogram4 package not installed. Run: pip install ideogram4")
+        raise ImportError("ideogram4 package required") from exc
+
+    logger.info("Generating image for prompt: %s", prompt)
+    logger.info(
+        "Parameters: %dx%d, quantization=%s, sampler=%s, device=%s",
+        width,
+        height,
+        quantization,
+        sampler_preset,
+        device,
+    )
+
+    # Configure pipeline
+    config = Ideogram4PipelineConfig(
+        quantization=quantization,
+        device=device,
+    )
+
+    logger.info("Loading Ideogram 4 model (this may take time on first run)...")
+    pipeline = Ideogram4Pipeline(config)
+
+    # Run inference
+    logger.info("Running inference...")
+    image = pipeline.generate(
         prompt=prompt,
-        width=width,
         height=height,
-        num_inference_steps=num_inference_steps,
-    ).images[0]
+        width=width,
+        sampler_preset=sampler_preset,
+        seed=seed,
+        magic_prompt=magic_prompt,
+        magic_prompt_key=magic_prompt_key,
+    )
 
     # Ensure output directory exists
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -140,7 +146,7 @@ def main() -> int:
         Exit code (0 for success, non-zero for errors).
     """
     parser = argparse.ArgumentParser(
-        description="Generate images from text prompts using Stable Diffusion",
+        description="Generate images from text prompts using Ideogram 4",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
@@ -152,30 +158,47 @@ def main() -> int:
         "--width",
         "-W",
         type=int,
-        default=512,
+        default=1024,
         help="Output image width in pixels",
     )
     parser.add_argument(
         "--height",
         "-H",
         type=int,
-        default=512,
+        default=1024,
         help="Output image height in pixels",
     )
     parser.add_argument(
-        "--steps",
-        "-s",
-        type=int,
-        default=50,
-        dest="num_inference_steps",
-        help="Number of inference steps (quality vs speed)",
+        "--quantization",
+        "-q",
+        type=str,
+        choices=["fp8", "nf4"],
+        default=DEFAULT_QUANTIZATION,
+        help="Model quantization (fp8 works on all devices, nf4 is CUDA-only)",
     )
     parser.add_argument(
-        "--model",
-        "-m",
+        "--sampler-preset",
+        "-s",
         type=str,
-        default=DEFAULT_MODEL,
-        help="HuggingFace model identifier",
+        default="V4_QUALITY_48",
+        help="Sampler preset for generation quality/speed tradeoff",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="Random seed for reproducibility",
+    )
+    parser.add_argument(
+        "--no-magic-prompt",
+        action="store_true",
+        help="Disable magic prompt expansion (use prompt verbatim)",
+    )
+    parser.add_argument(
+        "--magic-prompt-key",
+        type=str,
+        default=os.environ.get("MAGIC_PROMPT_API_KEY") or os.environ.get("IDEOGRAM_API_KEY"),
+        help="API key for magic prompt expansion (or set MAGIC_PROMPT_API_KEY/IDEOGRAM_API_KEY)",
     )
 
     args = parser.parse_args()
@@ -184,17 +207,23 @@ def main() -> int:
         # Detect device
         device = detect_device()
 
-        # Load model (downloads on first run)
-        pipeline = load_model(args.model, device)
+        # Auto-select quantization if needed
+        quantization = args.quantization
+        if quantization == "nf4" and device != "cuda":
+            logger.warning("nf4 quantization is CUDA-only, switching to fp8")
+            quantization = "fp8"
 
         # Generate image
         output_path = generate_image(
-            pipeline=pipeline,
             prompt=args.prompt,
             device=device,
+            quantization=quantization,
             width=args.width,
             height=args.height,
-            num_inference_steps=args.num_inference_steps,
+            sampler_preset=args.sampler_preset,
+            seed=args.seed,
+            magic_prompt=not args.no_magic_prompt,
+            magic_prompt_key=args.magic_prompt_key,
         )
 
         logger.info("Generation complete: %s", output_path)
@@ -203,6 +232,9 @@ def main() -> int:
     except KeyboardInterrupt:
         logger.info("Generation cancelled by user")
         return 130
+    except ImportError as exc:
+        logger.error("Import failed: %s", exc)
+        return 127
     except Exception as exc:
         logger.error("Generation failed: %s", exc)
         return 1
