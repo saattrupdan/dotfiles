@@ -2,17 +2,18 @@
 """Ideogram 4 image generation script.
 
 Generates images from text prompts using the Ideogram 4 model.
+Accepts structured JSON captions or plain text prompts.
 Automatically detects GPU/CPU and handles model download on first run.
 """
 
 import argparse
 import logging
-import os
 import sys
 from datetime import datetime
 from pathlib import Path
 
 import torch
+from ideogram4 import Ideogram4Pipeline, Ideogram4PipelineConfig
 
 # Output directory for generated images
 OUTPUT_DIR = Path.home() / ".pi" / "agent" / "generated-images"
@@ -52,14 +53,12 @@ def generate_image(
     height: int = 1024,
     sampler_preset: str = "V4_QUALITY_48",
     seed: int = 0,
-    magic_prompt: bool = True,
-    magic_prompt_key: str | None = None,
 ) -> Path:
     """Generate an image from a text prompt using Ideogram 4.
 
     Args:
         prompt:
-            Text description of the image to generate.
+            Text description or structured JSON caption for the image.
         device:
             Device string for inference ("cuda", "mps", or "cpu").
         quantization:
@@ -72,10 +71,6 @@ def generate_image(
             Sampler preset for generation. Default: V4_QUALITY_48.
         seed:
             Random seed for reproducibility. Default: 0.
-        magic_prompt:
-            Whether to expand prompt using magic prompt LLM. Default: True.
-        magic_prompt_key:
-            API key for magic prompt expansion. Optional.
 
     Returns:
         Path to the saved image file.
@@ -84,16 +79,6 @@ def generate_image(
         ImportError: If ideogram4 package is not installed.
         RuntimeError: If model loading or generation fails.
     """
-    try:
-        from ideogram4 import (
-            PRESETS,
-            Ideogram4Pipeline,
-            Ideogram4PipelineConfig,
-        )
-    except ImportError as exc:
-        logger.error("ideogram4 package not installed. Run: pip install ideogram4")
-        raise ImportError("ideogram4 package required") from exc
-
     logger.info("Generating image for prompt: %s", prompt)
     logger.info(
         "Parameters: %dx%d, quantization=%s, sampler=%s, device=%s",
@@ -105,24 +90,23 @@ def generate_image(
     )
 
     # Configure pipeline
-    config = Ideogram4PipelineConfig(
-        quantization=quantization,
-        device=device,
-    )
+    config = Ideogram4PipelineConfig(quantization=quantization)
 
     logger.info("Loading Ideogram 4 model (this may take time on first run)...")
-    pipeline = Ideogram4Pipeline(config)
+    pipeline = Ideogram4Pipeline.from_pretrained(
+        config=config,
+        device=device,
+        dtype=torch.bfloat16,
+    )
 
     # Run inference
     logger.info("Running inference...")
-    image = pipeline.generate(
-        prompt=prompt,
+    images = pipeline(
+        prompt,
         height=height,
         width=width,
         sampler_preset=sampler_preset,
         seed=seed,
-        magic_prompt=magic_prompt,
-        magic_prompt_key=magic_prompt_key,
     )
 
     # Ensure output directory exists
@@ -133,7 +117,7 @@ def generate_image(
     filename = f"generated_{timestamp}.png"
     output_path = OUTPUT_DIR / filename
 
-    image.save(output_path)
+    images[0].save(output_path)
     logger.info("Image saved to: %s", output_path)
 
     return output_path
@@ -152,7 +136,7 @@ def main() -> int:
     parser.add_argument(
         "prompt",
         type=str,
-        help="Text prompt describing the image to generate",
+        help="Text prompt or structured JSON caption describing the image to generate",
     )
     parser.add_argument(
         "--width",
@@ -189,17 +173,6 @@ def main() -> int:
         default=0,
         help="Random seed for reproducibility",
     )
-    parser.add_argument(
-        "--no-magic-prompt",
-        action="store_true",
-        help="Disable magic prompt expansion (use prompt verbatim)",
-    )
-    parser.add_argument(
-        "--magic-prompt-key",
-        type=str,
-        default=os.environ.get("MAGIC_PROMPT_API_KEY") or os.environ.get("IDEOGRAM_API_KEY"),
-        help="API key for magic prompt expansion (or set MAGIC_PROMPT_API_KEY/IDEOGRAM_API_KEY)",
-    )
 
     args = parser.parse_args()
 
@@ -222,8 +195,6 @@ def main() -> int:
             height=args.height,
             sampler_preset=args.sampler_preset,
             seed=args.seed,
-            magic_prompt=not args.no_magic_prompt,
-            magic_prompt_key=args.magic_prompt_key,
         )
 
         logger.info("Generation complete: %s", output_path)
@@ -238,7 +209,3 @@ def main() -> int:
     except Exception as exc:
         logger.error("Generation failed: %s", exc)
         return 1
-
-
-if __name__ == "__main__":
-    sys.exit(main())

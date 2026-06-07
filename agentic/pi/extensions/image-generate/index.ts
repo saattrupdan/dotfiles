@@ -15,7 +15,7 @@ const __dirname = dirname(__filename);
 
 /** Tool schema for image generation */
 interface ImageGenerateArgs {
-	/** Text prompt describing the image to generate */
+	/** Text prompt or structured JSON caption describing the image to generate */
 	prompt: string;
 	/** Output image width in pixels (default: 1024, multiples of 16, max 2048) */
 	width?: number;
@@ -27,52 +27,45 @@ interface ImageGenerateArgs {
 	sampler_preset?: string;
 	/** Random seed for reproducibility (default: 0) */
 	seed?: number;
-	/** API key for magic prompt expansion (optional, uses IDEOGRAM_API_KEY env var if not provided) */
-	magic_prompt_key?: string;
 }
 
-export default function (pi: ExtensionAPI) {
-	pi.registerTool({
-		name: 'image_generate',
-		label: 'image_generate',
-		description:
-			'Generate an image from a text prompt using Ideogram 4. Returns the path to the generated image. Model requires Hugging Face authentication (HF_TOKEN) and license acceptance.',
-		parameters: {
-			type: 'object',
-			properties: {
-				prompt: {
-					type: 'string',
-					description: 'Text prompt describing the image to generate',
+export default function (pi: ExtensionAPI) {		pi.registerTool({
+			name: 'image_generate',
+			label: 'image_generate',
+			description:
+				'Generate an image from a text prompt using Ideogram 4. Returns the path to the generated image. Model requires Hugging Face authentication (hf auth login) and license acceptance. Prompt should be a structured JSON caption per Ideogram schema (use your agent to expand prompts before calling).',
+			parameters: {
+				type: 'object',
+				properties: {
+					prompt: {
+						type: 'string',
+						description: 'Text prompt or structured JSON caption describing the image to generate',
+					},
+					width: {
+						type: 'number',
+						description: 'Output image width in pixels (default: 1024, multiples of 16, max 2048)',
+					},
+					height: {
+						type: 'number',
+						description: 'Output image height in pixels (default: 1024, multiples of 16, max 2048)',
+					},
+					quantization: {
+						type: 'string',
+						enum: ['fp8', 'nf4'],
+						description: 'Model quantization: fp8 (all devices) or nf4 (CUDA-only, default: fp8)',
+					},
+					sampler_preset: {
+						type: 'string',
+						description: 'Sampler preset: V4_QUALITY_48 (default), V4_BALANCED_32, V4_SPEED_20',
+					},
+					seed: {
+						type: 'number',
+						description: 'Random seed for reproducibility (default: 0)',
+					},
 				},
-				width: {
-					type: 'number',
-					description: 'Output image width in pixels (default: 1024, multiples of 16, max 2048)',
-				},
-				height: {
-					type: 'number',
-					description: 'Output image height in pixels (default: 1024, multiples of 16, max 2048)',
-				},
-				quantization: {
-					type: 'string',
-					enum: ['fp8', 'nf4'],
-					description: 'Model quantization: fp8 (all devices) or nf4 (CUDA-only, default: fp8)',
-				},
-				sampler_preset: {
-					type: 'string',
-					description: 'Sampler preset: V4_QUALITY_48 (default), V4_BALANCED_32, V4_SPEED_20',
-				},
-				seed: {
-					type: 'number',
-					description: 'Random seed for reproducibility (default: 0)',
-				},
-				magic_prompt_key: {
-					type: 'string',
-					description: 'API key for magic prompt expansion (optional, uses IDEOGRAM_API_KEY env var if not provided)',
-				},
+				required: ['prompt'],
+				additionalProperties: false,
 			},
-			required: ['prompt'],
-			additionalProperties: false,
-		},
 		handler: async (args: ImageGenerateArgs) => {
 			const pythonScript = join(__dirname, 'generate.py');
 			const pythonArgs = [pythonScript, args.prompt];
@@ -92,9 +85,6 @@ export default function (pi: ExtensionAPI) {
 			}
 			if (args.seed !== undefined) {
 				pythonArgs.push('--seed', String(args.seed));
-			}
-			if (args.magic_prompt_key !== undefined) {
-				pythonArgs.push('--magic-prompt-key', args.magic_prompt_key);
 			}
 
 			return new Promise<{ content: Array<{ type: 'text'; text: string }> }>((resolve) => {
