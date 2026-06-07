@@ -66,6 +66,8 @@ uv run generate.py "a red circle on white background" \
 
 **Root cause:** HuggingFace now uses Xet storage system which is slow for initial model downloads. The model (~4-5 GB) was partially cached (3.5 GB) but the remaining fetch operations timed out.
 
+**Offline test:** Attempted offline load with `HF_HUB_OFFLINE=1` to force use of cached files. Result: cache incomplete — missing `vae/diffusion_pytorch_model.safetensors`. This confirms the download was interrupted mid-transfer, not a code defect.
+
 **Verification of progress:**
 - Model cache found: `~/.cache/huggingface/hub/models--runwayml--stable-diffusion-v1-5` (3.5 GB)
 - Model fetching started successfully
