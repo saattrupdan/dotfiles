@@ -237,21 +237,20 @@ export default function (pi: ExtensionAPI) {
 	// Intercept bash tool calls to check for dangerous commands
 	pi.on('tool_execution_start', async (event, ctx) => {
 		if (!config.enabled || !config.blockCriticalCommands) return;
-		const toolCall = event?.toolCall;
-		if (!toolCall || toolCall.name !== 'bash') return;
+		if (event?.toolName !== 'bash') return;
 
 		const agentId = ctx.sessionManager.getLeafEntry()?.id;
 		const protection = agentId ? activeProtections.get(agentId) : null;
 		if (!protection) return;
 
-		const command = toolCall.arguments?.command || '';
+		const command = event?.args?.command || '';
 		if (!command) return;
 		
 		// Check 1: Dangerous command patterns
 		const safetyCheck = await checkCommandSafety(command);
 		if (!safetyCheck.safe) {
 			// Block the command
-			event.toolCall.arguments = { command: `echo "BLOCKED: ${safetyCheck.reason} \\nCommand: ${command.replace(/"/g, '\\"')}" && exit 1` };
+			event.args.command = `echo "BLOCKED: ${safetyCheck.reason} \\nCommand: ${command.replace(/"/g, '\\"')}" && exit 1`;
 			ctx.ui.setStatus('file-protection', `🚫 Blocked: ${safetyCheck.reason}`);
 			return;
 		}
