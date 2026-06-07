@@ -1,186 +1,130 @@
 /**
- * `image_generate` tool extension.
+ * Image generation tool — wires to Python Stable Diffusion backend.
  *
- * Provides an image generation tool that creates images from text prompts.
- * Supports multiple backends (local models, cloud APIs) and returns generated
- * images as file paths or base64 data.
- *
- * This extension is loaded from the `.pi/agent/extensions/image-generate/` directory
- * and registered via the standard pi extension API.
+ * Spawns `generate.py` as a subprocess with prompt and optional parameters,
+ * captures stdout/stderr, and returns the generated image path on success.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
-import { Type } from "typebox";
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 
-const Params = Type.Object({
-	prompt: Type.String({
-		description: "Text description of the image to generate.",
-	}),
-	model: Type.Optional(
-		Type.String({
-			description:
-				"Model to use for generation (e.g., 'dall-e-3', 'stable-diffusion-xl'). Default: configured default.",
-		}),
-	),
-	size: Type.Optional(
-		Type.String({
-			description:
-				"Image size (e.g., '1024x1024', '512x512'). Default: '1024x1024'.",
-			enum: [
-				"256x256",
-				"512x512",
-				"768x768",
-				"1024x1024",
-				"1024x768",
-				"768x1024",
-				"1280x720",
-				"1920x1080",
-			],
-			default: "1024x1024",
-		}),
-	),
-	output_path: Type.Optional(
-		Type.String({
-			description:
-				"Output file path (relative to cwd or absolute). If not provided, generates a temporary filename.",
-		}),
-	),
-	negative_prompt: Type.Optional(
-		Type.String({
-			description:
-				"Negative prompt describing what to avoid in the generated image.",
-		}),
-	),
-	steps: Type.Optional(
-		Type.Integer({
-			description: "Number of inference steps (for diffusion models). Default: 30.",
-			minimum: 1,
-			maximum: 150,
-			default: 30,
-		}),
-	),
-	guidance_scale: Type.Optional(
-		Type.Number({
-			description:
-				"Guidance scale / CFG scale (higher = more prompt adherence). Default: 7.5.",
-			minimum: 1,
-			maximum: 20,
-			default: 7.5,
-		}),
-	),
-	seed: Type.Optional(
-		Type.Integer({
-			description:
-				"Random seed for reproducibility. If not provided, uses a random seed.",
-		}),
-	),
-});
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
-function registerImageGenerateTool(pi: ExtensionAPI): void {
+/** Tool schema for image generation */
+interface ImageGenerateArgs {
+	/** Text prompt describing the image to generate */
+	prompt: string;
+	/** Output image width in pixels (default: 512) */
+	width?: number;
+	/** Output image height in pixels (default: 512) */
+	height?: number;
+	/** Number of inference steps (default: 50) */
+	steps?: number;
+	/** HuggingFace model identifier (default: stable-diffusion-2-1-base) */
+	model?: string;
+}
+
+export default function (pi: ExtensionAPI) {
 	pi.registerTool({
-		name: "image_generate",
-		label: "image_generate",
+		name: 'image_generate',
 		description:
-			"Generate an image from a text prompt. Returns the path to the generated image file or base64-encoded image data.",
-		parameters: Params,
-
-		async execute(
-			_toolCallId,
-			{
-				prompt,
-				model,
-				size = "1024x1024",
-				output_path,
-				negative_prompt,
-				steps = 30,
-				guidance_scale = 7.5,
-				seed,
-			},
-			_signal,
-			_onUpdate,
-			_ctx,
-		) {
-			// TODO: Implement image generation logic based on the configured backend.
-			// Possible implementations:
-			// - OpenAI DALL-E 3 API
-			// - Stability AI Stable Diffusion API
-			// - Local diffusion models (e.g., via llama.cpp or diffusers)
-			// - Replicate API for various models
-
-			const [width, height] = size.split("x").map(Number);
-
-			return {
-				content: [
-					{
-						type: "text",
-						text: `Image generation not yet implemented.
-Configuration:
-- Prompt: ${prompt}
-- Model: ${model || "(default)"}
-- Size: ${width}x${height}
-- Output: ${output_path || "(temporary)"}
-- Negative prompt: ${negative_prompt || "(none)"}
-- Steps: ${steps}
-- Guidance scale: ${guidance_scale}
-- Seed: ${seed !== undefined ? seed : "(random)"}
-
-Implement the generateImage() function in index.ts to add backend support.`,
-					},
-				],
-				details: {
-					prompt,
-					model: model || null,
-					size,
-					outputPath: output_path || null,
+			'Generate an image from a text prompt using Stable Diffusion. Returns the path to the generated image.',
+		parameters: {
+			type: 'object',
+			properties: {
+				prompt: {
+					type: 'string',
+					description: 'Text prompt describing the image to generate',
 				},
-			};
+				width: {
+					type: 'number',
+					description: 'Output image width in pixels (default: 512)',
+				},
+				height: {
+					type: 'number',
+					description: 'Output image height in pixels (default: 512)',
+				},
+				steps: {
+					type: 'number',
+					description: 'Number of inference steps (default: 50)',
+				},
+				model: {
+					type: 'string',
+					description:
+						'HuggingFace model identifier (default: stable-diffusion-2-1-base)',
+				},
+			},
+			required: ['prompt'],
+			additionalProperties: false,
 		},
+		handler: async (args: ImageGenerateArgs) => {
+			const pythonScript = join(__dirname, 'generate.py');
+			const pythonArgs = [pythonScript, args.prompt];
 
-		renderCall(args, theme) {
-			const prompt = args?.prompt ? String(args.prompt) : "...";
-			const truncatedPrompt =
-				prompt.length > 50 ? prompt.slice(0, 47) + "..." : prompt;
-			return new Text(
-				`${theme.fg("toolTitle", theme.bold("image_generate"))} ${theme.fg("accent", `"${truncatedPrompt}"`)}`,
-				0,
-				0,
-			);
-		},
-
-		renderResult(result, { expanded }, theme, _context) {
-			const text = textContent(result.content);
-			if (expanded) return new Text(text, 0, 0);
-
-			const details = result.details as
-				| { outputPath?: string | null; prompt?: string }
-				| undefined;
-
-			if (details?.outputPath) {
-				return new Text(
-					theme.fg("success", `✓ generated: ${details.outputPath}`),
-					0,
-					0,
-				);
+			// Add optional parameters
+			if (args.width !== undefined) {
+				pythonArgs.push('--width', String(args.width));
+			}
+			if (args.height !== undefined) {
+				pythonArgs.push('--height', String(args.height));
+			}
+			if (args.steps !== undefined) {
+				pythonArgs.push('--steps', String(args.steps));
+			}
+			if (args.model !== undefined) {
+				pythonArgs.push('--model', args.model);
 			}
 
-			return new Text(firstLine(text), 0, 0);
+			return new Promise<{ success: boolean; result?: string; error?: string }>(
+				(resolve) => {
+					let stdout = '';
+					let stderr = '';
+
+					const proc = spawn('uv', ['run', ...pythonArgs], {
+						cwd: __dirname,
+						stdio: ['ignore', 'pipe', 'pipe'],
+					});
+
+					proc.stdout.on('data', (data) => {
+						stdout += data.toString('utf8');
+					});
+
+					proc.stderr.on('data', (data) => {
+						stderr += data.toString('utf8');
+					});
+
+					proc.on('close', (code) => {
+						if (code === 0) {
+							// Python script logs the output path on success
+							// Extract it from stdout
+							const match = stdout.match(/Image saved to: (.+)$/m);
+							if (match) {
+								resolve({ success: true, result: match[1].trim() });
+							} else {
+								resolve({
+									success: false,
+									error: 'Image generation succeeded but output path not found in response',
+								});
+							}
+						} else {
+							resolve({
+								success: false,
+								error: `Image generation failed (exit code ${code}): ${stderr.trim() || stdout.trim()}`,
+							});
+						}
+					});
+
+					proc.on('error', (err) => {
+						resolve({
+							success: false,
+							error: `Failed to spawn Python process: ${err.message}`,
+						});
+					});
+				},
+			);
 		},
 	});
-}
-
-function textContent(content: Array<{ type: string; text?: string }>): string {
-	return content
-		.filter((block): block is { type: "text"; text: string } => block.type === "text")
-		.map((block) => block.text)
-		.join("\n");
-}
-
-function firstLine(text: string): string {
-	return text.split("\n")[0] || "(no output)";
-}
-
-// Extension entry point
-export default function (pi: ExtensionAPI): void {
-	registerImageGenerateTool(pi);
 }
