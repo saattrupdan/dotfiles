@@ -9,6 +9,7 @@ import argparse
 import logging
 import platform
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import torch
@@ -73,8 +74,8 @@ def load_model(model_name: str, device: torch.device) -> StableDiffusionPipeline
         try:
             pipeline.enable_attention_slicing()
             logger.info("Enabled attention slicing for memory efficiency")
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Could not enable attention slicing: %s", exc)
 
     logger.info("Model loaded successfully")
     return pipeline
@@ -122,8 +123,6 @@ def generate_image(
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     # Save with timestamped filename
-    from datetime import datetime
-
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"generated_{timestamp}.png"
     output_path = OUTPUT_DIR / filename
