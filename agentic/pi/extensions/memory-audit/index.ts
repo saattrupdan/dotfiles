@@ -214,6 +214,12 @@ export default function (pi: ExtensionAPI) {
 	pi.on("input", async (event, ctx) => {
 		if (!hasUI) return { action: "continue" };
 		const query = event.text;
+
+		// Don't transform slash commands — they must start at position 0 to be expanded
+		if (query?.trim().startsWith("/")) {
+			return { action: "continue" };
+		}
+
 		if (!query || query.trim().length < 3) {
 			return { action: "continue" };
 		}
