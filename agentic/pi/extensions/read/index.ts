@@ -449,7 +449,8 @@ export default async function (pi: ExtensionAPI) {
 			"  • No symbol, large file → outline (module doc, classes/functions with signatures, type hints, and doc-first-line). Use the outline to pick a symbol.\n" +
 			"  • symbol set → body of that symbol only (supports 'Class.method').\n" +
 			"  • symbol=\"__preamble__\" → everything before the first class/function (imports, constants, module setup).\n" +
-			"There is no pagination — you cannot walk a file via offset/limit. If the outline is not enough, use the `search` tool to locate what you need, then read the symbol. For interactive/JS-heavy pages, use `web_browse` instead.",
+			"There is no pagination — you cannot walk a file via offset/limit. If the outline is not enough, use the `search` tool to locate what you need, then read the symbol.\n" +
+			"Prefer `read` for fetching web pages — it's quicker and converts to Markdown via docling. Only use `web_browse` for interactive/JS-heavy pages that need clicking, typing, or JavaScript execution.",
 		parameters: Params,
 
 		async execute(_toolCallId, { path: filePath, symbol }, signal, _onUpdate, ctx) {

@@ -1,0 +1,8 @@
+{
+  "name": "vm-isolation",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}

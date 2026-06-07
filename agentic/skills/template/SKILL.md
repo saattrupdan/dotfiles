@@ -1,35 +1,50 @@
 ---
 name: skill-name
 description: One-line description of when the agent should use this skill.
-tagline: Short tagline for skill index (max ~50 chars)
-last-updated: 2026-06-02
+tagline: Short tagline for this skill
+last-updated: 2026-06-07
 ---
 
-## Skill Name
+# Skill Name
 
-Replace this with the actual skill instructions. This is the main body that will be
-loaded when the skill is invoked.
+## What
 
-### When to use
+Brief description of what this skill covers.
 
-Describe when the agent should use this skill. Be specific about triggers and use cases.
+## Usage
 
-### How to use
-
-Provide step-by-step instructions, conventions, or procedures the agent should follow.
+```bash
+command [options] [arguments]
+```
 
 ### Examples
 
 ```bash
-# Example commands or code snippets
-example-command --flag value
+# Example command
+command example-usage
 ```
 
-### Gotchas
+## API
 
-List any gotchas, common mistakes, or important notes the agent should be aware of.
+### Endpoints
 
-### References
+If this skill wraps an API, document the endpoints here.
 
-- Link to relevant documentation
-- Link to related tools or APIs
+## Gotchas
+
+- Any important gotchas or warnings
+- Authentication requirements
+- Rate limits or quotas
+
+## Testing
+
+How to test this skill:
+
+```bash
+# Test command
+command test
+```
+
+## Related
+
+- Links to related skills or documentation
