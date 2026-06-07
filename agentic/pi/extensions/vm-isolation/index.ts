@@ -160,18 +160,19 @@ export default function (pi: ExtensionAPI) {
 
 			if (result.critical.length > 0) {
 				return { safe: false, severity: 'critical', reason: 'Critical pattern detected' };
-			}		if (result.high?.length > 0) {
-			return { safe: false, severity: 'high', reason: 'High-risk pattern detected' };
-		}
-		if (result.medium?.length > 0) {
-			return { safe: true, severity: 'medium', reason: 'Medium-risk pattern - proceed with caution' };
-		}
+			}
+			if (result.high?.length > 0) {
+				return { safe: false, severity: 'high', reason: 'High-risk pattern detected' };
+			}
+			if (result.medium?.length > 0) {
+				return { safe: true, severity: 'medium', reason: 'Medium-risk pattern - proceed with caution' };
+			}
 
-		return { safe: true, severity: 'none' };
-	} catch (error: any) {
-		// Fail-secure: if we can't check, block the command
-		return { safe: false, severity: 'high', reason: 'Safety check unavailable - command blocked' };
-	}
+			return { safe: true, severity: 'none' };
+		} catch (error: any) {
+			// Fail-secure: if we can't check, block the command
+			return { safe: false, severity: 'high', reason: 'Safety check unavailable - command blocked' };
+		}
 	}
 
 	/**
@@ -221,11 +222,13 @@ export default function (pi: ExtensionAPI) {
 				projectRoot: ctx.cwd,
 			});
 
-			ctx.ui.setStatus('file-protection', snapshotName ? '🛡️ Protected' : '🛡️ Watching');
+			ctx.ui.setStatus('file-protection', snapshotName ? '🛡️' : undefined);
 		} catch (_error) {
 			ctx.ui.setStatus('file-protection', '⚠️ Protection inactive');
 		}
-	});		pi.on('agent_end', async (_event, ctx) => {
+	});
+
+	pi.on('agent_end', async (_event, ctx) => {
 		if (!ctx.hasUI) return;
 		const agentId = ctx.sessionManager.getLeafEntry()?.id;
 		if (!agentId || !activeProtections.has(agentId)) return;
