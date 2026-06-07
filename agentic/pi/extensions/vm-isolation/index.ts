@@ -202,6 +202,7 @@ export default function (pi: ExtensionAPI) {
 	// Hook into agent lifecycle
 	pi.on('agent_start', async (_event, ctx) => {
 		if (!config.enabled) return;
+		if (!ctx.hasUI) return;
 
 		const systemCheck = await checkSystemSupport();
 		if (!systemCheck.supported) {
@@ -225,6 +226,7 @@ export default function (pi: ExtensionAPI) {
 			ctx.ui.setStatus('file-protection', '⚠️ Protection inactive');
 		}
 	});		pi.on('agent_end', async (_event, ctx) => {
+		if (!ctx.hasUI) return;
 		const agentId = ctx.sessionManager.getLeafEntry()?.id;
 		if (!agentId || !activeProtections.has(agentId)) return;
 
@@ -238,6 +240,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on('tool_execution_start', async (event, ctx) => {
 		if (!config.enabled || !config.blockCriticalCommands) return;
 		if (event?.toolName !== 'bash') return;
+		if (!ctx.hasUI) return;
 
 		const agentId = ctx.sessionManager.getLeafEntry()?.id;
 		const protection = agentId ? activeProtections.get(agentId) : null;
@@ -289,6 +292,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand('protect', {
 		description: 'Control file protection and rollback',
 		handler: async (args, ctx) => {
+			if (!ctx.hasUI) return;
 			const subcommand = args[0] || 'status';
 
 			switch (subcommand) {
