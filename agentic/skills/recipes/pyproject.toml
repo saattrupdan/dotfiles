@@ -1,0 +1,16 @@
+[project]
+name = "recipes-dk"
+version = "1.0.0"
+description = "CLI for Valdemarsro.dk recipes — search and view Danish recipes"
+requires-python = ">=3.12"
+
+dependencies = [
+    "beautifulsoup4>=4.12.0",
+]
+
+[project.scripts]
+recipes = "recipes_dk.main:main"
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
