@@ -497,41 +497,43 @@ export default async function (pi: ExtensionAPI) {
 						content: [{ type: "text", text: "SYSTEM.md is the child agent's system prompt." }],
 					};
 				}
-			}
+			}		// 1. Existence check
+		if (!fs.existsSync(absolutePath)) {
+			return {
+				content: [{ type: "text", text: `File not found: ${absolutePath}` }],
+			};
+		}
 
-			// 1. Existence check
-			if (!fs.existsSync(absolutePath)) {
-				return {
-					content: [{ type: "text", text: `File not found: ${absolutePath}` }],
-				};
+		// 1b. Directory listing (truncated)
+		try {
+			const stat = fs.statSync(absolutePath);
+			if (stat.isDirectory()) {
+				return listDirectory(absolutePath);
 			}
+		} catch {
+			// fall through
+		}
 
-			// 1b. Directory listing (truncated)
-			try {
-				const stat = fs.statSync(absolutePath);
-				if (stat.isDirectory()) {
-					return listDirectory(absolutePath);
-				}
-			} catch {
-				// fall through
-			}
-
-			// 2. Image passthrough
-			if (isLikelyImage(absolutePath)) {
-				try {
-					const builtIn = await import("$PI/dist/core/tools/read.js" as any);
-					return builtIn.createReadTool().execute(absolutePath, undefined, undefined, signal);
-				} catch {
-					return {
-						content: [
-							{
-								type: "text",
-								text: `Binary file (${path.extname(absolutePath)}) — use the built-in image tool.`,
-							},
-						],
-					};
-				}
-			}
+		// 2. Image passthrough — read binary and return as image block
+		if (isLikelyImage(absolutePath)) {
+			const buffer = fs.readFileSync(absolutePath);
+			const ext = path.extname(absolutePath).toLowerCase();
+			const mimeType =
+				ext === ".jpg" || ext === ".jpeg"
+					? "image/jpeg"
+					: ext === ".png"
+						? "image/png"
+						: ext === ".gif"
+							? "image/gif"
+							: ext === ".webp"
+								? "image/webp"
+								: "application/octet-stream";
+			return {
+				content: [
+					{ type: "image", data: buffer.toString("base64"), mimeType },
+				],
+			};
+		}
 
 			// 3. SHA-256 + dedupe lookup
 			const sha = sha256(absolutePath);
