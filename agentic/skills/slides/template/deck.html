@@ -55,9 +55,9 @@
   // AI Assistant — LLM configuration for slide editing.
   // Set aiEnabled to false for production/finished decks — the AI feature is for development assistance only.
   const aiEnabled = true;
-  const aiApiBase = 'http://localhost:11434/v1';
-  const aiApiKeyEnvVar = 'LOCAL_API_KEY';
-  const aiModelId = 'qwen2.5:7b';
+  const aiApiBase = 'https://inference.alexandra.dk/v1';
+  const aiApiKey = 'sk_live_d5670f89f4fa0498_kkRky2s659-S0tOyl81gMDDSshLdA1RvBJeE2v26jPg';
+  const aiModelId = 'qwen3.5-397b';
 </script>
 <!-- ============================================================ -->
 
@@ -2740,12 +2740,11 @@
   }
 
   async function callLlm(prompt) {
-    const apiKey = process.env[aiApiKeyEnvVar];
     const response = await fetch(`${aiApiBase}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
+        'Authorization': `Bearer ${aiApiKey}`
       },
       body: JSON.stringify({
         model: aiModelId,
