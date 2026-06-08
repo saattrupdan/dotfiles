@@ -51,6 +51,11 @@
   // slides). Defaults to Alexandra Institute logos.
   const darkLogo = "https://alexandra.dk/wp-content/uploads/2020/02/Alexandra-Instituttet_Logo_Sort_DK.webp";
   const whiteLogo = "https://alexandra.dk/wp-content/uploads/2020/02/Alexandra-Instituttet_Logo_Hvid_DK.webp";
+
+  // AI Assistant — LLM configuration for slide editing.
+  const aiApiBase = 'http://localhost:11434/v1';
+  const aiApiKeyEnvVar = 'LOCAL_API_KEY';
+  const aiModelId = 'qwen2.5:7b';
 </script>
 <!-- ============================================================ -->
 
@@ -800,6 +805,7 @@
     <button class="nav-btn" onclick="prev()">&#8249;</button>
     <button class="nav-btn" onclick="next()">&#8250;</button>
   </div>
+  <button class="nav-btn" id="ai-btn" aria-label="AI assistant" title="AI assistant (A)">🧠</button>
 </div>
 
 <style>
@@ -2344,6 +2350,188 @@
     font-size: 0.8rem;
     margin: 0 0.1rem;
   }
+
+  /* AI Assistant Modal styles */
+  #ai-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(2px);
+    z-index: 9999;
+    align-items: center;
+    justify-content: center;
+  }
+
+  #ai-overlay.visible {
+    display: flex;
+  }
+
+  #ai-dialog {
+    background: var(--bg);
+    border-radius: 12px;
+    width: 90%;
+    max-width: 600px;
+    max-height: 80vh;
+    overflow: hidden;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    display: flex;
+    flex-direction: column;
+  }
+
+  #ai-dialog header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+    background: linear-gradient(135deg, rgba(67, 97, 154, 0.05), transparent);
+  }
+
+  #ai-dialog header h2 {
+    margin: 0;
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: var(--text);
+    font-family: var(--font-ui);
+  }
+
+  #ai-dialog header .close-btn {
+    background: transparent;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: var(--text-muted);
+    line-height: 1;
+    padding: 0.25rem;
+    border-radius: 4px;
+    transition: background 0.15s, color 0.15s;
+  }
+
+  #ai-dialog header .close-btn:hover {
+    background: rgba(0, 0, 0, 0.06);
+    color: var(--text);
+  }
+
+  #ai-dialog .config-details {
+    padding: 0.75rem 1.25rem;
+    background: rgba(0, 0, 0, 0.03);
+    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  #ai-dialog .config-details code {
+    background: rgba(0, 0, 0, 0.06);
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    margin: 0 0.1rem;
+  }
+
+  #ai-dialog textarea {
+    flex: 1;
+    min-height: 180px;
+    padding: 1rem 1.25rem;
+    border: none;
+    resize: vertical;
+    font-family: var(--font-ui);
+    font-size: 0.95rem;
+    line-height: 1.5;
+    background: transparent;
+    color: var(--text);
+  }
+
+  #ai-dialog textarea:focus {
+    outline: none;
+    background: rgba(67, 97, 154, 0.03);
+  }
+
+  #ai-dialog .status {
+    padding: 0.75rem 1.25rem;
+    font-size: 0.85rem;
+    font-family: var(--font-ui);
+    display: none;
+  }
+
+  #ai-dialog .status.error {
+    display: block;
+    background: rgba(220, 38, 38, 0.08);
+    color: #b91c1c;
+    border-left: 3px solid #b91c1c;
+  }
+
+  #ai-dialog .status.success {
+    display: block;
+    background: rgba(34, 197, 94, 0.08);
+    color: #15803d;
+    border-left: 3px solid #15803d;
+  }
+
+  #ai-dialog .status .spinner {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba(0, 0, 0, 0.1);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: ai-spin 0.8s linear infinite;
+    margin-right: 0.5rem;
+    vertical-align: middle;
+  }
+
+  @keyframes ai-spin {
+    to { transform: rotate(360deg); }
+  }
+
+  #ai-dialog footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    padding: 1rem 1.25rem;
+    border-top: 1px solid rgba(0, 0, 0, 0.08);
+    background: rgba(0, 0, 0, 0.02);
+  }
+
+  #ai-dialog footer button {
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    font-family: var(--font-ui);
+    font-size: 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    border: 1px solid transparent;
+  }
+
+  #ai-dialog footer button.cancel {
+    background: transparent;
+    border-color: rgba(0, 0, 0, 0.15);
+    color: var(--text);
+  }
+
+  #ai-dialog footer button.cancel:hover {
+    background: rgba(0, 0, 0, 0.04);
+  }
+
+  #ai-dialog footer button.generate {
+    background: linear-gradient(135deg, #4b5a77, #2d3a4f);
+    border-color: transparent;
+    color: white;
+  }
+
+  #ai-dialog footer button.generate:hover {
+    background: linear-gradient(135deg, #3d4a65, #232d3f);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  }
+
+  #ai-dialog footer button.generate:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+  }
 </style>
 
 <script>
@@ -2490,7 +2678,174 @@
     setTimeout(() => toast.classList.remove('visible'), 3000);
     setTimeout(() => toast.remove(), 3600);
   }
+
+  // ============================================================
+  // AI Assistant — modal state and logic
+  // ============================================================
+  const aiOverlay = document.getElementById('ai-overlay');
+  const aiDialog = document.getElementById('ai-dialog');
+  const aiTextarea = document.getElementById('ai-prompt');
+  const aiStatus = document.getElementById('ai-status');
+  const aiGenerateBtn = document.getElementById('ai-generate-btn');
+  const aiCancelBtn = document.getElementById('ai-cancel-btn');
+
+  let aiIsOpen = false;
+  let aiPreviousActiveElement = null;
+
+  function openAiModal() {
+    if (aiIsOpen) return;
+    aiIsOpen = true;
+    aiPreviousActiveElement = document.activeElement;
+    aiOverlay.classList.add('visible');
+    aiTextarea.focus();
+    // Pre-fill with current slide content for context
+    const currentContent = getCurrentSlideContent();
+    aiTextarea.value = currentContent ? currentContent + '\n\n' : '';
+  }
+
+  function closeAiModal() {
+    if (!aiIsOpen) return;
+    aiIsOpen = false;
+    aiOverlay.classList.remove('visible');
+    aiStatus.className = 'status';
+    aiStatus.textContent = '';
+    aiGenerateBtn.disabled = false;
+    if (aiPreviousActiveElement) {
+      aiPreviousActiveElement.focus();
+    }
+  }
+
+  function getCurrentSlideContent() {
+    const slide = document.querySelector('.slide:not(.hidden)');
+    return slide ? slide.innerHTML : '';
+  }
+
+  function sanitiseHtml(html) {
+    // Remove script tags and their content
+    let clean = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
+    // Remove event handlers (onclick, onmouseover, etc.)
+    clean = clean.replace(/\s*on\w+\s*=\s*["'][^"']*["']/gi, '');
+    clean = clean.replace(/\s*on\w+\s*=\s*[^\s>]*/gi, '');
+    // Remove javascript: URLs
+    clean = clean.replace(/javascript:/gi, '');
+    return clean;
+  }
+
+  async function callLlm(prompt) {
+    const apiKey = process.env[aiApiKeyEnvVar];
+    const response = await fetch(`${aiApiBase}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: aiModelId,
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a slide content assistant. Generate clean, semantic HTML for a slide deck. Use the existing slide structure and styling. Keep content concise and well-formatted.'
+          },
+          {
+            role: 'user',
+            content: prompt
+          }
+        ],
+        temperature: 0.7,
+        max_tokens: 2000
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`API request failed: ${response.status} ${error}`);
+    }
+
+    const data = await response.json();
+    return data.choices[0].message.content;
+  }
+
+  function updateSlideContent(newHtml) {
+    const slide = document.querySelector('.slide:not(.hidden)');
+    if (!slide) return;
+
+    // Sanitise the HTML before applying
+    const cleanHtml = sanitiseHtml(newHtml);
+    slide.innerHTML = cleanHtml;
+
+    // Re-run reveal initialisation for the updated slide
+    currentRevealIndex = 0;
+    const reveals = slide.querySelectorAll('[data-reveal]');
+    reveals.forEach(el => el.classList.add('hidden'));
+  }
+
+  async function handleGenerate() {
+    const prompt = aiTextarea.value.trim();
+    if (!prompt) return;
+
+    aiGenerateBtn.disabled = true;
+    aiStatus.className = 'status';
+    aiStatus.innerHTML = '<span class="spinner"></span>Generating content…';
+
+    try {
+      const result = await callLlm(prompt);
+      updateSlideContent(result);
+      aiStatus.className = 'status success';
+      aiStatus.textContent = 'Slide updated successfully!';
+      setTimeout(closeAiModal, 1500);
+    } catch (error) {
+      aiStatus.className = 'status error';
+      aiStatus.textContent = `Error: ${error.message}`;
+      aiGenerateBtn.disabled = false;
+    }
+  }
+
+  // Event listeners
+  document.getElementById('ai-btn').addEventListener('click', openAiModal);
+  aiCancelBtn.addEventListener('click', closeAiModal);
+  aiGenerateBtn.addEventListener('click', handleGenerate);
+
+  // Close on Escape
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && aiIsOpen) {
+      closeAiModal();
+    }
+    // Open modal with 'A' key (when not in an input field)
+    if (e.key === 'a' || e.key === 'A') {
+      const target = e.target;
+      const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+      if (!isInput && !aiIsOpen) {
+        openAiModal();
+      }
+    }
+  });
+
+  // Close on overlay click
+  aiOverlay.addEventListener('click', (e) => {
+    if (e.target === aiOverlay) {
+      closeAiModal();
+    }
+  });
 </script>
+
+<!-- AI Assistant Modal -->
+<div id="ai-overlay">
+  <div id="ai-dialog" role="dialog" aria-modal="true" aria-labelledby="ai-dialog-title">
+    <header>
+      <h2 id="ai-dialog-title">AI Assistant</h2>
+      <button class="close-btn" id="ai-close-btn" aria-label="Close modal">&times;</button>
+    </header>
+    <div class="config-details">
+      Model: <code>qwen2.5:7b</code> &middot; Endpoint: <code>http://localhost:11434</code>
+    </div>
+    <textarea id="ai-prompt" placeholder="Describe the slide content you'd like to generate or modify…"></textarea>
+    <div id="ai-status" class="status"></div>
+    <footer>
+      <button class="cancel" id="ai-cancel-btn">Cancel</button>
+      <button class="generate" id="ai-generate-btn">Generate</button>
+    </footer>
+  </div>
+</div>
 
 </body>
 </html>
