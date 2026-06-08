@@ -1,0 +1,18 @@
+[project]
+name = "image-generate"
+version = "1.0.0"
+description = "CLI for generating images with Ideogram 4"
+requires-python = ">=3.12"
+dependencies = [
+    "ideogram-4 @ git+https://github.com/ideogram-oss/ideogram4.git",
+]
+
+[project.scripts]
+generate-image = "image_generate_cli.main:main"
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["image_generate_cli*"]

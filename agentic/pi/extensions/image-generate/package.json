@@ -1,9 +1,0 @@
-{
-	"name": "image-generate",
-	"private": true,
-	"version": "0.1.0",
-	"description": "Image generation tool for creating images from text prompts.",
-	"type": "module",
-	"dependencies": {
-	}
-}
