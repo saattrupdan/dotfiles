@@ -25,3 +25,4 @@ agentic/pi/memories/
 
 # Python build artifacts
 **/*.egg-info/
+**/build/
