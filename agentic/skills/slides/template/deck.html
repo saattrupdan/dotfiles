@@ -55,9 +55,9 @@
   // AI Assistant — LLM configuration for slide editing.
   // Set aiEnabled to false for production/finished decks — the AI feature is for development assistance only.
   const aiEnabled = true;
-  const aiApiBase = 'https://inference.alexandra.dk/v1';
-  const aiApiKey = 'sk_live_d5670f89f4fa0498_kkRky2s659-S0tOyl81gMDDSshLdA1RvBJeE2v26jPg';
-  const aiModelId = 'qwen3.5-397b';
+  const aiApiBase = 'http://localhost:8080/v1';  // Local llama.cpp server
+  const aiApiKey = '';  // Not needed for local server
+  const aiModelId = 'qwen3.6-35B-A3B-no-thinking';
 </script>
 <!-- ============================================================ -->
 
@@ -808,12 +808,8 @@
     <button class="nav-btn" onclick="next()">&#8250;</button>
   </div>
   <!-- AI button — only rendered if aiEnabled is true -->
-  <button class="nav-btn" id="ai-btn" aria-label="AI assistant" title="AI assistant (A)" style="display: none;">🧠</button>
-  <script>
-    if (aiEnabled) {
-      document.getElementById('ai-btn').style.display = 'inline-block';
-    }
-  </script>
+  <button class="nav-btn" id="ai-btn" aria-label="AI assistant" title="AI assistant" style="display: none;">🧠</button>
+  <span id="ai-spinner" class="ai-spinner" style="display: none;">↻</span>
 </div>
 
 <style>
@@ -2305,6 +2301,18 @@
     transform: translateY(-1px);
   }
 
+  /* AI spinner */
+  .ai-spinner {
+    font-size: 1.2rem;
+    color: var(--accent);
+    margin-left: 0.5rem;
+    animation: ai-spin 1s linear infinite;
+  }
+
+  @keyframes ai-spin {
+    to { transform: rotate(360deg); }
+  }
+
   /* --- Nav reveal indicator --- */
   .nav .reveal-indicator {
     font-size: 0.72rem;
@@ -2550,7 +2558,7 @@
       <button class="close-btn" id="ai-close-btn" aria-label="Close modal">&times;</button>
     </header>
     <div class="config-details">
-      Model: <code>qwen2.5:7b</code> &middot; Endpoint: <code>http://localhost:11434</code>
+      Model: <code>qwen3.6-35B-A3B-no-thinking</code> &middot; Endpoint: <code>localhost:8080</code>
     </div>
     <textarea id="ai-prompt" placeholder="Describe the slide content you'd like to generate or modify…"></textarea>
     <div id="ai-status" class="status"></div>
@@ -2659,6 +2667,8 @@
   function prev() { if (current > 0) show(current - 1); }
 
   document.addEventListener('keydown', (e) => {
+    // Ignore navigation shortcuts when modal is open
+    if (aiIsOpen) return;
     if (e.key === 'ArrowRight') { e.preventDefault(); next(); }
     if (e.key === 'ArrowLeft') { e.preventDefault(); prev(); }
     if (e.key === ' ' || e.key === 'Enter' || e.key === 'PageDown') { e.preventDefault(); revealNext(); }
@@ -2724,10 +2734,8 @@
     aiIsOpen = true;
     aiPreviousActiveElement = document.activeElement;
     aiOverlay.classList.add('visible');
+    aiTextarea.value = '';
     aiTextarea.focus();
-    // Pre-fill with current slide content for context
-    const currentContent = getCurrentSlideContent();
-    aiTextarea.value = currentContent ? currentContent + '\n\n' : '';
   }
 
   function closeAiModal() {
@@ -2759,12 +2767,15 @@
   }
 
   async function callLlm(prompt) {
+    const headers = {
+      'Content-Type': 'application/json'
+    };
+    if (aiApiKey) {
+      headers['Authorization'] = `Bearer ${aiApiKey}`;
+    }
     const response = await fetch(`${aiApiBase}/chat/completions`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${aiApiKey}`
-      },
+      headers: headers,
       body: JSON.stringify({
         model: aiModelId,
         messages: [
@@ -2806,47 +2817,52 @@
   }
 
   async function handleGenerate() {
-    const prompt = aiTextarea.value.trim();
-    if (!prompt) return;
+    const userPrompt = aiTextarea.value.trim();
+    if (!userPrompt) return;
 
-    aiGenerateBtn.disabled = true;
-    aiStatus.className = 'status';
-    aiStatus.innerHTML = '<span class="spinner"></span>Generating content…';
+    // Close modal and show spinner
+    closeAiModal();
+    const aiSpinner = document.getElementById('ai-spinner');
+    aiSpinner.style.display = 'inline';
+
+    // Get current slide content to provide context
+    const slideContent = getCurrentSlideContent();
+    const fullPrompt = `Current slide HTML:\n${slideContent}\n\nUser request: ${userPrompt}\n\nReturn only the improved HTML for the slide-inner container, nothing else.`;
 
     try {
-      const result = await callLlm(prompt);
+      const result = await callLlm(fullPrompt);
       updateSlideContent(result);
-      aiStatus.className = 'status success';
-      aiStatus.textContent = 'Slide updated successfully!';
-      setTimeout(closeAiModal, 1500);
     } catch (error) {
-      aiStatus.className = 'status error';
-      aiStatus.textContent = `Error: ${error.message}`;
-      aiGenerateBtn.disabled = false;
+      console.error('AI error:', error);
+      alert('Error: ' + error.message);
+    } finally {
+      aiSpinner.style.display = 'none';
     }
   }
 
   // Event listeners
   if (aiEnabled) {
-    document.getElementById('ai-btn').addEventListener('click', openAiModal);
+    const aiBtn = document.getElementById('ai-btn');
+    aiBtn.style.display = 'inline-block';
+    aiBtn.addEventListener('click', openAiModal);
+    document.getElementById('ai-close-btn').addEventListener('click', closeAiModal);
     aiCancelBtn.addEventListener('click', closeAiModal);
     aiGenerateBtn.addEventListener('click', handleGenerate);
+
+    // Enter to submit, Shift+Enter for newline
+    aiTextarea.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        handleGenerate();
+      }
+    });
   }
 
   // Close on Escape
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && aiIsOpen) {
       closeAiModal();
-    }
-    // Open modal with 'A' key (when not in an input field) — only if aiEnabled is true
-    if (aiEnabled) {
-      if (e.key === 'a' || e.key === 'A') {
-        const target = e.target;
-        const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
-        if (!isInput && !aiIsOpen) {
-          openAiModal();
-        }
-      }
     }
   });
 
