@@ -1120,6 +1120,22 @@
     font-weight: 300;
   }
 
+  /* --- Compact list --- */
+  .compact-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  .compact-list li {
+    padding: 0.45rem 0;
+    font-size: 1.1rem;
+    line-height: 1.5;
+  }
+  .compact-list li strong { color: var(--accent); font-weight: 600; }
+
+  /* --- Text utilities --- */
+  .text-muted { color: var(--text-muted); font-size: 0.85rem; font-style: italic; }
+
   /* --- Dark callout --- */
   .callout {
     background: linear-gradient(135deg, var(--bg-dark-warm) 0%, var(--bg-dark) 100%);
