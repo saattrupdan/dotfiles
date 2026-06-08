@@ -2542,6 +2542,25 @@
   }
 </style>
 
+<!-- AI Assistant Modal -->
+<div id="ai-overlay">
+  <div id="ai-dialog" role="dialog" aria-modal="true" aria-labelledby="ai-dialog-title">
+    <header>
+      <h2 id="ai-dialog-title">AI Assistant</h2>
+      <button class="close-btn" id="ai-close-btn" aria-label="Close modal">&times;</button>
+    </header>
+    <div class="config-details">
+      Model: <code>qwen2.5:7b</code> &middot; Endpoint: <code>http://localhost:11434</code>
+    </div>
+    <textarea id="ai-prompt" placeholder="Describe the slide content you'd like to generate or modify…"></textarea>
+    <div id="ai-status" class="status"></div>
+    <footer>
+      <button class="cancel" id="ai-cancel-btn">Cancel</button>
+      <button class="generate" id="ai-generate-btn">Generate</button>
+    </footer>
+  </div>
+</div>
+
 <script>
   // Settings (colourScheme, darkLogo, whiteLogo, …) are declared in the
   // ⚙️ DECK SETTINGS block near the top of <body>.
@@ -2838,25 +2857,5 @@
     }
   });
 </script>
-
-<!-- AI Assistant Modal -->
-<div id="ai-overlay">
-  <div id="ai-dialog" role="dialog" aria-modal="true" aria-labelledby="ai-dialog-title">
-    <header>
-      <h2 id="ai-dialog-title">AI Assistant</h2>
-      <button class="close-btn" id="ai-close-btn" aria-label="Close modal">&times;</button>
-    </header>
-    <div class="config-details">
-      Model: <code>qwen2.5:7b</code> &middot; Endpoint: <code>http://localhost:11434</code>
-    </div>
-    <textarea id="ai-prompt" placeholder="Describe the slide content you'd like to generate or modify…"></textarea>
-    <div id="ai-status" class="status"></div>
-    <footer>
-      <button class="cancel" id="ai-cancel-btn">Cancel</button>
-      <button class="generate" id="ai-generate-btn">Generate</button>
-    </footer>
-  </div>
-</div>
-
 </body>
 </html>
