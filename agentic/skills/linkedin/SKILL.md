@@ -21,13 +21,16 @@ linkedin <command> [options]
 ### Prerequisites
 
 ```bash
-which linkedin || pipx install -e <path-to-this-skill>   # install the CLI
 which agent-browser || npm i -g agent-browser && agent-browser install
 ```
 
-The CLI shells out to `agent-browser` and runs the browser **headless** — no
-window appears and synthetic keystrokes never reach the OS. Standard library
-only.
+The `linkedin` command is a wrapper that runs from source (via `uv run --directory`)
+so you always have the latest version without reinstalling. The CLI shells out to
+`agent-browser` and runs the browser **headless** — no window appears and synthetic
+keystrokes never reach the OS. Standard library only.
+
+All browser commands use `--session-name linkedin` for persistent cookies/storage
+between invocations, so login state is preserved automatically.
 
 ### Authentication (one-time)
 
@@ -44,8 +47,8 @@ Then:
 linkedin login
 ```
 
-- If a saved session exists (`~/.linkedin-session.json`) it is restored and you
-  are done.
+- The CLI uses `agent-browser --session-name linkedin` for all commands, so
+  cookies and localStorage persist automatically between invocations.
 - Otherwise the CLI submits the credentials. LinkedIn usually then issues a
   **verification challenge**. If it sends an app push, approve it on your phone.
   If it asks for an authenticator code (or no push arrives), run stage 2:
@@ -55,7 +58,7 @@ linkedin login
   ```
 
   The browser daemon stays alive between the two calls, so it is sitting on the
-  code page ready for the code. On success the session is saved and future runs
+  code page ready for the code. On success the session persists and future runs
   skip login entirely.
 
 ## Commands
@@ -111,7 +114,8 @@ for approval before publishing.
 - **Emojis**: sparing and purposeful — section markers and the occasional
   reaction (🎉 😬 🤔). Not decorative spam.
 - **Links**: trailing CTA lines with the 👉 arrow (`Read more 👉 <link>`).
-  Write full URLs — LinkedIn auto-shortens to lnkd.in.
+  Write full URLs — LinkedIn auto-shortens to lnkd.in. **Do not use markdown-style
+  links** (`[text](url)` doesn't work in LinkedIn posts) — paste raw URLs instead.
 - **Collaborators**: thank coauthors/colleagues by name when relevant.
 - **Closing**: a short list of lowercase hashtags, commonly
   `#nlp #evaluation #llm #opensource #machinelearning #research`.
@@ -119,6 +123,21 @@ for approval before publishing.
 - **Audience** mostly already knows what LLM evals are — lead with what's
   new/novel, don't justify why evaluation matters. Recurring topic: EuroEval,
   multilingual LLM evaluation, hallucination/bias/values benchmarks.
+
+## Post length & engagement
+
+LinkedIn allows up to 3,000 characters. Engagement patterns by length:
+
+| Length | Engagement Pattern |
+| --- | --- |
+| < 500 chars | Lower engagement |
+| 500–1,000 chars | Moderate engagement |
+| 1,000–1,500 chars | Good engagement |
+| 1,800–2,100 chars | Highest engagement |
+| 2,100–3,000 chars | Strong for deep content |
+
+Aim for 1,800–2,100 characters for optimal engagement, or 2,100–3,000 for
+technical deep-dives.
 
 (This mirrors the `linkedin-post-style` memory; keep the two in sync.)
 
@@ -134,4 +153,8 @@ for approval before publishing.
   changing command logic.
 - The close button is named **"Dismiss"**; closing a loaded draft and choosing
   **Discard** deletes it.
+- **Draft saving limitation**: The save/discard dialog appears reliably for short
+  posts (< 750 chars) but may not appear for longer posts when using the CLI. For
+  posts in the optimal engagement range (1,800–3,000 chars), save drafts manually
+  in the browser if the CLI fails.
 - If a command reports a session problem, re-run `linkedin login`.

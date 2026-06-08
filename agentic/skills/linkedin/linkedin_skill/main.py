@@ -24,8 +24,10 @@ import sys
 import typing as t
 from pathlib import Path
 
-SESSION_FILE = Path.home() / ".linkedin-session.json"
+from .credentials import get_linkedin_credentials, save_credential
+
 ENV_FILE = Path.home() / ".env"
+BROWSER_SESSION_NAME = "linkedin"  # Persistent browser session for faster logins
 
 HANDLE = "saattrupdan"
 FEED_URL = "https://www.linkedin.com/feed/"
@@ -53,10 +55,15 @@ class BrowserError(RuntimeError):
 
 
 def ab(*args: str, check: bool = True, timeout: int = 90) -> str:
-    """Run an agent-browser command and return its stripped stdout."""
+    """Run an agent-browser command and return its stripped stdout.
+    
+    Always uses --session-name for persistent cookies/storage between invocations.
+    """
+    # Prepend session name to all commands for persistent auth state
+    all_args = ["agent-browser", "--session-name", BROWSER_SESSION_NAME, *args]
     try:
         proc = subprocess.run(
-            ["agent-browser", *args],
+            all_args,
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -138,23 +145,21 @@ def read_env_var(key: str) -> str | None:
 # --------------------------------------------------------------------------- #
 # Session / login
 # --------------------------------------------------------------------------- #
-def restore_session() -> bool:
-    """Load a saved session and confirm it lands on the feed. True if logged in."""
-    if not SESSION_FILE.exists():
-        return False
-    ab("state", "load", str(SESSION_FILE), check=False)
+def is_logged_in() -> bool:
+    """Check if already logged in by visiting feed and checking URL."""
     ab("open", FEED_URL, check=False)
-    ab("wait", "2000", check=False)
-    return "/feed" in get_url()
-
-
-def save_session() -> None:
-    ab("state", "save", str(SESSION_FILE))
+    ab("wait", "--load", "networkidle", check=False, timeout=30)
+    url = get_url()
+    return "/feed" in url and "/login" not in url
 
 
 def ensure_logged_in() -> None:
-    """Raise with guidance if no usable session exists."""
-    if restore_session():
+    """Check if logged in via persistent session; raise with guidance if not.
+    
+    The --session-name flag on all ab() calls persists cookies/storage between
+    invocations, so this is fast when already authenticated.
+    """
+    if is_logged_in():
         return
     raise BrowserError(
         "Not logged in. Run `linkedin login` first "
@@ -203,8 +208,7 @@ def submit_code(code: str) -> int:
     ab("wait", "4000", check=False)
     url = get_url()
     if "/feed" in url:
-        save_session()
-        logger.info("✓ Logged in and session saved to %s", SESSION_FILE)
+        logger.info("✓ Logged in (session persists via --session-name)")
         return 0
     if "checkpoint" in url or "challenge" in url:
         logger.error(
@@ -223,40 +227,35 @@ def cmd_login(args: argparse.Namespace) -> int:
     if args.code:
         return submit_code(args.code)
 
+    # Verify flag: just check if logged in after manual browser login.
+    if args.verify:
+        if is_logged_in():
+            logger.info("✓ Logged in and session saved.")
+            return 0
+        else:
+            logger.error("Not logged in yet. Please complete login in the browser.")
+            return 1
+
     # Already logged in?
-    if not args.force and restore_session():
-        save_session()
-        logger.info("✓ Already logged in (session restored from %s)", SESSION_FILE)
+    if not args.force and is_logged_in():
+        logger.info("✓ Already logged in")
         return 0
 
-    user = read_env_var("LINKEDIN_USER")
-    pw = read_env_var("LINKEDIN_PASS")
-    if not user or not pw:
-        logger.error(
-            "Missing credentials. Add to %s (dotenv format):\n"
-            "  LINKEDIN_USER=you@example.com\n"
-            "  LINKEDIN_PASS=your-password",
-            ENV_FILE,
-        )
-        return 1
-
+    # Open login page - user should complete auth manually in browser.
+    # The --session-name flag auto-saves cookies/storage after login.
     ab("open", LOGIN_URL)
-    ab("wait", "2000", check=False)
-    if not tag_visible(EMAIL_SEL, "ab_email"):
-        logger.error("Could not find the email field on the login page.")
-        return 1
-    ab("fill", "#ab_email", user)
-    if not tag_visible(PASSWORD_SEL, "ab_pw"):
-        logger.error("Could not find the password field on the login page.")
-        return 1
-    ab("fill", "#ab_pw", pw)
-    click_visible_submit()
+    logger.info(
+        " aidia» Opened LinkedIn login in browser.\n"
+        "Please log in manually (username/password or SSO).\n"
+        "Once logged in, the session will be auto-saved for future CLI commands.\n"
+        "\n"
+        "After completing login, run: linkedin login --verify"
+    )
+    return 0
     ab("wait", "4000", check=False)
-
     url = get_url()
     if "/feed" in url:
-        save_session()
-        logger.info("✓ Logged in and session saved to %s", SESSION_FILE)
+        logger.info("✓ Logged in")
         return 0
 
     if "checkpoint" in url or "challenge" in url:
@@ -264,8 +263,7 @@ def cmd_login(args: argparse.Namespace) -> int:
         for _ in range(args.wait_push // 3):
             ab("wait", "3000", check=False)
             if "/feed" in get_url():
-                save_session()
-                logger.info("✓ Login approved via app. Session saved.")
+                logger.info("✓ Login approved via app.")
                 return 0
         # Fall back to authenticator-code entry.
         goto_authenticator_code_page()
@@ -358,7 +356,7 @@ def parse_counts(counts: str) -> dict[str, int]:
 
 
 def cmd_posts(args: argparse.Namespace) -> int:
-    ensure_logged_in()
+    # Skip explicit login check - operation will fail naturally if not authed
     ab("open", ACTIVITY_URL)
     ab("wait", "--load", "networkidle", check=False)
     # We read posts straight from the DOM via eval, so the cookie banner does
@@ -523,25 +521,22 @@ def open_composer() -> None:
     # Note: we deliberately do NOT dismiss the cookie-consent banner. It does
     # not block the composer, and clicking a stray "Accept" risks hitting an
     # unrelated control (e.g. a connection invite) and navigating away.
-    ab("open", FEED_URL)
-    ab("wait", "--load", "networkidle", check=False)
-    # Find + click the share trigger ONCE (retry only the *find*, since the feed
-    # may still be rendering -- re-clicking would cancel the opening modal).
-    clicked = False
-    for _ in range(5):
-        if find_node(EDITOR_NAMES, role="textbox"):  # already open?
-            return
-        if click_node(SHARE_TRIGGER, role="button", required=False):
-            clicked = True
-            break
-        ab("wait", "1000", check=False)
-    if not clicked:
+    ab("open", FEED_URL, check=False)
+    # Brief wait for header elements to be ready.
+    ab("wait", "500", check=False)
+    # Click share button and poll for editor to appear in iframe.
+    btn = find_node(SHARE_TRIGGER, role="button")
+    if not btn:
         raise BrowserError("could not find the 'Start a post' button on the feed")
-    # Poll for the composer editor (it loads inside the preload iframe).
-    for _ in range(12):
-        ab("wait", "1200", check=False)
-        if find_node(EDITOR_NAMES, role="textbox"):
+    ab("click", f"@{btn['ref']}")
+    # Poll for composer editor (inside iframe, needs fresh snapshots each time).
+    for _ in range(10):  # Up to 5s
+        ab("snapshot", "-i", check=False)
+        try:
+            ref = editor_ref()
             return
+        except BrowserError:
+            ab("wait", "400", check=False)
     raise BrowserError("the post composer did not open")
 
 
@@ -580,14 +575,22 @@ def close_composer(save_draft: bool) -> None:
     """Close the composer, choosing Save-as-draft or Discard if prompted."""
     # Exact match: a substring match on "close" would hit "Close jump menu".
     click_node(BTN_CLOSE, role="button", exact=True, required=False)
-    ab("wait", "1500", check=False)
-    want = BTN_SAVE_DRAFT if save_draft else BTN_DISCARD
-    click_node(want, role="button", required=False)
-    ab("wait", "1000", check=False)
+    # Poll for save/discard dialog with snapshots.
+    want_names = BTN_SAVE_DRAFT if save_draft else BTN_DISCARD
+    btn = None
+    for _ in range(6):  # Up to 3s
+        ab("snapshot", "-i", check=False)
+        btn = find_node(want_names, role="button")
+        if btn:
+            ab("click", f"@{btn['ref']}", check=False)
+            # Wait for LinkedIn to persist the draft to storage.
+            ab("wait", "1500", check=False)
+            return
+        ab("wait", "400", check=False)
 
 
 def cmd_post(args):
-    ensure_logged_in()
+    # Skip explicit login check - operation will fail naturally if not authed
     open_composer()
     type_into_editor(args.text)
     logger.info("Composer now contains:\n---\n%s\n---", read_editor().strip())
@@ -604,7 +607,7 @@ def cmd_post(args):
 
 
 def cmd_draft(args):
-    ensure_logged_in()
+    # Skip explicit login check - operation will fail naturally if not authed
     open_composer()
     type_into_editor(args.text)
     logger.info("Draft content:\n---\n%s\n---", read_editor().strip())
@@ -617,10 +620,12 @@ def cmd_draft(args):
 # View drafts / scheduled
 # --------------------------------------------------------------------------- #
 def cmd_drafts(args):
-    ensure_logged_in()
+    # Skip explicit login check - operation will fail naturally if not authed
     # Opening the composer auto-loads the most recent draft into the editor
     # (LinkedIn shows a "Draft:" label). A fresh composer with no draft is empty.
     open_composer()
+    # Brief wait for LinkedIn to auto-load the draft from storage.
+    ab("wait", "1000", check=False)
     content = read_editor().strip()
     if content:
         logger.info("Current draft:\n---\n%s\n---", content)
@@ -650,6 +655,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=18,
         help="seconds to wait for an app-push approval before asking for a code",
+    )
+    sp.add_argument(
+        "--verify",
+        action="store_true",
+        help="verify login completed (used after manual browser login)",
     )
     sp.set_defaults(func=cmd_login)
 
