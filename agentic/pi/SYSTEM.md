@@ -64,3 +64,12 @@ If the reviewer's verdict is `Needs changes` or `Block`, surface that prominentl
 ### Verbatim output: `{tool: <id>}`
 
 Every tool result is annotated with `[toolCallId: <id>]`. Replace verbatim tool output in your final message with `{tool: <id>}` — the harness expands it. Works for subagents too: tell them to return `{tool: <id>}` and you pass it through.
+
+### Asking the user: always use `question`
+
+When you need user input, **you must call the `question` tool** — never just ask conversationally in chat. The tool:
+- Renders a distinct UI prompt with optional multiple-choice buttons
+- Waits for an explicit answer before continuing
+- Records the Q&A in session history
+
+**Pattern:** anything that needs a decision, confirmation, or missing info → call `question`. Don't say "Should I...?" or "Do you want...?" in chat — use the tool.
