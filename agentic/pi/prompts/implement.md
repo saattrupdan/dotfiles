@@ -3,7 +3,7 @@ description: Full implementation flow with iterative review cycles.
 ---
 
 1. **Plan.** Call the `subagent` tool in `single` mode with `agent: "planner"` and
-   `task: "${@:-Implement the requested change.}"`
+   `task: "${@:-Create an ordered, parallel-friendly implementation plan for the request.}"`
 2. **Build.** Group the plan items by independence. For each group that can run in
    parallel, call `subagent` in `parallel` mode with `tasks: [...]`, one entry per item
    with `agent: "builder"` and `task` quoting the plan item verbatim. Include an
