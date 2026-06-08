@@ -53,6 +53,8 @@
   const whiteLogo = "https://alexandra.dk/wp-content/uploads/2020/02/Alexandra-Instituttet_Logo_Hvid_DK.webp";
 
   // AI Assistant — LLM configuration for slide editing.
+  // Set aiEnabled to false for production/finished decks — the AI feature is for development assistance only.
+  const aiEnabled = true;
   const aiApiBase = 'http://localhost:11434/v1';
   const aiApiKeyEnvVar = 'LOCAL_API_KEY';
   const aiModelId = 'qwen2.5:7b';
@@ -805,7 +807,13 @@
     <button class="nav-btn" onclick="prev()">&#8249;</button>
     <button class="nav-btn" onclick="next()">&#8250;</button>
   </div>
-  <button class="nav-btn" id="ai-btn" aria-label="AI assistant" title="AI assistant (A)">🧠</button>
+  <!-- AI button — only rendered if aiEnabled is true -->
+  <button class="nav-btn" id="ai-btn" aria-label="AI assistant" title="AI assistant (A)" style="display: none;">🧠</button>
+  <script>
+    if (aiEnabled) {
+      document.getElementById('ai-btn').style.display = 'inline-block';
+    }
+  </script>
 </div>
 
 <style>
@@ -2801,21 +2809,25 @@
   }
 
   // Event listeners
-  document.getElementById('ai-btn').addEventListener('click', openAiModal);
-  aiCancelBtn.addEventListener('click', closeAiModal);
-  aiGenerateBtn.addEventListener('click', handleGenerate);
+  if (aiEnabled) {
+    document.getElementById('ai-btn').addEventListener('click', openAiModal);
+    aiCancelBtn.addEventListener('click', closeAiModal);
+    aiGenerateBtn.addEventListener('click', handleGenerate);
+  }
 
   // Close on Escape
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && aiIsOpen) {
       closeAiModal();
     }
-    // Open modal with 'A' key (when not in an input field)
-    if (e.key === 'a' || e.key === 'A') {
-      const target = e.target;
-      const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
-      if (!isInput && !aiIsOpen) {
-        openAiModal();
+    // Open modal with 'A' key (when not in an input field) — only if aiEnabled is true
+    if (aiEnabled) {
+      if (e.key === 'a' || e.key === 'A') {
+        const target = e.target;
+        const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+        if (!isInput && !aiIsOpen) {
+          openAiModal();
+        }
       }
     }
   });
