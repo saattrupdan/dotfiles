@@ -18,6 +18,23 @@ import { Type } from "typebox";
 const DEFAULT_USER_AGENT =
 	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36";
 
+const MAX_RETRIES = 3;
+const BASE_DELAY_MS = 1000;
+const MAX_DELAY_MS = 30_000;
+const BACKOFF_MULTIPLIER = 2.0;
+
+/** CAPTCHA/rate limit indicators in HTML content */
+const RATE_LIMIT_INDICATORS = [
+	"bots use duckduckgo",
+	"challenge",
+	"anomaly",
+	"captcha",
+	"rate limit",
+	"too many requests",
+	"blocked",
+	"automated",
+];
+
 const Params = Type.Object({
 	query: Type.String({ description: "Search query. Plain English; will be URL-encoded." }),
 	max_results: Type.Optional(
@@ -66,6 +83,34 @@ function unwrapDuckDuckGoUrl(href: string): string {
 	}
 }
 
+/**
+ * Check if HTML content indicates rate limiting or CAPTCHA.
+ * Returns the first matching indicator or null.
+ */
+function findRateLimitIndicator(html: string): string | null {
+	const lower = html.toLowerCase();
+	for (const indicator of RATE_LIMIT_INDICATORS) {
+		if (lower.includes(indicator)) {
+			return indicator;
+		}
+	}
+	return null;
+}
+
+/** Calculate delay with exponential backoff */
+function calculateDelayMs(attempt: number): number {
+	let delay = BASE_DELAY_MS * Math.pow(BACKOFF_MULTIPLIER, attempt);
+	delay = Math.min(delay, MAX_DELAY_MS);
+	// Add jitter (0-500ms)
+	const jitter = Math.random() * 500;
+	return delay + jitter;
+}
+
+/** Wait for a number of milliseconds */
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function parseDuckDuckGoHtml(html: string, max: number): SearchResult[] {
 	const results: SearchResult[] = [];
 	// Each result block contains an <a class="result__a" href="...">title</a>
@@ -97,22 +142,51 @@ function parseDuckDuckGoHtml(html: string, max: number): SearchResult[] {
 
 async function duckDuckGoSearch(query: string, max: number, signal?: AbortSignal): Promise<SearchResult[]> {
 	const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-	const res = await fetch(url, {
-		method: "POST",
-		headers: {
-			"User-Agent": DEFAULT_USER_AGENT,
-			"Content-Type": "application/x-www-form-urlencoded",
-			Accept: "text/html,application/xhtml+xml",
-			"Accept-Language": "en-US,en;q=0.9",
-		},
-		body: `q=${encodeURIComponent(query)}`,
-		signal,
-	});
-	if (!res.ok) {
-		throw new Error(`DuckDuckGo returned HTTP ${res.status}`);
+	let lastError: Error | null = null;
+
+	for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+		// Wait before retry (not on first attempt)
+		if (attempt > 0) {
+			const delay = calculateDelayMs(attempt - 1);
+			await sleep(delay);
+			if (signal?.aborted) {
+				throw new Error("Search cancelled");
+			}
+		}
+
+		const res = await fetch(url, {
+			method: "GET",
+			headers: {
+				"User-Agent": DEFAULT_USER_AGENT,
+				Accept: "text/html,application/xhtml+xml",
+				"Accept-Language": "en-US,en;q=0.9",
+			},
+			signal,
+		});
+
+		// Check for rate limit status codes
+		if (res.status === 429 || res.status === 202 || res.status >= 500) {
+			lastError = new Error(`DuckDuckGo returned HTTP ${res.status} (rate limited)`);
+			continue;
+		}
+
+		if (!res.ok) {
+			throw new Error(`DuckDuckGo returned HTTP ${res.status}`);
+		}
+
+		const html = await res.text();
+
+		// Check for CAPTCHA/rate limit indicators in HTML
+		const indicator = findRateLimitIndicator(html);
+		if (indicator) {
+			lastError = new Error(`DuckDuckGo CAPTCHA detected: "${indicator}"`);
+			continue;
+		}
+
+		return parseDuckDuckGoHtml(html, max);
 	}
-	const html = await res.text();
-	return parseDuckDuckGoHtml(html, max);
+
+	throw lastError || new Error("DuckDuckGo search failed after max retries");
 }
 
 function formatResultsMarkdown(query: string, results: SearchResult[]): string {
