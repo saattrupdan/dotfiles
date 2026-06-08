@@ -28,9 +28,6 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { unzip } from "node:zlib";
-import { promisify } from "node:util";
-
-const unzipAsync = promisify(unzip);
 
 import {
 	type AgentToolResult,
