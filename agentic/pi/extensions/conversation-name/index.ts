@@ -2,17 +2,16 @@
  * Conversation name generator.
  *
  * On the first user message in a session, generates a concise, descriptive
- * name for the conversation and writes it to the session directory. The
- * nvim plugin can then read this file and display it in the buffer title.
+ * name for the conversation and applies it via Pi's built-in setSessionName().
+ * Pi persists it as a session_info entry in the session file, where it shows
+ * up in Pi's session selector and is read by the pi-agent.nvim plugin for the
+ * window title.
  *
  * Only processes the first user message; subsequent messages are ignored.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import * as fs from "node:fs";
-import * as path from "node:path";
 
-const SESSION_NAME_FILE = "conversation-name.json";
 const MAX_NAME_LENGTH = 50;
 
 export default function (pi: ExtensionAPI) {
@@ -64,35 +63,15 @@ export default function (pi: ExtensionAPI) {
 		// Generate a name from the first prompt
 		const name = generateConversationName(firstPrompt);
 
-		// Rename the current session using Pi's built-in session name, so it
-		// shows up in the session selector.
+		// Rename the current session using Pi's built-in session name. Pi writes
+		// it as a session_info entry in the session file, so it shows up in the
+		// session selector and is picked up by the pi-agent.nvim window title.
 		try {
 			pi.setSessionName(name);
 		} catch (error) {
-			const errorMessage = error instanceof Error ? error.message : String(error);
-			console.error(`[conversation-name] Failed to set session name: ${errorMessage}`);
-		}
-
-		// Get the session directory from context
-		const sessionDir = event.context?.cwd;
-		if (!sessionDir) {
-			return;
-		}
-
-		// Write the name to the session directory
-		const filePath = path.join(sessionDir, SESSION_NAME_FILE);
-		const payload = {
-			name: name,
-			createdAt: new Date().toISOString(),
-			firstPrompt: firstPrompt.slice(0, 200),
-		};
-
-		try {
-			fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), "utf8");
-		} catch (error) {
 			// Silently fail - this is a nice-to-have feature
 			const errorMessage = error instanceof Error ? error.message : String(error);
-			console.error(`[conversation-name] Failed to write: ${errorMessage}`);
+			console.error(`[conversation-name] Failed to set session name: ${errorMessage}`);
 		}
 	});
 
