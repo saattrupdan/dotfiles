@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.78.1",
+  "lastChangelogVersion": "0.79.0",
   "defaultProvider": "inference",
   "defaultModel": "qwen3.5-397b",
   "defaultThinkingLevel": "medium",
@@ -9,5 +9,6 @@
   "theme": "gruvbox",
   "terminal": {
     "clearOnShrink": true
-  }
+  },
+  "packages": []
 }
