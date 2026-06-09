@@ -10,6 +10,16 @@
  * to continue. The model picks up where it left off and retries the request. This
  * repeats until the rate limit clears.
  *
+ * Invisibility & the assistant-role gotcha:
+ *   The nudge is a `display: false` custom message sent with `{ triggerTurn: true }`
+ *   (same mechanism as the double-check extension) — it reaches the LLM as a user
+ *   turn but never renders in the chat. This also sidesteps a runtime crash:
+ *   `sendUserMessage` routes through pi's `prompt()`, which runs a compaction check
+ *   against the *errored assistant message* the 429 leaves as the transcript tail
+ *   and then calls `agent.continue()` on it — throwing
+ *   "Cannot continue from message role: assistant". `sendMessage(..., { triggerTurn })`
+ *   goes straight to the agent prompt and skips that path.
+ *
  * Loop safety:
  *   - `retrying429` is true for the lifetime of an injected retry loop, preventing
  *     re-triggering on the injected turn's own agent_end.
@@ -48,16 +58,6 @@ let retrying429 = false;
 let sessionEnabled = true;
 /** Track whether the current turn already had a 429 retry injected. */
 let armed = false;
-
-/** Extract visible text from an assistant message. */
-function messageText(message: MessageLike): string {
-	if (!message.content) return "";
-	if (typeof message.content === "string") return message.content;
-	return message.content
-		.filter((b) => b.type === "text" && b.text)
-		.map((b) => b.text as string)
-		.join("");
-}
 
 /** Check if the last assistant message indicates a 429 error. */
 function is429Error(messages: readonly MessageLike[]): boolean {
@@ -130,7 +130,10 @@ export default function (pi: ExtensionAPI) {
 				retrying429 = false;
 				return;
 			}
-			pi.sendUserMessage(PROMPT);
+			pi.sendMessage(
+				{ customType: CUSTOM_TYPE, content: PROMPT, display: false },
+				{ triggerTurn: true },
+			);
 		});
 	});
 
