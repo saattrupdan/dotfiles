@@ -15,11 +15,9 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 const MAX_NAME_LENGTH = 50;
 
 export default function (pi: ExtensionAPI) {
-	// Track which sessions we've already processed
-	const processedSessions = new Set<string>();
-
-	// Listen for message_end events - this fires for both user and assistant messages
-	pi.on("message_end", async (event) => {
+	// Listen for message_end events - this fires for both user and assistant messages.
+	// Note: the ExtensionContext is the SECOND handler argument, not event.context.
+	pi.on("message_end", async (event, ctx) => {
 		const msg = event.message;
 
 		// Only process user messages
@@ -27,38 +25,35 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 
-		// Get the session ID from context
-		const sessionId = event.context?.sessionId;
-		if (!sessionId) {
-			return;
+		// Only name a session once: skip if it already has a session name. This
+		// also dedups across the whole session lifetime (and survives reloads),
+		// since the name persists as a session_info entry in the session file.
+		try {
+			if (ctx.sessionManager.getSessionName()) {
+				return;
+			}
+		} catch {
+			// getSessionName unavailable - fall through and try to set it anyway
 		}
 
-		// Skip if we've already processed this session
-		if (processedSessions.has(sessionId)) {
-			return;
-		}
-
-		// Extract the first prompt text
+		// Extract the first prompt text. User content may be a plain string or
+		// an array of content parts.
 		const content = (msg as any).content;
-		if (!Array.isArray(content) || content.length === 0) {
-			return;
-		}
-
-		// Find the first text part
 		let firstPrompt = "";
-		for (const part of content) {
-			if (part?.type === "text" && typeof part.text === "string") {
-				firstPrompt = part.text;
-				break;
+		if (typeof content === "string") {
+			firstPrompt = content;
+		} else if (Array.isArray(content)) {
+			for (const part of content) {
+				if (part?.type === "text" && typeof part.text === "string") {
+					firstPrompt = part.text;
+					break;
+				}
 			}
 		}
 
 		if (!firstPrompt.trim()) {
 			return;
 		}
-
-		// Mark this session as processed
-		processedSessions.add(sessionId);
 
 		// Generate a name from the first prompt
 		const name = generateConversationName(firstPrompt);
