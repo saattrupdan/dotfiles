@@ -15,7 +15,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-const MAX_NAME_LENGTH = 50;
+const MAX_NAME_LENGTH = 40;
 const NAMING_TIMEOUT_MS = 30_000;
 
 export default function (pi: ExtensionAPI) {
@@ -134,7 +134,7 @@ async function generateNameWithModel(
 		"about. Respond with ONLY the title.\n\nRequest: " +
 		request;
 
-	const result = await pi.exec("pi", ["-p", "--no-extensions", instruction], {
+	const result = await pi.exec("pi", ["-p", "--no-extensions", "--no-session", instruction], {
 		cwd,
 		timeout: NAMING_TIMEOUT_MS,
 	});
@@ -195,7 +195,7 @@ function generateConversationNameFallback(prompt: string): string {
 	const trimmed = prompt.trim();
 
 	// Take the first sentence (stop at ., ?, !, or newline)
-	const firstSentence = trimmed.split(/[\.\?\!\n]/)[0]?.trim() ?? trimmed;
+	const firstSentence = trimmed.split(/[.?!\n]/)[0]?.trim() ?? trimmed;
 
 	// Remove common filler prefixes
 	let cleaned = firstSentence.replace(
