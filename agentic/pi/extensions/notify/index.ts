@@ -5,9 +5,13 @@
  * orchestrator agent:
  *
  *  - asked the user a question (the `question` tool is about to run),
- *  - finished a turn normally (agent loop ended, ready for next prompt),
+ *  - finished a turn normally with no errors (agent loop ended, ready for
+ *    next prompt),
  *  - failed or was aborted (last assistant message has stopReason
  *    "error" or "aborted").
+ *
+ * Note: the "finished" notification is suppressed if any tool errors occurred
+ * during the turn, even if the agent recovered and completed successfully.
  *
  * The notification reaches the user even when the terminal is not focused
  * (that's the whole point — macOS surfaces it system-wide). Sounds are
@@ -118,6 +122,14 @@ export default function (pi: ExtensionAPI) {
 			const detail = errorMessage ? truncate(errorMessage) : stopReason;
 			notify("Pi failed", detail, SOUND_FAILED);
 		} else {
+			// Only notify on success if no errors occurred during the turn.
+			// Check for any tool results with isError: true — if the agent
+			// recovered and finished anyway, skip the "finished" notification.
+			const hadToolErrors = msgs.some((m) => {
+				const toolMsg = m as { role?: string; isError?: boolean };
+				return toolMsg?.role === "tool" && toolMsg.isError === true;
+			});
+			if (hadToolErrors) return;
 			notify("Pi finished", "Ready for your next prompt.", SOUND_FINISHED);
 		}
 	});
