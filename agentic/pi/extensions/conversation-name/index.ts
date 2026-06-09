@@ -55,6 +55,18 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 
+		// Strip the memory-audit auto-injection wrapper if present. That
+		// extension rewrites the user's input to `${block}\n\n---\n${query}`,
+		// where the block starts with the marker below. Without this, the
+		// session gets named after the injected memory preamble instead of the
+		// actual prompt. Only strip when the exact marker leads, so normal
+		// prompts (which may legitimately contain "---") are left untouched.
+		firstPrompt = stripInjectedMemoryBlock(firstPrompt);
+
+		if (!firstPrompt.trim()) {
+			return;
+		}
+
 		// Generate a name from the first prompt
 		const name = generateConversationName(firstPrompt);
 
@@ -72,6 +84,26 @@ export default function (pi: ExtensionAPI) {
 
 	// No tools to register - this extension works via hooks only
 	return {};
+}
+
+/** Leading marker of the memory-audit auto-injection block. */
+const INJECTED_MEMORY_MARKER =
+	/^Relevant memor(?:y|ies) found for this request \(auto-injected\)\./;
+
+/** Separator memory-audit places between its block and the real query. */
+const INJECTED_MEMORY_SEP = "\n\n---\n";
+
+/**
+ * If `text` is a memory-audit auto-injection (`${block}\n\n---\n${query}`),
+ * return just the user's query. Otherwise return `text` unchanged.
+ */
+function stripInjectedMemoryBlock(text: string): string {
+	if (!INJECTED_MEMORY_MARKER.test(text)) {
+		return text;
+	}
+	// The block contains no separator, so the first one is the real boundary.
+	const idx = text.indexOf(INJECTED_MEMORY_SEP);
+	return idx === -1 ? text : text.slice(idx + INJECTED_MEMORY_SEP.length);
 }
 
 /**
