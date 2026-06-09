@@ -240,10 +240,9 @@ function runEngine(repoRoot: string, query: string, regex: boolean, maxResults?:
 				"-i",
 				// --hidden: also search dotfiles like .zshrc.
 				"--hidden",
-				// --no-ignore: search everything (including .gitignore'd files).
-				//   Simple `--no-ignore` works fine — it was the `-g` exclude
-				//   globs that caused problems (a glob hiding a file's own dir).
-				"--no-ignore",
+				// No --no-ignore flag: respect .gitignore files by default to exclude
+				// generated directories (node_modules/, dist/, .vercel/, __pycache__/, etc.)
+				// and prevent massive result sets that cause freezing.
 				// -F: literal string unless the caller asked for regex, so a bare
 				//   "(" or "." is not a regex parse error / wildcard.
 				...(regex ? [] : ["-F"]),
@@ -251,15 +250,6 @@ function runEngine(repoRoot: string, query: string, regex: boolean, maxResults?:
 				//   Defaults to 100 if not specified. Note: --max-count is per-file,
 				//   so a global cap is applied below to the total result set.
 				...(maxResults ? [`--max-count=${maxResults}`] : []),
-				// Exclude common generated directories and minified files to reduce
-				// noise and prevent freezing on large result sets.
-				"--glob", "!node_modules/**",
-				"--glob", "!.vercel/**",
-				"--glob", "!dist/**",
-				"--glob", "!build/**",
-				"--glob", "!out/**",
-				"--glob", "!**/*.min.js",
-				"--glob", "!**/*.min.css",
 				"--",
 				query,
 				".",
