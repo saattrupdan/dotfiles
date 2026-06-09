@@ -119,6 +119,12 @@ Always inspect and address them.
    ```bash
    gh pr comment <N> -b "Addressed all comments. Fixes: <list> @copilot"
    ```
+
+   **Gotcha:** Literal `\n` in bash strings are *not* rendered as newlines by GitHub. For multi-line comments, use actual newlines via `$'...'` syntax:
+   ```bash
+   gh pr comment <N> -b $'Line 1\nLine 2\nLine 3'
+   ```
+   Or use a heredoc / body file: `gh pr comment <N> --body-file comment.md`
 6. **Resolve all review threads** (Copilot review comments cannot be resolved via the REST API — use GraphQL):
    ```bash
    # Find thread IDs for a given review

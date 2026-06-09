@@ -396,7 +396,68 @@
     </div>
   </section>
 
-  <!-- ===== Slide 11: FLOW ROW ===== -->
+  <!-- ===== Slide 11: SCATTER PLOT ===== -->
+  <section class="slide">
+    <div class="slide-inner">
+      <div class="eyebrow">Trade-offs</div>
+      <h2>Scatter plot <span class="dim">Two continuous variables</span></h2>
+      <div class="chart" data-reveal>
+        <div class="chart-title">Speed vs. accuracy across N values</div>
+        <div class="chart-subtitle">68 documents, 6 N configurations, ~130 comparisons.</div>
+        <div class="chart-body">
+          <div class="scatter-plot" style="height: 320px;">
+            <div class="scatter-axes">
+              <div class="scatter-x-axis"></div>
+              <div class="scatter-y-axis"></div>
+              <div class="scatter-x-label">Speed (min/doc)</div>
+              <div class="scatter-y-label">Term existence (F2)</div>
+              <!-- X-axis ticks -->
+              <div class="scatter-tick scatter-tick-x" style="left: 0%">1</div>
+              <div class="scatter-tick scatter-tick-x" style="left: 20%">2</div>
+              <div class="scatter-tick scatter-tick-x" style="left: 40%">3</div>
+              <div class="scatter-tick scatter-tick-x" style="left: 60%">4</div>
+              <div class="scatter-tick scatter-tick-x" style="left: 80%">5</div>
+              <div class="scatter-tick scatter-tick-x" style="left: 100%">6</div>
+              <!-- Y-axis ticks -->
+              <div class="scatter-tick scatter-tick-y" style="bottom: 0%">60%</div>
+              <div class="scatter-tick scatter-tick-y" style="bottom: 25%">70%</div>
+              <div class="scatter-tick scatter-tick-y" style="bottom: 50%">80%</div>
+              <div class="scatter-tick scatter-tick-y" style="bottom: 75%">90%</div>
+              <div class="scatter-tick scatter-tick-y" style="bottom: 100%">100%</div>
+              <!-- Data points -->
+              <div class="scatter-item" style="left: 20%; bottom: 17.5%" data-reveal>
+                <div class="scatter-point"></div>
+                <div class="scatter-label">N=130</div>
+              </div>
+              <div class="scatter-item" style="left: 20%; bottom: 49%" data-reveal>
+                <div class="scatter-point"></div>
+                <div class="scatter-label">N=50</div>
+              </div>
+              <div class="scatter-item" style="left: 40%; bottom: 62%" data-reveal>
+                <div class="scatter-point"></div>
+                <div class="scatter-label">N=10</div>
+              </div>
+              <div class="scatter-item" style="left: 40%; bottom: 76%" data-reveal>
+                <div class="scatter-point"></div>
+                <div class="scatter-label">N=5</div>
+              </div>
+              <div class="scatter-item" style="left: 60%; bottom: 78%" data-reveal>
+                <div class="scatter-point"></div>
+                <div class="scatter-label">N=3</div>
+              </div>
+              <div class="scatter-item" style="left: 100%; bottom: 95%" data-reveal>
+                <div class="scatter-point hero"></div>
+                <div class="scatter-label">N=1</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="scatter-note">Lower N improves accuracy but slows throughput.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Slide 12: FLOW ROW ===== -->
   <section class="slide">
     <div class="slide-inner">
       <div class="eyebrow">Pipeline</div>
@@ -2120,7 +2181,160 @@
     transform: translateY(-50%);
   }
 
-  /* --- 29. Diagram (free-form, SVG arrows) --- */
+  /* --- 29. Scatter plot --- */
+  .scatter-plot {
+    position: relative;
+    height: 320px;
+    min-width: 600px;
+    margin-top: 1.75rem;
+    padding: 2rem 2.5rem 3rem 1rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .scatter-axes {
+    position: absolute;
+    left: 4rem;
+    right: 2rem;
+    top: 1rem;
+    bottom: 3rem;
+  }
+
+  .scatter-x-axis,
+  .scatter-y-axis {
+    position: absolute;
+    background: var(--border-strong);
+  }
+
+  .scatter-x-axis {
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 1px;
+  }
+
+  .scatter-y-axis {
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+  }
+
+  .scatter-x-label,
+  .scatter-y-label {
+    position: absolute;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .scatter-x-label {
+    bottom: -1.8rem;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+
+  .scatter-y-label {
+    left: -8rem;
+    top: 50%;
+    transform: translateY(-50%) rotate(-90deg);
+  }
+
+  .scatter-tick {
+    position: absolute;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+  }
+
+  .scatter-tick-x {
+    bottom: -1.4rem;
+    transform: translateX(-50%);
+  }
+
+  .scatter-tick-y {
+    left: -2.5rem;
+    transform: translateY(50%);
+    text-align: right;
+  }
+
+  .scatter-point {
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    background: var(--accent);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 0 0 4px var(--bg-card), 0 0 0 5px var(--accent), 0 4px 12px var(--accent-glow);
+    cursor: pointer;
+    transition: transform 0.2s ease;
+  }
+
+  .scatter-point:hover {
+    transform: translate(-50%, -50%) scale(1.2);
+  }
+
+  .scatter-point.hero {
+    background: var(--accent);
+    box-shadow: 0 0 0 4px var(--bg-card), 0 0 0 5px var(--accent), 0 4px 16px var(--accent-glow);
+  }
+
+  .scatter-item {
+    position: absolute;
+  }
+
+  .scatter-item[data-reveal] {
+    opacity: 0;
+    transform: translateY(12px);
+    transition: opacity 0.4s ease, transform 0.4s ease;
+  }
+
+  .scatter-item[data-reveal].revealed {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .scatter-item .scatter-point {
+    left: 0;
+    bottom: 0;
+  }
+
+  .scatter-item .scatter-point.hero {
+    background: var(--accent);
+    box-shadow: 0 0 0 4px var(--bg-card), 0 0 0 5px var(--accent), 0 4px 16px var(--accent-glow);
+  }
+
+  .scatter-item .scatter-label {
+    position: absolute;
+    left: 12px;
+    bottom: -12px;
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    white-space: nowrap;
+  }
+
+  .scatter-label {
+    position: absolute;
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    white-space: nowrap;
+  }
+
+  .scatter-note {
+    position: absolute;
+    left: 4rem;
+    bottom: -2rem;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-style: italic;
+  }
+
+  /* --- 30. Diagram (free-form, SVG arrows) --- */
   .diagram {
     position: relative;
     width: 100%;
@@ -2668,26 +2882,30 @@
     });
   }
 
-  function revealNext() {
+  // Unified navigation: advance through all data-reveal elements sequentially
+  // Moving right/forward reveals next content or advances to next slide
+  // Moving left/backward goes to previous slide (collapsing all reveals)
+  function advance() {
     const currentSlide = slides[current];
     const unrevealed = currentSlide.querySelectorAll('[data-reveal]:not(.revealed)');
     if (unrevealed.length > 0) {
       unrevealed[0].classList.add('revealed');
       updateCounter(current);
     } else {
-      next();
+      if (current < slides.length - 1) show(current + 1);
     }
   }
 
-  function next() { if (current < slides.length - 1) show(current + 1); }
-  function prev() { if (current > 0) show(current - 1); }
+  function prev() {
+    if (current > 0) show(current - 1);
+  }
 
   document.addEventListener('keydown', (e) => {
     // Ignore navigation shortcuts when modal is open
     if (aiIsOpen) return;
-    if (e.key === 'ArrowRight') { e.preventDefault(); next(); }
+    if (e.key === 'ArrowRight') { e.preventDefault(); advance(); }
     if (e.key === 'ArrowLeft') { e.preventDefault(); prev(); }
-    if (e.key === ' ' || e.key === 'Enter' || e.key === 'PageDown') { e.preventDefault(); revealNext(); }
+    if (e.key === ' ' || e.key === 'Enter' || e.key === 'PageDown') { e.preventDefault(); advance(); }
     if (e.key === 'PageUp') { e.preventDefault(); prev(); }
     if (e.key === 'Home') { show(0); }
     if (e.key === 'End') { show(slides.length - 1); }
@@ -2708,10 +2926,10 @@
     const dy = e.changedTouches[0].screenY - touchStartY;
     const isHorizontalSwipe = Math.abs(dx) >= SWIPE_THRESHOLD && Math.abs(dx) > Math.abs(dy);
     if (isHorizontalSwipe) {
-      if (dx < 0) next();
+      if (dx < 0) advance();
       else prev();
     } else if (Math.abs(dx) < 10 && Math.abs(dy) < 10) {
-      revealNext();
+      advance();
     }
   }, { passive: true });
 
@@ -2724,8 +2942,8 @@
     const toast = document.createElement('div');
     toast.className = 'deck-toast';
     toast.innerHTML = isTouch
-      ? 'Tap for next content · swipe ← → to skip slides'
-      : 'Press <kbd>Enter</kbd> or <kbd>Space</kbd> for next content · <kbd>←</kbd> <kbd>→</kbd> to skip slides';
+      ? 'Tap or swipe → for next · swipe ← for previous'
+      : 'Press → / Space / Enter for next · ← for previous';
     document.body.appendChild(toast);
     requestAnimationFrame(() => toast.classList.add('visible'));
     setTimeout(() => toast.classList.remove('visible'), 3000);

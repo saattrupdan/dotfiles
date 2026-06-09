@@ -695,7 +695,7 @@ Every arrow lives in its own `<svg class="diagram-arrows">`. They all use the sa
 - Arrowheads are roughly equilateral triangles, not pointy slivers (if they're slivers, you set `preserveAspectRatio="none"` somewhere — find it and delete it).
 - Every arrow tip touches the edge of its target node, not the centre and not empty space.
 - No two nodes overlap.
-- Pressing Space cycles node → arrow → node → arrow in narration order.
+- Pressing ArrowRight/Space cycles node → arrow → node → arrow in narration order.
 - The `.diagram` wrapper itself has no `data-reveal`.
 
 ```html
@@ -770,6 +770,145 @@ The marker defs sit in an invisible `<svg>` at the top. Every later arrow `<svg>
 - Don't add inline `transform` to `.diagram-node` or `.diagram-label` — they already use `translate(-50%, -50%)` to centre on their `left/top` point, and the deck CSS preserves that during reveal.
 - Keep diagrams to 7 nodes or fewer. More than that and the reveal sequence becomes tedious and the layout gets cramped. Split into two slides instead.
 
+### 29. Scatter plot
+
+Pure-CSS scatter plot for comparing two continuous variables. No external libraries. Supports axis labels, custom ticks, data point labels, and a "hero" point for highlighting.
+
+**Positioning:** Data points use percentage-based `left` (X-axis) and `bottom` (Y-axis) positioning. Convert your data scales to percentages before authoring.
+
+**Animation:** Wrap the plot (or any ancestor) in `data-reveal`. Points fade and slide up when revealed. Without `data-reveal`, points render at full opacity immediately.
+
+**Point variants:** default (accent orange), `.hero` (highlighted, same colour but larger shadow).
+
+#### Basic scatter plot
+
+Single chart with axes, ticks, and labelled points:
+
+```html
+<div class="scatter-plot">
+  <div class="scatter-axes">
+    <div class="scatter-x-axis"></div>
+    <div class="scatter-y-axis"></div>
+    <div class="scatter-x-label">X-axis label</div>
+    <div class="scatter-y-label">Y-axis label</div>
+    
+    <!-- X-axis ticks -->
+    <div class="scatter-tick scatter-tick-x" style="left: 0%">0</div>
+    <div class="scatter-tick scatter-tick-x" style="left: 50%">5</div>
+    <div class="scatter-tick scatter-tick-x" style="left: 100%">10</div>
+    
+    <!-- Y-axis ticks -->
+    <div class="scatter-tick scatter-tick-y" style="bottom: 0%">0</div>
+    <div class="scatter-tick scatter-tick-y" style="bottom: 50%">50</div>
+    <div class="scatter-tick scatter-tick-y" style="bottom: 100%">100</div>
+    
+    <!-- Data points: left = X%, bottom = Y% -->
+    <div class="scatter-item" style="left: 20%; bottom: 30%">
+      <div class="scatter-point"></div>
+      <div class="scatter-label">A</div>
+    </div>
+    <div class="scatter-item" style="left: 60%; bottom: 80%">
+      <div class="scatter-point hero"></div>
+      <div class="scatter-label">B</div>
+    </div>
+  </div>
+</div>
+```
+
+#### Full-featured with title and subtitle
+
+Wrap in `.chart` to add title/subtitle (same structure as bar charts):
+
+```html
+<div class="chart">
+  <div class="chart-title">Experiment results</div>
+  <div class="chart-subtitle">68 docs across 6 N values.</div>
+  <div class="chart-body">
+    <div class="scatter-plot" style="height: 320px;">
+      <div class="scatter-axes">
+        <div class="scatter-x-axis"></div>
+        <div class="scatter-y-axis"></div>
+        <div class="scatter-x-label">Speed (min/doc)</div>
+        <div class="scatter-y-label">Accuracy (F2)</div>
+        
+        <!-- Ticks -->
+        <div class="scatter-tick scatter-tick-x" style="left: 0%">1</div>
+        <div class="scatter-tick scatter-tick-x" style="left: 100%">6</div>
+        <div class="scatter-tick scatter-tick-y" style="bottom: 0%">60%</div>
+        <div class="scatter-tick scatter-tick-y" style="bottom: 100%">100%</div>
+        
+        <!-- Points -->
+        <div class="scatter-item" style="left: 20%; bottom: 65%">
+          <div class="scatter-point"></div>
+          <div class="scatter-label">N=130</div>
+        </div>
+        <div class="scatter-item" style="left: 80%; bottom: 95%">
+          <div class="scatter-point hero"></div>
+          <div class="scatter-label">N=1</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="scatter-note">Each point represents one N value configuration.</div>
+</div>
+```
+
+#### Side-by-side comparison
+
+Multiple scatter plots in a grid (as in your Comadso deck):
+
+```html
+<div class="chart-body" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+  <div>
+    <h4 style="font-size: 0.85rem; font-weight: 500; color: var(--text-muted); margin-bottom: 0.5rem;">Term existence</h4>
+    <div class="scatter-plot" style="height: 280px;">
+      <!-- axes, ticks, points -->
+    </div>
+  </div>
+  <div>
+    <h4 style="font-size: 0.85rem; font-weight: 500; color: var(--text-muted); margin-bottom: 0.5rem;">Text extraction</h4>
+    <div class="scatter-plot" style="height: 280px;">
+      <!-- axes, ticks, points -->
+    </div>
+  </div>
+</div>
+```
+
+#### Authoring procedure
+
+**Step 1 — Determine your data scales.** Identify min/max for both axes. For example:
+- X-axis (speed): 1–6 min/doc
+- Y-axis (accuracy): 60–100% F2
+
+**Step 2 — Convert data to percentages.** For each point (x, y):
+```
+left% = (x - x_min) / (x_max - x_min) × 100
+bottom% = (y - y_min) / (y_max - y_min) × 100
+```
+
+Example: x=2, y=85 with ranges above:
+- `left% = (2-1)/(6-1) × 100 = 20%`
+- `bottom% = (85-60)/(100-60) × 100 = 62.5%`
+
+**Step 3 — Place ticks at meaningful intervals.** Common patterns:
+- Evenly spaced: 0%, 25%, 50%, 75%, 100%
+- Data-driven: tick at each distinct value in your dataset
+- Irregular: tick at round numbers (60%, 65%, 70%, …) even if spacing is uneven
+
+**Step 4 — Add labels.** Each `.scatter-item` wraps a `.scatter-point` and optional `.scatter-label`. Labels position automatically to the right of the point; use inline `transform: translateX(-20px)` to shift left when needed.
+
+**Step 5 — Highlight the hero.** Add `.hero` to the `.scatter-point` of the most important datum (e.g. your chosen configuration, the Pareto optimum).
+
+**When to use:**
+- Comparing two continuous metrics across multiple configurations
+- Showing trade-offs (e.g. speed vs. accuracy, cost vs. quality)
+- Highlighting one or two key points among many
+
+**When not to use:**
+- Time series (use a line chart via Chart.js)
+- Categorical data on either axis (use a bar chart)
+- More than ~12 points (becomes cluttered; consider aggregation or binning)
+
 ### 25. Art overlay
 
 Classical painting background with UI mockup floating on top. The "craft meets code" visual. Swap the gradient for a real painting via `background-image` on `.art-overlay-bg`.
@@ -822,7 +961,7 @@ When you have a story to tell, use the **setup slide → evidence slide** pair. 
 
 ## Progressive reveal
 
-Each slide can progressively reveal its content — like PowerPoint animations — by adding `data-reveal` to elements. Press **Space** or **Enter** to reveal the next element on the current slide. When all elements are revealed, the next press goes to the next slide. The counter shows `3/25 · 2/4` (slide 3 of 25, reveal 2 of 4 on that slide).
+Each slide can progressively reveal its content — like PowerPoint animations — by adding `data-reveal` to elements. All navigation inputs (**ArrowRight**, **Space**, **Enter**, **PageDown**) advance through reveals sequentially. When all elements on a slide are revealed, the next advance goes to the next slide. The counter shows `3/25 · 2/4` (slide 3 of 25, reveal 2 of 4 on that slide).
 
 ### How it works
 
@@ -846,7 +985,7 @@ Add `data-reveal` to any element you want to appear progressively. Elements star
 </section>
 ```
 
-Pressing Space/Enter cycles through: subtitle → two-col. Pressing ArrowRight always goes to the next slide regardless of reveal state.
+Pressing any forward input (ArrowRight, Space, Enter, PageDown) cycles through: subtitle → two-col. Pressing ArrowLeft or PageUp goes to the previous slide.
 
 ### Typical reveal patterns
 
@@ -872,11 +1011,8 @@ Pressing Space/Enter cycles through: subtitle → two-col. Pressing ArrowRight a
 
 | Key | Action |
 |-----|--------|
-| ArrowLeft | Previous slide |
-| ArrowRight | Next slide |
-| Space / Enter | Reveal next element (or next slide if all revealed) |
-| PageDown | Reveal next element (same as Space) |
-| PageUp | Previous slide |
+| ArrowRight / Space / Enter / PageDown | Advance to next reveal or next slide |
+| ArrowLeft / PageUp | Previous slide |
 | Home | First slide |
 | End | Last slide |
 | P | Export to PDF |
