@@ -324,7 +324,7 @@ const Params = Type.Object({
 	query: Type.String({ description: "Search query. Literal by default; multiple words are tried as an exact phrase, then as 'any of these words'. Use regex:true for a regular expression." }),
 	kind: Type.Optional(
 		Type.String({
-			description: "Filter kind: 'def' for definitions, 'ref' for references (grep-style content matches), 'any' for both (default).",
+			description: "Filter kind: 'def' for definitions, 'ref' for references (grep-style content matches), 'any' for both (default). Use 'any' to get both in one call — do not alternate between 'def' and 'ref'.",
 			enum: ["def", "ref", "any"],
 			default: "any",
 		}),
@@ -354,7 +354,7 @@ export default async function (pi: ExtensionAPI) {
 		name: "search",
 		label: "search",
 		description:
-			"Search the repository using a per-repo SQLite index + ripgrep full-text search (with a grep fallback). Returns filename matches, then definitions, then content/reference matches — each with its own result budget so grep-style hits are never crowded out.\n\nQuery semantics: the query is matched as a LITERAL string by default (so `foo(` or `a.b` are safe). A multi-word query like `parse config` is first tried as an exact phrase; if that matches nothing, it falls back to matching lines containing ANY of the words, ranked with most-words-matched first (so search across separate terms still returns results). Matching is case-insensitive unless the query contains an uppercase letter. Set regex:true to match the query as a regular expression instead (taken verbatim, never split on spaces).\n\nUse for finding files by name, symbols (functions/classes), or grep-style text matches.",
+			"Search the repository using a per-repo SQLite index + ripgrep full-text search (with a grep fallback). Returns filename matches, then definitions, then content/reference matches — each with its own result budget so grep-style hits are never crowded out.\n\nQuery semantics: the query is matched as a LITERAL string by default (so `foo(` or `a.b` are safe). A multi-word query like `parse config` is first tried as an exact phrase; if that matches nothing, it falls back to matching lines containing ANY of the words, ranked with most-words-matched first (so search across separate terms still returns results). Matching is case-insensitive unless the query contains an uppercase letter. Set regex:true to match the query as a regular expression instead (taken verbatim, never split on spaces).\n\nUse for finding files by name, symbols (functions/classes), or grep-style text matches.\n\n**Do not alternate between `kind: 'def'` and `kind: 'ref'` searches.** Use `kind: 'any'` (the default) to get both in one call. If you need only definitions or only references, pick one and stop — do not switch back and forth.",
 		parameters: Params,
 
 		async execute(
