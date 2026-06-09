@@ -1,11 +1,14 @@
 /**
  * Splash screen.
  *
- * On session start: hides the built-in header and footer, draws a big Pi logo
+ * On fresh session start: hides the built-in header and footer, draws a big Pi logo
  * above the input, and pads below so the editor lands roughly mid-screen —
  * Google-homepage style. The splash stays until the user submits their first
  * prompt; then the header/footer are restored and the editor drops to its
  * normal bottom position.
+ *
+ * If /reload is called mid-conversation (session already has messages), the splash
+ * is skipped to preserve the existing chat.
  *
  * Logo geometry is the 4x4 staircase mark decoded from the SVG.
  *
@@ -64,8 +67,15 @@ const EMPTY_COMPONENT: Component = {
 };
 
 export default function (pi: ExtensionAPI) {
-	pi.on("session_start", async (_event, ctx) => {
+	pi.on("session_start", async (event, ctx) => {
 		if (!ctx.hasUI) return;
+
+		// Skip the splash if there are already messages in the session.
+		// This happens when /reload is called mid-conversation — we don't
+		// want to dismiss the existing chat and show the splash screen.
+		const entries = ctx.sessionManager.getEntries();
+		const hasMessages = entries.some((e) => e.type === "message");
+		if (hasMessages) return;
 
 		// Wipe the terminal and scrollback so the splash is the only thing
 		// visible — no chance of scrolling up to previous shell output.
