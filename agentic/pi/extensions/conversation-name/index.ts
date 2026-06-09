@@ -1,20 +1,29 @@
 /**
  * Conversation name generator.
  *
- * On the first user message in a session, generates a concise, descriptive
- * name for the conversation and applies it via Pi's built-in setSessionName().
- * Pi persists it as a session_info entry in the session file, where it shows
- * up in Pi's session selector and is read by the pi-agent.nvim plugin for the
- * window title.
+ * On the first user message in a session, asks the model (via a lightweight
+ * `pi -p` sub-invocation) for a concise, descriptive title for the conversation
+ * and applies it via Pi's built-in setSessionName(). Pi persists it as a
+ * session_info entry in the session file, where it shows up in Pi's session
+ * selector and is read by the pi-agent.nvim plugin for the window title.
  *
- * Only processes the first user message; subsequent messages are ignored.
+ * The naming call runs fire-and-forget so it never delays the agent's reply;
+ * the name is filled in a few seconds later. If the model call fails, we fall
+ * back to a mechanical title derived from the prompt. Only the first user
+ * message in a session is named (dedup via the persisted session name).
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const MAX_NAME_LENGTH = 50;
+const NAMING_TIMEOUT_MS = 30_000;
 
 export default function (pi: ExtensionAPI) {
+	// Sessions for which a naming call is in flight. Guards against spawning a
+	// second `pi -p` if another user message arrives before the async naming
+	// call resolves and sets the persisted name.
+	const namingInFlight = new Set<string>();
+
 	// Listen for message_end events - this fires for both user and assistant messages.
 	// Note: the ExtensionContext is the SECOND handler argument, not event.context.
 	pi.on("message_end", async (event, ctx) => {
@@ -36,6 +45,17 @@ export default function (pi: ExtensionAPI) {
 			// getSessionName unavailable - fall through and try to set it anyway
 		}
 
+		// One naming call per session at a time.
+		let sessionId = "";
+		try {
+			sessionId = ctx.sessionManager.getSessionId();
+		} catch {
+			// ignore
+		}
+		if (sessionId && namingInFlight.has(sessionId)) {
+			return;
+		}
+
 		// Extract the first prompt text. User content may be a plain string or
 		// an array of content parts.
 		const content = (msg as any).content;
@@ -51,39 +71,100 @@ export default function (pi: ExtensionAPI) {
 			}
 		}
 
-		if (!firstPrompt.trim()) {
-			return;
-		}
-
 		// Strip the memory-audit auto-injection wrapper if present. That
 		// extension rewrites the user's input to `${block}\n\n---\n${query}`,
 		// where the block starts with the marker below. Without this, the
 		// session gets named after the injected memory preamble instead of the
 		// actual prompt. Only strip when the exact marker leads, so normal
 		// prompts (which may legitimately contain "---") are left untouched.
-		firstPrompt = stripInjectedMemoryBlock(firstPrompt);
+		firstPrompt = stripInjectedMemoryBlock(firstPrompt).trim();
 
-		if (!firstPrompt.trim()) {
+		if (!firstPrompt) {
 			return;
 		}
 
-		// Generate a name from the first prompt
-		const name = generateConversationName(firstPrompt);
-
-		// Rename the current session using Pi's built-in session name. Pi writes
-		// it as a session_info entry in the session file, so it shows up in the
-		// session selector and is picked up by the pi-agent.nvim window title.
-		try {
-			pi.setSessionName(name);
-		} catch (error) {
-			// Silently fail - this is a nice-to-have feature
-			const errorMessage = error instanceof Error ? error.message : String(error);
-			console.error(`[conversation-name] Failed to set session name: ${errorMessage}`);
+		if (sessionId) {
+			namingInFlight.add(sessionId);
 		}
+
+		// Generate and apply the name in the background so we never block the
+		// agent's reply (this handler is awaited before the assistant runs).
+		void (async () => {
+			let name = "";
+			try {
+				name = await generateNameWithModel(pi, firstPrompt, ctx.cwd);
+			} catch {
+				// fall through to the mechanical fallback
+			}
+			if (!name) {
+				name = generateConversationNameFallback(firstPrompt);
+			}
+			try {
+				pi.setSessionName(name);
+			} catch (error) {
+				const errorMessage = error instanceof Error ? error.message : String(error);
+				console.error(`[conversation-name] Failed to set session name: ${errorMessage}`);
+			} finally {
+				if (sessionId) {
+					namingInFlight.delete(sessionId);
+				}
+			}
+		})();
 	});
 
 	// No tools to register - this extension works via hooks only
 	return {};
+}
+
+/**
+ * Ask the model for a concise session title via a lightweight `pi -p` call.
+ * Uses --no-extensions so the sub-invocation is fast and does not recurse into
+ * this extension (or trigger memory injection). Returns "" on any failure.
+ */
+async function generateNameWithModel(
+	pi: ExtensionAPI,
+	prompt: string,
+	cwd: string,
+): Promise<string> {
+	// Keep the input bounded - a title only needs the gist of the request.
+	const request = prompt.slice(0, 1000);
+	const instruction =
+		"Generate a short, descriptive session title (3-6 words, Title Case, " +
+		"no quotes, no trailing punctuation) summarizing what this request is " +
+		"about. Respond with ONLY the title.\n\nRequest: " +
+		request;
+
+	const result = await pi.exec("pi", ["-p", "--no-extensions", instruction], {
+		cwd,
+		timeout: NAMING_TIMEOUT_MS,
+	});
+
+	if (result.code !== 0) {
+		return "";
+	}
+	return sanitizeTitle(result.stdout);
+}
+
+/**
+ * Clean up raw model output into a single-line title: take the last non-empty
+ * line, strip wrapping quotes/backticks and trailing punctuation, collapse
+ * whitespace, and truncate to MAX_NAME_LENGTH.
+ */
+function sanitizeTitle(raw: string): string {
+	const lines = raw
+		.split("\n")
+		.map((l) => l.trim())
+		.filter((l) => l.length > 0);
+	let title = lines.length > 0 ? lines[lines.length - 1] : "";
+
+	// Strip surrounding quotes or backticks the model sometimes adds.
+	title = title.replace(/^["'`]+|["'`]+$/g, "").trim();
+	// Collapse internal whitespace.
+	title = title.replace(/\s+/g, " ");
+	// Drop trailing sentence punctuation.
+	title = title.replace(/[.!?,;:]+$/, "").trim();
+
+	return truncate(title);
 }
 
 /** Leading marker of the memory-audit auto-injection block. */
@@ -107,14 +188,10 @@ function stripInjectedMemoryBlock(text: string): string {
 }
 
 /**
- * Generate a concise, descriptive name from a user prompt.
- *
- * Strategies (in order of priority):
- * 1. Extract the main task/topic from the first sentence
- * 2. Remove filler words and stop at the first punctuation
- * 3. Truncate to MAX_NAME_LENGTH
+ * Mechanical fallback when the model naming call fails: take the first
+ * sentence, strip common filler prefixes, capitalize, and truncate.
  */
-function generateConversationName(prompt: string): string {
+function generateConversationNameFallback(prompt: string): string {
 	const trimmed = prompt.trim();
 
 	// Take the first sentence (stop at ., ?, !, or newline)
@@ -126,20 +203,21 @@ function generateConversationName(prompt: string): string {
 		"",
 	);
 
-	// If it starts with a verb, capitalize it
+	// Capitalize the first character
 	cleaned = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
 
-	// Truncate if needed
-	if (cleaned.length > MAX_NAME_LENGTH) {
-		// Try to cut at a word boundary
-		const truncated = cleaned.slice(0, MAX_NAME_LENGTH - 3);
-		const lastSpace = truncated.lastIndexOf(" ");
-		if (lastSpace > MAX_NAME_LENGTH / 2) {
-			cleaned = truncated.slice(0, lastSpace) + "...";
-		} else {
-			cleaned = truncated + "...";
-		}
-	}
+	return truncate(cleaned) || "New Conversation";
+}
 
-	return cleaned || "New Conversation";
+/** Truncate to MAX_NAME_LENGTH, preferring a word boundary with an ellipsis. */
+function truncate(text: string): string {
+	if (text.length <= MAX_NAME_LENGTH) {
+		return text;
+	}
+	const cut = text.slice(0, MAX_NAME_LENGTH - 3);
+	const lastSpace = cut.lastIndexOf(" ");
+	if (lastSpace > MAX_NAME_LENGTH / 2) {
+		return cut.slice(0, lastSpace) + "...";
+	}
+	return cut + "...";
 }
