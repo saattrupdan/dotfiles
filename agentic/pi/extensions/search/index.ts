@@ -220,7 +220,7 @@ function tokenCoverage(text: string, tokens: string[]): number {
  * back to grep when ripgrep is unavailable or errors, surfacing the reason
  * rather than swallowing it.
  */
-function runEngine(repoRoot: string, query: string, regex: boolean): RefSearch {
+function runEngine(repoRoot: string, query: string, regex: boolean, maxResults?: number): RefSearch {
 	let rgError: string | undefined;
 	try {
 		const rgPath = findRipgrep();
@@ -247,6 +247,9 @@ function runEngine(repoRoot: string, query: string, regex: boolean): RefSearch {
 				// -F: literal string unless the caller asked for regex, so a bare
 				//   "(" or "." is not a regex parse error / wildcard.
 				...(regex ? [] : ["-F"]),
+				// --max-count: limit results to avoid massive result sets (50k+ matches).
+				//   Defaults to 500 if not specified, enough for most queries.
+				...(maxResults ? [`--max-count=${maxResults}`] : []),
 				"--",
 				query,
 				".",
@@ -284,7 +287,7 @@ function runEngine(repoRoot: string, query: string, regex: boolean): RefSearch {
  * why a two-word search no longer returns nothing when each word matches alone.
  * Regex queries (regex:true) are taken verbatim and never split.
  */
-function searchContent(repoRoot: string, query: string, regex: boolean): RefSearch {
+function searchContent(repoRoot: string, query: string, regex: boolean, maxResults?: number): RefSearch {
 	const tokens = regex ? [] : query.trim().split(/\s+/).filter(Boolean);
 	const orPattern = tokens.length >= 2 ? tokens.map(escapeRegex).join("|") : "";
 
@@ -299,13 +302,13 @@ function searchContent(repoRoot: string, query: string, regex: boolean): RefSear
 	};
 
 	// 1) ripgrep, exact (literal phrase or regex).
-	const exact = runEngine(repoRoot, query, regex);
+	const exact = runEngine(repoRoot, query, regex, maxResults);
 	if (exact.results.length > 0) return exact;
 
 	// 2) ripgrep, OR of the words — for a multi-word literal query whose words
 	//    don't appear adjacent (e.g. "title status").
 	if (orPattern && exact.engine === "ripgrep") {
-		const m = runEngine(repoRoot, orPattern, true);
+		const m = runEngine(repoRoot, orPattern, true, maxResults);
 		if (m.results.length > 0) return rankOr(m);
 	}
 
@@ -335,6 +338,13 @@ const Params = Type.Object({
 			default: false,
 		}),
 	),
+	maxResults: Type.Optional(
+		Type.Integer({
+			description: "Maximum number of raw search results to collect (default 500). Limits ripgrep's output to avoid massive result sets (50k+ matches) that waste memory and time.",
+			default: 500,
+			minimum: 1,
+		}),
+	),
 });
 
 // ---------------------------------------------------------------------------
@@ -359,7 +369,7 @@ export default async function (pi: ExtensionAPI) {
 
 		async execute(
 			_toolCallId,
-			{ query, kind = "any", regex = false },
+			{ query, kind = "any", regex = false, maxResults = 500 },
 			_signal,
 			_onUpdate,
 			ctx,
@@ -432,7 +442,7 @@ export default async function (pi: ExtensionAPI) {
 			// --- Content / ref matches (ripgrep, grep fallback) ---
 			let refSearch: RefSearch = { results: [], engine: "ripgrep", total: 0 };
 			if (kind === "ref" || kind === "any") {
-				refSearch = searchContent(repoRoot, query, regex);
+				refSearch = searchContent(repoRoot, query, regex, maxResults);
 			}
 			const refResults = refSearch.results;
 
