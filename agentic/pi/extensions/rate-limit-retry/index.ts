@@ -20,12 +20,19 @@
  *   "Cannot continue from message role: assistant". `sendMessage(..., { triggerTurn })`
  *   goes straight to the agent prompt and skips that path.
  *
+ * Looping until the limit clears:
+ *   `retrying429` is true for the lifetime of an injected retry loop. When an
+ *   injected turn ends, we re-inspect its outcome: if it 429'd again we inject
+ *   once more, and keep going until the turn ends as anything other than a 429
+ *   (the limit cleared, or some unrelated stop). Each cycle is naturally paced —
+ *   the built-in retry runs its full exponential backoff (~14s across 3 attempts)
+ *   inside every turn before agent_end fires, so this never busy-spins.
+ *
  * Loop safety:
- *   - `retrying429` is true for the lifetime of an injected retry loop, preventing
- *     re-triggering on the injected turn's own agent_end.
- *   - Each user turn gets at most one 429-retry injection, but if that injection
- *     also hits 429 and exhausts the built-in retry, it triggers another injection,
- *     and so on indefinitely.
+ *   - `retrying429` stays true across the whole loop, so injected turns' own
+ *     agent_start never re-arms a "genuine run" and the loop owns every agent_end
+ *     until it clears the flag itself.
+ *   - A genuine user turn gets at most one initial injection (guarded by `armed`).
  *
  * Non-interactive mode: suppressed in print/headless mode (-p) to avoid delaying
  * scripted/CI contexts.
@@ -102,10 +109,33 @@ export default function (pi: ExtensionAPI) {
 		if (!retrying429) armed = true;
 	});
 
+	// Defer a hidden retry nudge until the session is idle, then fire it.
+	// Keeps `retrying429` true on success so the loop owns the next agent_end;
+	// clears it (ending the loop) if the session isn't idle to receive it.
+	const scheduleRetry = (ctx: ExtensionContext) => {
+		setImmediate(() => {
+			if (!ctx.isIdle()) {
+				retrying429 = false;
+				return;
+			}
+			pi.sendMessage(
+				{ customType: CUSTOM_TYPE, content: PROMPT, display: false },
+				{ triggerTurn: true },
+			);
+		});
+	};
+
 	pi.on("agent_end", async (event, ctx: ExtensionContext) => {
-		// End of the injected loop: clear the flag and stop. Never re-inject.
+		const messages = (event.messages ?? []) as MessageLike[];
+
+		// Inside the retry loop: keep going while turns still 429, otherwise the
+		// limit has cleared (or the turn ended some other way) — stop.
 		if (retrying429) {
-			retrying429 = false;
+			if (sessionEnabled && is429Error(messages)) {
+				scheduleRetry(ctx);
+			} else {
+				retrying429 = false;
+			}
 			return;
 		}
 
@@ -117,24 +147,12 @@ export default function (pi: ExtensionAPI) {
 		if (!hasUI) return;
 
 		// Only trigger when the run ended with a 429 error.
-		if (!is429Error((event.messages ?? []) as MessageLike[])) return;
+		if (!is429Error(messages)) return;
 
 		// Enter the retry loop. Set the flag now so the injected loop's
 		// agent_start is recognised and doesn't re-arm.
 		retrying429 = true;
-
-		// Defer the trigger so the current agent_end fully settles and the
-		// session is idle before we start a fresh loop.
-		setImmediate(() => {
-			if (!ctx.isIdle()) {
-				retrying429 = false;
-				return;
-			}
-			pi.sendMessage(
-				{ customType: CUSTOM_TYPE, content: PROMPT, display: false },
-				{ triggerTurn: true },
-			);
-		});
+		scheduleRetry(ctx);
 	});
 
 	pi.registerCommand("rate-limit-retry", {
