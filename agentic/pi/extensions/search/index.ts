@@ -240,9 +240,9 @@ function runEngine(repoRoot: string, query: string, regex: boolean, maxResults?:
 				"-i",
 				// --hidden: also search dotfiles like .zshrc.
 				"--hidden",
-				// No --no-ignore flag: respect .gitignore files by default to exclude
-				// generated directories (node_modules/, dist/, .vercel/, __pycache__/, etc.)
-				// and prevent massive result sets that cause freezing.
+				// --ignore: respect .gitignore files to exclude all ignored files
+				// (node_modules/, dist/, .vercel/, __pycache__/, etc.) and prevent
+				// massive result sets that cause freezing.
 				// -F: literal string unless the caller asked for regex, so a bare
 				//   "(" or "." is not a regex parse error / wildcard.
 				...(regex ? [] : ["-F"]),
@@ -529,9 +529,23 @@ export default async function (pi: ExtensionAPI) {
 			if (refLines.length > REF_CAP) output.push(`… ${refLines.length - REF_CAP} more content matches (refine the query)`);
 			if (refSearch.error) output.push(refSearch.error);
 
+			// Build collapsed summary for compact tool output display
+			const fileCount = Math.min(fileHits.length, FILE_CAP);
+			const defCount = Math.min(defLines.length, DEF_CAP);
+			const refCount = Math.min(refLines.length, REF_CAP);
+			const totalTruncated = (fileHits.length > FILE_CAP ? fileHits.length - FILE_CAP : 0)
+				+ (defLines.length > DEF_CAP ? defLines.length - DEF_CAP : 0)
+				+ (refLines.length > REF_CAP ? refLines.length - REF_CAP : 0);
+
+			let collapsedSummary = `search: ${query}`;
+			if (kind && kind !== "any") collapsedSummary += ` [${kind}]`;
+			collapsedSummary += ` → ${fileCount} files${fileCount ? `, ${defCount} defs${defCount ? `, ${refCount} refs` : ''}` : ''}`;
+			if (totalTruncated > 0) collapsedSummary += ` (+${totalTruncated} more)`;
+			if (refSearch.error) collapsedSummary += ` [⚠ ${refSearch.engine} error]`;
+
 			return {
 				content: [{ type: "text", text: output.join("\n") }],
-				details: undefined,
+				details: { collapsed: collapsedSummary },
 			};
 		},
 
