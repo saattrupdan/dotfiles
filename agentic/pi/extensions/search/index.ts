@@ -248,8 +248,18 @@ function runEngine(repoRoot: string, query: string, regex: boolean, maxResults?:
 				//   "(" or "." is not a regex parse error / wildcard.
 				...(regex ? [] : ["-F"]),
 				// --max-count: limit results to avoid massive result sets (50k+ matches).
-				//   Defaults to 500 if not specified, enough for most queries.
+				//   Defaults to 100 if not specified. Note: --max-count is per-file,
+				//   so a global cap is applied below to the total result set.
 				...(maxResults ? [`--max-count=${maxResults}`] : []),
+				// Exclude common generated directories and minified files to reduce
+				// noise and prevent freezing on large result sets.
+				"--glob", "!node_modules/**",
+				"--glob", "!.vercel/**",
+				"--glob", "!dist/**",
+				"--glob", "!build/**",
+				"--glob", "!out/**",
+				"--glob", "!**/*.min.js",
+				"--glob", "!**/*.min.css",
 				"--",
 				query,
 				".",
@@ -266,7 +276,13 @@ function runEngine(repoRoot: string, query: string, regex: boolean, maxResults?:
 		);
 		// rg exit codes: 0 = matches, 1 = no matches (normal), 2 = error.
 		if (!proc.error && (proc.status === 0 || proc.status === 1)) {
-			const results = parseRipgrepJson(proc.stdout || "");
+			let results = parseRipgrepJson(proc.stdout || "");
+			// Global cap: ripgrep's --max-count is per-file, so slice the total
+			// result set to prevent freezing on queries with many file matches.
+			const GLOBAL_CAP = 200;
+			if (results.length > GLOBAL_CAP) {
+				results = results.slice(0, GLOBAL_CAP);
+			}
 			return { results, engine: "ripgrep", total: results.length };
 		}
 		rgError = proc.error?.message ?? proc.stderr?.trim() ?? `exit ${proc.status}`;
@@ -365,15 +381,13 @@ export default async function (pi: ExtensionAPI) {
 		label: "search",
 		description:
 			"Search the repository using a per-repo SQLite index + ripgrep full-text search (with a grep fallback). Returns filename matches, then definitions, then content/reference matches — each with its own result budget so grep-style hits are never crowded out.\n\nQuery semantics: the query is matched as a LITERAL string by default (so `foo(` or `a.b` are safe). A multi-word query like `parse config` is first tried as an exact phrase; if that matches nothing, it falls back to matching lines containing ANY of the words, ranked with most-words-matched first (so search across separate terms still returns results). Matching is case-insensitive unless the query contains an uppercase letter. Set regex:true to match the query as a regular expression instead (taken verbatim, never split on spaces).\n\nUse for finding files by name, symbols (functions/classes), or grep-style text matches.\n\n**Do not alternate between `kind: 'def'` and `kind: 'ref'` searches.** Use `kind: 'any'` (the default) to get both in one call. If you need only definitions or only references, pick one and stop — do not switch back and forth.",
-		parameters: Params,
-
-		async execute(
-			_toolCallId,
-			{ query, kind = "any", regex = false, maxResults = 500 },
-			_signal,
-			_onUpdate,
-			ctx,
-		) {
+		parameters: Params,			async execute(
+				_toolCallId,
+				{ query, kind = "any", regex = false, maxResults = 100 },
+				_signal,
+				_onUpdate,
+				ctx,
+			) {
 			if (!outline) {
 				return {
 					content: [{ type: "text", text: "Search index unavailable — outliner failed to load." }],
