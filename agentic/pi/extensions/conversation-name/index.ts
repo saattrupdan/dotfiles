@@ -15,7 +15,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-const MAX_NAME_LENGTH = 40;
+const MAX_NAME_LENGTH = 30;
 const NAMING_TIMEOUT_MS = 30_000;
 
 export default function (pi: ExtensionAPI) {
