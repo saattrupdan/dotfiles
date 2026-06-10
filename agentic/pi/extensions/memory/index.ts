@@ -506,7 +506,7 @@ export default function (pi: ExtensionAPI) {
 			"Call this first to see what's already remembered before answering, then `memory_read` any that look relevant.",
 		parameters: IndexParams,
 
-		async execute(_id, { scope }, _signal, _onUpdate, ctx): Promise<any> {
+		async execute(_id, { scope }, _signal, _onUpdate, ctx): Promise<AgentToolResult<MemoryRenderDetails>> {
 			const which = scope ?? "all";
 			const sections: string[] = [];
 
@@ -548,7 +548,7 @@ export default function (pi: ExtensionAPI) {
 			"Read the full body of a stored memory by `scope` + `name`. Use `memory_index` first to discover available memories.",
 		parameters: ReadParams,
 
-		async execute(_id, { scope, name }, _signal, _onUpdate, ctx): Promise<any> {
+		async execute(_id, { scope, name }, _signal, _onUpdate, ctx): Promise<AgentToolResult<MemoryRenderDetails>> {
 			const nameErr = validateName(name);
 			if (nameErr) return errorResult(nameErr);
 
@@ -590,7 +590,7 @@ export default function (pi: ExtensionAPI) {
 			"Save things that will be useful in *future* conversations — user preferences, project context, references, feedback — not transient task state.",
 		parameters: SaveParams,
 
-		async execute(_id, { scope, name, description, content, triggers, triggerFrequency }, _signal, _onUpdate, ctx): Promise<any> {
+		async execute(_id, { scope, name, description, content, triggers, triggerFrequency }, _signal, _onUpdate, ctx): Promise<AgentToolResult<MemoryRenderDetails>> {
 			const nameErr = validateName(name);
 			if (nameErr) return errorResult(nameErr);
 			const desc = description.trim();
@@ -709,7 +709,7 @@ export default function (pi: ExtensionAPI) {
 		"The orchestrator should pass tool_calls and message in context for trigger evaluation.",
 		parameters: SuggestParams,
 
-		async execute(_id, { query, top_k = 5, context }, _signal, _onUpdate, ctx): Promise<any> {
+		async execute(_id, { query, top_k = 5, context }, _signal, _onUpdate, ctx): Promise<AgentToolResult<MemoryRenderDetails>> {
 			const memories = collectMemories(ctx.cwd);
 
 			// No query = auto-injection mode: only trigger-based, no fuzzy search
@@ -825,7 +825,7 @@ export default function (pi: ExtensionAPI) {
 		description: "Delete a stored memory by `scope` + `name`. Use when a memory is wrong, outdated, or no longer useful.",
 		parameters: DeleteParams,
 
-		async execute(_id, { scope, name }, _signal, _onUpdate, ctx): Promise<any> {
+		async execute(_id, { scope, name }, _signal, _onUpdate, ctx): Promise<AgentToolResult<MemoryRenderDetails>> {
 			const nameErr = validateName(name);
 			if (nameErr) return errorResult(nameErr);
 
@@ -862,7 +862,7 @@ export default function (pi: ExtensionAPI) {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function errorResult(message: string) {
+function errorResult(message: string): AgentToolResult<MemoryRenderDetails> {
 	return { content: [{ type: "text", text: message }], details: undefined };
 }
 

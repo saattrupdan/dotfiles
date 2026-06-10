@@ -250,8 +250,7 @@ export default function (pi: ExtensionAPI) {
 					);
 				}
 				// Fallback for errors or unexpected output
-				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				const details = result.details as any;
+				const details = result.details;
 				if (details?.isError) {
 					return new Text(theme.fg("error", "✗ code_tree failed"), 0, 0);
 				}
