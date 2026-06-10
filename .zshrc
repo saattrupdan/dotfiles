@@ -74,34 +74,40 @@ PROMPT+='%F{154}%2~$ %f'
 # iTerm2 tab title (basename of current dir or git repo)
 #========================
 
-# Sets the iTerm2 tab title to show only the current directory name,
-# or the git repo name when inside a git repository.
+# Sets the iTerm2 tab title to show the full current directory path.
 # Requires "Applications in terminal may change the title" to be checked
 # in iTerm2 Settings → Profiles → [profile] → General → Title.
 set_tab_title() {
-  local dir="$PWD"
   local title
-  # Walk up the directory tree to find the git repo root
-  while [ "$dir" != "/" ]; do
-    if [ -d "$dir/.git" ]; then
-      title=$(basename "$dir")
-      break
-    fi
-    dir=$(dirname "$dir")
-  done
-  # Fallback to current directory basename if not in a git repo
-  if [ -z "$title" ]; then
-    title=$(basename "$PWD")
+  
+  # If connected via SSH, show the remote host name (e.g., "sparkie")
+  if [ -n "$SSH_CONNECTION" ] || [ -n "$SSH_CLIENT" ]; then
+    # On the remote machine, hostname -s gives the short host name
+    title=$(hostname -s 2>/dev/null || echo "ssh")
+  else
+    # Local session: show full path
+    title="$PWD"
   fi
-  # Set tab title using combined icon+window title sequence
-  echo -ne "\033]0;$title\007"
+  
+  # Set tab title using window title only (not icon)
+  echo -ne "\033]2;$title\007"
 }
 
 # Run on every prompt and directory change
-autoload -U add-hook-function
-add-hook-function chpwd_functions set_tab_title
-add-hook-function precmd_functions set_tab_title
+chpwd_functions+=(set_tab_title)
+precmd_functions+=(set_tab_title)
 set_tab_title  # Set it now for the current session
+
+
+#========================
+# SSH wrapper to pass config alias to remote
+#========================
+
+#========================
+# SSH wrapper
+#========================
+# Note: Remote servers set their own tab titles, which override local settings.
+# Can't change this without modifying the remote server's config.
 
 
 #=============================
