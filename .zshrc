@@ -85,12 +85,12 @@ set_tab_title() {
     # On the remote machine, hostname -s gives the short host name
     title=$(hostname -s 2>/dev/null || echo "ssh")
   else
-    # Local session: show full path
-    title="$PWD"
+    # Local session: show only current directory name (basename)
+    title=$(basename "$PWD")
   fi
   
-  # Set tab title using window title only (not icon)
-  echo -ne "\033]2;$title\007"
+  # Set tab title using combined icon+window title sequence
+  echo -ne "\033]0;$title\007"
 }
 
 # Run on every prompt and directory change
