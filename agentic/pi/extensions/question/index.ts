@@ -37,7 +37,7 @@
 import * as crypto from "node:crypto";
 import * as net from "node:net";
 
-import type { ExtensionAPI, ExtensionContext, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, ExtensionAPI, ExtensionContext, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
@@ -288,7 +288,7 @@ export default function (pi: ExtensionAPI) {
 			"To ask several things, call this tool multiple times in sequence.",
 		parameters: Params,
 
-		async execute(_toolCallId, { question, options }, signal, _onUpdate, ctx: ExtensionContext): Promise<any> {
+		async execute(_toolCallId, { question, options }, signal, _onUpdate, ctx: ExtensionContext): Promise<AgentToolResult<unknown>> {
 			const item: QuestionItem = { question, ...(options ? { options } : {}) };
 			const out = await dispatchAsk(ctx, [item], signal);
 			return buildResult(item, out);
