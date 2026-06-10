@@ -449,7 +449,7 @@ export default async function (pi: ExtensionAPI) {
 			"Prefer `read` for fetching web pages — it's quicker and converts to Markdown via docling. Only use `web_browse` for interactive/JS-heavy pages that need clicking, typing, or JavaScript execution.",
 		parameters: Params,
 
-		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			const { path: filePath, symbol } = params;
 			// 0a. URL → download + convert to Markdown via docling, then render.
 			if (URL_RE.test(filePath)) {

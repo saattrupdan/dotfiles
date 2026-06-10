@@ -95,13 +95,13 @@ function sha1(input: string): string {
  */
 export function resolveRepoId(cwd: string): string {
 	try {
-		const output = execSync("git rev-parse --show-toplevel", { cwd, encoding: "utf-8" });
+		const output = execSync("git rev-parse --show-toplevel", { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] });
 		const root = output.trim();
 		return sha1(root);
 	} catch {
 		// Try git-common-dir for worktrees
 		try {
-			const out = execSync("git rev-parse --git-common-dir", { cwd, encoding: "utf-8" });
+			const out = execSync("git rev-parse --git-common-dir", { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] });
 			const gitDir = out.trim();
 			const parent = path.dirname(gitDir);
 			return sha1(parent);
@@ -429,24 +429,62 @@ export function queryExactSymbol(db: DatabaseInstance, query: string): SymbolRes
 /**
  * Remove files that no longer exist on disk.
  */
-export function removeMissingFiles(db: DatabaseInstance, existingPaths: Set<string>): void {
+/**
+ * Remove files that no longer exist on disk.
+ * For large indexes, processes deletions in chunks to avoid blocking.
+ */
+export function removeMissingFiles(
+	db: DatabaseInstance,
+	existingPaths: Set<string>,
+	asyncCallback?: (_deleted: number, _total: number) => void,
+): void {
 	const stmt = db.prepare("SELECT path FROM files");
 	const rows = stmt.all() as { path: string }[];
 	const toDelete = rows
 		.filter((r) => !existingPaths.has(r.path))
 		.map((r) => r.path);
 
-	if (toDelete.length === 0) return;
+	if (toDelete.length === 0) {
+		asyncCallback?.(0, 0);
+		return;
+	}
 
+	// For small deletion sets, do it synchronously.
+	const SYNC_THRESHOLD = 1_000;
+	if (toDelete.length <= SYNC_THRESHOLD || !asyncCallback) {
+		const stmt2 = db.prepare("DELETE FROM files WHERE path = ?");
+		const stmt3 = db.prepare("DELETE FROM symbols WHERE file = ?");
+		for (const p of toDelete) {
+			stmt2.run(p);
+			stmt3.run(p);
+		}
+		asyncCallback?.(toDelete.length, toDelete.length);
+		return;
+	}
+
+	// For large deletion sets, process in chunks asynchronously.
+	let index = 0;
+	const BATCH_SIZE = 200;
 	const stmt2 = db.prepare("DELETE FROM files WHERE path = ?");
-	for (const p of toDelete) {
-		stmt2.run(p);
-	}
-
 	const stmt3 = db.prepare("DELETE FROM symbols WHERE file = ?");
-	for (const p of toDelete) {
-		stmt3.run(p);
-	}
+
+	const deleteNextBatch = (): void => {
+		const end = Math.min(index + BATCH_SIZE, toDelete.length);
+
+		for (; index < end; index++) {
+			const p = toDelete[index];
+			stmt2.run(p);
+			stmt3.run(p);
+		}
+
+		asyncCallback(index, toDelete.length);
+
+		if (index < toDelete.length) {
+			setImmediate(deleteNextBatch);
+		}
+	};
+
+	setImmediate(deleteNextBatch);
 }
 
 /**
@@ -651,16 +689,97 @@ export function refreshFile(
  * The earlier "iterate existing DB rows" approach never discovered new files,
  * leaving the index frozen at its first build.
  */
+// Track ongoing background reconciliation to avoid spawning duplicates.
+const backgroundReconcileState = new Map<
+	string,
+	{ running: boolean; queued: boolean; filesProcessed: number; totalFiles: number }
+>();
+
+/**
+ * Reconcile the index against the live working tree in the background.
+ * Processes files in chunks to avoid blocking the event loop.
+ */
 export function reconcileIndex(
 	db: DatabaseInstance,
 	repoRoot: string,
 	outline: OutlinerFn,
 ): void {
 	const diskFiles = listFiles(repoRoot);
-	for (const relPath of diskFiles) {
-		refreshFile(db, repoRoot, relPath, outline);
+
+	// For small directories, reconcile synchronously (fast path).
+	const SYNC_THRESHOLD = 5_000;
+	if (diskFiles.length <= SYNC_THRESHOLD) {
+		for (const relPath of diskFiles) {
+			refreshFile(db, repoRoot, relPath, outline);
+		}
+		removeMissingFiles(db, new Set(diskFiles));
+		return;
 	}
-	removeMissingFiles(db, new Set(diskFiles));
+
+	// For larger directories, reconcile asynchronously in chunks.
+	let state = backgroundReconcileState.get(repoRoot);
+	if (state?.running) {
+		// Already running — mark as needing a re-run when done.
+		backgroundReconcileState.set(repoRoot, { ...state, queued: true });
+		return;
+	}
+
+	// Start background reconciliation.
+	state = {
+		running: true,
+		queued: false,
+		filesProcessed: 0,
+		totalFiles: diskFiles.length,
+	};
+	backgroundReconcileState.set(repoRoot, state);
+
+	const BATCH_SIZE = 500; // Process 500 files per tick
+	let index = 0;
+
+	const processNextBatch = (): void => {
+		const end = Math.min(index + BATCH_SIZE, diskFiles.length);
+
+		for (; index < end; index++) {
+			const relPath = diskFiles[index];
+			try {
+				refreshFile(db, repoRoot, relPath, outline);
+			} catch {
+				// Skip files that fail to parse — don't crash the whole reconciliation.
+			}
+		}
+
+		state.filesProcessed = index;
+
+		if (index < diskFiles.length) {
+			// Yield to event loop, then continue with next batch.
+			setImmediate(processNextBatch);
+		} else {
+			// Done — remove deleted files asynchronously and mark complete.
+			removeMissingFiles(db, new Set(diskFiles), (_deleted, _total) => {
+				const currentState = backgroundReconcileState.get(repoRoot);
+				if (currentState?.queued) {
+					// Another reconcile was requested while we were running — start again.
+					backgroundReconcileState.set(repoRoot, {
+						running: true,
+						queued: false,
+						filesProcessed: 0,
+						totalFiles: diskFiles.length,
+					});
+					setImmediate(() => reconcileIndex(db, repoRoot, outline));
+				} else {
+					backgroundReconcileState.set(repoRoot, {
+						running: false,
+						queued: false,
+						filesProcessed: 0,
+						totalFiles: 0,
+					});
+				}
+			});
+		}
+	};
+
+	// Start async processing.
+	setImmediate(processNextBatch);
 }
 
 /**

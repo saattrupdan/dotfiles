@@ -4,7 +4,7 @@
  *
  * Two cooperating behaviours:
  *
- * 1. Relabel the inline hidden-thinking marker to "(hidden thoughts)" so finished
+ * 1. Relabel the inline hidden-thinking marker to "(...)" so finished
  *    thinking blocks no longer print a stale "Thinking..." (which misleadingly
  *    implies reasoning is still happening). Pi always renders *a* line for a
  *    hidden thinking block — it cannot be removed from an extension — so this
@@ -60,7 +60,7 @@ export default function (pi: ExtensionAPI) {
 	// Pi resets the label to its default ("Thinking...") on reload and session
 	// switches (resetExtensionUI), so re-apply our marker on the events that
 	// precede any render the user would see.
-	const HIDDEN_LABEL = "(hidden thoughts)";
+	const HIDDEN_LABEL = "(...)";
 	pi.on("session_start", (_event, ctx) => ctx.ui.setHiddenThinkingLabel(HIDDEN_LABEL));
 	pi.on("agent_start", (_event, ctx) => ctx.ui.setHiddenThinkingLabel(HIDDEN_LABEL));
 

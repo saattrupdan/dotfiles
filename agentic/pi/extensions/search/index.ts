@@ -558,5 +558,33 @@ export default async function (pi: ExtensionAPI) {
 				0,
 			);
 		},
+
+		renderResult(result, options, theme) {
+			// Collapsed: show only the summary from details.collapsed
+			if (!options.expanded) {
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				const details = result.details as any;
+				const summary = details?.collapsed;
+				if (summary) {
+					// Status indicators:
+					// ✓ search succeeded (results found or completed normally)
+					// ⚠ search used fallback engine (grep instead of ripgrep) or had partial issues
+					// ✗ search failed (outliner missing or no engine available)
+					if (summary.includes("[⚠")) {
+						return new Text(theme.fg("warning", `⚠ ${summary}`), 0, 0);
+					}
+					return new Text(theme.fg("success", `✓ ${summary}`), 0, 0);
+				}
+				// Fallback if no summary available
+				return new Text(theme.fg("success", "✓ search completed"), 0, 0);
+			}
+
+			// Expanded: show full output as normal
+			const text = (result.content ?? [])
+				.filter((c) => c.type === "text")
+				.map((c) => c.text ?? "")
+				.join("\n");
+			return new Text(text || "(no results)", 0, 0);
+		},
 	});
 }
