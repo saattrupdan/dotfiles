@@ -9,6 +9,18 @@ end
 -- Auto command group
 vim.api.nvim_create_augroup("BasicGroup", { clear = true })
 
+-- Prevent terminal title changes (block escape sequences)
+vim.api.nvim_create_autocmd("VimEnter", {
+  group = "BasicGroup",
+  pattern = "*",
+  callback = function()
+    vim.opt.title = false
+    vim.opt.icon = false
+    vim.cmd("set t_ts=")
+    vim.cmd("set t_fs=")
+  end,
+})
+
 -- Remove trailing whitespace everytime :w is called
 vim.api.nvim_create_autocmd("BufWritePre", {
   group = "BasicGroup",
