@@ -229,5 +229,41 @@ export default function (pi: ExtensionAPI) {
 				0,
 			);
 		},
+
+		renderResult(result, options, theme) {
+			// If collapsed (not expanded), show only a summary line
+			if (!options.expanded) {
+				const text = (result.content ?? [])
+					.filter((c) => c.type === "text")
+					.map((c) => c.text ?? "")
+					.join("\n");
+				// Extract summary from header line: "# tree <path> (<N> files, depth <d>)"
+				const headerMatch = text.match(/^# tree (.+) \((\d+) files, depth (\d+)\)/);
+				if (headerMatch) {
+					const [, treePath, fileCount] = headerMatch;
+					return new Text(
+						theme.fg("muted", `code_tree `) +
+						theme.fg("accent", treePath) +
+						theme.fg("success", ` ✓ ${fileCount} files`),
+						0,
+						0,
+					);
+				}
+				// Fallback for errors or unexpected output
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				const details = result.details as any;
+				if (details?.isError) {
+					return new Text(theme.fg("error", "✗ code_tree failed"), 0, 0);
+				}
+				return new Text(theme.fg("success", "✓ code_tree executed"), 0, 0);
+			}
+
+			// Expanded: show full tree output
+			const text = (result.content ?? [])
+				.filter((c) => c.type === "text")
+				.map((c) => c.text ?? "")
+				.join("\n");
+			return new Text(text || "(no output)", 0, 0);
+		},
 	});
 }
