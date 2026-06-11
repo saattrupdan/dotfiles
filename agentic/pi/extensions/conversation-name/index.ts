@@ -223,10 +223,6 @@ function truncate(text: string): string {
 	if (text.length <= MAX_NAME_LENGTH) {
 		return text;
 	}
-	const cut = text.slice(0, MAX_NAME_LENGTH - 3);
-	const lastSpace = cut.lastIndexOf(" ");
-	if (lastSpace > MAX_NAME_LENGTH / 2) {
-		return cut.slice(0, lastSpace) + "...";
-	}
-	return cut + "...";
+	// Hard cap at MAX_NAME_LENGTH characters.
+	return text.slice(0, MAX_NAME_LENGTH);
 }
