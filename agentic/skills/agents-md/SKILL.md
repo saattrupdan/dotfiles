@@ -3,6 +3,14 @@ name: agents-md
 description: Conventions for writing a good AGENTS.md file — a top-level orientation document that helps coding agents work effectively in a repo. Use when creating, updating, or reviewing AGENTS.md.
 tagline: Write an AGENTS.md that helps agents land changes correctly on the first try
 last-updated: 2026-05-23
+autoload:
+  tools:
+    - read
+    - write
+    - edit
+  files:
+    - AGENTS.md
+    - CLAUDE.md
 ---
 
 ## What AGENTS.md is for
