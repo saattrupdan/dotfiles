@@ -248,8 +248,19 @@ function generateConversationNameFallback(prompt: string): string {
 	// Capitalize the first character
 	cleaned = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
 
-	// Enforce 30-character limit (hard slice, no ellipsis)
-	cleaned = cleaned.slice(0, MAX_NAME_LENGTH);
+	// Enforce 30-character limit, respecting word boundaries.
+	if (cleaned.length > MAX_NAME_LENGTH) {
+		// Try to cut at the last space within the limit
+		const truncated = cleaned.slice(0, MAX_NAME_LENGTH);
+		const lastSpace = truncated.lastIndexOf(" ");
+		if (lastSpace > MAX_NAME_LENGTH / 2) {
+			// Cut at word boundary
+			cleaned = truncated.slice(0, lastSpace);
+		} else {
+			// No good word boundary, just use the limit
+			cleaned = truncated;
+		}
+	}
 
 	return cleaned || "New Conversation";
 }
