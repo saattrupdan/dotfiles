@@ -71,16 +71,19 @@ async function askOneLocally(
 
 				const unsubscribe = ui.onTerminalInput((data) => {
 					const key = data;
-					if (key === "j" || key === "\x1b[B") {
+					// Down Arrow
+					if (key === "\x1b[B") {
 						cursorIndex = (cursorIndex + 1) % item.options.length;
 						render();
 						return { consume: true };
 					}
-					if (key === "k" || key === "\x1b[A") {
+					// Up Arrow
+					if (key === "\x1b[A") {
 						cursorIndex = (cursorIndex - 1 + item.options.length) % item.options.length;
 						render();
 						return { consume: true };
 					}
+					// Space - toggle selection
 					if (key === " ") {
 						if (selected.has(cursorIndex)) {
 							selected.delete(cursorIndex);
@@ -90,6 +93,7 @@ async function askOneLocally(
 						render();
 						return { consume: true };
 					}
+					// Enter - submit
 					if (key === "\r" || key === "\n") {
 						unsubscribe();
 						if (selected.size === 0) {
@@ -100,6 +104,7 @@ async function askOneLocally(
 						}
 						return { consume: true };
 					}
+					// Esc - dismiss
 					if (key === "\x1b") {
 						unsubscribe();
 						resolve({ error: "dismissed" });
@@ -128,7 +133,7 @@ async function askOneLocally(
 						lines.push(cursor + " " + box + " " + optionText);
 					}
 					lines.push("");
-					lines.push(colors.dim + "Space: toggle · Enter: submit · Esc: cancel" + colors.reset);
+					lines.push(colors.dim + "↑↓ navigate · Space: toggle · Enter: submit · Esc: cancel" + colors.reset);
 					ui.setWorkingMessage(lines.join("\n"));
 				};
 
@@ -267,7 +272,7 @@ export default function (pi: ExtensionAPI) {
 		description:
 			"Ask the user a single question and wait for their answer. " +
 			"Pass `question` and optionally `options` (list of choices with 'Other…' auto-appended). " +
-			"Pass `multiSelect: true` for checkbox-list multi-select (j/k navigate, Space toggle, Enter submit).",
+			"Pass `multiSelect: true` for checkbox-list multi-select (↑↓ navigate, Space toggle, Enter submit).",
 		parameters: Params,
 		async execute(_toolCallId, { question, options, multiSelect }, signal, _onUpdate, ctx: ExtensionContext): Promise<AgentToolResult<unknown>> {
 			const item: QuestionItem = { question, ...(options ? { options } : {}), ...(multiSelect ? { multiSelect } : {}) };
