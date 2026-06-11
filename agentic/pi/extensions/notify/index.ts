@@ -49,6 +49,7 @@ const MIN_GAP_MS = 400;
 
 let lastNotifyAt = 0;
 let hasUI = false;
+let sessionName = "";
 
 function escapeForAppleScript(s: string): string {
 	return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -60,9 +61,11 @@ function notify(title: string, body: string, sound: string): void {
 	const now = Date.now();
 	if (now - lastNotifyAt < MIN_GAP_MS) return;
 	lastNotifyAt = now;
+	// Prefix the title with the session name if available (format: "Session — Title")
+	const fullTitle = sessionName ? `${sessionName} — ${title}` : title;
 	const script =
 		`display notification "${escapeForAppleScript(body)}" ` +
-		`with title "${escapeForAppleScript(title)}" ` +
+		`with title "${escapeForAppleScript(fullTitle)}" ` +
 		`sound name "${escapeForAppleScript(sound)}"`;
 	try {
 		const p = spawn("osascript", ["-e", script], { stdio: "ignore", detached: true });
@@ -88,6 +91,11 @@ export default function (pi: ExtensionAPI) {
 		// In non-interactive / print mode (pi -p "..."), there's no UI and
 		// notifications would be unwanted noise. Gate on ctx.hasUI.
 		hasUI = ctx.hasUI;
+		try {
+			sessionName = ctx.sessionManager.getSessionName() || "";
+		} catch {
+			sessionName = "";
+		}
 	});
 
 	pi.on("tool_call", async (event) => {
@@ -113,12 +121,20 @@ export default function (pi: ExtensionAPI) {
 			}
 		}
 		if (stopReason === "error" || stopReason === "aborted") {
-			// Skip notifications for transient errors that don't break the session:
+			// Skip notifications for transient/retryable errors:
 			// - "terminated" = Node.js version mismatch (Node 26 undici bug), auto-recovers
 			// - 429 = rate limit, Pi retries automatically
-			// Only notify if generation actually stopped with a real error.
+			// - tool_call_timeout = tool call timed out, Pi retries automatically
+			// - http_error = transient network errors, Pi retries automatically
+			// Only notify for blocking errors where no retries are attempted.
 			const msg = errorMessage?.toLowerCase() ?? "";
-			if (msg === "terminated" || msg.includes("429")) return;
+			if (
+				msg === "terminated" ||
+				msg.includes("429") ||
+				msg.includes("tool_call_timeout") ||
+				msg.includes("http_error")
+			)
+				return;
 			const detail = errorMessage ? truncate(errorMessage) : stopReason;
 			notify("Pi failed", detail, SOUND_FAILED);
 		} else {
