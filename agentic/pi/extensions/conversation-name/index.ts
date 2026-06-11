@@ -223,6 +223,6 @@ function truncate(text: string): string {
 	if (text.length <= MAX_NAME_LENGTH) {
 		return text;
 	}
-	// Hard cap at MAX_NAME_LENGTH characters.
-	return text.slice(0, MAX_NAME_LENGTH);
+	// Truncate to MAX_NAME_LENGTH including ellipsis.
+	return text.slice(0, MAX_NAME_LENGTH - 3) + "...";
 }
