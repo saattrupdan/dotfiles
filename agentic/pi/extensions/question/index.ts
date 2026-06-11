@@ -65,6 +65,13 @@ const Params = Type.Object({
 			maxItems: 10,
 		}),
 	),
+	multiSelect: Type.Optional(
+		Type.Boolean({
+			description:
+				"If true and options are provided, the user can select multiple options (presented as a checklist) and submit them together. Default is false (single selection).",
+			default: false,
+		}),
+	),
 });
 
 // ---------------------------------------------------------------------------
@@ -83,7 +90,84 @@ async function askOneLocally(
 	signal: AbortSignal | undefined,
 ): Promise<AskOutcome> {
 	try {
-		if (item.options && item.options.length > 0) {
+		if (item.options && item.options.length > 0) {		// Multi-select mode: checkbox list with keyboard navigation
+		if (item.multiSelect) {
+			let cursorIndex = 0;
+			const selected = new Set<number>();
+
+			return new Promise<AskOutcome>((resolve) => {
+				const unsubscribe = ui.onTerminalInput((data) => {
+					const key = data;
+					// j or Down Arrow
+					if (key === "j" || key === "\x1b[B" || key === "down") {
+						cursorIndex = (cursorIndex + 1) % item.options.length;
+						render();
+						return true;
+					}
+					// k or Up Arrow
+					if (key === "k" || key === "\x1b[A" || key === "up") {
+						cursorIndex = (cursorIndex - 1 + item.options.length) % item.options.length;
+						render();
+						return true;
+					}
+					// Space - toggle selection
+					if (key === " " || key === " ") {
+						if (selected.has(cursorIndex)) {
+							selected.delete(cursorIndex);
+						} else {
+							selected.add(cursorIndex);
+						}
+						render();
+						return true;
+					}
+					// Enter - submit
+					if (key === "\r" || key === "\n") {
+						unsubscribe();
+						if (selected.size === 0) {
+							resolve({ error: "empty" });
+						} else {
+							const answers = Array.from(selected).map((i) => item.options[i]);
+							resolve({ answer: answers.join(", ") });
+						}
+						return true;
+					}
+					// Esc - dismiss
+					if (key === "\x1b" || key === "escape") {
+						unsubscribe();
+						resolve({ error: "dismissed" });
+						return true;
+					}
+					return false;
+				});
+
+				// Signal abort handler
+				if (signal) {
+					signal.addEventListener("abort", () => {
+						unsubscribe();
+						resolve({ error: "aborted" });
+					}, { once: true });
+				}
+
+				const render = () => {
+					const lines = [title, ""];
+					for (let i = 0; i < item.options.length; i++) {
+						const isSelected = selected.has(i);
+						const isCursor = i === cursorIndex;
+						const checkbox = isSelected ? "[✓]" : "[ ]";
+						const cursor = isCursor ? "→" : " ";
+						lines.push(`${cursor} ${checkbox} ${item.options[i]}`);
+					}
+					lines.push("");
+					lines.push("j/k or ↑/↓ to navigate · Space to toggle · Enter to submit · Esc to cancel");
+					lines.push("(Keystrokes may appear in input field - this is normal, they're captured above)");
+					ui.setWorkingMessage(lines.join("\n"));
+				};
+
+				render();
+			});
+		}
+
+			// Single-select mode (existing behavior)
 			const choices = [...item.options, OTHER_LABEL];
 			const choice = await ui.select(title, choices, { signal });
 			if (choice === undefined) return { error: "dismissed" };
@@ -285,11 +369,16 @@ export default function (pi: ExtensionAPI) {
 			"Call this whenever you need information from the user, or when the user explicitly asks you to ask them something. " +
 			"Pass `question` (the text the user sees) and optionally `options` (a list of choices); " +
 			"with `options`, an 'Other…' entry is appended automatically so the user can still type a custom answer. " +
+			"Pass `multiSelect: true` with options to let users select multiple options and submit them together. " +
 			"To ask several things, call this tool multiple times in sequence.",
 		parameters: Params,
 
-		async execute(_toolCallId, { question, options }, signal, _onUpdate, ctx: ExtensionContext): Promise<AgentToolResult<unknown>> {
-			const item: QuestionItem = { question, ...(options ? { options } : {}) };
+		async execute(_toolCallId, { question, options, multiSelect }, signal, _onUpdate, ctx: ExtensionContext): Promise<AgentToolResult<unknown>> {
+			const item: QuestionItem = {
+				question,
+				...(options ? { options } : {}),
+				...(multiSelect ? { multiSelect } : {}),
+			};
 			const out = await dispatchAsk(ctx, [item], signal);
 			return buildResult(item, out);
 		},
@@ -311,7 +400,7 @@ export default function (pi: ExtensionAPI) {
 // ---------------------------------------------------------------------------
 
 function buildResult(
-	_item: QuestionItem,
+	item: QuestionItem,
 	out: { answers?: string[]; error?: string },
 ) {
 	if (out.error) {
@@ -329,7 +418,14 @@ function buildResult(
 	}
 	const answer = out.answers?.[0] ?? "";
 	return {
-		content: [{ type: "text", text: `User answered: ${answer}` }],
+		content: [
+			{
+				type: "question_response",
+				answer,
+				question: item.question,
+				...(item.options ? { options: item.options } : {}),
+			},
+		],
 		details: undefined,
 	};
 }

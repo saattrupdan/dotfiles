@@ -35,6 +35,7 @@ export const RESPONSE_TAG = "PI_QUESTION_RESPONSE ";
 export interface QuestionItem {
 	question: string;
 	options?: string[];
+	multiSelect?: boolean;
 }
 
 export interface QuestionRequest {

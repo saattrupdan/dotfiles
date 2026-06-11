@@ -140,6 +140,7 @@ async function generateNameWithModel(
 			`- Use Title Case\n` +
 			`- No quotes around the title value in the JSON (it's already a JSON string)\n` +
 			`- No trailing punctuation\n` +
+			`- Do NOT truncate mid-word or use ellipses - generate a proper title under the limit\n` +
 			`- Do NOT reference memories, auto-injection, or system context\n\n` +
 			`Request: ${request}`;
 
@@ -161,10 +162,13 @@ async function generateNameWithModel(
 		let name: string;
 		try {
 			const json = JSON.parse(parsed);
-			if (typeof json.name !== "string" || json.name.length === 0 || json.name.length > MAX_NAME_LENGTH) {
-				continue; // Invalid schema or too long - retry
+			if (typeof json.name !== "string" || json.name.length === 0) {
+				continue; // Invalid schema - retry
 			}
-			name = json.name;
+			// Truncate to MAX_NAME_LENGTH if needed, respecting word boundaries.
+			// This ensures we never return an over-limit name or fall back to
+			// the mechanical truncation that can cut mid-word.
+			name = truncateTitle(json.name);
 		} catch {
 			// Not valid JSON - retry
 			continue;
@@ -230,6 +234,24 @@ function stripInjectedMemoryBlock(text: string): string {
 }
 
 /**
+ * Truncate a title to MAX_NAME_LENGTH, respecting word boundaries where
+ * possible to avoid cutting mid-word.
+ */
+function truncateTitle(title: string): string {
+	if (title.length <= MAX_NAME_LENGTH) {
+		return title;
+	}
+	// Find the last space within the limit (search the full title, not a pre-sliced substring)
+	const lastSpace = title.slice(0, MAX_NAME_LENGTH).lastIndexOf(" ");
+	if (lastSpace > MAX_NAME_LENGTH / 2) {
+		// Cut at word boundary
+		return title.slice(0, lastSpace);
+	}
+	// No good word boundary, just use the limit
+	return title.slice(0, MAX_NAME_LENGTH);
+}
+
+/**
  * Mechanical fallback when the model naming call fails: take the first
  * sentence, strip common filler prefixes, capitalize, and truncate.
  */
@@ -241,26 +263,12 @@ function generateConversationNameFallback(prompt: string): string {
 
 	// Remove common filler prefixes
 	let cleaned = firstSentence.replace(
-		/^(can you|could you|please|I want to|I need to|I'd like to|let's|help me to?)\s+/i,
+		/^(can you|could you|please|I want to|I need to|I need to|I'd like to|let's|help me to?)\s+/i,
 		"",
 	);
 
 	// Capitalize the first character
 	cleaned = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
 
-	// Enforce 30-character limit, respecting word boundaries.
-	if (cleaned.length > MAX_NAME_LENGTH) {
-		// Try to cut at the last space within the limit
-		const truncated = cleaned.slice(0, MAX_NAME_LENGTH);
-		const lastSpace = truncated.lastIndexOf(" ");
-		if (lastSpace > MAX_NAME_LENGTH / 2) {
-			// Cut at word boundary
-			cleaned = truncated.slice(0, lastSpace);
-		} else {
-			// No good word boundary, just use the limit
-			cleaned = truncated;
-		}
-	}
-
-	return cleaned || "New Conversation";
+	return truncateTitle(cleaned) || "New Conversation";
 }
