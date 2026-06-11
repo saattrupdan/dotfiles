@@ -31,9 +31,25 @@ import { promisify } from 'node:util';
 
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 
-const execAsync = promisify(childProcess.exec);
+const execAsync = (cmd: string, timeoutMs = 8000) =>
+	Promise.race([
+		promisify(childProcess.exec)(cmd),
+		new Promise<never>((_, reject) =>
+			setTimeout(() => reject(new Error('exec timed out')), timeoutMs)
+		),
+	]);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FILE_PROTECTOR_PATH = path.join(__dirname, 'vm-runner/.build/debug/vm-runner');
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+function errorStdout(error: unknown): string | undefined {
+	if (!error || typeof error !== 'object' || !('stdout' in error)) return undefined;
+	const stdout = (error as { stdout?: unknown }).stdout;
+	return typeof stdout === 'string' ? stdout : undefined;
+}
 
 interface FileProtectionConfig {
 	enabled: boolean;
@@ -79,7 +95,7 @@ export default function (pi: ExtensionAPI) {
 					}
 				}
 			}
-		} catch (_error) {
+		} catch {
 			// Use defaults on error
 		}
 	}
@@ -96,7 +112,7 @@ export default function (pi: ExtensionAPI) {
 			// Check if tmutil is available
 			await execAsync('which tmutil');
 			return { supported: true };
-		} catch (_error) {
+		} catch {
 			return { supported: false, reason: 'tmutil not available' };
 		}
 	}
@@ -117,7 +133,7 @@ export default function (pi: ExtensionAPI) {
 				return result.snapshotName;
 			}
 			return null;
-		} catch (_error) {
+		} catch {
 			// Non-fatal - continue without snapshot
 			return null;
 		}
@@ -134,7 +150,7 @@ export default function (pi: ExtensionAPI) {
 			if (!jsonLine) return [];
 			const result = JSON.parse(jsonLine);
 			return result.snapshots || [];
-		} catch (_error) {
+		} catch {
 			return [];
 		}
 	}
@@ -169,7 +185,7 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			return { safe: true, severity: 'none' };
-		} catch (error: any) {
+		} catch {
 			// Fail-secure: if we can't check, block the command
 			return { safe: false, severity: 'high', reason: 'Safety check unavailable - command blocked' };
 		}
@@ -192,7 +208,7 @@ export default function (pi: ExtensionAPI) {
 		try {
 			const { stdout } = await execAsync(`git -C "${projectRoot}" ls-files --error-unmatch "${filePath}" 2>/dev/null`);
 			return stdout.trim().length > 0;
-		} catch (_error) {
+		} catch {
 			return false;
 		}
 	}
@@ -223,7 +239,7 @@ export default function (pi: ExtensionAPI) {
 			});
 
 			ctx.ui.setStatus('file-protection', snapshotName ? '🛡️' : undefined);
-		} catch (_error) {
+		} catch {
 			ctx.ui.setStatus('file-protection', '⚠️ Protection inactive');
 		}
 	});
@@ -235,7 +251,11 @@ export default function (pi: ExtensionAPI) {
 
 		activeProtections.delete(agentId);
 		// Cleanup old snapshots (keep last 10)
-		try { await execAsync(`${FILE_PROTECTOR_PATH} cleanup`); } catch (_e) {}
+		try {
+			await execAsync(`${FILE_PROTECTOR_PATH} cleanup`);
+		} catch {
+			// Cleanup is best-effort.
+		}
 		ctx.ui.setStatus('file-protection', undefined);
 	});
 
@@ -262,7 +282,7 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		// Check 2: Paths outside allowed directories
-		const pathPattern = command.match(/(?:^|\s)(\/[\w/.-]+|\~\/[\w/.-]+|\.\/[\w/.-]+)/g);
+		const pathPattern = command.match(/(?:^|\s)(\/[\w/.-]+|~\/[\w/.-]+|\.\/[\w/.-]+)/g);
 		if (pathPattern) {
 			const blockedPaths = pathPattern.filter((p: string) => {
 				const pPath = p.trim();
@@ -350,12 +370,13 @@ export default function (pi: ExtensionAPI) {
 						} else {
 							ctx.ui.setStatus('file-protection', `❌ ${result.error}`);
 						}
-					} catch (error: any) {
-						if (error.stdout) {
-							const result = JSON.parse(error.stdout);
+					} catch (error) {
+						const stdout = errorStdout(error);
+						if (stdout) {
+							const result = JSON.parse(stdout);
 							ctx.ui.setStatus('file-protection', `❌ ${result.error}. Available: ${result.available?.join(', ') || 'none'}`);
 						} else {
-							ctx.ui.setStatus('file-protection', `❌ Rollback failed: ${error.message}`);
+							ctx.ui.setStatus('file-protection', `❌ Rollback failed: ${errorMessage(error)}`);
 						}
 					}
 					break;
@@ -369,8 +390,8 @@ export default function (pi: ExtensionAPI) {
 						} else {
 							ctx.ui.setStatus('file-protection', '⚠️ Snapshot failed');
 						}
-					} catch (error: any) {
-						ctx.ui.setStatus('file-protection', `❌ Snapshot failed: ${error.message}`);
+					} catch (error) {
+						ctx.ui.setStatus('file-protection', `❌ Snapshot failed: ${errorMessage(error)}`);
 					}
 					break;
 
