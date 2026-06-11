@@ -15,7 +15,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-const MAX_NAME_LENGTH = 30;
+const MAX_NAME_LENGTH = 25;
 const NAMING_TIMEOUT_MS = 30_000;
 
 export default function (pi: ExtensionAPI) {
@@ -164,6 +164,11 @@ function sanitizeTitle(raw: string): string {
 	// Drop trailing sentence punctuation.
 	title = title.replace(/[.!?,;:]+$/, "").trim();
 
+	// Reject titles that reference auto-injected memories.
+	if (MEMORY_TITLE_PATTERN.test(title)) {
+		return "";
+	}
+
 	return truncate(title);
 }
 
@@ -173,6 +178,10 @@ const INJECTED_MEMORY_MARKER =
 
 /** Separator memory-audit places between its block and the real query. */
 const INJECTED_MEMORY_SEP = "\n\n---\n";
+
+/** Pattern to detect titles that reference auto-injected memories. Titles matching this are rejected. */
+const MEMORY_TITLE_PATTERN =
+	/\b(memory|memories|injected|auto-injected|auto-injection|context|triggers?|startup)\b/i;
 
 /**
  * If `text` is a memory-audit auto-injection (`${block}\n\n---\n${query}`),
