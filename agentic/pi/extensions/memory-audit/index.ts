@@ -5,15 +5,14 @@
  *    process new conversation lines and save memories. Throttled by a cooldown.
  *
  * 2. Trigger-based auto-injection: memories that declare `triggers:` in their
- *    frontmatter are injected into the conversation when a trigger fires —
- *      • `input`       evaluates startup + pattern triggers against the user
- *                      message and prepends the matched memories to it;
- *      • `tool_call`   evaluates pattern triggers against the tool's arguments
- *                      *before* it runs and, on a match, blocks the call with
- *                      the matched memories as the reason — a one-time nudge
- *                      that lets the LLM reconsider with the memory in context;
- *      • `tool_result` evaluates tool + pattern triggers against the tool name
- *                      and its output, appending matched memories to the result.
+ *    frontmatter are injected when a trigger fires —
+ *      • `startup`     injected once into the system prompt at session start
+ *                      (hidden from UI, preserves prefix caching after turn 1);
+ *      • `input`       pattern triggers matched against the user message;
+ *      • `tool_call`   pattern triggers matched against the tool's arguments
+ *                      *before* it runs — blocks the call once with the memory
+ *                      as the reason, so the LLM reconsiders with context;
+ *      • `tool_result` tool + pattern triggers matched against the tool output.
  *    A memory is injected at most once per session (deduped via a per-session
  *    file so it survives extension hot-reloads). Memories without triggers are
  *    never auto-injected.
@@ -106,12 +105,7 @@ function formatMemories(mems: MemoryDoc[], blocked = false): string {
 	}
 
 	return (
-		`Relevant ${memWord} found for this request (auto-injected). ` +
-		`${plural ? "These capture" : "This captures"} prior context, user preferences, and gotchas ` +
-		`that apply to what you're doing right now and reflect how the user expects you to work.\n\n` +
-		`Before you respond, call \`memory_read\` on ${refEach} below to load the ` +
-		`full body, then actually apply what you learn — let it shape your answer, your plan, and the ` +
-		`commands you run. Only the name is shown here, which is not enough to act on:\n\n` +
+		`Relevant ${memWord} (auto-injected). Call \`memory_read\` on ${refEach} below before proceeding:\n\n` +
 		`${lines.join("\n")}`
 	);
 }
@@ -197,7 +191,8 @@ export default function (pi: ExtensionAPI) {
 		return formatMemories(fired, blocked);
 	}
 
-	const INPUT_EVENTS = new Set<Trigger["event"]>(["startup", "pattern"]);
+	const INPUT_EVENTS = new Set<Trigger["event"]>(["pattern"]); // startup handled separately via before_agent_start
+	const STARTUP_EVENTS = new Set<Trigger["event"]>(["startup"]);
 	const TOOL_CALL_EVENTS = new Set<Trigger["event"]>(["pattern"]);
 	const TOOL_EVENTS = new Set<Trigger["event"]>(["tool", "pattern"]);
 
@@ -209,8 +204,8 @@ export default function (pi: ExtensionAPI) {
 		exec(`nohup bash -c '${AUDIT_SCRIPT}' </dev/null >/dev/null 2>&1 &`, () => {});
 	});
 
-	// Auto-inject on user input: startup + pattern triggers (matched against the
-	// message text). Prepended so the memories precede the user's request.
+	// Auto-inject on user input: pattern triggers (matched against the message text).
+	// Prepended so the memories precede the user's request.
 	pi.on("input", async (event, ctx) => {
 		if (!hasUI) return { action: "continue" };
 		const query = event.text;
@@ -297,5 +292,22 @@ export default function (pi: ExtensionAPI) {
 		if (!block) return undefined;
 
 		return { content: [...event.content, { type: "text" as const, text: `\n\n${block}` }] };
+	});
+
+	// Inject startup-trigger memories into the system prompt (hidden from UI).
+	// This runs once per session at agent start, preserving prefix caching.
+	let startupInjected = false;
+	pi.on("before_agent_start", async (event, ctx) => {
+		if (!hasUI) return undefined;
+		if (startupInjected) return undefined; // only once per session
+
+		const block = collect(ctx, { message: event.prompt }, STARTUP_EVENTS);
+		if (!block) {
+			startupInjected = true;
+			return undefined;
+		}
+		startupInjected = true;
+		// Append to system prompt — goes to model but not visible in conversation UI
+		return { systemPrompt: `${event.systemPrompt}\n\n--- AUTO-INJECTED CONTEXT (startup) ---\n${block}` };
 	});
 }

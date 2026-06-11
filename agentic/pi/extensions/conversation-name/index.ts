@@ -15,8 +15,9 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-const MAX_NAME_LENGTH = 25;
+const MAX_NAME_LENGTH = 30;
 const NAMING_TIMEOUT_MS = 30_000;
+const MAX_RETRIES = 2;
 
 export default function (pi: ExtensionAPI) {
 	// Sessions for which a naming call is in flight. Guards against spawning a
@@ -58,7 +59,7 @@ export default function (pi: ExtensionAPI) {
 
 		// Extract the first prompt text. User content may be a plain string or
 		// an array of content parts.
-		const content = (msg as any).content;
+		const content = (msg as { content?: unknown }).content;
 		let firstPrompt = "";
 		if (typeof content === "string") {
 			firstPrompt = content;
@@ -118,8 +119,8 @@ export default function (pi: ExtensionAPI) {
 
 /**
  * Ask the model for a concise session title via a lightweight `pi -p` call.
- * Uses --no-extensions so the sub-invocation is fast and does not recurse into
- * this extension (or trigger memory injection). Returns "" on any failure.
+ * Uses structured JSON output with a schema that enforces the 30-character limit.
+ * Retries up to MAX_RETRIES times if validation fails. Returns "" on any failure.
  */
 async function generateNameWithModel(
 	pi: ExtensionAPI,
@@ -128,21 +129,53 @@ async function generateNameWithModel(
 ): Promise<string> {
 	// Keep the input bounded - a title only needs the gist of the request.
 	const request = prompt.slice(0, 1000);
-	const instruction =
-		"Generate a short, descriptive session title (3-6 words, Title Case, " +
-		"no quotes, no trailing punctuation) summarizing what this request is " +
-		"about. Respond with ONLY the title.\n\nRequest: " +
-		request;
 
-	const result = await pi.exec("pi", ["-p", "--no-extensions", "--no-session", instruction], {
-		cwd,
-		timeout: NAMING_TIMEOUT_MS,
-	});
+	for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+		const instruction =
+			`Generate a concise session title summarizing this request. ` +
+			`Output ONLY valid JSON with this exact schema:\n` +
+			`{"name": "<title>"}\n\n` +
+			`Constraints:\n` +
+			`- The "name" field must be 1-30 characters (inclusive)\n` +
+			`- Use Title Case\n` +
+			`- No quotes around the title value in the JSON (it's already a JSON string)\n` +
+			`- No trailing punctuation\n` +
+			`- Do NOT reference memories, auto-injection, or system context\n\n` +
+			`Request: ${request}`;
 
-	if (result.code !== 0) {
-		return "";
+		const result = await pi.exec("pi", ["-p", "--no-extensions", "--no-session", instruction], {
+			cwd,
+			timeout: NAMING_TIMEOUT_MS,
+		});
+
+		if (result.code !== 0) {
+			continue; // Retry
+		}
+
+		const parsed = sanitizeTitle(result.stdout);
+		if (!parsed) {
+			continue; // Retry
+		}
+
+		// Try to parse as JSON and validate the schema
+		let name: string;
+		try {
+			const json = JSON.parse(parsed);
+			if (typeof json.name !== "string" || json.name.length === 0 || json.name.length > MAX_NAME_LENGTH) {
+				continue; // Invalid schema or too long - retry
+			}
+			name = json.name;
+		} catch {
+			// Not valid JSON - retry
+			continue;
+		}
+
+		// Success - validated name within the 30-character limit
+		return name;
 	}
-	return sanitizeTitle(result.stdout);
+
+	// All retries failed
+	return "";
 }
 
 /**
@@ -169,12 +202,12 @@ function sanitizeTitle(raw: string): string {
 		return "";
 	}
 
-	return truncate(title);
+	return title;
 }
 
 /** Leading marker of the memory-audit auto-injection block. */
 const INJECTED_MEMORY_MARKER =
-	/^Relevant memor(?:y|ies) found for this request \(auto-injected\)\./;
+	/^Relevant (?:memor(?:y|ies) found for this request|memor(?:y|ies)) \(auto-injected\)\./;
 
 /** Separator memory-audit places between its block and the real query. */
 const INJECTED_MEMORY_SEP = "\n\n---\n";
@@ -215,14 +248,8 @@ function generateConversationNameFallback(prompt: string): string {
 	// Capitalize the first character
 	cleaned = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
 
-	return truncate(cleaned) || "New Conversation";
-}
+	// Enforce 30-character limit (hard slice, no ellipsis)
+	cleaned = cleaned.slice(0, MAX_NAME_LENGTH);
 
-/** Truncate to MAX_NAME_LENGTH, preferring a word boundary with an ellipsis. */
-function truncate(text: string): string {
-	if (text.length <= MAX_NAME_LENGTH) {
-		return text;
-	}
-	// Truncate to MAX_NAME_LENGTH including ellipsis.
-	return text.slice(0, MAX_NAME_LENGTH - 3) + "...";
+	return cleaned || "New Conversation";
 }

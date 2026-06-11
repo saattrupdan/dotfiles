@@ -48,6 +48,7 @@
 
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
+import { invalidateTriggerCache } from "../_memory/triggers.ts";
 import * as os from "node:os";
 import * as path from "node:path";
 import { execSync } from "node:child_process";
@@ -263,6 +264,11 @@ function enforceLruCaps(scope: "system" | "project", cwd: string): void {
 		} catch {
 			// best effort
 		}
+	}
+
+	// Invalidate trigger cache if any files were deleted
+	if (list.length > count) {
+		invalidateTriggerCache();
 	}
 }
 
@@ -634,8 +640,9 @@ export default function (pi: ExtensionAPI) {
 			const rendered = renderFrontmatter(name, description, createdAt, now, content, effectiveTriggers, effectiveFrequency);
 			fs.writeFileSync(filePath, rendered, "utf-8");
 
-			// Invalidate suggestion cache so new triggers are picked up
+			// Invalidate caches so changes are picked up immediately
 			cachedMemories.length = 0;
+			invalidateTriggerCache();
 			enforceLruCaps(scope, ctx.cwd);
 			updateIndex(scope, ctx.cwd);
 
@@ -834,8 +841,9 @@ export default function (pi: ExtensionAPI) {
 				return errorResult(`No memory "${name}" in scope "${scope}".`);
 			}
 			fs.unlinkSync(filePath);
-			// Invalidate suggestion cache
+			// Invalidate caches so deletion is picked up immediately
 			cachedMemories.length = 0;
+			invalidateTriggerCache();
 			updateIndex(scope, ctx.cwd);
 
 			return {

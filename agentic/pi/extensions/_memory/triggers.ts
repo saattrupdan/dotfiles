@@ -25,6 +25,26 @@ import { execSync } from "node:child_process";
 
 export const MEMORY_ROOT = path.join(os.homedir(), ".pi", "agent", "memories");
 
+// ---------------------------------------------------------------------------
+// Caching for loadTriggeredMemories — avoids re-reading all files on every call
+// ---------------------------------------------------------------------------
+
+// Cache key is the cwd (project memories are cwd-specific; system memories are shared
+// but we include cwd in the key to keep invalidation simple).
+interface CacheEntry {
+	cwd: string;
+	memories: MemoryDoc[];
+	timestamp: number;
+}
+
+let cache: CacheEntry | null = null;
+
+// Invalidate cache when a memory file is modified (tracked by the memory extension).
+// Exported so memory/index.ts can call it after save/delete.
+export function invalidateTriggerCache(): void {
+	cache = null;
+}
+
 export function systemDir(): string {
 	return path.join(MEMORY_ROOT, "system");
 }
@@ -258,7 +278,15 @@ function listScopeDocs(scope: MemoryScope, cwd: string): MemoryDoc[] {
  * Load every memory (system + project) that declares at least one trigger.
  * Memories without triggers are excluded entirely — they are only reachable via
  * explicit `memory_read` / `memory_suggest`, never auto-injected.
+ *
+ * Results are cached per cwd to avoid re-reading all files on every message.
+ * Cache is invalidated when memories are saved/deleted (call `invalidateTriggerCache()`).
  */
 export function loadTriggeredMemories(cwd: string): MemoryDoc[] {
-	return [...listScopeDocs("system", cwd), ...listScopeDocs("project", cwd)];
+	if (cache !== null && cache.cwd === cwd) {
+		return cache.memories;
+	}
+	const memories = [...listScopeDocs("system", cwd), ...listScopeDocs("project", cwd)];
+	cache = { cwd, memories, timestamp: Date.now() };
+	return memories;
 }
