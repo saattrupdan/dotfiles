@@ -133,12 +133,10 @@ async function generateNameWithModel(
 	for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
 		const instruction =
 			`Generate a concise session title summarizing this request. ` +
-			`Output ONLY valid JSON with this exact schema:\n` +
-			`{"name": "<title>"}\n\n` +
+			`Output ONLY the title text — no JSON, no quotes, no markdown.\n\n` +
 			`Constraints:\n` +
-			`- The "name" field must be 1-30 characters (inclusive)\n` +
+			`- Must be 1-30 characters (inclusive)\n` +
 			`- Use Title Case\n` +
-			`- No quotes around the title value in the JSON (it's already a JSON string)\n` +
 			`- No trailing punctuation\n` +
 			`- Do NOT truncate mid-word or use ellipses - generate a proper title under the limit\n` +
 			`- Do NOT reference memories, auto-injection, or system context\n\n` +
@@ -153,25 +151,9 @@ async function generateNameWithModel(
 			continue; // Retry
 		}
 
-		const parsed = sanitizeTitle(result.stdout);
-		if (!parsed) {
+		const name = truncateTitle(sanitizeTitle(result.stdout));
+		if (!name) {
 			continue; // Retry
-		}
-
-		// Try to parse as JSON and validate the schema
-		let name: string;
-		try {
-			const json = JSON.parse(parsed);
-			if (typeof json.name !== "string" || json.name.length === 0) {
-				continue; // Invalid schema - retry
-			}
-			// Truncate to MAX_NAME_LENGTH if needed, respecting word boundaries.
-			// This ensures we never return an over-limit name or fall back to
-			// the mechanical truncation that can cut mid-word.
-			name = truncateTitle(json.name);
-		} catch {
-			// Not valid JSON - retry
-			continue;
 		}
 
 		// Success - validated name within the 30-character limit
