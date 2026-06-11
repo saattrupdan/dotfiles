@@ -292,5 +292,5 @@ function buildResult(item: QuestionItem, out: { answers?: string[]; error?: stri
 		return { content: [{ type: "text", text: out.error + " Proceed with a reasonable default." }], details: undefined };
 	}
 	const answer = out.answers?.[0] ?? "";
-	return { content: [{ type: "question_response", answer, question: item.question, ...(item.options ? { options: item.options } : {}) }], details: undefined };
+	return { content: [{ type: "text", text: answer }], details: undefined };
 }
