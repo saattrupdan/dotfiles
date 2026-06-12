@@ -2,7 +2,6 @@
 name: transport-dk
 description: Danish public transport via the `transport` CLI — plan routes, read live station departures, look up disruptions and planned schedule changes, browse ticket products, and search transport Q&A. Merges Rejseplanen (journey engine), DSB, Copenhagen Metro (m.dk) and dinoffentligetransport.dk. Use for any Danish transit lookup. Buying tickets is out of scope.
 last-updated: 2026-05-30
-allowed-tools: Bash(transport:*)
 ---
 
 # transport-dk

@@ -2,7 +2,6 @@
 name: citizen-dk
 description: Search Danish citizen / public-service portals via the `citizen` CLI — Q&A search across borger.dk (national), nyidanmark.dk (immigration) and frederiksberg.dk (municipal), plus factual pages for any of the 98 municipalities (kommune.dk). Merges borger-dk, frederiksberg-dk, kk-dk, kommune-dk and nyidanmark-dk. Use to find official Danish citizen-service info.
 last-updated: 2026-05-30
-allowed-tools: Bash(citizen:*)
 ---
 
 # citizen-dk

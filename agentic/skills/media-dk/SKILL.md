@@ -2,7 +2,6 @@
 name: media-dk
 description: Danish broadcast media via the `media` CLI — latest news headlines and keyword content search across dr.dk (DR) and tv2.dk (TV 2). Merges the dr-dk and tv2-dk skills. Use to fetch the latest Danish news or find recent coverage of a topic across both broadcasters.
 last-updated: 2026-05-30
-allowed-tools: Bash(media:*)
 ---
 
 # media-dk

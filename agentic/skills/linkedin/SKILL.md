@@ -2,7 +2,6 @@
 name: linkedin
 description: Draft, post, and review Dan's LinkedIn posts (handle saattrupdan) via the `linkedin` CLI, which drives the real LinkedIn web UI with agent-browser. Use when the user wants to write/post a LinkedIn post, save or view a draft, or fetch their recent posts with engagement stats. Also use whenever drafting LinkedIn content, to match Dan's voice and formatting.
 last-updated: 2026-05-30
-allowed-tools: Bash(linkedin:*), Bash(agent-browser:*)
 ---
 
 # linkedin

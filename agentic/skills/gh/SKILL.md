@@ -1,7 +1,6 @@
 ---
 name: gh
 description: GitHub CLI (gh) — the official command-line interface to GitHub. Use when the user needs to create or manage pull requests, issues, repositories, GitHub Actions, gists, API calls, authentication, or any other GitHub workflow from the terminal. Also use for scripting GitHub automation, querying the GraphQL/REST API, managing forks/clones, and viewing workflow run logs. Prefer gh over web browsing or the raw REST API.
-allowed-tools: Bash(gh:*)
 tagline: Official GitHub CLI for PRs, issues, repos, Actions, API, and more
 triggers:
   - pattern: "(create|make|open|submit|push|get|prepare)\\s+(a|an|the\\s+)?(pr|pull\\s*request|pull-request)"
@@ -74,6 +73,15 @@ gh pr status                       # Current branch
 
 gh pr close 123 / reopen 123 / lock 123 / ready 123 / revert 123
 gh pr edit 123 --body-file body.md  # Update body from file
+gh pr comment 123 -b $'Line 1\nLine 2'  # Use $'...' for newlines
+```
+
+**Gotcha: Newlines in comments** — Literal `\n` in bash strings are *not* rendered as newlines by GitHub. For multi-line comments, use `$'...'` syntax for actual newlines, or use `--body-file`:
+
+```bash
+gh pr comment <N> -b $'Line 1\nLine 2\nLine 3'  # ✓ Works
+gh pr comment <N> -b "Line 1\nLine 2"           # ✗ Shows literal \n
+gh pr comment <N> --body-file comment.md        # ✓ Alternative
 ```
 
 ### PR description style
