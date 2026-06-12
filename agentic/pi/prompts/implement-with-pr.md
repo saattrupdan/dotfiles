@@ -4,7 +4,6 @@ description:
 ---
 
 1. **Load `gh` skill.** Call `skill` with `name: "gh"` to load the GitHub CLI skill.
-
 2. **Switch branch.** Ask the user which branch to work on (or accept their suggestion
    for a branch name). Call `bash` to create and checkout that branch:
    `git checkout -b <branch-name>`. Confirm the branch switch succeeded before
