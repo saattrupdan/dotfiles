@@ -18,6 +18,9 @@
  *    that Pi automatically recovers from.
  *  - Notifications fire only on `agent_end`, not on intermediate `turn_end`
  *    events within multi-step workflows (e.g., planner → builders → reviewer).
+ *  - Notifications are also suppressed for extension-injected retry loops
+ *    (e.g., rate-limit-retry's 429 retry turns, double-check's nudge turns),
+ *    detected by checking for their injected user prompts.
  *
  * The notification reaches the user even when the terminal is not focused
  * (that's the whole point — macOS surfaces it system-wide). Sounds are
@@ -128,6 +131,25 @@ export default function (pi: ExtensionAPI) {
 	// available by the time agent_end fires.
 	pi.on("agent_end", async (event) => {
 		const msgs = event.messages ?? [];
+
+		// Skip notifications for extension-injected retry/nudge loops.
+		// Both rate-limit-retry and double-check inject hidden user messages
+		// to trigger additional turns. We detect these by checking if the
+		// most recent user message is an injected prompt.
+		const lastUserMsg = msgs.findLast((m) => m?.role === "user");
+		if (lastUserMsg) {
+			const content = Array.isArray(lastUserMsg.content)
+				? lastUserMsg.content.map((b) => (b as { text?: string; type?: string }).text ?? "").join("\n")
+				: (lastUserMsg.content as string) ?? "";
+			const text = typeof content === "string" ? content.toLowerCase() : "";
+			// Rate-limit-retry injects: "You hit a rate limit (HTTP 429)..."
+			if (text.startsWith("you hit a rate limit") || text.includes("http 429"))
+				return;
+			// Double-check injects: "Your last turn ended on a tool call or a thinking step..."
+			if (text.startsWith("your last turn ended on a tool call"))
+				return;
+		}
+
 		// Walk from the end to find the most recent assistant message — tool
 		// results may have been appended after it.
 		let stopReason: string | undefined;
