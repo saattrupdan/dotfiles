@@ -49,10 +49,19 @@ const MIN_GAP_MS = 400;
 
 let lastNotifyAt = 0;
 let hasUI = false;
-let sessionName = "";
+let sessionManager: ExtensionAPI["sessionManager"] | undefined;
 
 function escapeForAppleScript(s: string): string {
 	return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function getSessionName(): string {
+	if (!sessionManager) return "";
+	try {
+		return sessionManager.getSessionName() || "";
+	} catch {
+		return "";
+	}
 }
 
 function notify(title: string, body: string, sound: string): void {
@@ -62,7 +71,8 @@ function notify(title: string, body: string, sound: string): void {
 	if (now - lastNotifyAt < MIN_GAP_MS) return;
 	lastNotifyAt = now;
 	// Prefix the title with the session name if available (format: "Session — Title")
-	const fullTitle = sessionName ? `${sessionName} — ${title}` : title;
+	const name = getSessionName();
+	const fullTitle = name ? `${name} — ${title}` : title;
 	const script =
 		`display notification "${escapeForAppleScript(body)}" ` +
 		`with title "${escapeForAppleScript(fullTitle)}" ` +
@@ -91,11 +101,7 @@ export default function (pi: ExtensionAPI) {
 		// In non-interactive / print mode (pi -p "..."), there's no UI and
 		// notifications would be unwanted noise. Gate on ctx.hasUI.
 		hasUI = ctx.hasUI;
-		try {
-			sessionName = ctx.sessionManager.getSessionName() || "";
-		} catch {
-			sessionName = "";
-		}
+		sessionManager = ctx.sessionManager;
 	});
 
 	pi.on("tool_call", async (event) => {
@@ -106,7 +112,10 @@ export default function (pi: ExtensionAPI) {
 		notify("Pi has a question", preview, SOUND_QUESTION);
 	});
 
-	pi.on("agent_end", async (event) => {
+	// Use turn_end instead of agent_end to ensure the session name has been set.
+	// The conversation-name extension names sessions asynchronously (fire-and-forget),
+	// so agent_end may fire before pi.setSessionName() completes.
+	pi.on("turn_end", async (event) => {
 		const msgs = event.messages ?? [];
 		// Walk from the end to find the most recent assistant message — tool
 		// results may have been appended after it.
