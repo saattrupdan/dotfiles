@@ -8,24 +8,24 @@ description:
    for a branch name). Call `bash` to create and checkout that branch:
    `git checkout -b <branch-name>`. Confirm the branch switch succeeded before
    proceeding.
-3. **Plan.** Call the `subagent` tool in `single` mode with `agent: "planner"` and
+4. **Plan.** Call the `subagent` tool in `single` mode with `agent: "planner"` and
    `task: "$@"`. If `$@` is empty (no argument provided), STOP and ask the user to
    call this prompt again with an argument.
-3. **Build.** Group the plan items by independence. For each group that can run in
+5. **Build.** Group the plan items by independence. For each group that can run in
    parallel, call `subagent` in `parallel` mode with `tasks: [...]`, one entry per item
    with `agent: "builder"` and `task` quoting the plan item verbatim. Include an
    instruction to commit before finishing. For sequential dependencies, run groups one
    after another.
-4. **Review.** Call `subagent` in `single` mode with `agent: "reviewer"` and
+6. **Review.** Call `subagent` in `single` mode with `agent: "reviewer"` and
    `task: "Audit the implementation and return a verdict (Pass / Needs changes / Block)
    with findings."`
-5. **Fix (if needed).** If the verdict is "Needs changes" or "Block", treat the findings
+7. **Fix (if needed).** If the verdict is "Needs changes" or "Block", treat the findings
    like a plan. Group issues by independence and call `subagent` in `parallel` mode with
    `tasks: [...]`, one per issue with `agent: "builder"` and `task` quoting the issue
    verbatim. Include an instruction to commit before finishing.
-6. **Repeat.** Call the reviewer again (fresh audit). Repeat steps 5–6 until the
+8. **Repeat.** Call the reviewer again (fresh audit). Repeat steps 7–8 until the
    reviewer passes or the user stops.
-7. **Push and PR.** Once the reviewer passes:
+9. **Push and PR.** Once the reviewer passes:
    - Push: `git push -u origin <branch-name>`
    - Ask for base branch (default: `main` or `master`)
    - Generate PR title from commit subject (first commit or latest)
