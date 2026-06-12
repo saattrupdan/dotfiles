@@ -136,16 +136,24 @@ export default function (pi: ExtensionAPI) {
 		// Both rate-limit-retry and double-check inject hidden user messages
 		// to trigger additional turns. We detect these by checking if the
 		// most recent user message is an injected prompt.
+		//
+		// Coupling notes (text-based, not exported):
+		// - rate-limit-retry: PROMPT = "You hit a rate limit (HTTP 429)..."
+		//   → matches: text.startsWith("you hit a rate limit") || text.includes("http 429")
+		// - double-check: PROMPT = "Your last turn ended on a tool call..."
+		//   → matches: text.startsWith("your last turn ended on a tool call")
+		//
+		// If either extension changes its injected prompt text, update the
+		// matching logic here. This is a deliberate text-based coupling to
+		// avoid requiring exports or a protocol between extensions.
 		const lastUserMsg = msgs.findLast((m) => m?.role === "user");
 		if (lastUserMsg) {
 			const content = Array.isArray(lastUserMsg.content)
 				? lastUserMsg.content.map((b) => (b as { text?: string; type?: string }).text ?? "").join("\n")
 				: (lastUserMsg.content as string) ?? "";
 			const text = typeof content === "string" ? content.toLowerCase() : "";
-			// Rate-limit-retry injects: "You hit a rate limit (HTTP 429)..."
 			if (text.startsWith("you hit a rate limit") || text.includes("http 429"))
 				return;
-			// Double-check injects: "Your last turn ended on a tool call or a thinking step..."
 			if (text.startsWith("your last turn ended on a tool call"))
 				return;
 		}
