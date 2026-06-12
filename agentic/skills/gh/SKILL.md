@@ -1,8 +1,21 @@
 ---
 name: gh
-description: GitHub CLI (gh) — the official command-line interface to GitHub. Use when the user needs to manage pull requests, issues, repositories, GitHub Actions, gists, API calls, authentication, or any other GitHub workflow from the terminal. Also use for scripting GitHub automation, querying the GraphQL/REST API, managing forks/clones, and viewing workflow run logs. Prefer gh over web browsing or the raw REST API.
+description: GitHub CLI (gh) — the official command-line interface to GitHub. Use when the user needs to create or manage pull requests, issues, repositories, GitHub Actions, gists, API calls, authentication, or any other GitHub workflow from the terminal. Also use for scripting GitHub automation, querying the GraphQL/REST API, managing forks/clones, and viewing workflow run logs. Prefer gh over web browsing or the raw REST API.
 allowed-tools: Bash(gh:*)
 tagline: Official GitHub CLI for PRs, issues, repos, Actions, API, and more
+triggers:
+  - pattern: "(create|make|open|submit|push|get|prepare)\\s+(a|an|the\\s+)?(pr|pull\\s*request|pull-request)"
+    description: "PR creation/opening requests"
+  - pattern: "(pr|pull\\s*request|pull-request)\\s+(create|make|open|submit|push)"
+    description: "PR creation/opening requests (reverse order)"
+  - pattern: "gh\\s+(pr|pull-request|pull\\s*request)"
+    description: "gh pr commands"
+  - pattern: "(assign|reviewer|merge|checkout|review|approve|comment|list|show)\\s+(pr|pull\\s*request)"
+    description: "PR workflow actions"
+  - pattern: "(pr|pull\\s*request)\\s+(assign|reviewer|merge|checkout|review|approve|comment|list|show|diff|rebase|close)"
+    description: "PR workflow actions (reverse order)"
+  - pattern: "(issue|pr)\\s+(comment|label|transfer|lock|pin|reopen|close|lock)"
+    description: "Issue/PR management actions"
 ---
 
 # GitHub CLI (`gh`)
