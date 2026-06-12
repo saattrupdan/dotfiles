@@ -535,13 +535,11 @@ export default async function (pi: ExtensionAPI) {
 			const refCount = Math.min(refLines.length, REF_CAP);
 			const totalTruncated = (fileHits.length > FILE_CAP ? fileHits.length - FILE_CAP : 0)
 				+ (defLines.length > DEF_CAP ? defLines.length - DEF_CAP : 0)
-				+ (refLines.length > REF_CAP ? refLines.length - REF_CAP : 0);
-
-			let collapsedSummary = `search: ${query}`;
-			if (kind && kind !== "any") collapsedSummary += ` [${kind}]`;
-			collapsedSummary += ` → ${fileCount} files${fileCount ? `, ${defCount} defs${defCount ? `, ${refCount} refs` : ''}` : ''}`;
-			if (totalTruncated > 0) collapsedSummary += ` (+${totalTruncated} more)`;
-			if (refSearch.error) collapsedSummary += ` [⚠ ${refSearch.engine} error]`;
+				+ (refLines.length > REF_CAP ? refLines.length - REF_CAP : 0);		let collapsedSummary = `search: ${query}`;
+		if (kind && kind !== "any") collapsedSummary += ` [${kind}]`;
+		collapsedSummary += ` → ${fileCount} files, ${defCount} defs, ${refCount} refs`;
+		if (totalTruncated > 0) collapsedSummary += ` (+${totalTruncated} more)`;
+		if (refSearch.error) collapsedSummary += ` [⚠ ${refSearch.engine} error]`;
 
 			return {
 				content: [{ type: "text", text: output.join("\n") }],
