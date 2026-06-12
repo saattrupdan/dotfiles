@@ -10,7 +10,7 @@
 
 const SCHEMA_VERSION = 5;
 
-import * as childProcess from "node:child_process";
+import { execSync, spawn, ChildProcess } from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -698,10 +698,8 @@ export async function listFilesAsync(repoRoot: string): Promise<string[]> {
 	return new Promise((resolve) => {
 		// Try git ls-files first - it respects .gitignore automatically
 		// Use async spawn to avoid blocking the event loop
-		const child = childProcess.spawn("git", ["ls-files"], {
+		const child: ChildProcess = spawn("git", ["ls-files"], {
 			cwd: repoRoot,
-			encoding: "utf-8",
-			maxBuffer: 128 * 1024 * 1024,
 		});
 
 		let stdout = "";
@@ -716,15 +714,19 @@ export async function listFilesAsync(repoRoot: string): Promise<string[]> {
 			}
 		}, 5000);
 
-		child.stdout.on("data", (data) => {
-			stdout += data.toString();
-		});
+		if (child.stdout) {
+			child.stdout.on("data", (data: Buffer) => {
+				stdout += data.toString();
+			});
+		}
 
-		child.stderr.on("data", (data) => {
-			stderr += data.toString();
-		});
+		if (child.stderr) {
+			child.stderr.on("data", (data: Buffer) => {
+				stderr += data.toString();
+			});
+		}
 
-		child.on("close", (code) => {
+		child.on("close", (code: number | null) => {
 			completed = true;
 			clearTimeout(timeout);
 			if (code === 0 && stdout.trim()) {
@@ -742,7 +744,7 @@ export async function listFilesAsync(repoRoot: string): Promise<string[]> {
 			}
 		});
 
-		child.on("error", (err) => {
+		child.on("error", (err: Error) => {
 			completed = true;
 			clearTimeout(timeout);
 			console.warn(`git ls-files error: ${err.message}`);

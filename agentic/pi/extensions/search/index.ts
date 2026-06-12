@@ -56,7 +56,7 @@ async function loadOutliner(): Promise<typeof import("../_outliner/outliner.js")
 
 import {
 	ensureFullIndex,
-	reconcileIndex,
+	reconcileIndexAsync,
 	touchMeta,
 	querySymbols,
 	queryExactSymbol,
@@ -392,11 +392,27 @@ export default async function (pi: ExtensionAPI) {
 			const { db, repoId, repoRoot } = ensureFullIndex(cwd, outline);
 			touchMeta(repoId);
 
-			// Reconcile the index against the live tree: add files created since
-			// the last build, re-parse changed ones, drop deleted ones. Walking
-			// the disk every call is cheap because refreshFile short-circuits
-			// unchanged files via mtime/size.
-			reconcileIndex(db, repoRoot, outline);
+			// Reconcile the index against the live tree **asynchronously** — do NOT
+			// block search results on this. Reconciliation runs in the background,
+			// updating the index for subsequent calls. This prevents freezing on
+			// every search, especially for large repos or slow tree-sitter parses.
+			// The index returned by ensureFullIndex() is always usable, even if
+			// slightly stale.
+			if (ctx?.hasUI) {
+				ctx.ui.setWorkingMessage("Updating search index…");
+			}
+			const updateProgress = (processed: number, total: number): void => {
+				if (ctx?.hasUI && processed < total) {
+					const percent = Math.round((processed / total) * 100);
+					ctx.ui.setWorkingMessage(`Updating search index… ${percent}% (${processed}/${total})`);
+				}
+			};
+			// Fire-and-forget: reconciliation runs in background, errors silently ignored
+			// to avoid crashing the search tool
+			reconcileIndexAsync(db, repoRoot, outline, updateProgress).catch(() => {
+				// Reconciliation failed silently - index still usable from ensureFullIndex()
+				if (ctx?.hasUI) ctx.ui.setWorkingMessage(undefined);
+			});
 
 			// --- Definition lookup ---
 			let defResults: { file: string; line: number; kind: string; name: string; parent: string | null }[] = [];
@@ -535,11 +551,12 @@ export default async function (pi: ExtensionAPI) {
 			const refCount = Math.min(refLines.length, REF_CAP);
 			const totalTruncated = (fileHits.length > FILE_CAP ? fileHits.length - FILE_CAP : 0)
 				+ (defLines.length > DEF_CAP ? defLines.length - DEF_CAP : 0)
-				+ (refLines.length > REF_CAP ? refLines.length - REF_CAP : 0);		let collapsedSummary = `search: ${query}`;
-		if (kind && kind !== "any") collapsedSummary += ` [${kind}]`;
-		collapsedSummary += ` → ${fileCount} files, ${defCount} defs, ${refCount} refs`;
-		if (totalTruncated > 0) collapsedSummary += ` (+${totalTruncated} more)`;
-		if (refSearch.error) collapsedSummary += ` [⚠ ${refSearch.engine} error]`;
+				+ (refLines.length > REF_CAP ? refLines.length - REF_CAP : 0);
+			let collapsedSummary = `search: ${query}`;
+			if (kind && kind !== "any") collapsedSummary += ` [${kind}]`;
+			collapsedSummary += ` → ${fileCount} files, ${defCount} defs, ${refCount} refs`;
+			if (totalTruncated > 0) collapsedSummary += ` (+${totalTruncated} more)`;
+			if (refSearch.error) collapsedSummary += ` [⚠ ${refSearch.engine} error]`;
 
 			return {
 				content: [{ type: "text", text: output.join("\n") }],
