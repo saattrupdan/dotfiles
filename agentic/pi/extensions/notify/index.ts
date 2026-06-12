@@ -5,13 +5,19 @@
  * orchestrator agent:
  *
  *  - asked the user a question (the `question` tool is about to run),
- *  - finished a turn normally with no errors (agent loop ended, ready for
- *    next prompt),
- *  - failed or was aborted (last assistant message has stopReason
- *    "error" or "aborted").
+ *  - finished the entire workflow normally with no errors (agent loop ended,
+ *    ready for next prompt),
+ *  - failed or was aborted with a non-retryable error (last assistant message
+ *    has stopReason "error" or "aborted").
  *
- * Note: the "finished" notification is suppressed if any tool errors occurred
- * during the turn, even if the agent recovered and completed successfully.
+ * Note:
+ *  - The "finished" notification is suppressed if any tool errors occurred
+ *    during the turn, even if the agent recovered and finished anyway.
+ *  - The "failed" notification is suppressed for transient/retryable errors
+ *    (rate limits, tool timeouts, network errors, Node version mismatches)
+ *    that Pi automatically recovers from.
+ *  - Notifications fire only on `agent_end`, not on intermediate `turn_end`
+ *    events within multi-step workflows (e.g., planner → builders → reviewer).
  *
  * The notification reaches the user even when the terminal is not focused
  * (that's the whole point — macOS surfaces it system-wide). Sounds are
@@ -112,10 +118,15 @@ export default function (pi: ExtensionAPI) {
 		notify("Pi has a question", preview, SOUND_QUESTION);
 	});
 
-	// Use turn_end instead of agent_end to ensure the session name has been set.
-	// The conversation-name extension names sessions asynchronously (fire-and-forget),
-	// so agent_end may fire before pi.setSessionName() completes.
-	pi.on("turn_end", async (event) => {
+	// Use agent_end to notify only when the entire agent loop finishes (ready for user input).
+	// turn_end fires after every single turn, including intermediate turns in multi-step
+	// workflows (e.g., planner → builders → reviewer), which causes excessive notifications.
+	// agent_end fires when the agent is completely done and waiting for the next user prompt.
+	//
+	// Note: The session name is set by the conversation-name extension on session_start.
+	// Even if it's async, getSessionName() reads from sessionManager state which is
+	// available by the time agent_end fires.
+	pi.on("agent_end", async (event) => {
 		const msgs = event.messages ?? [];
 		// Walk from the end to find the most recent assistant message — tool
 		// results may have been appended after it.
