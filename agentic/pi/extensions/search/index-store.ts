@@ -10,6 +10,7 @@
 
 const SCHEMA_VERSION = 5;
 
+import * as childProcess from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -636,89 +637,52 @@ const backgroundReconcileState = new Map<
 
 /**
  * Reconcile the index against the live working tree in the background.
- * Processes files in chunks to avoid blocking the event loop.
+ * Always runs asynchronously to avoid blocking the event loop — even small
+ * repos can stall the UI if tree-sitter parsing blocks the main thread.
  */
-export function reconcileIndex(
+export async function reconcileIndexAsync(
 	db: DatabaseInstance,
 	repoRoot: string,
 	outline: OutlinerFn,
-): void {
-	const diskFiles = listFiles(repoRoot);
+	onProgress?: (_processed: number, _total: number) => void,
+): Promise<void> {
+	const diskFiles = await listFilesAsync(repoRoot);
+	const totalFiles = diskFiles.length;
 
-	// For small directories, reconcile synchronously (fast path).
-	const SYNC_THRESHOLD = 5_000;
-	if (diskFiles.length <= SYNC_THRESHOLD) {
-		for (const relPath of diskFiles) {
-			refreshFile(db, repoRoot, relPath, outline);
-		}
-		removeMissingFiles(db, new Set(diskFiles));
+	if (totalFiles === 0) {
+		if (onProgress) onProgress(0, 0);
 		return;
 	}
 
-	// For larger directories, reconcile asynchronously in chunks.
-	let state = backgroundReconcileState.get(repoRoot);
-	if (state?.running) {
-		// Already running — mark as needing a re-run when done.
-		backgroundReconcileState.set(repoRoot, { ...state, queued: true });
-		return;
-	}
+	// Process files in batches to avoid blocking the event loop.
+	const BATCH_SIZE = 200;
+	let processed = 0;
 
-	// Start background reconciliation.
-	state = {
-		running: true,
-		queued: false,
-		filesProcessed: 0,
-		totalFiles: diskFiles.length,
-	};
-	backgroundReconcileState.set(repoRoot, state);
+	const processBatch = async (): Promise<void> => {
+		const end = Math.min(processed + BATCH_SIZE, totalFiles);
 
-	const BATCH_SIZE = 500; // Process 500 files per tick
-	let index = 0;
-
-	const processNextBatch = (): void => {
-		const end = Math.min(index + BATCH_SIZE, diskFiles.length);
-
-		for (; index < end; index++) {
-			const relPath = diskFiles[index];
+		for (let i = processed; i < end; i++) {
 			try {
-				refreshFile(db, repoRoot, relPath, outline);
+				refreshFile(db, repoRoot, diskFiles[i], outline);
 			} catch {
-				// Skip files that fail to parse — don't crash the whole reconciliation.
+				// Skip files that fail to parse
 			}
 		}
 
-		state.filesProcessed = index;
+		processed = end;
+		if (onProgress) onProgress(processed, totalFiles);
 
-		if (index < diskFiles.length) {
-			// Yield to event loop, then continue with next batch.
-			setImmediate(processNextBatch);
+		if (processed < totalFiles) {
+			// Yield to event loop before next batch
+			await new Promise((resolve) => setImmediate(resolve));
+			await processBatch();
 		} else {
-			// Done — remove deleted files asynchronously and mark complete.
-			removeMissingFiles(db, new Set(diskFiles), (_deleted, _total) => {
-				const currentState = backgroundReconcileState.get(repoRoot);
-				if (currentState?.queued) {
-					// Another reconcile was requested while we were running — start again.
-					backgroundReconcileState.set(repoRoot, {
-						running: true,
-						queued: false,
-						filesProcessed: 0,
-						totalFiles: diskFiles.length,
-					});
-					setImmediate(() => reconcileIndex(db, repoRoot, outline));
-				} else {
-					backgroundReconcileState.set(repoRoot, {
-						running: false,
-						queued: false,
-						filesProcessed: 0,
-						totalFiles: 0,
-					});
-				}
-			});
+			// Done - remove deleted files
+			removeMissingFiles(db, new Set(diskFiles));
 		}
 	};
 
-	// Start async processing.
-	setImmediate(processNextBatch);
+	await processBatch();
 }
 
 /**
@@ -730,24 +694,71 @@ export function reconcileIndex(
  * Uses `git ls-files` when available (fast, respects .gitignore),
  * falls back to manual walk for non-git directories.
  */
-export function listFiles(repoRoot: string): string[] {
-	// Try git ls-files first - it respects .gitignore automatically
-	try {
-		const result = spawnSync("git", ["ls-files"], {
+/**
+ * Asynchronously list all files in a repo, respecting .gitignore.
+ * Returns a promise to avoid blocking the event loop.
+ */
+export async function listFilesAsync(repoRoot: string): Promise<string[]> {
+	return new Promise((resolve) => {
+		// Try git ls-files first - it respects .gitignore automatically
+		// Use async spawn to avoid blocking the event loop
+		const child = childProcess.spawn("git", ["ls-files"], {
 			cwd: repoRoot,
 			encoding: "utf-8",
 			maxBuffer: 128 * 1024 * 1024,
 		});
-		if (result.status === 0) {
-			return result.stdout
-				.split("\n")
-				.filter((line) => line.trim() !== "");
-		}
-	} catch {
-		// Git not available or not a git repo - fall through to manual walk
-	}
 
-	// Fallback: manual walk with basic skips
+		let stdout = "";
+		let stderr = "";
+		let completed = false;
+
+		// Timeout after 5 seconds - git shouldn't take this long
+		const timeout = setTimeout(() => {
+			if (!completed) {
+				child.kill("SIGKILL");
+				resolve(listFilesManual(repoRoot));
+			}
+		}, 5000);
+
+		child.stdout.on("data", (data) => {
+			stdout += data.toString();
+		});
+
+		child.stderr.on("data", (data) => {
+			stderr += data.toString();
+		});
+
+		child.on("close", (code) => {
+			completed = true;
+			clearTimeout(timeout);
+			if (code === 0 && stdout.trim()) {
+				resolve(
+					stdout
+						.split("\n")
+						.filter((line) => line.trim() !== "")
+				);
+			} else {
+				// Git failed - log stderr for diagnostics, then fall back to manual walk
+				if (stderr.trim()) {
+					console.warn(`git ls-files failed: ${stderr.trim()}`);
+				}
+				resolve(listFilesManual(repoRoot));
+			}
+		});
+
+		child.on("error", (err) => {
+			completed = true;
+			clearTimeout(timeout);
+			console.warn(`git ls-files error: ${err.message}`);
+			resolve(listFilesManual(repoRoot));
+		});
+	});
+}
+
+/**
+ * Manual file walk when git is unavailable or fails.
+ */
+export function listFilesManual(repoRoot: string): string[] {
 	const results: string[] = [];
 	const skipDirs = new Set([
 		".git",
@@ -763,19 +774,31 @@ export function listFiles(repoRoot: string): string[] {
 	]);
 
 	function walk(dir: string): void {
-		const entries = fs.readdirSync(dir, { withFileTypes: true });
-		for (const entry of entries) {
-			const fullPath = path.join(dir, entry.name);
-			if (entry.isDirectory()) {
-				if (skipDirs.has(entry.name)) continue;
-				walk(fullPath);
-			} else {
-				const relPath = path.relative(repoRoot, fullPath);
-				results.push(relPath);
+		try {
+			const entries = fs.readdirSync(dir, { withFileTypes: true });
+			for (const entry of entries) {
+				const fullPath = path.join(dir, entry.name);
+				if (entry.isDirectory()) {
+					if (skipDirs.has(entry.name)) continue;
+					walk(fullPath);
+				} else {
+					const relPath = path.relative(repoRoot, fullPath);
+					results.push(relPath);
+				}
 			}
+		} catch {
+			// Skip unreadable directories
 		}
 	}
 
 	walk(repoRoot);
 	return results;
+}
+
+/**
+ * Synchronous wrapper for backwards compatibility - DO NOT USE in hot paths.
+ * @deprecated Use listFilesAsync instead
+ */
+export function listFiles(repoRoot: string): string[] {
+	return listFilesManual(repoRoot);
 }
