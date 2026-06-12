@@ -977,31 +977,58 @@ export default function (pi: ExtensionAPI) {
 					}
 				};
 
-				const results = await mapWithConcurrencyLimit(params.tasks ?? [], MAX_CONCURRENCY, async (t: { agent: string; task: string; cwd?: string; skills?: string[] }, index) => {
-					const result = await runSingleAgent(
-						ctx.cwd,
-						agents,
-						t.agent,
-						t.task,
-						t.cwd,
-						undefined,
-						signal,
-						// Per-task update callback
-						(partial) => {
-							if (partial.details?.results[0]) {
-								allResults[index] = partial.details.results[0];
-								emitParallelUpdate();
-							}
-						},
-						makeDetails("parallel"),
-						fulfillQuestion,
-						sessionModel,
-						t.skills,
-					);
-					allResults[index] = result;
-					emitParallelUpdate();
-					return result;
-				});
+				// Create an abort controller to cancel remaining tasks when one fails
+				const parallelController = new AbortController();
+				const abortIfFailed = (result: SingleResult) => {
+					if (isFailedResult(result) && !parallelController.signal.aborted) {
+						parallelController.abort();
+					}
+				};
+
+				const results = await mapWithConcurrencyLimit(
+					params.tasks ?? [],
+					MAX_CONCURRENCY,
+					async (t: { agent: string; task: string; cwd?: string; skills?: string[] }, index) => {
+						// Don't start new tasks if we've already failed
+						if (parallelController.signal.aborted) {
+							return {
+								agent: t.agent,
+								agentSource: "unknown",
+								task: t.task,
+								exitCode: -1,
+								messages: [],
+								stderr: "Task cancelled due to another task's failure",
+								stopReason: "aborted",
+								usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
+							} as SingleResult;
+						}
+
+						const result = await runSingleAgent(
+							ctx.cwd,
+							agents,
+							t.agent,
+							t.task,
+							t.cwd,
+							undefined,
+							parallelController.signal,
+							// Per-task update callback
+							(partial) => {
+								if (partial.details?.results[0]) {
+									allResults[index] = partial.details.results[0];
+									emitParallelUpdate();
+								}
+							},
+							makeDetails("parallel"),
+							fulfillQuestion,
+							sessionModel,
+							t.skills,
+						);
+						allResults[index] = result;
+						abortIfFailed(result);
+						emitParallelUpdate();
+						return result;
+					},
+				);
 
 				const successCount = results.filter((r) => !isFailedResult(r)).length;
 				const summaries = results.map((r) => {
