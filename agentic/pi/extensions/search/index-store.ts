@@ -629,11 +629,7 @@ export function refreshFile(
  * The earlier "iterate existing DB rows" approach never discovered new files,
  * leaving the index frozen at its first build.
  */
-// Track ongoing background reconciliation to avoid spawning duplicates.
-const backgroundReconcileState = new Map<
-	string,
-	{ running: boolean; queued: boolean; filesProcessed: number; totalFiles: number }
->();
+
 
 /**
  * Reconcile the index against the live working tree in the background.
