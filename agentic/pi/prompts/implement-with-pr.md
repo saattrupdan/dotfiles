@@ -22,7 +22,7 @@ description:
    like a plan. Group issues by independence and call `subagent` in `parallel` mode with
    `tasks: [...]`, one per issue with `agent: "builder"` and `task` quoting the issue
    verbatim. Include an instruction to commit before finishing.
-7. **Repeat.** Call the reviewer again (fresh audit). Repeat steps 7–8 until the
+7. **Repeat.** Call the reviewer again (fresh audit). Repeat steps 5–6 until the
    reviewer passes or the user stops.
 8. **Push and PR.** Once the reviewer passes:
    - Push: `git push -u origin <branch-name>`
