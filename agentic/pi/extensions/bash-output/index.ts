@@ -48,19 +48,30 @@ export default function (pi: ExtensionAPI) {
 	builtInBash.renderResult = (result, options, theme, context) => {
 		// If collapsed (not expanded), show only a status indicator
 		if (!options.expanded) {
-			// Get state for this tool call from our tracked map
+			// Check context for error state (available even if state map lookup fails)
+			const isError = context.isError;
+			
+			// Try to get state for this tool call from our tracked map
 			const toolCallId = options.toolCallId;
 			const state = toolCallId ? bashState.get(toolCallId) : undefined;
 			
-			// If no state tracked or still running, show "running" status
-			if (!state || state.status === "running") {
+			// If we have tracked state and it's not running, use it
+			if (state && state.status !== "running") {
+				if (state.status === "failed") {
+					return new Text(theme.fg("error", "✗ bash failed"), 0, 0);
+				}
+				return new Text(theme.fg("success", "✓ bash executed"), 0, 0);
+			}
+			
+			// Fallback: use context.isError if state lookup failed
+			if (isError) {
+				return new Text(theme.fg("error", "✗ bash failed"), 0, 0);
+			}
+			if (state?.status === "running") {
 				return new Text(theme.fg("warning", "⋯ bash running"), 0, 0);
 			}
 			
-			// Show final status based on completion state
-			if (state.status === "failed") {
-				return new Text(theme.fg("error", "✗ bash failed"), 0, 0);
-			}
+			// Default: assume success if we got here (renderResult means execution completed)
 			return new Text(theme.fg("success", "✓ bash executed"), 0, 0);
 		}
 		
