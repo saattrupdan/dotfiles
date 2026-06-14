@@ -10,22 +10,32 @@
  * - Still reference outputs verbatim via {tool: <id>} placeholders
  */
 
-import { createBashToolDefinition, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createBashToolDefinition, type ExtensionAPI, type ToolExecutionStartEvent } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 
-// Store exit codes by toolCallId since they're not available in renderResult
-const exitCodes = new Map<string, number | null>();
-let lastBashToolCallId: string | null = null;
+// Track bash execution state by toolCallId
+const bashState = new Map<string, { status: "running" | "completed" | "failed"; exitCode?: number | null }>();
 
 export default function (pi: ExtensionAPI) {
-	// Capture toolCallId and exit code from bash tool events
+	// Track when bash starts executing
+	pi.on("tool_execution_start", (event: ToolExecutionStartEvent) => {
+		if (event.toolName === "bash") {
+			bashState.set(event.toolCallId, { status: "running" });
+		}
+	});
+
+	// Capture exit code and update status when bash completes
 	// Note: BashResult.exitCode is on event.result directly, NOT on result.details
 	pi.on("tool_execution_end", (event) => {
 		if (event.toolName === "bash") {
-			lastBashToolCallId = event.toolCallId;
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 			const bashResult = event.result as any;
-			exitCodes.set(event.toolCallId, bashResult?.exitCode ?? null);
+			const exitCode = bashResult?.exitCode ?? null;
+			const isError = exitCode !== null && exitCode !== 0;
+			bashState.set(event.toolCallId, {
+				status: isError ? "failed" : "completed",
+				exitCode,
+			});
 		}
 	});
 
@@ -38,21 +48,18 @@ export default function (pi: ExtensionAPI) {
 	builtInBash.renderResult = (result, options, theme, context) => {
 		// If collapsed (not expanded), show only a status indicator
 		if (!options.expanded) {
-			// Try to get exit code from our captured map using the last bash toolCallId
-			let exitCode: number | null | undefined;
+			// Get state for this tool call from our tracked map
+			const toolCallId = options.toolCallId;
+			const state = toolCallId ? bashState.get(toolCallId) : undefined;
 			
-			if (lastBashToolCallId && exitCodes.has(lastBashToolCallId)) {
-				exitCode = exitCodes.get(lastBashToolCallId);
-			} else {
-				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				const details = result.details as any;
-				exitCode = details?.exitCode;
+			// If no state tracked or still running, show "running" status
+			if (!state || state.status === "running") {
+				return new Text(theme.fg("warning", "⋯ bash running"), 0, 0);
 			}
 			
-			const isError = context.isError || (exitCode !== null && exitCode !== 0);
-			
-			if (isError) {
-				return new Text(theme.fg("error", `✗ bash failed (exit ${exitCode ?? "?"})`), 0, 0);
+			// Show final status based on completion state
+			if (state.status === "failed") {
+				return new Text(theme.fg("error", "✗ bash failed"), 0, 0);
 			}
 			return new Text(theme.fg("success", "✓ bash executed"), 0, 0);
 		}
