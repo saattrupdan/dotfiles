@@ -103,6 +103,49 @@ function lastAssistant(messages: readonly MessageLike[]): MessageLike | undefine
 }
 
 /**
+ * Check if the message text mentions a bash command without actually calling
+ * the bash tool. Common failure: agent writes "Let me run: `git status`" or
+ * includes a shell code block, but never invokes the tool.
+ */
+function mentionsBashWithoutCalling(message: MessageLike): boolean {
+	const text = messageText(message);
+	if (!text) return false;
+
+	// Check for bash tool call in content array.
+	if (Array.isArray(message.content)) {
+		const hasBashCall = message.content.some(
+			(c) => c?.type === "toolCall" && typeof c.text === "string" && c.text.includes("\"tool\":\"bash\""),
+		);
+		if (hasBashCall) return false; // Already called bash properly.
+	}
+
+	// Patterns that suggest the agent intended to run a command.
+	const bashPatterns = [
+		/```\s*(?:shell|bash|sh|console|terminal|cmd)/i, // Code block with shell hint
+		/```\n[\s]*\$\s+/m, // Code block starting with $ prompt
+		/```\n[\s]*(?:git|npm|pip|yarn|pnpm|docker|kubectl|curl|wget|ssh|scp|rsync|make|cargo|go|python|node)\s+/m, // Common commands at start of code block
+		/`(?:git|npm|pip|yarn|pnpm|docker|kubectl|curl|wget|ssh|scp|rsync|make|cargo|go|python|node)\s+[^`]+`/, // Inline code with command
+		/(?:run|execute|call|invoke)\s+(?:the\s+)?(?:command|bash|shell|terminal)/i, // "run the command"
+		/(?:let\s+(?:me|us)\s+(?:run|execute|call))\s*[`:]?/i, // "Let me run:"
+	];
+
+	if (bashPatterns.some((pattern) => pattern.test(text))) return true;
+
+	// Case: the entire message is a bare shell command
+	// (agent starts typing a command but forgets to call the bash tool).
+	// Detect when the message looks like a shell command with no tool call.
+	const trimmed = text.trim();
+	if (trimmed && !trimmed.includes("\n") && trimmed.length < 200) {
+		// Single-line, short text: likely a bare command if it starts with
+		// a common command name or shell builtin.
+		const commandStart = /^(?:\$\s+)?(?:(?:git|npm|pip|yarn|pnpm|docker|kubectl|curl|wget|ssh|scp|rsync|make|cargo|go|python|node|ls|cd|cat|grep|find|awk|sed|echo|mkdir|rm|cp|mv|chmod|chown|ps|top|htop|kill|pkill|killall|systemctl|journalctl|tail|head|less|more|wc|sort|uniq|cut|tr|tee|xargs|which|whereis|locate|df|du|free|uname|hostname|whoami|id|pwd|bash|sh|zsh|fish|tmux|screen|vim|vi|nano|emacs|mvim|code|gcc|clang|g\+\+|rustc|javac|dotnet|swiftc|rubyc|perlc|lua|php|ruby|perl|tsc|webpack|rollup|vite|esbuild|pnpm|bun|deno)\b)/i;
+		if (commandStart.test(trimmed)) return true;
+	}
+
+	return false;
+}
+
+/**
  * Should we nudge? Only when the run ended *mid-task* — i.e. the final
  * assistant message is not a regular text response. That means it ended on a
  * tool call it never acted on, or on a thinking block with no concluding text.
@@ -123,6 +166,10 @@ function endedMidTask(messages: readonly MessageLike[]): boolean {
 
 	const endedOnToolCall = content.some((c) => c?.type === "toolCall");
 	const hasConcludingText = content.some((c) => c?.type === "text" && (c.text ?? "").trim().length > 0);
+
+	// Also nudge if the agent mentioned a bash command but didn't call the tool.
+	if (mentionsBashWithoutCalling(m)) return true;
+
 	return endedOnToolCall || !hasConcludingText;
 }
 
