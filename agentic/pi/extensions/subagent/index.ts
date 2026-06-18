@@ -553,148 +553,174 @@ async function runSingleAgent(
 		let wasAborted = false;
 
 		const exitCode = await new Promise<number>((resolve) => {
-			const invocation = getPiInvocation(args);
-			// stdin stays "ignore" (= /dev/null in the child) so the child
-			// never blocks on a startup stdin read. The question bridge uses
-			// an extra pipe on fd 3 for parent→child responses; the child
-			// finds it via PI_QUESTION_RESPONSE_FD. Child→parent requests
-			// still travel on stderr as tagged lines.
-			const proc = spawn(invocation.command, invocation.args, {
-				cwd: effectiveCwd ?? defaultCwd,
-				shell: false,
-				stdio: ["ignore", "pipe", "pipe", "pipe"],
-				env: {
-					...process.env,
-					PI_SUBAGENT_CHILD: "1",
-					PI_QUESTION_RESPONSE_FD: "3",
-				},
-			});
-			const responseChannel = proc.stdio[3] as NodeJS.WritableStream | null;
-			let buffer = "";
+				const invocation = getPiInvocation(args);
+				// stdin stays "ignore" (= /dev/null in the child) so the child
+				// never blocks on a startup stdin read. The question bridge uses
+				// an extra pipe on fd 3 for parent→child responses; the child
+				// finds it via PI_QUESTION_RESPONSE_FD. Child→parent requests
+				// still travel on stderr as tagged lines.
+				const proc = spawn(invocation.command, invocation.args, {
+					cwd: effectiveCwd ?? defaultCwd,
+					shell: false,
+					stdio: ["ignore", "pipe", "pipe", "pipe"],
+					env: {
+						...process.env,
+						PI_SUBAGENT_CHILD: "1",
+						PI_QUESTION_RESPONSE_FD: "3",
+					},
+				});
+				const responseChannel = proc.stdio[3] as NodeJS.WritableStream | null;
+				let buffer = "";
 
-			const processLine = (line: string) => {
-				if (!line.trim()) return;
-				let event: any;
-				try {
-					event = JSON.parse(line);
-				} catch {
-					return;
-				}
+				const processLine = (line: string) => {
+					if (!line.trim()) return;
+					let event: any;
+					try {
+						event = JSON.parse(line);
+					} catch {
+						return;
+					}
 
-				if (event.type === "message_end" && event.message) {
-					const msg = event.message as Message;
-					currentResult.messages.push(msg);
+					if (event.type === "message_end" && event.message) {
+						const msg = event.message as Message;
+						currentResult.messages.push(msg);
 
-					if (msg.role === "assistant") {
-						currentResult.usage.turns++;
-						const usage = msg.usage;
-						if (usage) {
-							currentResult.usage.input += usage.input || 0;
-							currentResult.usage.output += usage.output || 0;
-							currentResult.usage.cacheRead += usage.cacheRead || 0;
-							currentResult.usage.cacheWrite += usage.cacheWrite || 0;
-							currentResult.usage.cost += usage.cost?.total || 0;
-							currentResult.usage.contextTokens = usage.totalTokens || 0;
+						if (msg.role === "assistant") {
+							currentResult.usage.turns++;
+							const usage = msg.usage;
+							if (usage) {
+								currentResult.usage.input += usage.input || 0;
+								currentResult.usage.output += usage.output || 0;
+								currentResult.usage.cacheRead += usage.cacheRead || 0;
+								currentResult.usage.cacheWrite += usage.cacheWrite || 0;
+								currentResult.usage.cost += usage.cost?.total || 0;
+								currentResult.usage.contextTokens = usage.totalTokens || 0;
+							}
+							if (!currentResult.model && msg.model) currentResult.model = msg.model;
+							if (msg.stopReason) currentResult.stopReason = msg.stopReason;
+							if (msg.errorMessage) currentResult.errorMessage = msg.errorMessage;
 						}
-						if (!currentResult.model && msg.model) currentResult.model = msg.model;
-						if (msg.stopReason) currentResult.stopReason = msg.stopReason;
-						if (msg.errorMessage) currentResult.errorMessage = msg.errorMessage;
+						emitUpdate();
 					}
-					emitUpdate();
-				}
 
-				if (event.type === "tool_execution_end" && event.toolCallId) {
-					const tcid = event.toolCallId as string;
-					if (currentResult.partialResults) {
-						delete currentResult.partialResults[tcid];
+					if (event.type === "tool_execution_end" && event.toolCallId) {
+						const tcid = event.toolCallId as string;
+						if (currentResult.partialResults) {
+							delete currentResult.partialResults[tcid];
+						}
+						emitUpdate();
 					}
-					emitUpdate();
-				}
 
-				// `tool_execution_update` carries the in-progress AgentToolResult
-				// emitted by an extension via `onUpdate`. For nested subagent
-				// calls, this is how we see the grandchild's live tool calls
-				// before the parent's `subagent` tool returns. Stash by
-				// toolCallId; the renderer falls back to this when the matching
-				// tool_result_end hasn't arrived yet.
-				if (event.type === "tool_execution_update" && event.toolCallId) {
-					const partial = event.partialResult;
-					if (partial) {
-						if (!currentResult.partialResults) currentResult.partialResults = {};
-						currentResult.partialResults[event.toolCallId] = {
-							content: partial.content,
-							details: partial.details,
-							isError: partial.isError,
+					// `tool_execution_update` carries the in-progress AgentToolResult
+					// emitted by an extension via `onUpdate`. For nested subagent
+					// calls, this is how we see the grandchild's live tool calls
+					// before the parent's `subagent` tool returns. Stash by
+					// toolCallId; the renderer falls back to this when the matching
+					// tool_result_end hasn't arrived yet.
+					if (event.type === "tool_execution_update" && event.toolCallId) {
+						const partial = event.partialResult;
+						if (partial) {
+							if (!currentResult.partialResults) currentResult.partialResults = {};
+							currentResult.partialResults[event.toolCallId] = {
+								content: partial.content,
+								details: partial.details,
+								isError: partial.isError,
+							};
+						}
+						emitUpdate();
+					}
+				};
+
+				proc.stdout?.on("data", (data) => {
+					buffer += data.toString();
+					const lines = buffer.split("\n");
+					buffer = lines.pop() || "";
+					for (const line of lines) processLine(line);
+				});
+
+				// Stderr carries both real diagnostics and (when the child calls the
+				// `question` tool) tagged protocol lines we must intercept. Buffer
+				// by line; route protocol lines to fulfillQuestion, append the rest
+				// to the visible stderr.
+				let stderrBuffer = "";
+				const handleStderrLine = (line: string) => {
+					const req = tryParseRequest(line);
+					if (!req) {
+						currentResult.stderr += `${line}\n`;
+						return;
+					}
+					if (!fulfillQuestion) {
+						const res: QuestionResponse = {
+							id: req.id,
+							error: "No question handler available in this parent process.",
 						};
+						try {
+							responseChannel?.write(encodeResponse(res));
+						} catch {
+							/* ignore */
+						}
+						return;
 					}
-					emitUpdate();
-				}
-			};
-
-			proc.stdout?.on("data", (data) => {
-				buffer += data.toString();
-				const lines = buffer.split("\n");
-				buffer = lines.pop() || "";
-				for (const line of lines) processLine(line);
-			});
-
-			// Stderr carries both real diagnostics and (when the child calls the
-			// `question` tool) tagged protocol lines we must intercept. Buffer
-			// by line; route protocol lines to fulfillQuestion, append the rest
-			// to the visible stderr.
-			let stderrBuffer = "";
-			const handleStderrLine = (line: string) => {
-				const req = tryParseRequest(line);
-				if (!req) {
-					currentResult.stderr += `${line}\n`;
-					return;
-				}
-				if (!fulfillQuestion) {
-					const res: QuestionResponse = {
-						id: req.id,
-						error: "No question handler available in this parent process.",
-					};
-					try {
-						responseChannel?.write(encodeResponse(res));
-					} catch {
-						/* ignore */
+					void (async () => {
+						let out: { answers?: string[]; error?: string };
+						try {
+							out = await fulfillQuestion(req.questions, signal);
+						} catch (err) {
+							out = { error: `bridge failed: ${(err as Error).message}` };
+						}
+						const res: QuestionResponse = { id: req.id, ...out };
+						try {
+							responseChannel?.write(encodeResponse(res));
+						} catch {
+							/* child may have exited */
+						}
+					})();
+				};
+				proc.stderr?.on("data", (data) => {
+					stderrBuffer += data.toString();
+					let nl = stderrBuffer.indexOf("\n");
+					while (nl !== -1) {
+						handleStderrLine(stderrBuffer.slice(0, nl));
+						stderrBuffer = stderrBuffer.slice(nl + 1);
+						nl = stderrBuffer.indexOf("\n");
 					}
-					return;
-				}
-				void (async () => {
-					let out: { answers?: string[]; error?: string };
-					try {
-						out = await fulfillQuestion(req.questions, signal);
-					} catch (err) {
-						out = { error: `bridge failed: ${(err as Error).message}` };
-					}
-					const res: QuestionResponse = { id: req.id, ...out };
-					try {
-						responseChannel?.write(encodeResponse(res));
-					} catch {
-						/* child may have exited */
-					}
-				})();
-			};
-			proc.stderr?.on("data", (data) => {
-				stderrBuffer += data.toString();
-				let nl = stderrBuffer.indexOf("\n");
-				while (nl !== -1) {
-					handleStderrLine(stderrBuffer.slice(0, nl));
-					stderrBuffer = stderrBuffer.slice(nl + 1);
-					nl = stderrBuffer.indexOf("\n");
-				}
-			});
+				});
 
-			proc.on("close", (code) => {
-				if (buffer.trim()) processLine(buffer);
-				if (stderrBuffer.trim()) handleStderrLine(stderrBuffer);
-				resolve(code ?? 0);
-			});
+				// Track stream completion separately from process exit. The `close`
+				// event fires when the process exits, but stdout/stderr may still
+				// have buffered data that hasn't been emitted via "data" events yet.
+				// We must wait for both streams to end before resolving.
+				let stdoutEnded = false;
+				let stderrEnded = false;
+				let exitCodeValue: number | null = null;
 
-			proc.on("error", () => {
-				resolve(1);
-			});
+				const tryResolve = () => {
+					if (!stdoutEnded || !stderrEnded || exitCodeValue === null) return;
+					// Process any remaining data in buffers
+					if (buffer.trim()) processLine(buffer);
+					if (stderrBuffer.trim()) handleStderrLine(stderrBuffer);
+					resolve(exitCodeValue);
+				};
+
+				proc.stdout?.on("end", () => {
+					stdoutEnded = true;
+					tryResolve();
+				});
+
+				proc.stderr?.on("end", () => {
+					stderrEnded = true;
+					tryResolve();
+				});
+
+				proc.on("close", (code) => {
+					exitCodeValue = code ?? 0;
+					tryResolve();
+				});
+
+				proc.on("error", () => {
+					exitCodeValue = 1;
+					tryResolve();
+				});
 
 			if (signal) {
 				const killProc = () => {

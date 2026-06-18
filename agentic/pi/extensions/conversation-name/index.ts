@@ -132,15 +132,22 @@ async function generateNameWithModel(
 
 	for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
 		const instruction =
-			`Generate a concise session title summarizing this request. ` +
-			`Output ONLY the title text — no JSON, no quotes, no markdown.\n\n` +
-			`Constraints:\n` +
-			`- Must be 1-30 characters (inclusive)\n` +
-			`- Use Title Case\n` +
-			`- No trailing punctuation\n` +
-			`- Do NOT truncate mid-word or use ellipses - generate a proper title under the limit\n` +
-			`- Do NOT reference memories, auto-injection, or system context\n\n` +
-			`Request: ${request}`;
+		`Generate a concise session title (max 30 chars) for this request.\n\n` +
+		`Format: Use a noun phrase or gerund + object pattern. Examples:\n` +
+		`- "Fixing conversation naming"\n` +
+		`- "Debugging extension triggers"\n` +
+		`- "Session name bug"\n` +
+		`- "Implementing search feature"\n` +
+		`- "Wrong type inference"\n\n` +
+		`Rules:\n` +
+		`- Output ONLY the title — no quotes, JSON, or markdown\n` +
+		`- 1-30 characters (inclusive)\n` +
+		`- Use Title Case\n` +
+		`- No trailing punctuation\n` +
+		`- Do NOT truncate mid-word or use ellipses\n` +
+		`- Do NOT reference memories, auto-injection, or system context\n` +
+		`- Be specific: include key nouns/verbs from the request\n\n` +
+		`Request: ${request}`;
 
 		const result = await pi.exec("pi", ["-p", "--no-extensions", "--no-session", instruction], {
 			cwd,
