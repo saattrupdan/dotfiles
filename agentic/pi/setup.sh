@@ -277,7 +277,7 @@ for pkg in "$EXT_DIR"/*/package.json; do
   rm -rf "$dir/node_modules"
 
   echo "--- $name: npm $INSTALL_CMD"
-  if (cd "$dir" && CXXFLAGS="--std=c++20" npm "$INSTALL_CMD"); then
+  if (cd "$dir" && CXXFLAGS="--std=c++20" npm "$INSTALL_CMD" --legacy-peer-deps); then
     installed=$((installed + 1))
   else
     echo "!!! $name: install failed" >&2
