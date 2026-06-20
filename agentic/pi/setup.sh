@@ -94,6 +94,19 @@ if ! command -v npm >/dev/null 2>&1; then
   exit 1
 fi
 
+# Native modules (better-sqlite3, tree-sitter) ship prebuilt binaries only for
+# LTS (even-numbered) Node releases. On an odd/non-LTS Node, prebuild-install
+# misses and falls back to compiling from source, which often fails with the
+# old tree-sitter binding.gyp. Warn early — switching to Node LTS is the fix.
+node_major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+if [ "$((node_major % 2))" -eq 1 ]; then
+  echo "!!! Node v$node_major is a non-LTS release — native modules may have no" >&2
+  echo "    prebuilds and fail to compile. If installs below fail, switch to LTS:" >&2
+  echo "      nvm install 22 && nvm use 22 && nvm alias default 22" >&2
+  echo "      rm -rf $EXT_DIR/*/node_modules && sh \"$0\"" >&2
+  echo
+fi
+
 # Native modules (better-sqlite3, tree-sitter) compile on install and need a
 # C/C++ toolchain + python3. On apt-based systems, install them if missing.
 need_toolchain=false
