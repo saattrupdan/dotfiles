@@ -2,7 +2,9 @@
 # Set up Pi on a fresh machine, end to end:
 #   1. symlink the config into ~/.pi/agent (backing up any real files in the way)
 #   2. ensure an LTS Node via nvm (installing nvm/Node if needed)
-#   3. wipe stale node_modules and install each extension's npm dependencies
+#   3. ensure GNU Make >= 4.4 (building it if the system make is too old; needed
+#      to compile the tree-sitter native modules)
+#   4. wipe stale node_modules and install each extension's npm dependencies
 # Idempotent — safe to re-run.
 #
 # Symlinks (into this dotfiles repo, so edits stay version-controlled):
@@ -139,7 +141,7 @@ if ! command -v npm >/dev/null 2>&1; then
   exit 1
 fi
 
-# --- 3. Extension dependencies ----------------------------------------------
+# --- 3. Build toolchain & GNU Make ------------------------------------------
 
 # Native modules (better-sqlite3, tree-sitter) compile on install and need a
 # C/C++ toolchain + python3. On apt-based systems, install them if missing.
@@ -158,6 +160,46 @@ if [ "$need_toolchain" = true ]; then
     echo "    Install a C/C++ compiler + python3 manually if native modules fail." >&2
     echo
   fi
+fi
+
+# node-gyp needs GNU Make >= 4.4 to build the tree-sitter modules. Make 4.3
+# (Ubuntu 24.04's default) has a target-matching regression that breaks on the
+# node-addon-api ".stamp" path node-gyp emits (Release/obj.target/../...stamp),
+# so the compile dies with "No rule to make target". When the system make is
+# too old, build 4.4.1 once and point node-gyp at it via $MAKE.
+make_lt_44() {
+  v="$(make --version 2>/dev/null | head -1 | awk '{print $NF}')"   # e.g. 4.3 / 4.4.1
+  mj="${v%%.*}"; r="${v#*.}"; mn="${r%%.*}"
+  [ -z "$mj" ] && return 0
+  [ "$mj" -gt 4 ] 2>/dev/null && return 1
+  [ "$mj" -eq 4 ] 2>/dev/null && [ "${mn:-0}" -ge 4 ] 2>/dev/null && return 1
+  return 0
+}
+
+if make_lt_44; then
+  MAKE_PREFIX="$HOME/.cache/pi-setup/make-4.4.1"
+  if [ ! -x "$MAKE_PREFIX/bin/make" ]; then
+    echo "System make is < 4.4 ($(make --version 2>/dev/null | head -1)) — building GNU Make 4.4.1"
+    if ! command -v curl >/dev/null 2>&1; then
+      echo "error: curl needed to fetch GNU Make sources" >&2
+      exit 1
+    fi
+    build_tmp="$(mktemp -d)"
+    (
+      cd "$build_tmp" &&
+      curl -fsSLO https://ftpmirror.gnu.org/make/make-4.4.1.tar.gz &&
+      tar xf make-4.4.1.tar.gz &&
+      cd make-4.4.1 &&
+      ./configure --prefix="$MAKE_PREFIX" >/dev/null &&
+      make -j"$(nproc 2>/dev/null || echo 2)" >/dev/null &&
+      make install >/dev/null
+    ) || { echo "error: failed to build GNU Make 4.4.1" >&2; rm -rf "$build_tmp"; exit 1; }
+    rm -rf "$build_tmp"
+  fi
+  MAKE="$MAKE_PREFIX/bin/make"
+  export MAKE   # node-gyp honours $MAKE
+  echo "Using $("$MAKE" --version | head -1) for native builds ($MAKE)"
+  echo
 fi
 
 echo "Installing extension dependencies in $EXT_DIR"
@@ -194,7 +236,7 @@ done
 echo "Done: $installed extension(s) installed."
 if [ -n "$failed" ]; then
   echo "Failed:$failed" >&2
-  echo "Native modules failed to build. Check you're on LTS Node ($(node -v)) and" >&2
-  echo "that build-essential + python3 are installed, then re-run." >&2
+  echo "Native modules failed to build. Check you're on LTS Node ($(node -v)), that" >&2
+  echo "build-essential + python3 are installed, and GNU Make >= 4.4, then re-run." >&2
   exit 1
 fi
