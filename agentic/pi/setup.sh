@@ -22,8 +22,8 @@
 # dir that has a package.json.
 #
 # Some extensions (read, search, _outliner) use native modules (better-sqlite3,
-# tree-sitter). These have prebuilt binaries for LTS Node, so the script pins to
-# LTS; build-essential + python3 are installed as a compile fallback on apt.
+# tree-sitter). Node.js 25+ requires C++20 for native builds, so CXXFLAGS is set
+# accordingly. build-essential + python3 are installed as a compile fallback on apt.
 #
 # Usage: ./setup.sh [--ci]
 #   --ci   use `npm ci` (clean, lockfile-exact) instead of `npm install`
@@ -218,7 +218,7 @@ for pkg in "$EXT_DIR"/*/package.json; do
   rm -rf "$dir/node_modules"
 
   echo "--- $name: npm $INSTALL_CMD"
-  if (cd "$dir" && npm "$INSTALL_CMD"); then
+  if (cd "$dir" && CXXFLAGS="--std=c++20" npm "$INSTALL_CMD"); then
     installed=$((installed + 1))
   else
     echo "!!! $name: install failed" >&2
