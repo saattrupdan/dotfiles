@@ -12,6 +12,7 @@
  */
 
 import * as childProcess from "node:child_process";
+import { execSync } from "node:child_process";
 
 // Find ripgrep binary — shipped with VS Code or available via homebrew/npm.
 const RGP_PATHS = [
@@ -21,6 +22,24 @@ const RGP_PATHS = [
 	"/usr/local/bin/rg",
 	"rg",
 ];
+
+/**
+ * Check if cwd is inside a git repository. Returns the repo root if yes, null otherwise.
+ * Search is designed for git repos only — indexing arbitrary directories like $HOME
+ * causes freezing due to the massive file count.
+ */
+function findGitRoot(cwd: string): string | null {
+	try {
+		const output = execSync("git rev-parse --show-toplevel", {
+			cwd,
+			encoding: "utf-8",
+			stdio: ["ignore", "pipe", "ignore"],
+		});
+		return output.trim();
+	} catch {
+		return null;
+	}
+}
 
 function findRipgrep(): string {
 	for (const p of RGP_PATHS) {
@@ -418,7 +437,31 @@ export default async function (pi: ExtensionAPI) {
 			// agent actually is — searching process.cwd() then looks in the wrong
 			// tree and finds nothing where the user's files live.
 			const cwd = ctx?.cwd ?? process.cwd();
-			const { db, repoId, repoRoot } = ensureFullIndex(cwd, outline);
+
+			// Search is designed for git repositories only. Building a SQLite index
+			// with tree-sitter parsing for non-repo directories (e.g. $HOME) causes
+			// freezing due to massive file counts (100k+ files). Refuse to search
+			// outside a git repo.
+			const gitRoot = findGitRoot(cwd);
+			if (!gitRoot) {
+				return {
+					content: [
+						{
+							type: "text",
+							text:
+								`Search requires a git repository. The current directory (${cwd}) is not inside a git repo.\n\n` +
+								"The search tool builds a SQLite index with tree-sitter parsing, which is designed for code repositories. " +
+								"Searching arbitrary directories like $HOME would require indexing hundreds of thousands of files, causing the tool to freeze.\n\n" +
+								"To search this area, first initialize a git repo, or navigate to a git repository.",
+						},
+					],
+					details: undefined,
+				};
+			}
+
+			// We're in a git repo — use the git root as the search root, not the cwd.
+			// This ensures consistent results regardless of which subdirectory you're in.
+			const { db, repoId, repoRoot } = ensureFullIndex(gitRoot, outline);
 			touchMeta(repoId);
 
 			// Reconcile the index against the live tree **asynchronously** — do NOT
