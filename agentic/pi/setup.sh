@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Set up Pi on a fresh machine, end to end:
 #   1. symlink the config into ~/.pi/agent (backing up any real files in the way)
-#   2. ensure an LTS Node via nvm (installing nvm/Node if needed)
+#   2. use the existing Node, or bootstrap an LTS Node via nvm if none is found
 #   3. ensure GNU Make >= 4.4 (building it if the system make is too old; needed
 #      to compile the tree-sitter native modules)
 #   4. wipe stale node_modules and install each extension's npm dependencies
@@ -92,24 +92,18 @@ link SYSTEM.md        "$SCRIPT_DIR/SYSTEM.md"
 link skills           "$REPO_AGENTIC/skills"
 echo
 
-# --- 2. Node (LTS) -----------------------------------------------------------
+# --- 2. Node -----------------------------------------------------------------
 
-# Native modules (better-sqlite3, tree-sitter) ship prebuilt binaries only for
-# LTS (even-numbered) Node releases. On an odd/non-LTS Node, prebuild-install
-# misses and falls back to compiling old tree-sitter binding.gyp from source,
-# which fails. So ensure an LTS Node (via nvm) whenever the current one isn't.
+# The native modules (better-sqlite3, tree-sitter) are N-API, so the built
+# binaries are ABI-stable and run under any Node major — we don't care which
+# Node version is used, only that one exists. So leave whatever Node is already
+# installed alone (switching it risks orphaning a global `pi`), and only
+# bootstrap an LTS Node via nvm when none is present at all.
 NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 export NVM_DIR
 
-node_major() { node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0; }
-
-cur_major="$(node_major)"
-if [ "$cur_major" -eq 0 ] || [ "$((cur_major % 2))" -eq 1 ]; then
-  if [ "$cur_major" -eq 0 ]; then
-    echo "Node not found — installing LTS via nvm"
-  else
-    echo "Node v$cur_major is non-LTS (no native prebuilds) — switching to LTS via nvm"
-  fi
+if ! command -v node >/dev/null 2>&1; then
+  echo "Node not found — installing LTS via nvm"
   if ! command -v curl >/dev/null 2>&1; then
     echo "error: curl needed to install nvm/Node — install curl, then re-run" >&2
     exit 1
@@ -125,16 +119,16 @@ if [ "$cur_major" -eq 0 ] || [ "$((cur_major % 2))" -eq 1 ]; then
   . "$NVM_DIR/nvm.sh"
   nvm install --lts
   nvm use --lts
-  nvm alias default 'lts/*'   # so `pi` later runs under the same LTS Node
+  nvm alias default 'lts/*'
   set -eu
 
   if ! command -v node >/dev/null 2>&1; then
     echo "error: nvm failed to provide Node — see output above" >&2
     exit 1
   fi
-  echo "Now using Node $(node -v)"
-  echo
 fi
+echo "Using Node $(node -v)"
+echo
 
 if ! command -v npm >/dev/null 2>&1; then
   echo "error: npm still not on PATH after Node setup" >&2
@@ -219,8 +213,8 @@ for pkg in "$EXT_DIR"/*/package.json; do
     continue
   fi
 
-  # Wipe any node_modules first — a switch in Node version leaves native
-  # modules built for the wrong ABI, which won't load at runtime.
+  # Wipe any node_modules first for a clean, reproducible install (clears any
+  # half-built or wrong-arch native modules left by a previous failed run).
   rm -rf "$dir/node_modules"
 
   echo "--- $name: npm $INSTALL_CMD"
