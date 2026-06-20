@@ -26,3 +26,7 @@ agentic/pi/memories/
 # Python build artifacts
 **/*.egg-info/
 **/build/
+
+# Pi agent secrets — contain API keys and credentials
+agentic/pi/models.json
+agentic/pi/auth.json

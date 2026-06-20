@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Set up Pi on a fresh machine, end to end:
 #   1. symlink the config into ~/.pi/agent (backing up any real files in the way)
-#   2. use the existing Node, or bootstrap an LTS Node via nvm if none is found
-#   3. ensure GNU Make >= 4.4 (building it if the system make is too old; needed
+#   2. create models.json by prompting for provider credentials (not committed to git)
+#   3. use the existing Node, or bootstrap an LTS Node via nvm if none is found
+#   4. ensure GNU Make >= 4.4 (building it if the system make is too old; needed
 #      to compile the tree-sitter native modules)
-#   4. wipe stale node_modules and install each extension's npm dependencies
+#   5. wipe stale node_modules and install each extension's npm dependencies
 # Idempotent — safe to re-run.
 #
 # Symlinks (into this dotfiles repo, so edits stay version-controlled):
@@ -94,7 +95,127 @@ link skills           "$REPO_AGENTIC/skills"
 link themes           "$SCRIPT_DIR/themes"
 echo
 
-# --- 2. Node -----------------------------------------------------------------
+# --- 2. models.json ---------------------------------------------------------
+# Create models.json by prompting the user for provider credentials.
+# This file contains secrets and is NOT committed to git.
+
+echo "=== Setting up models.json ==="
+
+# Skip if already exists (user may have custom config)
+if [ -f "$PI_HOME/models.json" ]; then
+  echo "models.json already exists at $PI_HOME/models.json — skipping"
+else
+  echo "models.json not found — creating new configuration"
+  echo
+  echo "Configure your LLM providers. Press Enter to keep the default value."
+  echo
+  
+  # Llama.cpp (local)
+  echo "--- llama.cpp (local) ---"
+  read -rp "Base URL [http://localhost:8080/v1]: " llamacpp_url
+  read -rp "Model ID [qwen3.6-35B-A3B]: " llamacpp_model
+  llamacpp_url="${llamacpp_url:-http://localhost:8080/v1}"
+  llamacpp_model="${llamacpp_model:-qwen3.6-35B-A3B}"
+  
+  # Sparkie (optional remote)
+  echo
+  echo "--- sparkie (optional, skip if not used) ---"
+  read -rp "Use sparkie? (y/N): " use_sparkie
+  if [[ "$use_sparkie" =~ ^[Yy]$ ]]; then
+    read -rp "Base URL [http://100.102.237.34:8000/v1]: " sparkie_url
+    read -rp "Model ID [Qwen/Qwen3.6-35B-A3B-FP8]: " sparkie_model
+    sparkie_url="${sparkie_url:-http://100.102.237.34:8000/v1}"
+    sparkie_model="${sparkie_model:-Qwen/Qwen3.6-35B-A3B-FP8}"
+  else
+    use_sparkie="n"
+  fi
+  
+  # Alexandra inference (optional)
+  echo
+  echo "--- Alexandra inference API (optional, skip if not used) ---"
+  read -rp "Use inference.alexandra.dk? (y/N): " use_inference
+  if [[ "$use_inference" =~ ^[Yy]$ ]]; then
+    read -rp "API key: " inference_key
+    read -rp "Model ID [qwen3.5-397b]: " inference_model
+    inference_key="${inference_key:-}"
+    inference_model="${inference_model:-qwen3.5-397b}"
+  else
+    use_inference="n"
+  fi
+  
+  echo
+  echo "Writing models.json..."
+  
+  # Build JSON file
+  json_file="$PI_HOME/models.json"
+  
+  # Determine which providers are enabled
+  has_sparkie=false
+  has_inference=false
+  [[ "$use_sparkie" =~ ^[Yy]$ ]] && has_sparkie=true
+  [[ "$use_inference" =~ ^[Yy]$ ]] && has_inference=true
+  
+  # Start with llamacpp provider (always present)
+  printf '{\n  "providers": {\n    "llamacpp": {\n' > "$json_file"
+  printf '      "baseUrl": "%s",\n' "$llamacpp_url" >> "$json_file"
+  printf '      "api": "openai-completions",\n' >> "$json_file"
+  printf '      "apiKey": "llamacpp",\n' >> "$json_file"
+  printf '      "models": [{\n' >> "$json_file"
+  printf '        "id": "%s",\n' "$llamacpp_model" >> "$json_file"
+  printf '        "contextWindow": 262144\n' >> "$json_file"
+  printf '      }]\n' >> "$json_file"
+  
+  # Close llamacpp with comma if more providers follow
+  if $has_sparkie || $has_inference; then
+    printf '    },\n' >> "$json_file"
+  else
+    printf '    }\n' >> "$json_file"
+  fi
+  
+  # Add sparkie if enabled
+  if $has_sparkie; then
+    printf '    "sparkie": {\n' >> "$json_file"
+    printf '      "baseUrl": "%s",\n' "$sparkie_url" >> "$json_file"
+    printf '      "api": "openai-completions",\n' >> "$json_file"
+    printf '      "apiKey": "sparkie",\n' >> "$json_file"
+    printf '      "models": [{\n' >> "$json_file"
+    printf '        "id": "%s",\n' "$sparkie_model" >> "$json_file"
+    printf '        "contextWindow": 262144\n' >> "$json_file"
+    printf '      }]\n' >> "$json_file"
+    
+    # Close sparkie with comma if inference follows
+    if $has_inference; then
+      printf '    },\n' >> "$json_file"
+    else
+      printf '    }\n' >> "$json_file"
+    fi
+  fi
+  
+  # Add inference if enabled
+  if $has_inference; then
+    printf '    "inference": {\n' >> "$json_file"
+    printf '      "baseUrl": "https://inference.alexandra.dk/v1",\n' >> "$json_file"
+    printf '      "api": "openai-completions",\n' >> "$json_file"
+    printf '      "apiKey": "%s",\n' "$inference_key" >> "$json_file"
+    printf '      "models": [{\n' >> "$json_file"
+    printf '        "id": "%s",\n' "$inference_model" >> "$json_file"
+    printf '        "contextWindow": 262144,\n' >> "$json_file"
+    printf '        "input": ["text", "image"]\n' >> "$json_file"
+    printf '      }]\n' >> "$json_file"
+    printf '    }\n' >> "$json_file"
+  fi
+  
+  # Close the JSON
+  printf '  }\n' >> "$json_file"
+  printf '}\n' >> "$json_file"
+  
+  echo "--- models.json created at $PI_HOME/models.json"
+  echo
+fi
+
+echo
+
+# --- 3. Node -----------------------------------------------------------------
 
 # The native modules (better-sqlite3, tree-sitter) are N-API, so the built
 # binaries are ABI-stable and run under any Node major — we don't care which
@@ -137,7 +258,7 @@ if ! command -v npm >/dev/null 2>&1; then
   exit 1
 fi
 
-# --- 3. Build toolchain & GNU Make ------------------------------------------
+# --- 4. Build toolchain & GNU Make ------------------------------------------
 
 # Native modules (better-sqlite3, tree-sitter) compile on install and need a
 # C/C++ toolchain + python3. On apt-based systems, install them if missing.
@@ -197,6 +318,8 @@ if make_lt_44; then
   echo "Using $("$MAKE" --version | head -1) for native builds ($MAKE)"
   echo
 fi
+
+# --- 5. Extension dependencies ----------------------------------------------
 
 echo "Installing extension dependencies in $EXT_DIR"
 echo

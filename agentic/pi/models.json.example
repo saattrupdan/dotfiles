@@ -1,0 +1,38 @@
+{
+  "providers": {
+    "llamacpp": {
+      "baseUrl": "http://localhost:8080/v1",
+      "api": "openai-completions",
+      "apiKey": "llamacpp",
+      "models": [
+        {
+          "id": "qwen3.6-35B-A3B",
+          "contextWindow": 262144
+        }
+      ]
+    },
+    "sparkie": {
+      "baseUrl": "http://YOUR_SPARK_HOST:8000/v1",
+      "api": "openai-completions",
+      "apiKey": "sparkie",
+      "models": [
+        {
+          "id": "Qwen/Qwen3.6-35B-A3B-FP8",
+          "contextWindow": 262144
+        }
+      ]
+    },
+    "inference": {
+      "baseUrl": "https://inference.alexandra.dk/v1",
+      "api": "openai-completions",
+      "apiKey": "YOUR_API_KEY_HERE",
+      "models": [
+        {
+          "id": "qwen3.5-397b",
+          "contextWindow": 262144,
+          "input": ["text", "image"]
+        }
+      ]
+    }
+  }
+}
