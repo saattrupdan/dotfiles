@@ -229,6 +229,27 @@ function runEngine(repoRoot: string, query: string, regex: boolean, maxResults?:
 		// diverge from a plain grep.
 		const env = { ...process.env };
 		delete env.RIPGREP_CONFIG_PATH;
+		// Timeout (seconds) for ripgrep — prevents freezing on massive directories
+		// like $HOME where there's no .gitignore to limit the search space.
+		const RG_TIMEOUT_MS = 10_000;
+		// Always apply per-file cap — default to 50 when not specified to prevent
+		// runaway result sets. The global cap below further limits total results.
+		const perFileCap = maxResults ?? 50;
+		// Explicit exclude patterns for common large directories — essential when
+		// searching non-repo directories (e.g. $HOME) where --ignore has no effect.
+		const excludePatterns = [
+			"--glob=!node_modules/**",
+			"--glob=!.git/**",
+			"--glob=!dist/**",
+			"--glob=!build/**",
+			"--glob=!__pycache__/**",
+			"--glob=!.venv/**",
+			"--glob=!vendor/**",
+			"--glob=!.cache/**",
+			"--glob=!Library/**",
+			"--glob=!.local/**",
+		];
+
 		const proc = childProcess.spawnSync(
 			rgPath,
 			[
@@ -246,10 +267,11 @@ function runEngine(repoRoot: string, query: string, regex: boolean, maxResults?:
 				// -F: literal string unless the caller asked for regex, so a bare
 				//   "(" or "." is not a regex parse error / wildcard.
 				...(regex ? [] : ["-F"]),
-				// --max-count: limit results to avoid massive result sets (50k+ matches).
-				//   Defaults to 100 if not specified. Note: --max-count is per-file,
-				//   so a global cap is applied below to the total result set.
-				...(maxResults ? [`--max-count=${maxResults}`] : []),
+				// --max-count: limit results per-file to avoid massive result sets.
+				//   Always applied (defaults to 50) — note this is per-file, so a
+				//   global cap is also applied below to the total result set.
+				`--max-count=${perFileCap}`,
+				...excludePatterns,
 				"--",
 				query,
 				".",
@@ -259,6 +281,9 @@ function runEngine(repoRoot: string, query: string, regex: boolean, maxResults?:
 				stdio: "pipe",
 				encoding: "utf-8",
 				env,
+				// Timeout prevents freezing on huge directories — ripgrep will be
+				// killed after this duration if it hasn't completed.
+				timeout: RG_TIMEOUT_MS,
 				// Default maxBuffer is 1 MB — large result sets get silently
 				// truncated/errored. Give it room.
 				maxBuffer: 128 * 1024 * 1024,
@@ -275,7 +300,11 @@ function runEngine(repoRoot: string, query: string, regex: boolean, maxResults?:
 			}
 			return { results, engine: "ripgrep", total: results.length };
 		}
-		rgError = proc.error?.message ?? proc.stderr?.trim() ?? `exit ${proc.status}`;
+		// Detect timeout — provides a clearer error than "killed" or signal code.
+		const isTimeout = proc.error?.code === "ETIME" || (proc.error?.message?.includes("timed out"));
+		rgError = isTimeout
+			? `ripgrep timed out after ${RG_TIMEOUT_MS / 1000}s — too many files to search. Try running in a smaller directory (e.g. a git repo), or refine your query.`
+			: proc.error?.message ?? proc.stderr?.trim() ?? `exit ${proc.status}`;
 	} catch (err) {
 		rgError = err instanceof Error ? err.message : String(err);
 	}
