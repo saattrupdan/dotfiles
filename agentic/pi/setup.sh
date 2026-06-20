@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Set up Pi on a fresh machine: symlink the config into ~/.pi/agent and
-# install per-extension npm dependencies.
+# Set up Pi on a fresh machine, end to end:
+#   1. symlink the config into ~/.pi/agent (backing up any real files in the way)
+#   2. ensure an LTS Node via nvm (installing nvm/Node if needed)
+#   3. wipe stale node_modules and install each extension's npm dependencies
+# Idempotent — safe to re-run.
 #
 # Symlinks (into this dotfiles repo, so edits stay version-controlled):
 #   ~/.pi/agent/agents          -> agentic/pi/agents
@@ -16,9 +19,9 @@
 # but none of the installed packages. This installs them in every extension
 # dir that has a package.json.
 #
-# Some extensions (read, search, _outliner) use native modules
-# (better-sqlite3, tree-sitter) that compile on install and need a C/C++
-# toolchain + python3. On Debian/Ubuntu: sudo apt-get install -y build-essential python3
+# Some extensions (read, search, _outliner) use native modules (better-sqlite3,
+# tree-sitter). These have prebuilt binaries for LTS Node, so the script pins to
+# LTS; build-essential + python3 are installed as a compile fallback on apt.
 #
 # Usage: ./setup.sh [--ci]
 #   --ci   use `npm ci` (clean, lockfile-exact) instead of `npm install`
@@ -87,25 +90,56 @@ link SYSTEM.md        "$SCRIPT_DIR/SYSTEM.md"
 link skills           "$REPO_AGENTIC/skills"
 echo
 
-# --- 2. Extension dependencies ---------------------------------------------
-
-if ! command -v npm >/dev/null 2>&1; then
-  echo "error: npm not found on PATH — install Node.js, then re-run" >&2
-  exit 1
-fi
+# --- 2. Node (LTS) -----------------------------------------------------------
 
 # Native modules (better-sqlite3, tree-sitter) ship prebuilt binaries only for
 # LTS (even-numbered) Node releases. On an odd/non-LTS Node, prebuild-install
-# misses and falls back to compiling from source, which often fails with the
-# old tree-sitter binding.gyp. Warn early — switching to Node LTS is the fix.
-node_major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
-if [ "$((node_major % 2))" -eq 1 ]; then
-  echo "!!! Node v$node_major is a non-LTS release — native modules may have no" >&2
-  echo "    prebuilds and fail to compile. If installs below fail, switch to LTS:" >&2
-  echo "      nvm install 22 && nvm use 22 && nvm alias default 22" >&2
-  echo "      rm -rf $EXT_DIR/*/node_modules && sh \"$0\"" >&2
+# misses and falls back to compiling old tree-sitter binding.gyp from source,
+# which fails. So ensure an LTS Node (via nvm) whenever the current one isn't.
+NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+export NVM_DIR
+
+node_major() { node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0; }
+
+cur_major="$(node_major)"
+if [ "$cur_major" -eq 0 ] || [ "$((cur_major % 2))" -eq 1 ]; then
+  if [ "$cur_major" -eq 0 ]; then
+    echo "Node not found — installing LTS via nvm"
+  else
+    echo "Node v$cur_major is non-LTS (no native prebuilds) — switching to LTS via nvm"
+  fi
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "error: curl needed to install nvm/Node — install curl, then re-run" >&2
+    exit 1
+  fi
+  # nvm.sh and the nvm functions aren't written for `set -eu`, so relax it
+  # while we drive nvm, then restore.
+  set +eu
+  if [ ! -s "$NVM_DIR/nvm.sh" ]; then
+    echo "Installing nvm into $NVM_DIR…"
+    curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+  fi
+  # shellcheck source=/dev/null
+  . "$NVM_DIR/nvm.sh"
+  nvm install --lts
+  nvm use --lts
+  nvm alias default 'lts/*'   # so `pi` later runs under the same LTS Node
+  set -eu
+
+  if ! command -v node >/dev/null 2>&1; then
+    echo "error: nvm failed to provide Node — see output above" >&2
+    exit 1
+  fi
+  echo "Now using Node $(node -v)"
   echo
 fi
+
+if ! command -v npm >/dev/null 2>&1; then
+  echo "error: npm still not on PATH after Node setup" >&2
+  exit 1
+fi
+
+# --- 3. Extension dependencies ----------------------------------------------
 
 # Native modules (better-sqlite3, tree-sitter) compile on install and need a
 # C/C++ toolchain + python3. On apt-based systems, install them if missing.
@@ -143,6 +177,10 @@ for pkg in "$EXT_DIR"/*/package.json; do
     continue
   fi
 
+  # Wipe any node_modules first — a switch in Node version leaves native
+  # modules built for the wrong ABI, which won't load at runtime.
+  rm -rf "$dir/node_modules"
+
   echo "--- $name: npm $INSTALL_CMD"
   if (cd "$dir" && npm "$INSTALL_CMD"); then
     installed=$((installed + 1))
@@ -156,7 +194,7 @@ done
 echo "Done: $installed extension(s) installed."
 if [ -n "$failed" ]; then
   echo "Failed:$failed" >&2
-  echo "Native modules (better-sqlite3, tree-sitter) need a build toolchain — on Debian/Ubuntu try:" >&2
-  echo "  sudo apt-get install -y build-essential python3" >&2
+  echo "Native modules failed to build. Check you're on LTS Node ($(node -v)) and" >&2
+  echo "that build-essential + python3 are installed, then re-run." >&2
   exit 1
 fi
