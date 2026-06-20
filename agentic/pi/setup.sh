@@ -20,8 +20,10 @@
 # (better-sqlite3, tree-sitter) that compile on install and need a C/C++
 # toolchain + python3. On Debian/Ubuntu: sudo apt-get install -y build-essential python3
 #
-# Usage: ./setup.sh [--ci]
-#   --ci   use `npm ci` (clean, lockfile-exact) instead of `npm install`
+# Usage: ./setup.sh [--ci] [--force]
+#   --ci      use `npm ci` (clean, lockfile-exact) instead of `npm install`
+#   --force   if a real file/dir is in the way of a symlink, back it up to
+#             <name>.bak and create the symlink anyway (default: skip & warn)
 
 set -eu
 
@@ -34,9 +36,14 @@ EXT_DIR="$SCRIPT_DIR/extensions"
 PI_HOME="$HOME/.pi/agent"
 
 INSTALL_CMD="install"
-if [ "${1:-}" = "--ci" ]; then
-  INSTALL_CMD="ci"
-fi
+FORCE=false
+for arg in "$@"; do
+  case "$arg" in
+    --ci) INSTALL_CMD="ci" ;;
+    --force) FORCE=true ;;
+    *) echo "unknown option: $arg" >&2; exit 2 ;;
+  esac
+done
 
 # --- 1. Symlinks ------------------------------------------------------------
 
@@ -56,10 +63,18 @@ link() {
     return
   fi
 
-  # A real file/dir (not a symlink) lives here — don't clobber user data.
+  # A real file/dir (not a symlink) lives here. Without --force, don't clobber
+  # user data. With --force, back it up to <name>.bak and replace with a link.
   if [ -e "$dest" ] && [ ! -L "$dest" ]; then
-    echo "!!! $name: $dest exists and is not a symlink, skipping (move it aside first)" >&2
-    return
+    if [ "$FORCE" != true ]; then
+      echo "!!! $name: $dest exists and is not a symlink, skipping (re-run with --force to back up & link)" >&2
+      return
+    fi
+    backup="$dest.bak"
+    i=1
+    while [ -e "$backup" ]; do backup="$dest.bak.$i"; i=$((i + 1)); done
+    mv "$dest" "$backup"
+    echo "    backed up existing $name -> $backup"
   fi
 
   ln -sfn "$target" "$dest"
