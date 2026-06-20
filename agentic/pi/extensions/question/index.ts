@@ -6,7 +6,7 @@ import * as crypto from "node:crypto";
 import * as net from "node:net";
 
 import type { AgentToolResult, ExtensionAPI, ExtensionContext, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
-import { Text, type Theme } from "@earendil-works/pi-tui";
+import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 import { isLidClosed } from "../_lid_state/lid.ts";
@@ -136,6 +136,7 @@ async function askOneLocally(
 					lines.push(colors.dim + "↑↓ navigate · Space: toggle · Enter: submit · Esc: cancel" + colors.reset);
 					ui.setWorkingMessage(lines.join("\n"));
 				};
+				void signal; // eslint-disable-line @typescript-eslint/no-unused-vars
 
 				render();
 			});
