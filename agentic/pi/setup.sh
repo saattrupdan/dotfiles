@@ -82,6 +82,25 @@ if ! command -v npm >/dev/null 2>&1; then
   exit 1
 fi
 
+# Native modules (better-sqlite3, tree-sitter) compile on install and need a
+# C/C++ toolchain + python3. On apt-based systems, install them if missing.
+need_toolchain=false
+command -v cc  >/dev/null 2>&1 || need_toolchain=true
+command -v make >/dev/null 2>&1 || need_toolchain=true
+command -v python3 >/dev/null 2>&1 || need_toolchain=true
+
+if [ "$need_toolchain" = true ]; then
+  if command -v apt-get >/dev/null 2>&1; then
+    echo "Build toolchain missing — installing build-essential python3"
+    sudo apt-get update && sudo apt-get install -y build-essential python3
+    echo
+  else
+    echo "!!! build toolchain (cc/make/python3) missing and apt-get not found." >&2
+    echo "    Install a C/C++ compiler + python3 manually if native modules fail." >&2
+    echo
+  fi
+fi
+
 echo "Installing extension dependencies in $EXT_DIR"
 echo
 
