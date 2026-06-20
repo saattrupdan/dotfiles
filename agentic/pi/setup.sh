@@ -15,6 +15,7 @@
 #   ~/.pi/agent/keybindings.json-> agentic/pi/keybindings.json
 #   ~/.pi/agent/SYSTEM.md       -> agentic/pi/SYSTEM.md
 #   ~/.pi/agent/skills          -> agentic/skills
+#   ~/.pi/agent/themes          -> agentic/pi/themes
 #
 # Dependencies: each extension declares its own npm deps in a per-extension
 # package.json, but node_modules/ is gitignored — so a fresh copy has the code
@@ -90,6 +91,7 @@ link settings.json    "$SCRIPT_DIR/settings.json"
 link keybindings.json "$SCRIPT_DIR/keybindings.json"
 link SYSTEM.md        "$SCRIPT_DIR/SYSTEM.md"
 link skills           "$REPO_AGENTIC/skills"
+link themes           "$SCRIPT_DIR/themes"
 echo
 
 # --- 2. Node -----------------------------------------------------------------
