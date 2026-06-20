@@ -23,10 +23,12 @@
 # Usage: ./setup.sh [--ci]
 #   --ci   use `npm ci` (clean, lockfile-exact) instead of `npm install`
 
-set -euo pipefail
+set -eu
 
-# Resolve this script's dir (= agentic/pi), following symlinks.
-SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+# Resolve this script's dir (= agentic/pi), following symlinks. POSIX-safe:
+# uses $0, so this works whether invoked as `./setup.sh`, `bash setup.sh`,
+# or `sh setup.sh`.
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 REPO_AGENTIC="$(cd "$SCRIPT_DIR/.." && pwd)"   # agentic/
 EXT_DIR="$SCRIPT_DIR/extensions"
 PI_HOME="$HOME/.pi/agent"
@@ -104,7 +106,7 @@ fi
 echo "Installing extension dependencies in $EXT_DIR"
 echo
 
-failed=()
+failed=""
 installed=0
 
 for pkg in "$EXT_DIR"/*/package.json; do
@@ -123,14 +125,14 @@ for pkg in "$EXT_DIR"/*/package.json; do
     installed=$((installed + 1))
   else
     echo "!!! $name: install failed" >&2
-    failed+=("$name")
+    failed="$failed $name"
   fi
   echo
 done
 
 echo "Done: $installed extension(s) installed."
-if [ ${#failed[@]} -gt 0 ]; then
-  echo "Failed: ${failed[*]}" >&2
+if [ -n "$failed" ]; then
+  echo "Failed:$failed" >&2
   echo "Native modules (better-sqlite3, tree-sitter) need a build toolchain — on Debian/Ubuntu try:" >&2
   echo "  sudo apt-get install -y build-essential python3" >&2
   exit 1
