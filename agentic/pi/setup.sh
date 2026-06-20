@@ -107,40 +107,22 @@ if [ -f "$PI_HOME/models.json" ]; then
 else
   echo "models.json not found — creating new configuration"
   echo
-  echo "Configure your LLM providers. Press Enter to keep the default value."
+  echo "Configure your LLM provider. Press Enter to keep the default value."
   echo
   
-  # Llama.cpp (local)
-  echo "--- llama.cpp (local) ---"
-  read -rp "Base URL [http://localhost:8080/v1]: " llamacpp_url
-  read -rp "Model ID [qwen3.6-35B-A3B]: " llamacpp_model
-  llamacpp_url="${llamacpp_url:-http://localhost:8080/v1}"
-  llamacpp_model="${llamacpp_model:-qwen3.6-35B-A3B}"
+  read -rp "Base URL [http://localhost:8080/v1]: " base_url
+  read -rp "API key [default]: " api_key
+  read -rp "Model ID: " model_id
+  read -rp "Context window [262144]: " context_window
   
-  # Sparkie (optional remote)
-  echo
-  echo "--- sparkie (optional, skip if not used) ---"
-  read -rp "Use sparkie? (y/N): " use_sparkie
-  if [[ "$use_sparkie" =~ ^[Yy]$ ]]; then
-    read -rp "Base URL [http://100.102.237.34:8000/v1]: " sparkie_url
-    read -rp "Model ID [Qwen/Qwen3.6-35B-A3B-FP8]: " sparkie_model
-    sparkie_url="${sparkie_url:-http://100.102.237.34:8000/v1}"
-    sparkie_model="${sparkie_model:-Qwen/Qwen3.6-35B-A3B-FP8}"
-  else
-    use_sparkie="n"
-  fi
+  base_url="${base_url:-http://localhost:8080/v1}"
+  api_key="${api_key:-default}"
+  model_id="${model_id:-}"
+  context_window="${context_window:-262144}"
   
-  # Alexandra inference (optional)
-  echo
-  echo "--- Alexandra inference API (optional, skip if not used) ---"
-  read -rp "Use inference.alexandra.dk? (y/N): " use_inference
-  if [[ "$use_inference" =~ ^[Yy]$ ]]; then
-    read -rp "API key: " inference_key
-    read -rp "Model ID [qwen3.5-397b]: " inference_model
-    inference_key="${inference_key:-}"
-    inference_model="${inference_model:-qwen3.5-397b}"
-  else
-    use_inference="n"
+  if [ -z "$model_id" ]; then
+    echo "Error: Model ID is required"
+    exit 1
   fi
   
   echo
@@ -149,63 +131,15 @@ else
   # Build JSON file
   json_file="$PI_HOME/models.json"
   
-  # Determine which providers are enabled
-  has_sparkie=false
-  has_inference=false
-  [[ "$use_sparkie" =~ ^[Yy]$ ]] && has_sparkie=true
-  [[ "$use_inference" =~ ^[Yy]$ ]] && has_inference=true
-  
-  # Start with llamacpp provider (always present)
-  printf '{\n  "providers": {\n    "llamacpp": {\n' > "$json_file"
-  printf '      "baseUrl": "%s",\n' "$llamacpp_url" >> "$json_file"
+  printf '{\n  "providers": {\n    "default": {\n' > "$json_file"
+  printf '      "baseUrl": "%s",\n' "$base_url" >> "$json_file"
   printf '      "api": "openai-completions",\n' >> "$json_file"
-  printf '      "apiKey": "llamacpp",\n' >> "$json_file"
+  printf '      "apiKey": "%s",\n' "$api_key" >> "$json_file"
   printf '      "models": [{\n' >> "$json_file"
-  printf '        "id": "%s",\n' "$llamacpp_model" >> "$json_file"
-  printf '        "contextWindow": 262144\n' >> "$json_file"
+  printf '        "id": "%s",\n' "$model_id" >> "$json_file"
+  printf '        "contextWindow": %s\n' "$context_window" >> "$json_file"
   printf '      }]\n' >> "$json_file"
-  
-  # Close llamacpp with comma if more providers follow
-  if $has_sparkie || $has_inference; then
-    printf '    },\n' >> "$json_file"
-  else
-    printf '    }\n' >> "$json_file"
-  fi
-  
-  # Add sparkie if enabled
-  if $has_sparkie; then
-    printf '    "sparkie": {\n' >> "$json_file"
-    printf '      "baseUrl": "%s",\n' "$sparkie_url" >> "$json_file"
-    printf '      "api": "openai-completions",\n' >> "$json_file"
-    printf '      "apiKey": "sparkie",\n' >> "$json_file"
-    printf '      "models": [{\n' >> "$json_file"
-    printf '        "id": "%s",\n' "$sparkie_model" >> "$json_file"
-    printf '        "contextWindow": 262144\n' >> "$json_file"
-    printf '      }]\n' >> "$json_file"
-    
-    # Close sparkie with comma if inference follows
-    if $has_inference; then
-      printf '    },\n' >> "$json_file"
-    else
-      printf '    }\n' >> "$json_file"
-    fi
-  fi
-  
-  # Add inference if enabled
-  if $has_inference; then
-    printf '    "inference": {\n' >> "$json_file"
-    printf '      "baseUrl": "https://inference.alexandra.dk/v1",\n' >> "$json_file"
-    printf '      "api": "openai-completions",\n' >> "$json_file"
-    printf '      "apiKey": "%s",\n' "$inference_key" >> "$json_file"
-    printf '      "models": [{\n' >> "$json_file"
-    printf '        "id": "%s",\n' "$inference_model" >> "$json_file"
-    printf '        "contextWindow": 262144,\n' >> "$json_file"
-    printf '        "input": ["text", "image"]\n' >> "$json_file"
-    printf '      }]\n' >> "$json_file"
-    printf '    }\n' >> "$json_file"
-  fi
-  
-  # Close the JSON
+  printf '    }\n' >> "$json_file"
   printf '  }\n' >> "$json_file"
   printf '}\n' >> "$json_file"
   
