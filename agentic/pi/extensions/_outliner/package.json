@@ -4,6 +4,12 @@
 	"version": "0.1.0",
 	"description": "Shared tree-sitter outliner used by the read and search pi extensions.",
 	"type": "module",
+	"//": [
+		"tree-sitter versions are pinned deliberately — do NOT bump without testing on the DGX Spark (ARM64), which is the primary deployment target:",
+		"tree-sitter 0.21.x: newer runtimes (0.22.x, 0.25.x) build on macOS/Node 24 but fail on the Spark, so we stay on the 0.21 line.",
+		"tree-sitter-typescript 0.20.5: 0.23.x has a node-gyp build bug; 0.20.5 is the last release that builds cleanly on the Spark.",
+		"Native modules need C++20 to compile on Node 24+ (cppgc headers) — setup.sh passes CXXFLAGS=-std=c++20 during npm install."
+	],
 	"dependencies": {
 		"tree-sitter": "^0.21.1",
 		"tree-sitter-javascript": "^0.21.4",
