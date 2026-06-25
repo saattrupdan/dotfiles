@@ -124,7 +124,7 @@ Always inspect and address them.
 
 Note: You cannot submit a review (`gh pr review`) on your own PR — only post comments and resolve threads.
 
-### Handling reviews: Copilot vs humans
+#### Handling reviews: Copilot vs humans
 
 **Copilot reviews:**
 1. **Fetch inline comments**:
@@ -166,7 +166,7 @@ Note: You cannot submit a review (`gh pr review`) on your own PR — only post c
    gh pr edit <N> --remove-reviewer <reviewer-login> --add-reviewer <reviewer-login>
    ```
 
-**Key principle:** Copilot → resolve threads + one summary tagged @copilot. Humans → reply on each thread, no summary, re-request review.
+**Key principle:** Copilot → resolve threads + one summary tagged `@copilot`. Humans → reply to each thread, no summary, re-request review.
 
 ## Issues
 
