@@ -1,5 +1,3 @@
-vim.keymap.set('n', '<leader>cc', '<cmd>ClaudeCode<CR>')
-
 return {
   "greggh/claude-code.nvim",
   dependencies = {
