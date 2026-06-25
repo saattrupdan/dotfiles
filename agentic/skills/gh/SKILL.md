@@ -124,9 +124,8 @@ Always inspect and address them.
 
 Note: You cannot submit a review (`gh pr review`) on your own PR — only post comments and resolve threads.
 
-#### Handling reviews: Copilot vs humans
+#### Copilot review workflow
 
-**Copilot reviews:**
 1. **Fetch inline comments**:
    ```bash
    gh api repos/<org>/<repo>/pulls/<N>/reviews --jq '.[] | select(.author.login == "copilot-pull-request-reviewer") | .id'
@@ -150,7 +149,8 @@ Note: You cannot submit a review (`gh pr review`) on your own PR — only post c
    gh api graphql --method POST -f 'query=mutation { resolveReviewThread(input: {threadId: "PRRT_xxx"}) { clientMutationId } }'
    ```
 
-**Human reviews:**
+#### Human review workflow
+
 1. **Fetch inline comments** for each review:
    ```bash
    gh api repos/<org>/<repo>/pulls/<N>/reviews/<REVIEW_ID>/comments --jq '.[] | {id, path, line, body}'
@@ -159,7 +159,7 @@ Note: You cannot submit a review (`gh pr review`) on your own PR — only post c
    ```bash
    gh api repos/<org>/<repo>/pulls/comments/<COMMENT_ID> -X POST -f body="Your reply here"
    ```
-3. **Do NOT resolve threads without replying** — resolve only for trivial nits you've fixed. Otherwise reply with context.
+3. **Do NOT resolve threads without replying** — resolve only for trivial nits you've immediately fixed. Otherwise, reply with context.
 4. **No overall summary comment** — individual replies are sufficient.
 5. **Re-request the review** after addressing all comments:
    ```bash
