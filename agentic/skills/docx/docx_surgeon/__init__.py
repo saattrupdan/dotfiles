@@ -1,0 +1,41 @@
+"""Surgical, formatting-preserving editing of Microsoft Word .docx files."""
+
+from .main import (
+    Block,
+    append_comments,
+    apply_edits,
+    comment_block,
+    document_path,
+    ensure_comments_part,
+    escape,
+    iter_blocks,
+    pack,
+    para,
+    read,
+    replace_once,
+    sample_rpr,
+    scan,
+    unpack,
+    validate,
+    write,
+)
+
+__all__ = [
+    "Block",
+    "append_comments",
+    "apply_edits",
+    "comment_block",
+    "document_path",
+    "ensure_comments_part",
+    "escape",
+    "iter_blocks",
+    "pack",
+    "para",
+    "read",
+    "replace_once",
+    "sample_rpr",
+    "scan",
+    "unpack",
+    "validate",
+    "write",
+]

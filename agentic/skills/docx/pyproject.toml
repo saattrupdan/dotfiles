@@ -1,0 +1,18 @@
+[project]
+name = "docx"
+version = "1.0.0"
+description = "Surgical, formatting-preserving editing of Microsoft Word .docx files"
+requires-python = ">=3.12"
+
+[project.scripts]
+docx = "docx_surgeon.main:main"
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["docx_surgeon"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
