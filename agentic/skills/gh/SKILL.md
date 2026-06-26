@@ -135,7 +135,7 @@ Note: You cannot submit a review (`gh pr review`) on your own PR — only post c
 3. **Fix the code** if the feedback is valid (or improve it even if the suggestion isn't perfect).
 4. **Reply to ambiguous comments** — if a comment contains a question or is unclear, reply on that specific thread:
    ```bash
-   gh api repos/<org>/<repo>/pulls/comments/<COMMENT_ID> -X POST -f body="Your clarification question here"
+   gh api repos/<org>/<repo>/pulls/<N>/comments -X POST -f body="Your clarification question here" -F in_reply_to=<COMMENT_ID>
    ```
 5. **Post a summary comment** on the PR listing what you fixed, tagged with `@copilot`:
    ```bash
@@ -157,7 +157,7 @@ Note: You cannot submit a review (`gh pr review`) on your own PR — only post c
    ```
 2. **Reply directly to each comment** — explain your fix or reasoning on the specific thread:
    ```bash
-   gh api repos/<org>/<repo>/pulls/comments/<COMMENT_ID> -X POST -f body="Your reply here"
+   gh api repos/<org>/<repo>/pulls/<N>/comments -X POST -f body="Your reply here" -F in_reply_to=<COMMENT_ID>
    ```
 3. **Do NOT resolve threads without replying** — resolve only for trivial nits you've immediately fixed. Otherwise, reply with context.
 4. **No overall summary comment** — individual replies are sufficient.
