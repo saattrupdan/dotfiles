@@ -163,8 +163,9 @@ Note: You cannot submit a review (`gh pr review`) on your own PR — only post c
 4. **No overall summary comment** — individual replies are sufficient.
 5. **Re-request the review** after addressing all comments:
    ```bash
-   gh pr edit <N> --remove-reviewer <reviewer-login> --add-reviewer <reviewer-login>
+   echo '{"reviewers":["<reviewer-login>"]}' | gh api --method POST repos/<org>/<repo>/pulls/<N>/requested_reviewers --input -
    ```
+   **Note:** `gh pr edit --add-reviewer` doesn't actually re-request — use the API endpoint directly.
 
 **Key principle:** Copilot → resolve threads + one summary tagged `@copilot`. Humans → reply to each thread, no summary, re-request review.
 
