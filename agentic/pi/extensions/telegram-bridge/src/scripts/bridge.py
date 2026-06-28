@@ -117,13 +117,17 @@ def call_pi(
     if not nvm_script.exists():
         return "Error: nvm not found."
     
-    # Find latest node version
+    # Find latest node 24.x version (compatible with native modules)
     nvm_versions = nvm_dir / "versions" / "node"
     node_version = None
     if nvm_versions.exists():
-        versions = sorted([d.name for d in nvm_versions.iterdir() if d.is_dir()], reverse=True)
-        if versions:
-            node_version = versions[0]
+        # Prefer v24.x for compatibility, otherwise latest
+        v24_versions = [d.name for d in nvm_versions.iterdir() if d.is_dir() and d.name.startswith("v24.")]
+        all_versions = [d.name for d in nvm_versions.iterdir() if d.is_dir()]
+        if v24_versions:
+            node_version = sorted(v24_versions, reverse=True)[0]
+        elif all_versions:
+            node_version = sorted(all_versions, reverse=True)[0]
     
     if not node_version:
         return "Error: No node version found in nvm."
