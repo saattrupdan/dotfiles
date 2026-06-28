@@ -78,10 +78,10 @@ def get_session(user_id: int) -> dict[str, Any]:
 
 def truncate_response(text: str) -> str:
     """Truncate response for mobile brevity."""
-    if len(text) > 300:
-        breakpoint_pos = text[:300].rfind("\n")
+    if len(text) > 1000:
+        breakpoint_pos = text[:1000].rfind("\n")
         if breakpoint_pos == -1:
-            breakpoint_pos = 300
+            breakpoint_pos = 1000
         return text[:breakpoint_pos] + "\n\n... (ask for more details)"
     return text
 
