@@ -37,9 +37,6 @@ uv run src/scripts/bridge.py
 | Command | Description |
 |---------|-------------|
 | `clear` | Reset history (creates new session ID) |
-| `status` | Show cwd, session ID, message count |
-| `cwd <path>` | Change working directory |
-| `help` | List available commands |
 
 Any other text is forwarded to Pi.
 

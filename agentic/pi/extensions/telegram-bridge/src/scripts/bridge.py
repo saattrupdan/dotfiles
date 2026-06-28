@@ -29,11 +29,7 @@ MAX_RESPONSE_LENGTH = 4096
 TELEGRAM_SESSION_ID = "telegram"  # Fixed session ID for Telegram
 
 # Commands (natural language, no slashes)
-COMMANDS: dict[str, str] = {
-    "clear": "Reset conversation history (creates new session)",
-    "status": "Show current cwd and session state",
-    "help": "List available commands",
-}
+COMMANDS: set[str] = {"clear"}
 
 logger = logging.getLogger(__name__)
 
@@ -149,38 +145,6 @@ async def handle_command(update: Update, context: Any) -> None:
         await update.message.reply_text(
             f"✓ History cleared (new session: {new_session_id[:8]}...)"
         )
-        return
-
-    if text == "status":
-        history_count = len(session.get("history", []))
-        cwd = session.get("cwd", "unknown")
-        session_id = session.get("session_id", TELEGRAM_SESSION_ID)
-        msg = (
-            f"cwd: {cwd}\n"
-            f"session: {session_id[:8]}...\n"
-            f"History: {history_count} messages"
-        )
-        await update.message.reply_text(msg)
-        return
-
-    if text == "help":
-        help_text = "Commands:\n"
-        for cmd, desc in COMMANDS.items():
-            help_text += f"  {cmd} - {desc}\n"
-        help_text += "\n  cwd <path> - Change working directory\n"
-        help_text += "\nAny other text is sent to Pi."
-        await update.message.reply_text(help_text)
-        return
-
-    if text.startswith("cwd "):
-        new_cwd = text_raw[4:].strip()
-        expanded = os.path.expanduser(new_cwd)
-        if os.path.isdir(expanded):
-            session["cwd"] = os.path.abspath(expanded)
-            save_sessions({str(user_id): session})
-            await update.message.reply_text(f"✓ cwd set to {session['cwd']}")
-        else:
-            await update.message.reply_text(f"Invalid directory: {new_cwd}")
         return
 
     await handle_message_to_pi(update, context)
