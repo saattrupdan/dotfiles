@@ -243,14 +243,11 @@ async def handle_command(update: Update, context: Any) -> None:
         # Run /compact command in Pi to compress session history
         await update.message.reply_chat_action(action="typing")
         loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(
-            None,
-            lambda: call_pi(
-                "/compact", session["cwd"], session["session_id"], session["history"]
-            ),
+        call_pi(
+            "/compact", session["cwd"], session["session_id"], session["history"]
         )
-        # Show compact result but don't truncate (it's metadata, not conversation)
-        await update.message.reply_text(response)
+        # Just acknowledge - don't show Pi's full output on mobile
+        await update.message.reply_text("Compacted session.")
         # Don't add /compact to history - it's a meta-command
         return
 
