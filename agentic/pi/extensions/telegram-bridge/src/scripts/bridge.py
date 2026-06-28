@@ -122,6 +122,12 @@ def call_pi(
     with open(debug_file, "a") as f:
         f.write(f"call_pi: nvm_in_path={nvm_in_path}, pi_found_at={pi_which}\n")
 
+    # Fix path if it's from macOS but we're on Linux (sessions.json got synced)
+    if cwd.startswith("/Users/"):
+        cwd = cwd.replace("/Users/dansmart/gitsky/", str(Path.home()) + "/")
+    
+    logger.info(f"call_pi: cwd={cwd}")
+    
     try:
         result = subprocess.run(
             ["pi", "-p", "--session-id", session_id],
