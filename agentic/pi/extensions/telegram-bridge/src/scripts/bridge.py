@@ -112,21 +112,25 @@ def call_pi(
 
     full_text = "\n".join(full_prompt)
 
-    # Fix path if it's from macOS but we're on Linux (sessions.json got synced)
+    # Fix path if sessions.json got synced across machines
     if cwd.startswith("/Users/"):
+        # macOS to Linux
         cwd = cwd.replace("/Users/dansmart/gitsky/", str(Path.home()) + "/")
-    
+    elif "/gitsky/" in cwd:
+        # Linux to Linux (remove gitsky from path)
+        cwd = cwd.replace("/gitsky/", "/")
+
     # Call pi via bash with nvm loaded (handles any node version)
     nvm_dir = Path.home() / ".nvm"
     nvm_script = nvm_dir / "nvm.sh"
-    
+
     # Debug logging
     logger.info(f"call_pi: nvm_dir={nvm_dir}, exists={nvm_dir.exists()}")
     logger.info(f"call_pi: nvm_script={nvm_script}, exists={nvm_script.exists()}")
-    
+
     if not nvm_script.exists():
         return "Error: nvm not found."
-    
+
     # Find latest node 24.x version (compatible with native modules)
     nvm_versions = nvm_dir / "versions" / "node"
     node_version = None
@@ -138,18 +142,18 @@ def call_pi(
             node_version = sorted(v24_versions, reverse=True)[0]
         elif all_versions:
             node_version = sorted(all_versions, reverse=True)[0]
-    
+
     logger.info(f"call_pi: nvm_versions={nvm_versions}, exists={nvm_versions.exists()}, node_version={node_version}")
-    
+
     if not node_version:
         return "Error: No node version found in nvm."
-    
+
     # Build bash command that loads nvm and runs pi
     # nvm output goes to stderr (2>&1), pi output is captured in stdout
     pi_cmd = f"""source {nvm_script} >/dev/null 2>&1 && nvm use {node_version} >/dev/null 2>&1 && pi -p --session-id {session_id}"""
-    
+
     logger.info(f"call_pi: cwd={cwd}, pi_cmd={pi_cmd[:100]}...")
-    
+
     try:
         result = subprocess.run(
             ["bash", "-c", pi_cmd],
@@ -253,7 +257,7 @@ async def main() -> None:
         f.write(f"PATH: {os.environ.get('PATH', 'NOT SET')}\n")
         f.write(f"NVM_DIR: {os.environ.get('NVM_DIR', 'NOT SET')}\n")
         f.write(f"NODE_BIN: {os.environ.get('NODE_BIN', 'NOT SET')}\n")
-    
+
     # Check if bridge is explicitly enabled (defaults to disabled)
     enabled = os.environ.get(ENABLE_BRIDGE_ENV, "").lower()
     if enabled not in ("1", "true", "yes"):
