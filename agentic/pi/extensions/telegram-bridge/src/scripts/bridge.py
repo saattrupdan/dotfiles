@@ -106,13 +106,15 @@ def call_pi(
 
     full_text = "\n".join(full_prompt)
 
-    # Use absolute path to pi since uv run strips PATH
-    pi_bin = str(Path.home() / ".nvm" / "versions" / "node" / "v24.17.0" / "bin" / "pi")
+    # Call pi via node since uv run strips PATH and pi's shebang needs node
+    node_bin = str(Path.home() / ".nvm" / "versions" / "node" / "v24.17.0" / "bin" / "node")
+    pi_cli = str(Path.home() / ".nvm" / "versions" / "node" / "v24.17.0" / "lib" / "node_modules" / "@earendil-works" / "pi-coding-agent" / "dist" / "cli.js")
     
     # Debug logging to file
     debug_file = Path.home() / ".telegram-bridge-debug.log"
     with open(debug_file, "a") as f:
-        f.write(f"call_pi: pi_bin={pi_bin}, exists={os.path.exists(pi_bin)}\n")
+        f.write(f"call_pi: node_bin={node_bin}, exists={os.path.exists(node_bin)}\n")
+        f.write(f"call_pi: pi_cli={pi_cli}, exists={os.path.exists(pi_cli)}\n")
 
     # Fix path if it's from macOS but we're on Linux (sessions.json got synced)
     if cwd.startswith("/Users/"):
@@ -122,7 +124,7 @@ def call_pi(
     
     try:
         result = subprocess.run(
-            [pi_bin, "-p", "--session-id", session_id],
+            [node_bin, pi_cli, "-p", "--session-id", session_id],
             input=full_text,
             capture_output=True,
             text=True,
