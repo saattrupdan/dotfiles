@@ -39,7 +39,7 @@ MAX_RESPONSE_LENGTH = 4096
 TELEGRAM_SESSION_ID = "telegram"  # Fixed session ID for Telegram
 
 # Commands (natural language, no slashes)
-COMMANDS: set[str] = {"clear", "status"}
+COMMANDS: set[str] = {"clear", "status", "compact"}
 
 # Enable logging to stderr for systemd journal
 logging.basicConfig(
@@ -237,6 +237,21 @@ async def handle_command(update: Update, context: Any) -> None:
             f"Started: {start_time}"
         )
         await update.message.reply_text(status_msg)
+        return
+
+    if text == "compact":
+        # Run /compact command in Pi to compress session history
+        await update.message.reply_chat_action(action="typing")
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(
+            None,
+            lambda: call_pi(
+                "/compact", session["cwd"], session["session_id"], session["history"]
+            ),
+        )
+        # Show compact result but don't truncate (it's metadata, not conversation)
+        await update.message.reply_text(response)
+        # Don't add /compact to history - it's a meta-command
         return
 
     # Not a recognised command - forward to Pi
