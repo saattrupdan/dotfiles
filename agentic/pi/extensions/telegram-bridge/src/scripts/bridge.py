@@ -212,8 +212,12 @@ async def handle_message_to_pi(update: Update, context: Any) -> None:
 
 async def main() -> None:
     """Initialise and run the bot."""
-    # Log PATH for debugging
-    logger.info(f"PATH: {os.environ.get('PATH', 'NOT SET')[:500]}")
+    # Write debug info to a file since journal might not capture it
+    debug_file = Path.home() / ".telegram-bridge-debug.log"
+    with open(debug_file, "w") as f:
+        f.write(f"PATH: {os.environ.get('PATH', 'NOT SET')}\n")
+        f.write(f"NVM_DIR: {os.environ.get('NVM_DIR', 'NOT SET')}\n")
+        f.write(f"NODE_BIN: {os.environ.get('NODE_BIN', 'NOT SET')}\n")
     
     # Check if bridge is explicitly enabled (defaults to disabled)
     enabled = os.environ.get(ENABLE_BRIDGE_ENV, "").lower()
