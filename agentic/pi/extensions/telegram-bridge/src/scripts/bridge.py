@@ -212,6 +212,9 @@ async def handle_message_to_pi(update: Update, context: Any) -> None:
 
 async def main() -> None:
     """Initialise and run the bot."""
+    # Log PATH for debugging
+    logger.info(f"PATH: {os.environ.get('PATH', 'NOT SET')[:500]}")
+    
     # Check if bridge is explicitly enabled (defaults to disabled)
     enabled = os.environ.get(ENABLE_BRIDGE_ENV, "").lower()
     if enabled not in ("1", "true", "yes"):
