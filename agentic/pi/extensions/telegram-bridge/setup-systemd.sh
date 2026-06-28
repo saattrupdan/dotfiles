@@ -51,6 +51,21 @@ if [ ! -x "$UV_BIN" ]; then
     exit 1
 fi
 
+# Check if pi CLI is available (needed for bridge to work)
+if ! command -v pi &> /dev/null; then
+    # Try loading nvm to find pi
+    if [ -d "$HOME/.nvm" ]; then
+        echo "Installing pi CLI (npm via nvm)..."
+        export NVM_DIR="$HOME/.nvm"
+        [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+        nvm use 24 2>/dev/null || true
+        npm install -g @earendil-works/pi-coding-agent
+    else
+        echo "WARNING: pi CLI not found and nvm not installed."
+        echo "Install pi CLI manually: npm install -g @earendil-works/pi-coding-agent"
+    fi
+fi
+
 # Install dependencies
 echo "Installing dependencies..."
 cd "$SCRIPT_DIR"
