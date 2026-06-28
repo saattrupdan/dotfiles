@@ -110,45 +110,37 @@ def call_pi(
     if cwd.startswith("/Users/"):
         cwd = cwd.replace("/Users/dansmart/gitsky/", str(Path.home()) + "/")
     
-    # Build PATH that includes common node/pi locations
+    # Call pi via bash with nvm loaded (handles any node version)
     nvm_dir = Path.home() / ".nvm"
+    nvm_script = nvm_dir / "nvm.sh"
+    
+    if not nvm_script.exists():
+        return "Error: nvm not found."
+    
+    # Find latest node version
     nvm_versions = nvm_dir / "versions" / "node"
-    
-    # Find available node versions and add to PATH
-    paths_to_try = []
+    node_version = None
     if nvm_versions.exists():
-        for version_dir in sorted(nvm_versions.iterdir(), reverse=True):
-            if version_dir.is_dir():
-                paths_to_try.append(str(version_dir / "bin"))
+        versions = sorted([d.name for d in nvm_versions.iterdir() if d.is_dir()], reverse=True)
+        if versions:
+            node_version = versions[0]
     
-    # Add global npm bin and local bin
-    paths_to_try.append(str(Path.home() / ".local" / "bin"))
-    paths_to_try.append(str(Path.home() / ".yarn" / "bin"))
+    if not node_version:
+        return "Error: No node version found in nvm."
     
-    # Prepend to current PATH
-    env = os.environ.copy()
-    current_path = env.get("PATH", "")
-    new_path = ":".join(paths_to_try) + ":" + current_path
-    env["PATH"] = new_path
+    # Build bash command that loads nvm and runs pi
+    pi_cmd = f"""source {nvm_script} && nvm use {node_version} && pi -p --session-id {session_id}"""
     
-    # Find pi in PATH
-    import shutil
-    pi_bin = shutil.which("pi", path=new_path)
-    
-    logger.info(f"call_pi: cwd={cwd}, pi_bin={pi_bin}")
-    
-    if not pi_bin:
-        return "Error: 'pi' command not found. Check nvm/node installation."
+    logger.info(f"call_pi: cwd={cwd}, nvm_version={node_version}")
     
     try:
         result = subprocess.run(
-            [pi_bin, "-p", "--session-id", session_id],
+            ["bash", "-c", pi_cmd],
             input=full_text,
             capture_output=True,
             text=True,
             cwd=cwd,
             timeout=120,
-            env=env,
         )
         return result.stdout.strip() or result.stderr.strip() or "No response from Pi"
     except subprocess.TimeoutExpired:
