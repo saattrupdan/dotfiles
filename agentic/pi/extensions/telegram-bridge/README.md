@@ -21,10 +21,17 @@ Bridge Telegram messages to/from your local Pi agent.
 
 ### 3. Install and Run
 
+**Bridge is disabled by default.** Set `TELEGRAM_BRIDGE_ENABLED=true` to enable.
+
 ```bash
 cd agentic/pi/extensions/telegram-bridge
 
-# Set environment variables
+# Option A: Using .env file (recommended)
+cp .env.example .env
+nano .env  # Edit with your token, user ID, and enable flag
+
+# Option B: Export variables
+export TELEGRAM_BRIDGE_ENABLED=true
 export TELEGRAM_BOT_TOKEN="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
 export ALLOWED_USER_IDS="123456789"
 
@@ -49,7 +56,7 @@ cd agentic/pi/extensions/telegram-bridge
 
 # Copy and edit the environment file
 cp .env.example .env
-nano .env  # Add your token and user ID
+nano .env  # Add token, user ID, and set TELEGRAM_BRIDGE_ENABLED=true
 
 # Start the bridge
 ./start.sh
@@ -64,6 +71,29 @@ tmux attach -t pi-bridge
 ```
 
 Works on both macOS and Linux (DGX Spark).
+
+### systemd (Linux/DGX Spark)
+
+For auto-start on boot:
+
+```bash
+# Copy service file
+cp pi-telegram-bridge.service ~/.config/systemd/user/
+
+# Copy and edit .env
+cp .env.example .env
+nano .env  # Set TELEGRAM_BRIDGE_ENABLED=true, add token and user ID
+
+# Enable and start
+systemctl --user daemon-reload
+systemctl --user enable --now pi-telegram-bridge
+
+# Check status
+systemctl --user status pi-telegram-bridge
+
+# View logs
+journalctl --user -u pi-telegram-bridge -f
+```
 
 ## Session Handling
 

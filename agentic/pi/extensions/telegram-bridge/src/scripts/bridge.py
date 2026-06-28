@@ -23,6 +23,7 @@ from telegram.ext import Application, MessageHandler, filters
 # Configuration
 BOT_TOKEN_ENV = "TELEGRAM_BOT_TOKEN"
 ALLOWED_USER_IDS_ENV = "ALLOWED_USER_IDS"
+ENABLE_BRIDGE_ENV = "TELEGRAM_BRIDGE_ENABLED"
 SESSION_FILE = Path(__file__).parent.parent / "sessions.json"
 MAX_HISTORY_LENGTH = 20
 MAX_RESPONSE_LENGTH = 4096
@@ -195,6 +196,16 @@ async def handle_message_to_pi(update: Update, context: Any) -> None:
 
 async def main() -> None:
     """Initialise and run the bot."""
+    # Check if bridge is explicitly enabled (defaults to disabled)
+    enabled = os.environ.get(ENABLE_BRIDGE_ENV, "").lower()
+    if enabled not in ("1", "true", "yes"):
+        logger.error(
+            f"{ENABLE_BRIDGE_ENV} not set to 'true'. "
+            "Bridge is disabled by default. "
+            f"Set {ENABLE_BRIDGE_ENV}=true to enable."
+        )
+        return
+
     bot_token = os.environ.get(BOT_TOKEN_ENV)
     if not bot_token:
         logger.error("TELEGRAM_BOT_TOKEN not set")

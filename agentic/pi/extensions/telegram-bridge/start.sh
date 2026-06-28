@@ -22,6 +22,12 @@ if [ -f "$SCRIPT_DIR/.env" ]; then
 fi
 
 # Check required variables
+if [ -z "$TELEGRAM_BRIDGE_ENABLED" ]; then
+    echo "Error: TELEGRAM_BRIDGE_ENABLED not set"
+    echo "Bridge is disabled by default. Set TELEGRAM_BRIDGE_ENABLED=true in $SCRIPT_DIR/.env"
+    exit 1
+fi
+
 if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
     echo "Error: TELEGRAM_BOT_TOKEN not set"
     echo "Set it in $SCRIPT_DIR/.env or export it"
