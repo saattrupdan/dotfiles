@@ -1,6 +1,7 @@
 # Telegram Bridge for Pi
 
-Bridge Telegram messages to/from your local Pi agent.
+Bridge Telegram messages to/from your Pi agent. Runs as a background service
+on a single machine (recommended: Linux server like DGX Spark).
 
 ## Setup
 
@@ -19,7 +20,7 @@ Bridge Telegram messages to/from your local Pi agent.
 2. Send any message
 3. It replies with your user ID (e.g., `123456789`)
 
-### 3. Configure and Run
+### 3. Configure
 
 **Bridge is disabled by default.** Set `TELEGRAM_BRIDGE_ENABLED=true` in `~/.env` to enable.
 
@@ -27,16 +28,10 @@ Bridge Telegram messages to/from your local Pi agent.
 # Copy the template to your home directory
 cp .env.example ~/.env
 nano ~/.env  # Edit with your token, user ID, and set enabled=true
-
-# Then run the bridge
-cd agentic/pi/extensions/telegram-bridge
-
-# Option A: Using tmux (recommended)
-./start.sh
-
-# Option B: Direct
-uv run src/scripts/bridge.py
 ```
+
+**Important:** Only run the bridge on ONE machine. Running on multiple machines
+with the same bot token will cause message routing conflicts.
 
 ## Commands
 
@@ -48,11 +43,12 @@ Any other text is forwarded to Pi.
 
 ## Running the Bridge
 
-### Quick Start (tmux)
+### Development (tmux)
+
+For testing on macOS or Linux:
 
 ```bash
 # Ensure ~/.env is configured
-cp agentic/pi/extensions/telegram-bridge/.env.example ~/.env
 nano ~/.env  # Set TELEGRAM_BRIDGE_ENABLED=true, add token and user ID
 
 # Start the bridge
@@ -68,23 +64,23 @@ tmux attach -t pi-bridge
 ./stop.sh
 ```
 
-Works on both macOS and Linux (DGX Spark).
+### Production (systemd on Linux)
 
-### systemd (Linux/DGX Spark)
+**Recommended for DGX Spark or any Linux server.**
 
-For auto-start on boot:
+One-time setup:
 
 ```bash
-# One-time setup
 cd agentic/pi/extensions/telegram-bridge
 ./setup-systemd.sh
 ```
 
-The script:
+The `setup-systemd.sh` script:
 - Installs `uv` if missing
-- Installs dependencies
+- Installs Python dependencies
 - Copies the systemd service file
 - Enables and starts the service
+- Verifies it's running
 
 **After setup:**
 
@@ -92,12 +88,20 @@ The script:
 # Check status
 systemctl --user status pi-telegram-bridge.service
 
-# View logs
+# View logs (follow)
 journalctl --user -u pi-telegram-bridge.service -f
 
 # Stop
 systemctl --user stop pi-telegram-bridge.service
+
+# Restart
+systemctl --user restart pi-telegram-bridge.service
+
+# Disable auto-start
+systemctl --user disable pi-telegram-bridge.service
 ```
+
+The service auto-starts on login and restarts on crash.
 
 ## Session Handling
 
@@ -117,11 +121,21 @@ laptop for full details. This keeps conversations brief and mobile-friendly.
 
 ## Gotchas
 
-- **Keep the bridge running** — it polls every 2 seconds
-- **Your Mac must be awake** — bridge runs locally
-- **One chat thread** — use `clear` to reset context when switching topics
-- **Authorisation** — only configured user IDs can interact
+- **Single instance only** — Don't run on multiple machines with the same bot token
+- **Polling** — Bridge polls Telegram every 2 seconds
+- **One chat thread** — Use `clear` to reset context when switching topics
+- **Authorisation** — Only configured user IDs can interact
+- **Session persistence** — State stored in `src/sessions.json`
 
-## Stop
+## Stopping the Bridge
 
-Press `Ctrl+C` to stop the bridge.
+**tmux:**
+```bash
+./stop.sh
+# Or: tmux kill-session -t pi-bridge
+```
+
+**systemd:**
+```bash
+systemctl --user stop pi-telegram-bridge.service
+```

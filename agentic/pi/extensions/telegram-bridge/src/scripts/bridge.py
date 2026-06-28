@@ -2,10 +2,11 @@
 """Telegram bridge for Pi agent.
 
 Usage:
-    uv add python-telegram-bot aiohttp
-    export TELEGRAM_BOT_TOKEN="your-token-here"
-    export ALLOWED_USER_IDS="123456789,987654321"
+    # Configure ~/.env with TELEGRAM_BRIDGE_ENABLED=true, token, and user ID
     uv run src/scripts/bridge.py
+
+Or use the setup script for systemd deployment:
+    ./setup-systemd.sh
 """
 
 import asyncio
