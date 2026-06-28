@@ -82,7 +82,7 @@ def truncate_response(text: str) -> str:
         breakpoint_pos = text[:300].rfind("\n")
         if breakpoint_pos == -1:
             breakpoint_pos = 300
-        return text[:breakpoint_pos] + "\n\n... (check laptop for full details)"
+        return text[:breakpoint_pos] + "\n\n... (ask for more details)"
     return text
 
 
