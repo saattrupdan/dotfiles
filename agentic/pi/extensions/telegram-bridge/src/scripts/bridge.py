@@ -261,8 +261,21 @@ async def handle_command(update: Update, context: Any) -> None:
         else:
             usage_display = f"{usage_pct:.1f}"
 
+        # Get model/provider from pi config file
+        provider_model = "Unknown"
+        try:
+            pi_config = Path.home() / ".pi" / "agent" / "settings.json"
+            if pi_config.exists():
+                config_data = json.loads(pi_config.read_text())
+                provider = config_data.get("defaultProvider", "Unknown")
+                model = config_data.get("defaultModel", "Unknown")
+                provider_model = f"{provider}/{model}"
+        except (json.JSONDecodeError, KeyError, IOError):
+            pass
+
         status_msg = (
             f"📊 Session status\n"
+            f"Model: {provider_model}\n"
             f"Tokens: ~{estimated_tokens:,} / {MAX_CONTEXT_TOKENS:,} ({usage_display}%)\n"
             f"Started: {start_time}"
         )
@@ -273,8 +286,11 @@ async def handle_command(update: Update, context: Any) -> None:
         # Run /compact command in Pi to compress session history
         await update.message.reply_chat_action(action="typing")
         loop = asyncio.get_event_loop()
-        call_pi(
-            "/compact", session["cwd"], session["session_id"], session["history"]
+        await loop.run_in_executor(
+            None,
+            lambda: call_pi(
+                "/compact", session["cwd"], session["session_id"], session["history"]
+            ),
         )
         # Just acknowledge - don't show Pi's full output on mobile
         await update.message.reply_text("Compacted session.")
