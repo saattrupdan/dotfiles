@@ -100,7 +100,7 @@ def call_pi(
 
     try:
         result = subprocess.run(
-            ["pi", "--no-interactive", "--session-id", session_id],
+            ["pi", "-p", "--session-id", session_id],
             input=full_text,
             capture_output=True,
             text=True,
