@@ -121,7 +121,10 @@ async def handle_command(update: Update, context: Any) -> None:
     if not update.effective_user or not update.message:
         return
 
-    user_id = update.effective_user.id
+    user_id = update.effective_user.id if update.effective_user else None
+    if user_id is None:
+        return
+
     allowed_ids_str = os.environ.get(ALLOWED_USER_IDS_ENV, "")
     allowed_ids = {int(x.strip()) for x in allowed_ids_str.split(",") if x.strip()}
 
@@ -147,6 +150,7 @@ async def handle_command(update: Update, context: Any) -> None:
         )
         return
 
+    # Not a recognised command - forward to Pi
     await handle_message_to_pi(update, context)
 
 
@@ -155,7 +159,10 @@ async def handle_message_to_pi(update: Update, context: Any) -> None:
     if not update.effective_user or not update.message:
         return
 
-    user_id = update.effective_user.id
+    user_id = update.effective_user.id if update.effective_user else None
+    if user_id is None:
+        return
+
     allowed_ids_str = os.environ.get(ALLOWED_USER_IDS_ENV, "")
     allowed_ids = {int(x.strip()) for x in allowed_ids_str.split(",") if x.strip()}
 
