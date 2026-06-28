@@ -17,8 +17,14 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters
+
+# Load environment variables from ~/.env (global config)
+HOME_ENV_FILE = Path.home() / ".env"
+if HOME_ENV_FILE.exists():
+    load_dotenv(HOME_ENV_FILE)
 
 # Configuration
 BOT_TOKEN_ENV = "TELEGRAM_BOT_TOKEN"

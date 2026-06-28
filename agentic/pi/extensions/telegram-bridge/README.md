@@ -19,23 +19,22 @@ Bridge Telegram messages to/from your local Pi agent.
 2. Send any message
 3. It replies with your user ID (e.g., `123456789`)
 
-### 3. Install and Run
+### 3. Configure and Run
 
-**Bridge is disabled by default.** Set `TELEGRAM_BRIDGE_ENABLED=true` to enable.
+**Bridge is disabled by default.** Set `TELEGRAM_BRIDGE_ENABLED=true` in `~/.env` to enable.
 
 ```bash
+# Copy the template to your home directory
+cp .env.example ~/.env
+nano ~/.env  # Edit with your token, user ID, and set enabled=true
+
+# Then run the bridge
 cd agentic/pi/extensions/telegram-bridge
 
-# Option A: Using .env file (recommended)
-cp .env.example .env
-nano .env  # Edit with your token, user ID, and enable flag
+# Option A: Using tmux (recommended)
+./start.sh
 
-# Option B: Export variables
-export TELEGRAM_BRIDGE_ENABLED=true
-export TELEGRAM_BOT_TOKEN="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
-export ALLOWED_USER_IDS="123456789"
-
-# Run the bridge
+# Option B: Direct
 uv run src/scripts/bridge.py
 ```
 
@@ -52,13 +51,12 @@ Any other text is forwarded to Pi.
 ### Quick Start (tmux)
 
 ```bash
-cd agentic/pi/extensions/telegram-bridge
-
-# Copy and edit the environment file
-cp .env.example .env
-nano .env  # Add token, user ID, and set TELEGRAM_BRIDGE_ENABLED=true
+# Ensure ~/.env is configured
+cp agentic/pi/extensions/telegram-bridge/.env.example ~/.env
+nano ~/.env  # Set TELEGRAM_BRIDGE_ENABLED=true, add token and user ID
 
 # Start the bridge
+cd agentic/pi/extensions/telegram-bridge
 ./start.sh
 
 # Attach to see logs
@@ -80,9 +78,9 @@ For auto-start on boot:
 # Copy service file
 cp pi-telegram-bridge.service ~/.config/systemd/user/
 
-# Copy and edit .env
-cp .env.example .env
-nano .env  # Set TELEGRAM_BRIDGE_ENABLED=true, add token and user ID
+# Copy and edit ~/.env
+cp agentic/pi/extensions/telegram-bridge/.env.example ~/.env
+nano ~/.env  # Set TELEGRAM_BRIDGE_ENABLED=true, add token and user ID
 
 # Enable and start
 systemctl --user daemon-reload

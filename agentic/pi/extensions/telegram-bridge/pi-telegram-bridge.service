@@ -5,7 +5,6 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=%h/gitsky/dotfiles/agentic/pi/extensions/telegram-bridge
-EnvironmentFile=%h/gitsky/dotfiles/agentic/pi/extensions/telegram-bridge/.env
 ExecStart=%h/.local/bin/uv run src/scripts/bridge.py
 Restart=always
 RestartSec=5

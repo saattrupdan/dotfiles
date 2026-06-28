@@ -14,29 +14,29 @@ if ! command -v tmux &> /dev/null; then
     exit 1
 fi
 
-# Load environment variables from .env if it exists
-if [ -f "$SCRIPT_DIR/.env" ]; then
+# Load environment variables from ~/.env (global config)
+if [ -f "$HOME/.env" ]; then
     set -a
-    source "$SCRIPT_DIR/.env"
+    source "$HOME/.env"
     set +a
 fi
 
 # Check required variables
 if [ -z "$TELEGRAM_BRIDGE_ENABLED" ]; then
     echo "Error: TELEGRAM_BRIDGE_ENABLED not set"
-    echo "Bridge is disabled by default. Set TELEGRAM_BRIDGE_ENABLED=true in $SCRIPT_DIR/.env"
+    echo "Bridge is disabled by default. Set TELEGRAM_BRIDGE_ENABLED=true in ~/.env"
     exit 1
 fi
 
 if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
     echo "Error: TELEGRAM_BOT_TOKEN not set"
-    echo "Set it in $SCRIPT_DIR/.env or export it"
+    echo "Set it in ~/.env or export it"
     exit 1
 fi
 
 if [ -z "$ALLOWED_USER_IDS" ]; then
     echo "Error: ALLOWED_USER_IDS not set"
-    echo "Set it in $SCRIPT_DIR/.env or export it"
+    echo "Set it in ~/.env or export it"
     exit 1
 fi
 
