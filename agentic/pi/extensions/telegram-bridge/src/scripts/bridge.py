@@ -12,9 +12,11 @@ Or use the setup script for systemd deployment:
 import asyncio
 import json
 import logging
+import math
 import os
 import subprocess
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -37,7 +39,7 @@ MAX_RESPONSE_LENGTH = 4096
 TELEGRAM_SESSION_ID = "telegram"  # Fixed session ID for Telegram
 
 # Commands (natural language, no slashes)
-COMMANDS: set[str] = {"clear"}
+COMMANDS: set[str] = {"clear", "status"}
 
 # Enable logging to stderr for systemd journal
 logging.basicConfig(
@@ -71,6 +73,7 @@ def get_session(user_id: int) -> dict[str, Any]:
             "cwd": str(Path.home() / "gitsky" / "dotfiles"),
             "history": [],
             "session_id": TELEGRAM_SESSION_ID,  # Fixed session ID
+            "created_at": datetime.now(timezone.utc).isoformat(),
         }
         save_sessions(sessions)
     return sessions[user_key]
@@ -78,11 +81,11 @@ def get_session(user_id: int) -> dict[str, Any]:
 
 def truncate_response(text: str) -> str:
     """Truncate response for mobile brevity."""
-    if len(text) > 1000:
-        breakpoint_pos = text[:1000].rfind("\n")
+    if len(text) > 500:
+        breakpoint_pos = text[:500].rfind("\n")
         if breakpoint_pos == -1:
-            breakpoint_pos = 1000
-        return text[:breakpoint_pos] + "\n\n... (ask for more details)"
+            breakpoint_pos = 500
+        return text[:breakpoint_pos] + "\n\n… (ask for more)"
     return text
 
 
@@ -104,7 +107,10 @@ def call_pi(
     Returns:
         Pi's response text.
     """
-    full_prompt = []
+    # Telegram-specific system instruction: prioritise brevity for mobile
+    telegram_instruction = """[Telegram mode: You're chatting with a user on mobile via Telegram. Keep responses short and scannable – aim for 2-4 sentences max unless they explicitly ask for details. Use bullet points over paragraphs. Skip explanations of obvious steps. End with an offer to expand if needed (e.g. "Want more detail?"). Never send walls of text.]"""
+    
+    full_prompt = [telegram_instruction]
     for msg in history[-MAX_HISTORY_LENGTH:]:
         role = "User" if msg["role"] == "user" else "Assistant"
         full_prompt.append(f"{role}: {msg['content']}")
@@ -200,10 +206,37 @@ async def handle_command(update: Update, context: Any) -> None:
         new_session_id = str(uuid.uuid4())
         session["history"] = []
         session["session_id"] = new_session_id
+        session["created_at"] = datetime.now(timezone.utc).isoformat()
         save_sessions({str(user_id): session})
         await update.message.reply_text(
             f"✓ History cleared (new session: {new_session_id[:8]}...)"
         )
+        return
+
+    if text == "status":
+        history = session.get("history", [])
+        history_count = len(history)
+        usage_pct = (history_count / MAX_HISTORY_LENGTH) * 100
+
+        created_at_str = session.get("created_at")
+        if created_at_str:
+            try:
+                created_at = datetime.fromisoformat(created_at_str)
+                start_time = created_at.strftime("%Y-%m-%d %H:%M UTC")
+            except ValueError:
+                start_time = "Unknown"
+        else:
+            start_time = "Unknown"
+
+        # Round usage to nearest 5% for cleaner display
+        usage_rounded = math.ceil(usage_pct / 5) * 5 if usage_pct > 0 else 0
+
+        status_msg = (
+            f"📊 Session status\n"
+            f"Messages: {history_count}/{MAX_HISTORY_LENGTH} ({usage_rounded}%)\n"
+            f"Started: {start_time}"
+        )
+        await update.message.reply_text(status_msg)
         return
 
     # Not a recognised command - forward to Pi
