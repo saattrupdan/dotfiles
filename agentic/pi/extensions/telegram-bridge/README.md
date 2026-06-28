@@ -70,6 +70,35 @@ tmux attach -t pi-bridge
 
 Works on both macOS and Linux (DGX Spark).
 
+### systemd (Linux/DGX Spark)
+
+For auto-start on boot:
+
+```bash
+# One-time setup
+cd agentic/pi/extensions/telegram-bridge
+./setup-systemd.sh
+```
+
+The script:
+- Installs `uv` if missing
+- Installs dependencies
+- Copies the systemd service file
+- Enables and starts the service
+
+**After setup:**
+
+```bash
+# Check status
+systemctl --user status pi-telegram-bridge.service
+
+# View logs
+journalctl --user -u pi-telegram-bridge.service -f
+
+# Stop
+systemctl --user stop pi-telegram-bridge.service
+```
+
 ## Session Handling
 
 The bridge uses a **fixed session ID** (`telegram`) for all Telegram
