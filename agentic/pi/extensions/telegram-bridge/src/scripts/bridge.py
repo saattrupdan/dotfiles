@@ -106,21 +106,13 @@ def call_pi(
 
     full_text = "\n".join(full_prompt)
 
-    # Build PATH that includes nvm's node and npm global bin
-    nvm_bin = str(Path.home() / ".nvm" / "versions" / "node" / "v24.17.0" / "bin")
-    env = os.environ.copy()
-    # Prepend nvm bin to PATH so node and pi are found
-    current_path = env.get("PATH", "")
-    nvm_in_path = nvm_bin in current_path
-    if not nvm_in_path:
-        env["PATH"] = f"{nvm_bin}:{current_path}"
+    # Use absolute path to pi since uv run strips PATH
+    pi_bin = str(Path.home() / ".nvm" / "versions" / "node" / "v24.17.0" / "bin" / "pi")
     
     # Debug logging to file
-    import shutil
-    pi_which = shutil.which("pi", path=env["PATH"])
     debug_file = Path.home() / ".telegram-bridge-debug.log"
     with open(debug_file, "a") as f:
-        f.write(f"call_pi: nvm_in_path={nvm_in_path}, pi_found_at={pi_which}\n")
+        f.write(f"call_pi: pi_bin={pi_bin}, exists={os.path.exists(pi_bin)}\n")
 
     # Fix path if it's from macOS but we're on Linux (sessions.json got synced)
     if cwd.startswith("/Users/"):
@@ -130,7 +122,7 @@ def call_pi(
     
     try:
         result = subprocess.run(
-            ["pi", "-p", "--session-id", session_id],
+            [pi_bin, "-p", "--session-id", session_id],
             input=full_text,
             capture_output=True,
             text=True,
