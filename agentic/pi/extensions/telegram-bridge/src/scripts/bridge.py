@@ -16,24 +16,20 @@ import math
 import os
 import subprocess
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 # Copenhagen timezone (Europe/Copenhagen)
-def get_copenhagen_time(dt: datetime) -> datetime:
-    """Convert datetime to Copenhagen timezone."""
-    # Try to use zoneinfo first (Python 3.9+)
-    try:
-        from zoneinfo import ZoneInfo
-        copenhagen = ZoneInfo("Europe/Copenhagen")
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(copenhagen)
-    except ImportError:
-        # Fallback: UTC+1 or UTC+2 depending on DST (approximate)
-        # For proper handling, install backports.zoneinfo
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc)
+COPENHAGEN_TZ = ZoneInfo("Europe/Copenhagen")
+
+def get_copenhagen_time(dt: datetime | None = None) -> datetime:
+    """Return datetime in Copenhagen timezone."""
+    if dt is None:
+        return datetime.now(COPENHAGEN_TZ)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+    return dt.astimezone(COPENHAGEN_TZ)
+
 from pathlib import Path
 from typing import Any
 
@@ -94,7 +90,7 @@ def get_session(user_id: int) -> dict[str, Any]:
             "cwd": str(Path.home() / "gitsky" / "dotfiles"),
             "history": [],
             "session_id": TELEGRAM_SESSION_ID,  # Fixed session ID
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": get_copenhagen_time().isoformat(),
         }
         save_sessions(sessions)
     return sessions[user_key]
@@ -227,7 +223,7 @@ async def handle_command(update: Update, context: Any) -> None:
         new_session_id = str(uuid.uuid4())
         session["history"] = []
         session["session_id"] = new_session_id
-        session["created_at"] = datetime.now(timezone.utc).isoformat()
+        session["created_at"] = get_copenhagen_time().isoformat()
         save_sessions({str(user_id): session})
         await update.message.reply_text(
             f"✓ History cleared (new session: {new_session_id[:8]}...)"
@@ -245,9 +241,8 @@ async def handle_command(update: Update, context: Any) -> None:
         start_time = "Unknown"
         if created_at_str:
             try:
-                created_at = datetime.fromisoformat(created_at_str)
-                created_at_cph = get_copenhagen_time(created_at)
-                now_cph = get_copenhagen_time(datetime.now(timezone.utc))
+                created_at_cph = get_copenhagen_time(datetime.fromisoformat(created_at_str))
+                now_cph = get_copenhagen_time()
                 today = now_cph.date()
                 yesterday = today - timedelta(days=1)
 
