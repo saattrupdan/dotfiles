@@ -17,6 +17,23 @@ import os
 import subprocess
 import uuid
 from datetime import datetime, timedelta, timezone
+
+# Copenhagen timezone (Europe/Copenhagen)
+def get_copenhagen_time(dt: datetime) -> datetime:
+    """Convert datetime to Copenhagen timezone."""
+    # Try to use zoneinfo first (Python 3.9+)
+    try:
+        from zoneinfo import ZoneInfo
+        copenhagen = ZoneInfo("Europe/Copenhagen")
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(copenhagen)
+    except ImportError:
+        # Fallback: UTC+1 or UTC+2 depending on DST (approximate)
+        # For proper handling, install backports.zoneinfo
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
 from pathlib import Path
 from typing import Any
 
@@ -228,17 +245,18 @@ async def handle_command(update: Update, context: Any) -> None:
         start_time = "Unknown"
         if created_at_str:
             try:
-                created_at = datetime.fromisoformat(created_at_str).astimezone()
-                now = datetime.now(timezone.utc).astimezone()
-                today = now.date()
+                created_at = datetime.fromisoformat(created_at_str)
+                created_at_cph = get_copenhagen_time(created_at)
+                now_cph = get_copenhagen_time(datetime.now(timezone.utc))
+                today = now_cph.date()
                 yesterday = today - timedelta(days=1)
 
-                if created_at.date() == today:
-                    start_time = f"today at {created_at.strftime('%H:%M')}"
-                elif created_at.date() == yesterday:
-                    start_time = f"yesterday at {created_at.strftime('%H:%M')}"
+                if created_at_cph.date() == today:
+                    start_time = f"today at {created_at_cph.strftime('%H:%M')}"
+                elif created_at_cph.date() == yesterday:
+                    start_time = f"yesterday at {created_at_cph.strftime('%H:%M')}"
                 else:
-                    start_time = created_at.strftime("%d %b at %H:%M")
+                    start_time = created_at_cph.strftime("%d %b at %H:%M")
             except (ValueError, AttributeError):
                 start_time = "Unknown"
 
