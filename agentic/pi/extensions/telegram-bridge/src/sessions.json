@@ -1,0 +1,16 @@
+{
+  "8807634193": {
+    "cwd": "/Users/dansmart/gitsky/dotfiles",
+    "history": [
+      {
+        "role": "user",
+        "content": "What's going on in tmux now?"
+      },
+      {
+        "role": "assistant",
+        "content": "You have 2 tmux sessions:\n\n- **croco-dash**: running `zsh` (shell prompt)\n- **llama-server**: running `make` (likely building llama.cpp)"
+      }
+    ],
+    "session_id": "b8a4d374-4c48-44e4-aa3e-a57df2abe9f2"
+  }
+}
