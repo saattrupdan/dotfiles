@@ -111,8 +111,14 @@ def call_pi(
     env = os.environ.copy()
     # Prepend nvm bin to PATH so node and pi are found
     current_path = env.get("PATH", "")
-    if nvm_bin not in current_path:
+    nvm_in_path = nvm_bin in current_path
+    if not nvm_in_path:
         env["PATH"] = f"{nvm_bin}:{current_path}"
+    
+    # Debug logging
+    import shutil
+    pi_which = shutil.which("pi", path=env["PATH"])
+    logger.info(f"call_pi: nvm_in_path={nvm_in_path}, pi_found_at={pi_which}")
 
     try:
         result = subprocess.run(
