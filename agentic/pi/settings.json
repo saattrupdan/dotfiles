@@ -4,7 +4,7 @@
   "defaultModel": "qwen3.5-397b",
   "defaultThinkingLevel": "medium",
   "httpIdleTimeoutMs": 0,
-  "hideThinkingBlock": false,
+  "hideThinkingBlock": true,
   "quietStartup": true,
   "theme": "gruvbox",
   "terminal": {
