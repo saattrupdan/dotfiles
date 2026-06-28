@@ -106,10 +106,13 @@ def call_pi(
 
     full_text = "\n".join(full_prompt)
 
-    # Build PATH that includes nvm's npm global bin
+    # Build PATH that includes nvm's node and npm global bin
     nvm_bin = str(Path.home() / ".nvm" / "versions" / "node" / "v24.17.0" / "bin")
     env = os.environ.copy()
-    env["PATH"] = f"{nvm_bin}:{env.get('PATH', '')}"
+    # Prepend nvm bin to PATH so node and pi are found
+    current_path = env.get("PATH", "")
+    if nvm_bin not in current_path:
+        env["PATH"] = f"{nvm_bin}:{current_path}"
 
     try:
         result = subprocess.run(

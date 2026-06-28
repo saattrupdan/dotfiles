@@ -6,7 +6,8 @@ After=network.target
 Type=simple
 WorkingDirectory=%h/dotfiles/agentic/pi/extensions/telegram-bridge
 Environment="NVM_DIR=%h/.nvm"
-Environment="PATH=%h/.local/bin:%h/.nvm/versions/node/v24.17.0/bin:/usr/bin:/bin"
+Environment="NODE_BIN=%h/.nvm/versions/node/v24.17.0/bin"
+Environment="PATH=%h/.nvm/versions/node/v24.17.0/bin:%h/.local/bin:/usr/bin:/bin"
 ExecStart=/bin/bash -c 'source $NVM_DIR/nvm.sh && nvm use 24 && exec $HOME/.local/bin/uv run src/scripts/bridge.py'
 Restart=always
 RestartSec=5
