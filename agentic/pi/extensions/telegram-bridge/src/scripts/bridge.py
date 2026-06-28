@@ -129,7 +129,8 @@ def call_pi(
         return "Error: No node version found in nvm."
     
     # Build bash command that loads nvm and runs pi
-    pi_cmd = f"""source {nvm_script} && nvm use {node_version} && pi -p --session-id {session_id}"""
+    # nvm output goes to stderr (2>&1), pi output is captured in stdout
+    pi_cmd = f"""source {nvm_script} >/dev/null 2>&1 && nvm use {node_version} >/dev/null 2>&1 && pi -p --session-id {session_id}"""
     
     logger.info(f"call_pi: cwd={cwd}, nvm_version={node_version}")
     
