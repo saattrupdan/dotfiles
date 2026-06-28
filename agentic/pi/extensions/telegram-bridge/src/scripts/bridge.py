@@ -115,10 +115,12 @@ def call_pi(
     if not nvm_in_path:
         env["PATH"] = f"{nvm_bin}:{current_path}"
     
-    # Debug logging
+    # Debug logging to file
     import shutil
     pi_which = shutil.which("pi", path=env["PATH"])
-    logger.info(f"call_pi: nvm_in_path={nvm_in_path}, pi_found_at={pi_which}")
+    debug_file = Path.home() / ".telegram-bridge-debug.log"
+    with open(debug_file, "a") as f:
+        f.write(f"call_pi: nvm_in_path={nvm_in_path}, pi_found_at={pi_which}\n")
 
     try:
         result = subprocess.run(
