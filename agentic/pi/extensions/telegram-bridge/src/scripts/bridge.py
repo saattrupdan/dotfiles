@@ -106,6 +106,11 @@ def call_pi(
 
     full_text = "\n".join(full_prompt)
 
+    # Build PATH that includes nvm's npm global bin
+    nvm_bin = str(Path.home() / ".nvm" / "versions" / "node" / "v24.17.0" / "bin")
+    env = os.environ.copy()
+    env["PATH"] = f"{nvm_bin}:{env.get('PATH', '')}"
+
     try:
         result = subprocess.run(
             ["pi", "-p", "--session-id", session_id],
@@ -114,12 +119,13 @@ def call_pi(
             text=True,
             cwd=cwd,
             timeout=120,
+            env=env,
         )
         return result.stdout.strip() or result.stderr.strip() or "No response from Pi"
     except subprocess.TimeoutExpired:
         return "Pi timed out (took too long)"
     except FileNotFoundError:
-        return "Error: 'pi' command not found. Ensure Pi CLI is installed."
+        return "Error: 'pi' command not found. Check nvm/node installation."
     except Exception as e:
         return f"Error calling Pi: {e}"
 
