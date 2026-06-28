@@ -114,6 +114,10 @@ def call_pi(
     nvm_dir = Path.home() / ".nvm"
     nvm_script = nvm_dir / "nvm.sh"
     
+    # Debug logging
+    logger.info(f"call_pi: nvm_dir={nvm_dir}, exists={nvm_dir.exists()}")
+    logger.info(f"call_pi: nvm_script={nvm_script}, exists={nvm_script.exists()}")
+    
     if not nvm_script.exists():
         return "Error: nvm not found."
     
@@ -129,6 +133,8 @@ def call_pi(
         elif all_versions:
             node_version = sorted(all_versions, reverse=True)[0]
     
+    logger.info(f"call_pi: nvm_versions={nvm_versions}, exists={nvm_versions.exists()}, node_version={node_version}")
+    
     if not node_version:
         return "Error: No node version found in nvm."
     
@@ -136,7 +142,7 @@ def call_pi(
     # nvm output goes to stderr (2>&1), pi output is captured in stdout
     pi_cmd = f"""source {nvm_script} >/dev/null 2>&1 && nvm use {node_version} >/dev/null 2>&1 && pi -p --session-id {session_id}"""
     
-    logger.info(f"call_pi: cwd={cwd}, nvm_version={node_version}")
+    logger.info(f"call_pi: cwd={cwd}, pi_cmd={pi_cmd[:100]}...")
     
     try:
         result = subprocess.run(

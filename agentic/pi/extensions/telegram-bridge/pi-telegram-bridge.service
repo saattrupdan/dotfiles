@@ -5,9 +5,6 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=%h/dotfiles/agentic/pi/extensions/telegram-bridge
-Environment="NVM_DIR=%h/.nvm"
-Environment="NODE_BIN=%h/.nvm/versions/node/v24.17.0/bin"
-Environment="PATH=%h/.nvm/versions/node/v24.17.0/bin:%h/.local/bin:/usr/bin:/bin"
 ExecStart=%h/.local/bin/uv run src/scripts/bridge.py
 Restart=always
 RestartSec=5
