@@ -106,30 +106,49 @@ def call_pi(
 
     full_text = "\n".join(full_prompt)
 
-    # Call pi via node since uv run strips PATH and pi's shebang needs node
-    node_bin = str(Path.home() / ".nvm" / "versions" / "node" / "v24.17.0" / "bin" / "node")
-    pi_cli = str(Path.home() / ".nvm" / "versions" / "node" / "v24.17.0" / "lib" / "node_modules" / "@earendil-works" / "pi-coding-agent" / "dist" / "cli.js")
-    
-    # Debug logging to file
-    debug_file = Path.home() / ".telegram-bridge-debug.log"
-    with open(debug_file, "a") as f:
-        f.write(f"call_pi: node_bin={node_bin}, exists={os.path.exists(node_bin)}\n")
-        f.write(f"call_pi: pi_cli={pi_cli}, exists={os.path.exists(pi_cli)}\n")
-
     # Fix path if it's from macOS but we're on Linux (sessions.json got synced)
     if cwd.startswith("/Users/"):
         cwd = cwd.replace("/Users/dansmart/gitsky/", str(Path.home()) + "/")
     
-    logger.info(f"call_pi: cwd={cwd}")
+    # Build PATH that includes common node/pi locations
+    nvm_dir = Path.home() / ".nvm"
+    nvm_versions = nvm_dir / "versions" / "node"
+    
+    # Find available node versions and add to PATH
+    paths_to_try = []
+    if nvm_versions.exists():
+        for version_dir in sorted(nvm_versions.iterdir(), reverse=True):
+            if version_dir.is_dir():
+                paths_to_try.append(str(version_dir / "bin"))
+    
+    # Add global npm bin and local bin
+    paths_to_try.append(str(Path.home() / ".local" / "bin"))
+    paths_to_try.append(str(Path.home() / ".yarn" / "bin"))
+    
+    # Prepend to current PATH
+    env = os.environ.copy()
+    current_path = env.get("PATH", "")
+    new_path = ":".join(paths_to_try) + ":" + current_path
+    env["PATH"] = new_path
+    
+    # Find pi in PATH
+    import shutil
+    pi_bin = shutil.which("pi", path=new_path)
+    
+    logger.info(f"call_pi: cwd={cwd}, pi_bin={pi_bin}")
+    
+    if not pi_bin:
+        return "Error: 'pi' command not found. Check nvm/node installation."
     
     try:
         result = subprocess.run(
-            [node_bin, pi_cli, "-p", "--session-id", session_id],
+            [pi_bin, "-p", "--session-id", session_id],
             input=full_text,
             capture_output=True,
             text=True,
             cwd=cwd,
             timeout=120,
+            env=env,
         )
         return result.stdout.strip() or result.stderr.strip() or "No response from Pi"
     except subprocess.TimeoutExpired:
