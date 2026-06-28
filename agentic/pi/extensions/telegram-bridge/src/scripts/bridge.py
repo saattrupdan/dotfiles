@@ -16,7 +16,7 @@ import math
 import os
 import subprocess
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +37,10 @@ SESSION_FILE = Path(__file__).parent.parent / "sessions.json"
 MAX_HISTORY_LENGTH = 20
 MAX_RESPONSE_LENGTH = 4096
 TELEGRAM_SESSION_ID = "telegram"  # Fixed session ID for Telegram
+# Token estimation: ~4 chars per token (conservative estimate)
+# Max context: 262,144 tokens (Qwen3.6-35B-A3B as per project config)
+TOKENS_PER_CHAR_ESTIMATE = 1 / 4
+MAX_CONTEXT_TOKENS = 262_144
 
 # Commands (natural language, no slashes)
 COMMANDS: set[str] = {"clear", "status", "compact"}
@@ -215,25 +219,38 @@ async def handle_command(update: Update, context: Any) -> None:
 
     if text == "status":
         history = session.get("history", [])
-        history_count = len(history)
-        usage_pct = (history_count / MAX_HISTORY_LENGTH) * 100
+        # Estimate tokens from content (rough: ~4 chars per token)
+        total_chars = sum(len(msg.get("content", "")) for msg in history)
+        estimated_tokens = int(total_chars * TOKENS_PER_CHAR_ESTIMATE)
+        usage_pct = (estimated_tokens / MAX_CONTEXT_TOKENS) * 100
 
         created_at_str = session.get("created_at")
+        start_time = "Unknown"
         if created_at_str:
             try:
-                created_at = datetime.fromisoformat(created_at_str)
-                start_time = created_at.strftime("%Y-%m-%d %H:%M UTC")
-            except ValueError:
-                start_time = "Unknown"
-        else:
-            start_time = "Unknown"
+                created_at = datetime.fromisoformat(created_at_str).astimezone()
+                now = datetime.now(timezone.utc).astimezone()
+                today = now.date()
+                yesterday = today - timedelta(days=1)
 
-        # Round usage to nearest 5% for cleaner display
-        usage_rounded = math.ceil(usage_pct / 5) * 5 if usage_pct > 0 else 0
+                if created_at.date() == today:
+                    start_time = f"today at {created_at.strftime('%H:%M')}"
+                elif created_at.date() == yesterday:
+                    start_time = f"yesterday at {created_at.strftime('%H:%M')}"
+                else:
+                    start_time = created_at.strftime("%d %b at %H:%M")
+            except (ValueError, AttributeError):
+                start_time = "Unknown"
+
+        # Round usage to nearest 0.01% for small values, 0.1% otherwise
+        if usage_pct < 1:
+            usage_display = f"{usage_pct:.2f}"
+        else:
+            usage_display = f"{usage_pct:.1f}"
 
         status_msg = (
             f"📊 Session status\n"
-            f"Messages: {history_count}/{MAX_HISTORY_LENGTH} ({usage_rounded}%)\n"
+            f"Tokens: ~{estimated_tokens:,} / {MAX_CONTEXT_TOKENS:,} ({usage_display}%)\n"
             f"Started: {start_time}"
         )
         await update.message.reply_text(status_msg)
