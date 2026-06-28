@@ -5,7 +5,8 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=%h/dotfiles/agentic/pi/extensions/telegram-bridge
-ExecStart=%h/.local/bin/uv run src/scripts/bridge.py
+Environment="NVM_DIR=%h/.nvm"
+ExecStart=/bin/bash -c 'source $NVM_DIR/nvm.sh && nvm use 24 && exec $HOME/.local/bin/uv run src/scripts/bridge.py'
 Restart=always
 RestartSec=5
 StandardOutput=journal
