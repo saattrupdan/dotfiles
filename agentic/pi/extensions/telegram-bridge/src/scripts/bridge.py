@@ -128,7 +128,6 @@ def call_pi(
             text=True,
             cwd=cwd,
             timeout=120,
-            env=env,
         )
         return result.stdout.strip() or result.stderr.strip() or "No response from Pi"
     except subprocess.TimeoutExpired:
