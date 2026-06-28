@@ -39,6 +39,12 @@ TELEGRAM_SESSION_ID = "telegram"  # Fixed session ID for Telegram
 # Commands (natural language, no slashes)
 COMMANDS: set[str] = {"clear"}
 
+# Enable logging to stderr for systemd journal
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+
 logger = logging.getLogger(__name__)
 
 
