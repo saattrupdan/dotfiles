@@ -1,0 +1,18 @@
+[project]
+name = "xlsx"
+version = "1.0.0"
+description = "Surgical, formatting-preserving editing of Microsoft Excel .xlsx files"
+requires-python = ">=3.12"
+
+[project.scripts]
+xlsx = "xlsx_surgeon.main:main"
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["xlsx_surgeon"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
