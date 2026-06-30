@@ -175,13 +175,17 @@ export PYTORCH_ENABLE_MPS_FALLBACK="1"
 # first time you run one, it sources the real nvm, removes the shims, and re-runs your
 # command. Startup stays snappy.
 export NVM_DIR="$HOME/.config/nvm"
-_load_nvm() {
-  unset -f nvm node npm npx
-  [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
-  [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
-}
+# Each shim unsets ALL four shims first, then sources nvm, then runs the real
+# command. Self-contained (no separate _load_nvm to go missing) and unsets
+# itself before running, so a missing nvm.sh falls through to PATH instead of
+# recursing into the shim forever.
 for _cmd in nvm node npm npx; do
-  eval "${_cmd}() { _load_nvm; ${_cmd} \"\$@\"; }"
+  eval "${_cmd}() {
+    unset -f nvm node npm npx
+    [ -s \"\$NVM_DIR/nvm.sh\" ] && \. \"\$NVM_DIR/nvm.sh\"
+    [ -s \"\$NVM_DIR/bash_completion\" ] && \. \"\$NVM_DIR/bash_completion\"
+    ${_cmd} \"\$@\"
+  }"
 done
 unset _cmd
 
