@@ -41,6 +41,12 @@ import {
 } from "../_question_protocol/protocol.ts";
 import { dispatchAsk } from "../question/index.ts";
 
+// Tool label for the footer spinner (used by thinking-status extension).
+// Without this, the spinner falls back to generic "Working...".
+const TOOL_LABELS: Record<string, string> = {
+	subagent: "Delegating...",
+};
+
 const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
 const COLLAPSED_ITEM_COUNT = 10;
