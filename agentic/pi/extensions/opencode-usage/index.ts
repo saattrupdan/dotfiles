@@ -116,6 +116,8 @@ async function saveConfig(config: GoUsageConfig): Promise<void> {
 
 async function readLedger(): Promise<{ events: UsageLedgerEvent[]; invalidLineCount: number }> {
 	const store = await ensureStore();
+	// NOTE: The ledger grows unbounded over time. Production use should add pruning
+	// (e.g. keep only last N days or truncate after each monthly reset).
 	const raw = await readFile(store.ledgerPath, "utf8").catch(() => "");
 	const events: UsageLedgerEvent[] = [];
 	let invalidLineCount = 0;
@@ -140,6 +142,9 @@ async function appendUsageEventDeduped(event: UsageLedgerEvent): Promise<boolean
 	const store = await ensureStore();
 	const { events } = await readLedger();
 	if (events.some((existing) => existing.dedupeKey === event.dedupeKey)) return false;
+	// TOCTOU race: another process could append between the dedupe check above and this write.
+	// Acceptable for local single-user usage tracking; a production system would use file locking
+	// or an atomic compare-and-swap append.
 	await appendFile(store.ledgerPath, `${JSON.stringify(event)}\n`, "utf8");
 	return true;
 }
@@ -465,19 +470,6 @@ export default function opencodeUsageExtension(pi: ExtensionAPI) {
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 			const message = (event.message as any) as Record<string, unknown>;
 			if (!message || message.role !== "assistant") return;
-
-			try {
-				const f = await import("node:fs");
-				f.appendFileSync("/tmp/oc-msgend.log", JSON.stringify({
-					role: message.role,
-					provider: message.provider,
-					model: message.model,
-					responseId: message.responseId,
-					usage: message.usage,
-				}) + "\n");
-			} catch {
-				// Ignore debug logging failures
-			}
 
 			const config = await loadConfig();
 			if (!isActiveProvider(message.provider, config)) return;
