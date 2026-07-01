@@ -557,6 +557,15 @@ async function runSingleAgent(
 
 		args.push(`Task: ${task}`);
 		let wasAborted = false;
+		let exitTimeout: NodeJS.Timeout | undefined;
+
+		// Exit timeout: after the last message, give the subagent N seconds to exit
+		// cleanly, then force-kill. Prevents hanging when pi doesn't shut down cleanly
+		// (e.g., extension cleanup deadlock, open handles, undisposed resources).
+		// Default 30s, configurable via PI_SUBAGENT_EXIT_TIMEOUT_MS.
+		const exitTimeoutMs = process.env.PI_SUBAGENT_EXIT_TIMEOUT_MS
+			? parseInt(process.env.PI_SUBAGENT_EXIT_TIMEOUT_MS, 10)
+			: 30 * 1000;
 
 		const exitCode = await new Promise<number>((resolve) => {
 				const invocation = getPiInvocation(args);
@@ -575,6 +584,23 @@ async function runSingleAgent(
 						PI_QUESTION_RESPONSE_FD: "3",
 					},
 				});
+
+				// Exit timeout: start after last message, clear on process exit.
+				const startExitTimeout = () => {
+					if (exitTimeout) clearTimeout(exitTimeout);
+					exitTimeout = setTimeout(() => {
+						proc.kill("SIGTERM");
+						setTimeout(() => {
+							if (!proc.killed) proc.kill("SIGKILL");
+						}, 5000);
+					}, exitTimeoutMs);
+				};
+				const clearExitTimeout = () => {
+					if (exitTimeout) {
+						clearTimeout(exitTimeout);
+						exitTimeout = undefined;
+					}
+				};
 				const responseChannel = proc.stdio[3] as NodeJS.WritableStream | null;
 				let buffer = "";
 
@@ -585,6 +611,12 @@ async function runSingleAgent(
 						event = JSON.parse(line);
 					} catch {
 						return;
+					}
+
+					// Start exit timeout after the final message (agent_end).
+					// The subagent should exit shortly after this; if not, force-kill.
+					if (event.type === "agent_end") {
+						startExitTimeout();
 					}
 
 					if (event.type === "message_end" && event.message) {
@@ -705,6 +737,7 @@ async function runSingleAgent(
 					// Process any remaining data in buffers
 					if (buffer.trim()) processLine(buffer);
 					if (stderrBuffer.trim()) handleStderrLine(stderrBuffer);
+					clearExitTimeout();
 					resolve(exitCodeValue);
 				};
 
@@ -731,6 +764,7 @@ async function runSingleAgent(
 			if (signal) {
 				const killProc = () => {
 					wasAborted = true;
+					clearExitTimeout();
 					proc.kill("SIGTERM");
 					setTimeout(() => {
 						if (!proc.killed) proc.kill("SIGKILL");
