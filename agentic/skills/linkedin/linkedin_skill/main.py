@@ -572,7 +572,6 @@ EDITOR_NAMES = (
 )
 SHARE_TRIGGER = ("start a post", "opret et opslag", "start indl\u00e6g")
 BTN_POST = ("post", "opsl\u00e5", "del")
-BTN_CLOSE = ("close", "dismiss", "luk")
 BTN_SAVE_DRAFT = ("save as draft", "gem som kladde")
 BTN_DISCARD = ("discard", "kass\u00e9r", "slet")
 
@@ -648,21 +647,29 @@ def open_composer() -> None:
     # not block the composer, and clicking a stray "Accept" risks hitting an
     # unrelated control (e.g. a connection invite) and navigating away.
     ab("open", FEED_URL, check=False)
-    # Brief wait for header elements to be ready.
-    ab("wait", "500", check=False)
-    # Click share button and poll for editor to appear in iframe.
-    btn = find_node(SHARE_TRIGGER, role="button")
+    ab("wait", "--load", "networkidle", check=False, timeout=30)
+    # Poll for the share trigger: the heavy feed can take a few seconds to
+    # render it, and LinkedIn renders it as a button in some layouts and a link
+    # in others, so accept either role.
+    btn = None
+    for _ in range(15):  # up to ~7.5s
+        btn = find_node(SHARE_TRIGGER, role="button") or find_node(
+            SHARE_TRIGGER, role="link"
+        )
+        if btn:
+            break
+        ab("wait", "500", check=False)
     if not btn:
         raise BrowserError("could not find the 'Start a post' button on the feed")
     ab("click", f"@{btn['ref']}")
     # Poll for composer editor (inside iframe, needs fresh snapshots each time).
-    for _ in range(10):  # Up to 5s
+    for _ in range(20):  # up to ~10s
         ab("snapshot", "-i", check=False)
         try:
             editor_ref()
             return
         except BrowserError:
-            ab("wait", "400", check=False)
+            ab("wait", "500", check=False)
     raise BrowserError("the post composer did not open")
 
 
@@ -697,22 +704,37 @@ def read_editor() -> str:
     return ab("get", "text", f"@{n['ref']}", check=False) if n else ""
 
 
-def close_composer(save_draft: bool) -> None:
-    """Close the composer, choosing Save-as-draft or Discard if prompted."""
-    # Exact match: a substring match on "close" would hit "Close jump menu".
-    click_node(BTN_CLOSE, role="button", exact=True, required=False)
-    # Poll for save/discard dialog with snapshots.
+def close_composer(save_draft: bool) -> bool:
+    """Close the composer, choosing Save-as-draft or Discard if prompted.
+
+    Returns True if the confirm dialog appeared and the requested button was
+    clicked. An empty composer closes with no dialog and returns False -- that
+    is expected (nothing to save), so callers must not treat False as an error
+    on its own.
+    """
+    # Poll for the save/discard confirm dialog, re-triggering the close each
+    # round until it appears. Every lookup is by content (accessible name) and
+    # clicks the ref atomically, so there are no snapshot races.
     want_names = BTN_SAVE_DRAFT if save_draft else BTN_DISCARD
-    btn = None
-    for _ in range(6):  # Up to 3s
-        ab("snapshot", "-i", check=False)
-        btn = find_node(want_names, role="button")
-        if btn:
-            ab("click", f"@{btn['ref']}", check=False)
+    for _ in range(16):  # up to ~8s
+        # Check for the confirm dialog first, so re-triggering below never
+        # dismisses a dialog that is already up.
+        if click_node(want_names, role="button", required=False):
             # Wait for LinkedIn to persist the draft to storage.
             ab("wait", "1500", check=False)
-            return
-        ab("wait", "400", check=False)
+            return True
+        # Trigger the "Save this post as a draft?" prompt by pressing Escape on
+        # the focused editor. Clicking the composer's "Dismiss"/X control is
+        # unreliable -- LinkedIn's a11y tree exposes hidden decoy buttons with
+        # that same name -- whereas Escape is a single key (never an OS-level
+        # chord) that the composer handles directly.
+        try:
+            ab("click", f"@{editor_ref()}")
+            ab("press", "Escape")
+        except BrowserError:
+            pass  # editor already gone: composer closed with no dialog
+        ab("wait", "500", check=False)
+    return False
 
 
 def cmd_post(args):
@@ -737,7 +759,11 @@ def cmd_draft(args):
     open_composer()
     type_into_editor(args.text)
     logger.info("Draft content:\n---\n%s\n---", read_editor().strip())
-    close_composer(save_draft=True)
+    if not close_composer(save_draft=True):
+        raise BrowserError(
+            "the 'Save as draft' dialog never appeared, so the draft was not "
+            "saved. Try again."
+        )
     logger.info("\u2713 Saved as draft (view with `linkedin drafts`).")
     return 0
 
@@ -750,9 +776,14 @@ def cmd_drafts(args):
     # Opening the composer auto-loads the most recent draft into the editor
     # (LinkedIn shows a "Draft:" label). A fresh composer with no draft is empty.
     open_composer()
-    # Brief wait for LinkedIn to auto-load the draft from storage.
-    ab("wait", "1000", check=False)
-    content = read_editor().strip()
+    # Poll for LinkedIn to auto-load the draft from storage -- a single fixed
+    # wait races the network and reports "no draft" for a draft that exists.
+    content = ""
+    for _ in range(10):  # up to ~5s
+        content = read_editor().strip()
+        if content:
+            break
+        ab("wait", "500", check=False)
     if content:
         logger.info("Current draft:\n---\n%s\n---", content)
     else:
