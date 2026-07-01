@@ -194,8 +194,6 @@ function usageEventFromAssistantMessage(message: any, ctx: ExtensionContext): Us
 		sessionFile: ctx.sessionManager.getSessionFile(),
 		responseId,
 		stopReason: typeof message.stopReason === "string" ? message.stopReason : undefined,
-		// getSessionFile() may return undefined if no session is active; allow it
-		sessionFile: ctx.sessionManager.getSessionFile() ?? undefined,
 	};
 }
 
@@ -472,8 +470,6 @@ export default function opencodeUsageExtension(pi: ExtensionAPI) {
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 			const message = (event.message as any) as Record<string, unknown>;
 			if (!message || message.role !== "assistant") return;
-
-
 
 			const config = await loadConfig();
 			if (!isActiveProvider(message.provider, config)) return;
