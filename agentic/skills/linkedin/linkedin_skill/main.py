@@ -24,7 +24,7 @@ import sys
 import typing as t
 from pathlib import Path
 
-from .credentials import get_linkedin_credentials, save_credential
+from .credentials import get_linkedin_credentials
 
 ENV_FILE = Path.home() / ".env"
 BROWSER_SESSION_NAME = "linkedin"  # Persistent browser session for faster logins
@@ -56,7 +56,7 @@ class BrowserError(RuntimeError):
 
 def ab(*args: str, check: bool = True, timeout: int = 90) -> str:
     """Run an agent-browser command and return its stripped stdout.
-    
+
     Always uses --session-name for persistent cookies/storage between invocations.
     """
     # Prepend session name to all commands for persistent auth state
@@ -155,7 +155,7 @@ def is_logged_in() -> bool:
 
 def ensure_logged_in() -> None:
     """Check if logged in via persistent session; raise with guidance if not.
-    
+
     The --session-name flag on all ab() calls persists cookies/storage between
     invocations, so this is fast when already authenticated.
     """
@@ -227,13 +227,13 @@ def cmd_login(args: argparse.Namespace) -> int:
     if args.code:
         return submit_code(args.code)
 
-    # Verify flag: just check if logged in after manual browser login.
+    # Verify flag: just check if logged in after login.
     if args.verify:
         if is_logged_in():
             logger.info("✓ Logged in and session saved.")
             return 0
         else:
-            logger.error("Not logged in yet. Please complete login in the browser.")
+            logger.error("Not logged in yet.")
             return 1
 
     # Already logged in?
@@ -241,42 +241,168 @@ def cmd_login(args: argparse.Namespace) -> int:
         logger.info("✓ Already logged in")
         return 0
 
-    # Open login page - user should complete auth manually in browser.
-    # The --session-name flag auto-saves cookies/storage after login.
+    # Get credentials from keychain
+    username, password = get_linkedin_credentials()
+    if not username or not password:
+        logger.error(
+            "No LinkedIn credentials found in keychain.\n"
+            "Please add them manually:\n"
+            "  security add-generic-password -s linkedin -a username -w <your-email>\n"
+            "  security add-generic-password -s linkedin -a password -w <your-password>"
+        )
+        return 1
+
+    # Open login page
     ab("open", LOGIN_URL)
-    logger.info(
-        " aidia» Opened LinkedIn login in browser.\n"
-        "Please log in manually (username/password or SSO).\n"
-        "Once logged in, the session will be auto-saved for future CLI commands.\n"
-        "\n"
-        "After completing login, run: linkedin login --verify"
-    )
-    return 0
-    ab("wait", "4000", check=False)
-    url = get_url()
-    if "/feed" in url:
-        logger.info("✓ Logged in")
+    logger.info(" aidia» Opened LinkedIn login page")
+
+    # Wait for page to load
+    ab("wait", "2000", check=False)
+
+    # A still-valid session redirects /login -> /feed, so there is no form to
+    # fill. Treat that as success (e.g. `--force` on an authenticated session).
+    if "/feed" in get_url():
+        logger.info("✓ Already logged in")
         return 0
 
-    if "checkpoint" in url or "challenge" in url:
-        # Try a brief poll in case it's a push notification the user approves.
-        for _ in range(args.wait_push // 3):
-            ab("wait", "3000", check=False)
-            if "/feed" in get_url():
-                logger.info("✓ Login approved via app.")
-                return 0
-        # Fall back to authenticator-code entry.
-        goto_authenticator_code_page()
-        logger.info(
-            "🔐 LinkedIn needs a verification code.\n"
-            "Open your authenticator app and run:\n"
-            "    linkedin login --code XXXXXX\n"
-            "(The browser stays on the code page, so just supply the 6-digit code.)"
-        )
-        return 2
+    # Fill credentials and submit
+    try:
+        # Take snapshot and find email field. The email field is optional: after
+        # a logout LinkedIn shows a "Welcome back" page that remembers the
+        # account and asks only for the password.
+        lines = ab("snapshot", check=False)
+        nodes = parse_nodes(lines.split("\n") if lines else None)
+        email_node = None
+        for node in nodes:
+            if node["role"] == "textbox" and (
+                "email" in node["name"].lower() or "username" in node["name"].lower()
+            ):
+                email_node = node
+                break
 
-    logger.error("Login did not reach the feed (URL: %s).", url)
-    return 1
+        if email_node:
+            ab("click", f"@{email_node['ref']}")
+            ab("fill", f"@{email_node['ref']}", username)
+            logger.info(" aidia» Entered username")
+            # Password field may only appear after the email is entered.
+            ab("wait", "1000", check=False)
+        else:
+            logger.info(" aidia» Account remembered; entering password only")
+
+        # Find password field - try multiple strategies
+        lines = ab("snapshot", check=False)
+        nodes = parse_nodes(lines.split("\n") if lines else None)
+        password_node = None
+
+        # Strategy 1: Look for password field by role and name
+        for node in nodes:
+            if (
+                node["role"] in ("textbox", "text")
+                and "password" in node["name"].lower()
+            ):
+                password_node = node
+                break
+
+        # Strategy 2: Look for any textbox after the email field
+        if not password_node:
+            found_email = False
+            for node in nodes:
+                if node["role"] == "textbox":
+                    if found_email:
+                        password_node = node
+                        break
+                    if email_node and node["ref"] == email_node["ref"]:
+                        found_email = True
+
+        # Strategy 3: Look for field with "password" in line content
+        if not password_node:
+            for node in nodes:
+                if "password" in str(node.get("line", "")).lower():
+                    password_node = node
+                    break
+
+        if not password_node:
+            raise BrowserError("could not find password field")
+
+        ab("click", f"@{password_node['ref']}")
+        ab("fill", f"@{password_node['ref']}", password)
+        logger.info(" aidia» Entered password")
+
+        # Wait before submitting
+        ab("wait", "500", check=False)
+
+        # Find and click submit button - look for "Sign in" button
+        lines = ab("snapshot", check=False)
+        nodes = parse_nodes(lines.split("\n") if lines else None)
+        submit_node = None
+        for node in nodes:
+            if node["role"] != "button" or node.get("disabled"):
+                continue
+            name_lower = node["name"].lower()
+            # Skip third-party SSO buttons ("Sign in with Google/Apple") -- they
+            # also contain "sign in" but open a separate provider flow.
+            if "google" in name_lower or "apple" in name_lower or "with " in name_lower:
+                continue
+            if "sign in" in name_lower or "log in" in name_lower:
+                submit_node = node
+                break
+
+        if not submit_node:
+            raise BrowserError("could not find sign in button")
+
+        ab("click", f"@{submit_node['ref']}")
+        logger.info(" aidia» Submitted login form")
+
+        # Wait for navigation/checkpoint
+        ab("wait", "4000", check=False)
+        url = get_url()
+
+        if "/feed" in url:
+            logger.info("✓ Logged in successfully")
+            return 0
+
+        # Google SSO redirect - need manual completion
+        if "accounts.google.com" in url:
+            logger.info(
+                "🔐 LinkedIn uses Google SSO for your account.\n"
+                "Please complete the Google login manually in the browser.\n"
+                "Once logged in, the session will be saved for future commands."
+            )
+            # Poll for login completion
+            for _ in range(15):  # ~75 seconds total
+                ab("wait", "5000", check=False)
+                if "/feed" in get_url():
+                    logger.info("✓ Logged in successfully")
+                    return 0
+            logger.info(
+                "Still waiting for login... run `linkedin login --verify` when done"
+            )
+            return 0
+
+        if "checkpoint" in url or "challenge" in url:
+            # Try a brief poll in case it's a push notification the user approves.
+            for _ in range(args.wait_push // 3):
+                ab("wait", "3000", check=False)
+                if "/feed" in get_url():
+                    logger.info("✓ Login approved via app.")
+                    return 0
+            # Fall back to authenticator-code entry.
+            goto_authenticator_code_page()
+            logger.info(
+                "🔐 LinkedIn needs a verification code.\n"
+                "Open your authenticator app and run:\n"
+                "    linkedin login --code XXXXXX\n"
+                "(The browser stays on the code page, so just supply the 6-digit code.)"
+            )
+            return 2
+
+        logger.error("Login did not reach the feed (URL: %s).", url)
+        return 1
+
+    except BrowserError as e:
+        logger.error("Login failed: %s", e)
+        logger.info(" falling back to manual login. Please complete in browser.")
+        return 1
 
 
 # --------------------------------------------------------------------------- #
@@ -356,7 +482,7 @@ def parse_counts(counts: str) -> dict[str, int]:
 
 
 def cmd_posts(args: argparse.Namespace) -> int:
-    # Skip explicit login check - operation will fail naturally if not authed
+    ensure_logged_in()
     ab("open", ACTIVITY_URL)
     ab("wait", "--load", "networkidle", check=False)
     # We read posts straight from the DOM via eval, so the cookie banner does
@@ -533,7 +659,7 @@ def open_composer() -> None:
     for _ in range(10):  # Up to 5s
         ab("snapshot", "-i", check=False)
         try:
-            ref = editor_ref()
+            editor_ref()
             return
         except BrowserError:
             ab("wait", "400", check=False)
@@ -590,7 +716,7 @@ def close_composer(save_draft: bool) -> None:
 
 
 def cmd_post(args):
-    # Skip explicit login check - operation will fail naturally if not authed
+    ensure_logged_in()
     open_composer()
     type_into_editor(args.text)
     logger.info("Composer now contains:\n---\n%s\n---", read_editor().strip())
@@ -607,7 +733,7 @@ def cmd_post(args):
 
 
 def cmd_draft(args):
-    # Skip explicit login check - operation will fail naturally if not authed
+    ensure_logged_in()
     open_composer()
     type_into_editor(args.text)
     logger.info("Draft content:\n---\n%s\n---", read_editor().strip())
@@ -620,7 +746,7 @@ def cmd_draft(args):
 # View drafts / scheduled
 # --------------------------------------------------------------------------- #
 def cmd_drafts(args):
-    # Skip explicit login check - operation will fail naturally if not authed
+    ensure_logged_in()
     # Opening the composer auto-loads the most recent draft into the editor
     # (LinkedIn shows a "Draft:" label). A fresh composer with no draft is empty.
     open_composer()
@@ -653,7 +779,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument(
         "--wait-push",
         type=int,
-        default=18,
+        default=60,
         help="seconds to wait for an app-push approval before asking for a code",
     )
     sp.add_argument(
