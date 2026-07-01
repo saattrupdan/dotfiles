@@ -1,7 +1,7 @@
 ---
 name: linkedin
 description: Draft, post, and review Dan's LinkedIn posts (handle saattrupdan) via the `linkedin` CLI, which drives the real LinkedIn web UI with agent-browser. Use when the user wants to write/post a LinkedIn post, save or view a draft, or fetch their recent posts with engagement stats. Also use whenever drafting LinkedIn content, to match Dan's voice and formatting.
-last-updated: 2026-05-30
+last-updated: 2026-07-01
 ---
 
 # linkedin
@@ -23,21 +23,25 @@ linkedin <command> [options]
 which agent-browser || npm i -g agent-browser && agent-browser install
 ```
 
-The `linkedin` command is a wrapper that runs from source (via `uv run --directory`)
-so you always have the latest version without reinstalling. The CLI shells out to
-`agent-browser` and runs the browser **headless** — no window appears and synthetic
-keystrokes never reach the OS. Standard library only.
+The `linkedin` command is an editable install pointing at
+`linkedin_skill/main.py`, so edits to the source take effect immediately. The
+CLI shells out to `agent-browser` and runs the browser **headless** — no window
+appears. It does send keystrokes to the editor (via `agent-browser type`, which
+targets the editor element), but these are in-page key events, never OS-level
+chords, so nothing leaks to the OS. Standard library only.
 
 All browser commands use `--session-name linkedin` for persistent cookies/storage
 between invocations, so login state is preserved automatically.
 
-### Authentication (one-time)
+### Authentication
 
-Credentials live in `~/.env` (dotenv format), read literally — never echoed:
+Credentials live in the **macOS Keychain** (service `linkedin`), never in a file
+and never echoed. Read/set them with:
 
-```
-LINKEDIN_USER=you@example.com
-LINKEDIN_PASS=your-password
+```bash
+security find-generic-password -s linkedin -a username -w      # read
+security add-generic-password  -s linkedin -a username -w <email>
+security add-generic-password  -s linkedin -a password -w <password>
 ```
 
 Then:
@@ -46,29 +50,44 @@ Then:
 linkedin login
 ```
 
-- The CLI uses `agent-browser --session-name linkedin` for all commands, so
-  cookies and localStorage persist automatically between invocations.
-- Otherwise the CLI submits the credentials. LinkedIn usually then issues a
-  **verification challenge**. If it sends an app push, approve it on your phone.
-  If it asks for an authenticator code (or no push arrives), run stage 2:
+The login flow (all automated except the one 2FA step):
 
-  ```bash
-  linkedin login --code 123456
-  ```
+1. The CLI opens the login page and fills the credentials from Keychain. After a
+   logout LinkedIn shows a **"Welcome back" page that remembers the account** and
+   asks only for the password — the CLI handles both that and the full
+   email+password form (the email field is optional). It clicks the real
+   **"Sign in"** button, carefully skipping the "Sign in with Google/Apple" SSO
+   buttons.
+2. LinkedIn then issues a **verification challenge** — this is the one manual
+   step:
+   - **App push:** approve it on your phone. `linkedin login` polls for up to
+     `--wait-push` seconds (default 60) and completes automatically.
+   - **Authenticator code** (LinkedIn often demands this instead of a push): the
+     browser daemon stays alive on the code page, so supply the code with:
 
-  The browser daemon stays alive between the two calls, so it is sitting on the
-  code page ready for the code. On success the session persists and future runs
-  skip login entirely.
+     ```bash
+     linkedin login --code 123456
+     ```
+
+On success the session persists and future runs skip login. `linkedin login
+--verify` checks the current state; `--force` re-runs even if a session exists
+(a still-valid session redirects to the feed and is treated as already logged
+in).
+
+> **Session fragility:** rapid/interleaved browser activity (e.g. mixing raw
+> `agent-browser` commands with `linkedin` CLI calls, or killing/restarting the
+> daemon) can get the session **logged out**, forcing another 2FA round. Prefer
+> the CLI commands, and don't restart the daemon mid-task unless it has hung.
 
 ## Commands
 
 | Command | What it does | Verified |
 | --- | --- | --- |
-| `linkedin login [--code N] [--force]` | Log in / finish 2FA; saves session | ✅ |
+| `linkedin login [--code N] [--force] [--verify] [--wait-push N]` | Log in / finish 2FA; saves session | ✅ |
 | `linkedin posts [-n N] [--full] [--include-reposts] [--json]` | Fetch recent posts with engagement stats (default 10) | ✅ |
-| `linkedin post "<text>" [--yes]` | Publish now (dry run unless `--yes`) | ✅ fill; publish via `--yes` |
-| `linkedin draft "<text>"` | Save the text as a draft | ✅ |
-| `linkedin drafts` | Show the current draft | ✅ |
+| `linkedin post "<text>" [--yes]` | Publish now (dry run unless `--yes`) | ✅ type; publish via `--yes` |
+| `linkedin draft "<text>"` | Save the text as a draft (empty composer only) | ✅ |
+| `linkedin drafts` | Show the current draft (non-destructive) | ✅ |
 
 > Scheduling is intentionally **not** supported: LinkedIn's schedule dialog
 > (date field + calendar + time picker) was too brittle to automate reliably.
@@ -89,13 +108,19 @@ always included and tagged `[repost +commentary]`.
 
 ### Posting / drafting
 
-- `post` is **dry-run by default** — it fills the composer and shows you the
-  content but does nothing irreversible. Add `--yes` to actually publish.
-  Always show Dan the composed text and get the OK first.
-- Opening the composer **auto-loads the most recent draft**. To avoid mangling
-  an existing draft, `post`/`draft` refuse to type over a non-empty composer —
-  review it with `linkedin drafts` and discard it in the browser first if
-  needed.
+- `post` is **dry-run by default** — it types the content into the composer and
+  shows you what it entered but does nothing irreversible. Add `--yes` to
+  actually publish. Always show Dan the composed text and get the OK first.
+- Opening the composer **auto-loads the most recent draft**. LinkedIn keeps a
+  **single** server-side draft, and the editor cannot be cleared in place (see
+  below), so `post`/`draft` **refuse to type over a non-empty composer**.
+- **Replacing an existing draft is not automated** — the discard-then-resave
+  chain proved too flaky and can lose the draft. To overwrite: open the draft in
+  the browser, **Discard** it there, then run `linkedin draft "<new text>"` on
+  the now-empty composer. (`linkedin draft` on an empty composer is reliable.)
+- **Trailing whitespace:** pass text via `"$(cat file)"` — command substitution
+  strips trailing newlines. Reading a file into a variable that keeps a trailing
+  `\n` will save a draft with a stray blank line.
 
 ## Writing in Dan's voice
 
@@ -142,18 +167,36 @@ technical deep-dives.
 
 ## How it works / robustness notes
 
-- The composer renders inside the `linkedin.com/preload/` **iframe**, so the CLI
-  drives it via `agent-browser snapshot` (which pierces frames) and ref-based
-  clicks, not page `eval`.
+The composer is a **Lexical contenteditable inside an iframe**, which drives most
+of the gotchas below. The CLI reads the page with `agent-browser snapshot -i`
+(pierces frames) and acts via ref-based clicks; page-level `eval`/`keyboard`
+don't reach into the iframe. These behaviours were established the hard way — do
+not "simplify" them away:
+
+- **Enter text with `type`, not `fill`.** `agent-browser fill` only mutates the
+  DOM: it does **not** reliably flip Lexical's "dirty" flag (so the save prompt
+  never appears) and can drop the caret mid-text, misplacing characters. `type`
+  fires real per-char key events on the editor element and preserves order.
+  `type_into_editor` uses `type`; keep it that way.
+- **The "Save this post as a draft?" prompt only appears when the composer has
+  unsaved changes**, and is triggered by pressing **Escape** on the focused
+  editor. Do **not** click the composer's "Dismiss"/X control — LinkedIn's a11y
+  tree exposes **hidden decoy "Dismiss" buttons** that ref-clicks silently
+  no-op on.
+- **Never take a snapshot between entering text and pressing Escape** — it loses
+  the trigger. That's why `cmd_draft`/`cmd_post` log the *input* text rather than
+  reading the editor back before closing.
+- Choosing **Discard** in that prompt **deletes the single draft entirely** (it
+  doesn't just revert changes).
 - Elements are matched by **accessible role + name** with multiple candidates
-  (English + Danish) and exact-vs-contains rules — so small LinkedIn relabels
+  (English + Danish) and exact-vs-contains rules, so small LinkedIn relabels
   usually don't break it. If LinkedIn renames a control, add a candidate to the
-  `*_NAMES`/`BTN_*` tuples near the top of `linkedin_skill/main.py` rather than
-  changing command logic.
-- The close button is named **"Dismiss"**; closing a loaded draft and choosing
-  **Discard** deletes it.
-- **Draft saving limitation**: The save/discard dialog appears reliably for short
-  posts (< 750 chars) but may not appear for longer posts when using the CLI. For
-  posts in the optimal engagement range (1,800–3,000 chars), save drafts manually
-  in the browser if the CLI fails.
+  `*_NAMES`/`BTN_*` tuples near the top of `linkedin_skill/main.py`.
+- **"Start a post"** is rendered as a **link** in the current layout (previously
+  a button); `open_composer` accepts either role and polls for it, since the
+  heavy feed takes a few seconds to render.
+- Composer helpers poll and retry (open, save/discard, draft auto-load) because
+  the live UI is slow and occasionally flaky. Sustained snapshots on the heavy
+  feed can **hang the agent-browser daemon** — the polling keeps snapshot volume
+  modest; if the daemon hangs, killing it usually also logs the session out.
 - If a command reports a session problem, re-run `linkedin login`.

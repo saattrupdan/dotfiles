@@ -681,13 +681,9 @@ def editor_ref() -> str:
 
 
 def type_into_editor(text: str) -> None:
-    # Keystroke-free by design: we never send key chords. Synthetic Cmd/Ctrl
-    # combinations (e.g. select-all) can leak to the OS, so we avoid `press`
-    # entirely and rely on click + fill (in-page CDP events).
-    #
-    # The composer auto-loads any saved draft. Rather than clobbering or merging
-    # it (which previously required a select-all keystroke), refuse to type over
-    # existing content and tell the user to deal with the draft first.
+    # The composer auto-loads any saved draft. The editor cannot be cleared in
+    # place, so refuse to type over existing content -- the caller must discard
+    # the existing draft in the browser first (see SKILL.md).
     ref = editor_ref()
     if read_editor().strip():
         raise BrowserError(
@@ -696,7 +692,13 @@ def type_into_editor(text: str) -> None:
             "posting/scheduling fresh text."
         )
     ab("click", f"@{ref}")
-    ab("fill", f"@{ref}", text)
+    # Use `type` (real per-char key events on the editor element), NOT `fill`.
+    # `fill` mutates the DOM without reliably flipping the Lexical editor's dirty
+    # flag, so the later "Save as draft?" prompt frequently never appears -- and
+    # `fill` can also drop the caret mid-text and misplace characters. `type`
+    # fires the input events LinkedIn listens for and preserves order. It is a
+    # single key per char (never an OS-level chord), so nothing leaks to the OS.
+    ab("type", f"@{ref}", text, timeout=180)
 
 
 def read_editor() -> str:
@@ -708,32 +710,52 @@ def close_composer(save_draft: bool) -> bool:
     """Close the composer, choosing Save-as-draft or Discard if prompted.
 
     Returns True if the confirm dialog appeared and the requested button was
-    clicked. An empty composer closes with no dialog and returns False -- that
-    is expected (nothing to save), so callers must not treat False as an error
-    on its own.
+    clicked. An empty (or pristine, unmodified) composer closes with no dialog
+    and returns False -- that is expected, so callers must not treat False as an
+    error on its own.
     """
-    # Poll for the save/discard confirm dialog, re-triggering the close each
-    # round until it appears. Every lookup is by content (accessible name) and
-    # clicks the ref atomically, so there are no snapshot races.
-    want_names = BTN_SAVE_DRAFT if save_draft else BTN_DISCARD
-    for _ in range(16):  # up to ~8s
+    return _confirm_close(BTN_SAVE_DRAFT if save_draft else BTN_DISCARD)
+
+
+def _confirm_close(target_names) -> bool:
+    """Close the composer and click `target_names` in the confirm dialog.
+
+    Poll for the "Save this post as a draft?" prompt, re-triggering the close
+    each round until it appears. Every lookup is by content (accessible name)
+    and clicks the ref atomically, so there are no snapshot races.
+
+    The prompt is triggered by pressing Escape on the focused editor: clicking
+    the composer's "Dismiss"/X control is unreliable (LinkedIn's a11y tree
+    exposes hidden decoy buttons with that same name), whereas Escape is a
+    single key -- never an OS-level chord. The prompt only appears when the
+    composer has unsaved changes.
+
+    The caller enters text immediately before calling this, so the editor is
+    already focused and dirty -- we press Escape *first*, with no intervening
+    snapshot (a snapshot between the edit and Escape loses the trigger). Only if
+    that first Escape does not raise the prompt do we re-focus and retry.
+    """
+    ab("press", "Escape")
+    ab("wait", "1000", check=False)
+    for _ in range(14):  # up to ~12s
+        # One snapshot per round, reused for both the button and the editor
+        # lookup -- the composer page is heavy and sustained snapshots can hang
+        # the agent-browser daemon.
+        nodes = parse_nodes()
         # Check for the confirm dialog first, so re-triggering below never
         # dismisses a dialog that is already up.
-        if click_node(want_names, role="button", required=False):
-            # Wait for LinkedIn to persist the draft to storage.
+        btn = find_node(target_names, role="button", nodes=nodes)
+        if btn:
+            ab("click", f"@{btn['ref']}", check=False)
+            # Wait for LinkedIn to persist the change to storage.
             ab("wait", "1500", check=False)
             return True
-        # Trigger the "Save this post as a draft?" prompt by pressing Escape on
-        # the focused editor. Clicking the composer's "Dismiss"/X control is
-        # unreliable -- LinkedIn's a11y tree exposes hidden decoy buttons with
-        # that same name -- whereas Escape is a single key (never an OS-level
-        # chord) that the composer handles directly.
-        try:
-            ab("click", f"@{editor_ref()}")
+        editor = find_node(EDITOR_NAMES, role="textbox", nodes=nodes)
+        if editor:  # prompt not up yet: re-focus and retry the trigger
+            ab("click", f"@{editor['ref']}")
+            ab("wait", "500", check=False)  # let focus settle before Escape
             ab("press", "Escape")
-        except BrowserError:
-            pass  # editor already gone: composer closed with no dialog
-        ab("wait", "500", check=False)
+        ab("wait", "800", check=False)
     return False
 
 
@@ -741,7 +763,9 @@ def cmd_post(args):
     ensure_logged_in()
     open_composer()
     type_into_editor(args.text)
-    logger.info("Composer now contains:\n---\n%s\n---", read_editor().strip())
+    # Log the input rather than reading the editor back: a snapshot between
+    # entering text and pressing Escape loses the close/save trigger.
+    logger.info("Composer now contains:\n---\n%s\n---", args.text)
     if not args.yes:
         logger.info("Dry run -- nothing posted. Re-run with --yes to publish.")
         close_composer(save_draft=False)  # leave LinkedIn clean
@@ -758,12 +782,14 @@ def cmd_draft(args):
     ensure_logged_in()
     open_composer()
     type_into_editor(args.text)
-    logger.info("Draft content:\n---\n%s\n---", read_editor().strip())
+    # Close immediately after typing -- do not read the editor back first, as a
+    # snapshot between the edit and Escape loses the save trigger.
     if not close_composer(save_draft=True):
         raise BrowserError(
             "the 'Save as draft' dialog never appeared, so the draft was not "
             "saved. Try again."
         )
+    logger.info("Draft content:\n---\n%s\n---", args.text)
     logger.info("\u2713 Saved as draft (view with `linkedin drafts`).")
     return 0
 
