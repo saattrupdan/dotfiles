@@ -471,23 +471,6 @@ export default function opencodeUsageExtension(pi: ExtensionAPI) {
 			const message = (event.message as any) as Record<string, unknown>;
 			if (!message || message.role !== "assistant") return;
 
-			// DEBUG: Log message structure for opencode-go
-			if (message.provider === "opencode-go") {
-				try {
-					const fs = await import("node:fs");
-					const debugMsg = {
-						provider: message.provider,
-						model: message.model,
-						hasUsage: !!message.usage,
-						usageKeys: message.usage ? Object.keys(message.usage as object) : undefined,
-						costTotal: (message.usage as any)?.cost?.total,
-					};
-					fs.appendFileSync("/tmp/oc-debug.jsonl", JSON.stringify(debugMsg) + "\n");
-				} catch {
-					// Ignore
-				}
-			}
-
 			const config = await loadConfig();
 			if (!isActiveProvider(message.provider, config)) return;
 
