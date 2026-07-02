@@ -180,7 +180,7 @@ export function safeNumber(value: unknown, fallback = 0): number {
 
 export function clampPercent(used: number, limit: number): number {
 	if (!Number.isFinite(used) || !Number.isFinite(limit) || limit <= 0) return 0;
-	return Math.max(0, Math.min(999, Math.floor((used / limit) * 100)));
+	return Math.max(0, Math.min(100, Math.floor((used / limit) * 100)));
 }
 
 export function formatUsd(value: number): string {
