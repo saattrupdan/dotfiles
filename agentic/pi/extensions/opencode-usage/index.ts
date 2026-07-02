@@ -286,8 +286,22 @@ function currentProvider(ctx: ExtensionContext): string {
 	return ctx.model?.provider ?? "";
 }
 
+function hasMessages(ctx: ExtensionContext): boolean {
+	const entries = ctx.sessionManager.getEntries();
+	return entries.some((e) => e.type === "message");
+}
+
 async function refreshUi(ctx: ExtensionContext): Promise<void> {
 	if (!ctx.hasUI) return;
+
+	// Suppress progress bars when the splash screen is shown (no messages yet).
+	// This keeps the splash view clean and Google-homepage style.
+	if (!hasMessages(ctx)) {
+		ctx.ui.setWidget(WIDGET_KEY, undefined);
+		ctx.ui.setStatus(STATUS_KEY, undefined);
+		return;
+	}
+
 	const config = await loadConfig();
 	const active = isActiveProvider(currentProvider(ctx), config);
 	if (!active) {
