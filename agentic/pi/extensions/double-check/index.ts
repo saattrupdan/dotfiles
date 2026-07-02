@@ -68,6 +68,9 @@ const PROMPT =
 	"and claims you haven't verified.\n\n" +
 	"If anything is missing or incomplete, finish it now without asking. If — and only if — the " +
 	"work is genuinely complete, reply with exactly the single word `done` and nothing else.\n\n" +
+	"Important: if the user's request was a question (not a task to execute), simply answer it — " +
+	"do not start acting on the answer or launching into new work. Only continue if there are " +
+	"concrete unfinished steps from the original request.\n\n" +
 	"(This is an automated self-check, not a message from the user.)";
 
 /** True while a genuine user run is in flight and still owes a double-check. */
@@ -90,8 +93,10 @@ function messageText(message: MessageLike): string {
 
 /** Is this assistant reply a bare "done" acknowledgement and nothing else? */
 function isBareDone(message: MessageLike): boolean {
-	const text = messageText(message).trim().toLowerCase().replace(/[.!]+$/, "");
-	return text === "done" || text === "`done`";
+	const text = messageText(message).trim().toLowerCase();
+	// Strip all leading/trailing punctuation and backticks.
+	const cleaned = text.replace(/^[^\w]+|[^\w]+$/g, "");
+	return cleaned === "done";
 }
 
 /** The most recent assistant message in the loop's transcript, if any. */
