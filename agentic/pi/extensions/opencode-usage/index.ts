@@ -56,9 +56,51 @@ import {
 	renderReport,
 	renderStatus,
 	renderWidget,
+	safeNumber,
 	type GoUsageConfig,
 	type UsageLedgerEvent,
 } from "./lib.js";
+
+/**
+ * OpenCode Go model pricing ($ per 1M tokens).
+ * Source: models.dev/api.json — verified for opencode.ai/go models.
+ */
+const MODEL_PRICING: Record<string, { input: number; output: number; cacheRead?: number; cacheWrite?: number }> = {
+	// ZAI / GLM family
+	"glm-5.2": { input: 1.2, output: 4.1, cacheRead: 0.2 },
+	"glm-5.1": { input: 1.0, output: 3.2, cacheRead: 0.1 },
+	"glm-4.7-flash": { input: 0.1, output: 0.5, cacheRead: 0.1 },
+	// Moonshot / Kimi family
+	"kimi-k2.7-code": { input: 0.95, output: 4.0, cacheRead: 0.95 },
+	"kimi-k2.6": { input: 0.68, output: 3.15, cacheRead: 0.07 },
+	// MiniMax family
+	"minimax-m3": { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0.375 },
+	"minimax-m2.7": { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0.375 },
+	"minimax-m2.5": { input: 0.3, output: 1.2, cacheRead: 0.03, cacheWrite: 0.375 },
+	// MiMo family (Xiaomi)
+	"mimo-v2.5-pro": { input: 0, output: 0 },
+	"mimo-v2.5": { input: 0, output: 0 },
+	// Qwen family
+	"qwen3.7-max": { input: 0, output: 0 },
+	"qwen3.7-plus": { input: 0, output: 0 },
+	"qwen3.6-plus": { input: 0, output: 0 },
+	// DeepSeek family
+	"deepseek-v4-pro": { input: 1.74, output: 3.48, cacheRead: 0.02 },
+	"deepseek-v4-flash": { input: 0, output: 0 },
+};
+
+/** Calculate cost in USD from token usage counters. */
+function calculateCostFromTokens(usage: Record<string, unknown>, modelId: string): number {
+	const pricing = MODEL_PRICING[modelId.toLowerCase()];
+	if (!pricing) return 0;
+
+	return (
+		(safeNumber(usage.input, 0) / 1_000_000) * pricing.input +
+		(safeNumber(usage.output, 0) / 1_000_000) * pricing.output +
+		(safeNumber(usage.cacheRead, 0) / 1_000_000) * (pricing.cacheRead ?? 0) +
+		(safeNumber(usage.cacheWrite, 0) / 1_000_000) * (pricing.cacheWrite ?? 0)
+	);
+}
 
 const WIDGET_KEY = "opencode-usage";
 const STATUS_KEY = "opencode-usage";
@@ -151,7 +193,17 @@ async function appendUsageEventDeduped(event: UsageLedgerEvent): Promise<boolean
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function usageEventFromAssistantMessage(message: any, ctx: ExtensionContext): UsageLedgerEvent | undefined {
-	const costUsd = Number(message?.usage?.cost?.total ?? 0);
+	// Try to use cost from message first (if pi calculated it)
+	let costUsd = Number(message?.usage?.cost?.total ?? 0);
+	
+	// If cost is 0/missing, calculate from tokens using model pricing
+	if (!Number.isFinite(costUsd) || costUsd <= 0) {
+		const modelId = String(message.model ?? "");
+		const usage = message.usage ?? {};
+		costUsd = calculateCostFromTokens(usage, modelId);
+	}
+	
+	// Still 0? Skip this event (free model or unknown pricing)
 	if (!Number.isFinite(costUsd) || costUsd <= 0) return undefined;
 
 	const timestampMs = Number(message.timestamp);
@@ -463,6 +515,24 @@ function usageHelp(): string {
 export default function opencodeUsageExtension(pi: ExtensionAPI) {
 	// Warm-create the local store, but never block extension load on it.
 	ensureStore().catch(() => undefined);
+
+	// DEBUG: Capture response headers from opencode-go provider
+	pi.on("after_provider_response", async (event, ctx) => {
+		if (ctx.model?.provider !== "opencode-go") return;
+		try {
+			const fs = await import("node:fs");
+			const headersObj: Record<string, string> = {};
+			// event.headers may be a Map or Record - handle both
+			if (event.headers instanceof Map) {
+				for (const [k, v] of event.headers.entries()) headersObj[k] = v;
+			} else if (typeof event.headers === "object") {
+				Object.assign(headersObj, event.headers);
+			}
+			fs.appendFileSync("/tmp/oc-headers.jsonl", JSON.stringify(headersObj) + "\n");
+		} catch {
+			// Ignore
+		}
+	});
 
 	// Record observed cost from each assistant message whose provider is Go.
 	pi.on("message_end", async (event, ctx) => {
