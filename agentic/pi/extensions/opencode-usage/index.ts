@@ -516,24 +516,6 @@ export default function opencodeUsageExtension(pi: ExtensionAPI) {
 	// Warm-create the local store, but never block extension load on it.
 	ensureStore().catch(() => undefined);
 
-	// DEBUG: Capture response headers from opencode-go provider
-	pi.on("after_provider_response", async (event, ctx) => {
-		if (ctx.model?.provider !== "opencode-go") return;
-		try {
-			const fs = await import("node:fs");
-			const headersObj: Record<string, string> = {};
-			// event.headers may be a Map or Record - handle both
-			if (event.headers instanceof Map) {
-				for (const [k, v] of event.headers.entries()) headersObj[k] = v;
-			} else if (typeof event.headers === "object") {
-				Object.assign(headersObj, event.headers);
-			}
-			fs.appendFileSync("/tmp/oc-headers.jsonl", JSON.stringify(headersObj) + "\n");
-		} catch {
-			// Ignore
-		}
-	});
-
 	// Record observed cost from each assistant message whose provider is Go.
 	pi.on("message_end", async (event, ctx) => {
 		try {
