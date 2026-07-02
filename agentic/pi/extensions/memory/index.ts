@@ -272,8 +272,13 @@ function enforceLruCaps(scope: "system" | "project", cwd: string): void {
 	}
 }
 
+function stripQuotes(value: string): string {
+	return value.replace(/^['"]|['"]$/g, "");
+}
+
 function validateName(name: string): string | null {
-	if (!SLUG_RE.test(name)) {
+	const cleaned = stripQuotes(name);
+	if (!SLUG_RE.test(cleaned)) {
 		return `Invalid memory name "${name}". Use lowercase kebab/underscore slug (a-z, 0-9, -, _), max 64 chars, starting alphanumeric.`;
 	}
 	return null;
@@ -533,7 +538,7 @@ export default function (pi: ExtensionAPI) {
 		},
 
 		renderCall(args, theme) {
-			const scope = args?.scope ? String(args.scope) : "all";
+			const scope = args?.scope ? stripQuotes(String(args.scope)) : "all";
 			return new Text(
 				`${theme.fg("toolTitle", theme.bold("memory_index"))} ${theme.fg("accent", scope)}`,
 				0,
@@ -555,16 +560,18 @@ export default function (pi: ExtensionAPI) {
 		parameters: ReadParams,
 
 		async execute(_id, { scope, name }, _signal, _onUpdate, ctx): Promise<AgentToolResult<MemoryRenderDetails>> {
-			const nameErr = validateName(name);
+			const cleanedScope = stripQuotes(scope) as "system" | "project";
+			const cleanedName = stripQuotes(name);
+			const nameErr = validateName(cleanedName);
 			if (nameErr) return errorResult(nameErr);
 
-			const filePath = memoryPath(scope, name, ctx.cwd);
+			const filePath = memoryPath(cleanedScope, cleanedName, ctx.cwd);
 			if (!fs.existsSync(filePath)) {
-				return errorResult(`No memory "${name}" in scope "${scope}". Try \`memory_index\`.`);
+				return errorResult(`No memory "${cleanedName}" in scope "${cleanedScope}". Try \`memory_index\`.`);
 			}
 			const content = fs.readFileSync(filePath, "utf-8");
-			touchAccessed(filePath, name);
-			const header = `# memory: ${scope}/${name}  (${filePath})`;
+			touchAccessed(filePath, cleanedName);
+			const header = `# memory: ${cleanedScope}/${cleanedName}  (${filePath})`;
 			return {
 				content: [{ type: "text", text: `${header}\n${content}` }],
 				details: { collapsed: `✓ memory read` },
@@ -572,8 +579,8 @@ export default function (pi: ExtensionAPI) {
 		},
 
 		renderCall(args, theme) {
-			const scope = args?.scope ? String(args.scope) : "?";
-			const name = args?.name ? String(args.name) : "...";
+			const scope = args?.scope ? stripQuotes(String(args.scope)) : "?";
+			const name = args?.name ? stripQuotes(String(args.name)) : "...";
 			return new Text(
 				`${theme.fg("toolTitle", theme.bold("memory_read"))} ${theme.fg("accent", `${scope}/${name}`)}`,
 				0,
@@ -597,7 +604,9 @@ export default function (pi: ExtensionAPI) {
 		parameters: SaveParams,
 
 		async execute(_id, { scope, name, description, content, triggers, triggerFrequency }, _signal, _onUpdate, ctx): Promise<AgentToolResult<MemoryRenderDetails>> {
-			const nameErr = validateName(name);
+			const cleanedScope = stripQuotes(scope) as "system" | "project";
+			const cleanedName = stripQuotes(name);
+			const nameErr = validateName(cleanedName);
 			if (nameErr) return errorResult(nameErr);
 			const desc = description.trim();
 			if (!desc) {
@@ -610,10 +619,10 @@ export default function (pi: ExtensionAPI) {
 				);
 			}
 
-			const dir = scopeDir(scope, ctx.cwd);
+			const dir = scopeDir(cleanedScope, ctx.cwd);
 			ensureDir(dir);
 
-			const filePath = memoryPath(scope, name, ctx.cwd);
+			const filePath = memoryPath(cleanedScope, cleanedName, ctx.cwd);
 			const existed = fs.existsSync(filePath);
 			const now = new Date().toISOString();
 			let createdAt = now;
@@ -637,21 +646,21 @@ export default function (pi: ExtensionAPI) {
 					// keep `now` and the provided args
 				}
 			}
-			const rendered = renderFrontmatter(name, description, createdAt, now, content, effectiveTriggers, effectiveFrequency);
+			const rendered = renderFrontmatter(cleanedName, description, createdAt, now, content, effectiveTriggers, effectiveFrequency);
 			fs.writeFileSync(filePath, rendered, "utf-8");
 
 			// Invalidate caches so changes are picked up immediately
 			cachedMemories.length = 0;
 			invalidateTriggerCache();
-			enforceLruCaps(scope, ctx.cwd);
-			updateIndex(scope, ctx.cwd);
+			enforceLruCaps(cleanedScope, ctx.cwd);
+			updateIndex(cleanedScope, ctx.cwd);
 
 			const verb = existed ? "updated" : "saved";
 			return {
 				content: [
 					{
 						type: "text",
-						text: `${verb} memory \`${scope}/${name}\` → ${filePath}`,
+						text: `${verb} memory \`${scope}/${cleanedName}\` → ${filePath}`,
 					},
 				],
 				details: { collapsed: "✓ memory saved" },
@@ -659,8 +668,8 @@ export default function (pi: ExtensionAPI) {
 		},
 
 		renderCall(args, theme) {
-			const scope = args?.scope ? String(args.scope) : "?";
-			const name = args?.name ? String(args.name) : "...";
+			const scope = args?.scope ? stripQuotes(String(args.scope)) : "?";
+			const name = args?.name ? stripQuotes(String(args.name)) : "...";
 			return new Text(
 				`${theme.fg("toolTitle", theme.bold("memory_save"))} ${theme.fg("accent", `${scope}/${name}`)}`,
 				0,
@@ -833,28 +842,30 @@ export default function (pi: ExtensionAPI) {
 		parameters: DeleteParams,
 
 		async execute(_id, { scope, name }, _signal, _onUpdate, ctx): Promise<AgentToolResult<MemoryRenderDetails>> {
-			const nameErr = validateName(name);
+			const cleanedScope = stripQuotes(scope) as "system" | "project";
+			const cleanedName = stripQuotes(name);
+			const nameErr = validateName(cleanedName);
 			if (nameErr) return errorResult(nameErr);
 
-			const filePath = memoryPath(scope, name, ctx.cwd);
+			const filePath = memoryPath(cleanedScope, cleanedName, ctx.cwd);
 			if (!fs.existsSync(filePath)) {
-				return errorResult(`No memory "${name}" in scope "${scope}".`);
+				return errorResult(`No memory "${name}" in scope "${cleanedScope}".`);
 			}
 			fs.unlinkSync(filePath);
-			// Invalidate caches so deletion is picked up immediately
+			// Invalidate caches so deletion is picked up immediate
 			cachedMemories.length = 0;
 			invalidateTriggerCache();
-			updateIndex(scope, ctx.cwd);
+			updateIndex(cleanedScope, ctx.cwd);
 
 			return {
-				content: [{ type: "text", text: `deleted memory \`${scope}/${name}\`` }],
+				content: [{ type: "text", text: `deleted memory \`${scope}/${cleanedName}\`` }],
 				details: { collapsed: "✓ memory deleted" },
 			};
 		},
 
 		renderCall(args, theme) {
-			const scope = args?.scope ? String(args.scope) : "?";
-			const name = args?.name ? String(args.name) : "...";
+			const scope = args?.scope ? stripQuotes(String(args.scope)) : "?";
+			const name = args?.name ? stripQuotes(String(args.name)) : "...";
 			return new Text(
 				`${theme.fg("toolTitle", theme.bold("memory_delete"))} ${theme.fg("accent", `${scope}/${name}`)}`,
 				0,
@@ -871,7 +882,7 @@ export default function (pi: ExtensionAPI) {
 // ---------------------------------------------------------------------------
 
 function errorResult(message: string): AgentToolResult<MemoryRenderDetails> {
-	return { content: [{ type: "text", text: message }], details: undefined };
+	return { content: [{ type: "text", text: message }], details: {} };
 }
 
 function formatSection(header: string, list: MemoryEntry[]): string {
