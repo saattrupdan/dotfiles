@@ -103,9 +103,8 @@ delivers, not *which files changed*. (The diffs page covers that.)
 
 Always assign yourself (`@me`) to the PR as the author.
 
-Before adding reviewers, read the project's `AGENTS.md` file. It may list
-maintainers or designated reviewers — assign those people rather than guessing.
-Never assign the author as a reviewer.
+Do not manually assign reviewers — GitHub's CODEOWNERS file handles automatic
+reviewer assignment based on changed files.
 
 Auto-close: `Fixes #N`, `Closes #N`, `Resolves #N` in body.
 Aliases: `gh pr new` = `create`, `gh pr co` = `checkout`.
