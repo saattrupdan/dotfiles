@@ -160,14 +160,22 @@ function parseDuckDuckGoHtml(html: string, max: number): SearchResult[] {
 
 /**
  * Check if Tavily MCP server is available and connected.
+ * Attempts to connect if not already connected (servers are lazy by default).
  */
 async function isTavilyMcpAvailable(ctx: ExtensionContext): Promise<boolean> {
 	try {
-		// Try to list Tavily tools via MCP proxy
+		// First, try to connect (idempotent - no-op if already connected)
+		await ctx.callTool({
+			name: "mcp",
+			arguments: { connect: "tavily" } as Record<string, unknown>,
+		});
+
+		// Then list tools to verify connection succeeded
 		const result = await ctx.callTool({
 			name: "mcp",
 			arguments: { server: "tavily" } as Record<string, unknown>,
 		});
+
 		// If we got a successful response with tools, Tavily is available
 		return result?.content?.some((c: { type: string; text?: string }) => 
 			c.type === "text" && c.text?.includes("tavily_search")
