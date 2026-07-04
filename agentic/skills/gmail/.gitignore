@@ -1,0 +1,7 @@
+.venv/
+*.egg-info/
+__pycache__/
+*.pyc
+.gmail/
+token.json
+credentials.json
