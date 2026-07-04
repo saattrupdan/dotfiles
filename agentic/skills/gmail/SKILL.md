@@ -44,19 +44,48 @@ uv pip install -e .
 
 ### First-time setup
 
-1. **Get OAuth credentials:**
+1. **Create a Google Cloud project:**
    - Go to [Google Cloud Console](https://console.cloud.google.com/)
-   - Create a new project (or select existing)
-   - Enable the Gmail API
-   - Create credentials → OAuth 2.0 Client ID → Application type: **Desktop app**
-   - Download the JSON and save as `~/.gmail/credentials.json`
+   - Click the project dropdown at the top → **New Project**
+   - Name it (e.g., "Gmail CLI") and click **Create**
 
-2. **Login:**
+2. **Enable the Gmail API:**
+   - Go to **APIs & Services** → **Library**
+   - Search for "Gmail API"
+   - Click **Enable** (wait for it to finish)
+
+3. **Configure OAuth consent screen:**
+   - Go to **APIs & Services** → **OAuth consent screen**
+   - User Type: **External**
+   - Fill in:
+     - App name: "Gmail CLI"
+     - User support email: your email
+     - Developer contact: your email
+   - Click **Save and Continue**
+   - Skip "Scopes" (click **Save and Continue**)
+   - Skip "Test users" for now (click **Save and Continue**)
+   - Click **Back to Dashboard**
+
+4. **Create OAuth credentials:**
+   - Go to **APIs & Services** → **Credentials**
+   - Click **+ Create Credentials** → **OAuth client ID**
+   - Application type: **Desktop app**
+   - Name: "Gmail CLI"
+   - Click **Create**
+   - Click **Download JSON** (or copy the JSON)
+   - Save as `~/.gmail/credentials.json`
+
+5. **Login:**
    ```bash
    gmail login
    ```
-   This opens a browser window for OAuth consent. The token is saved to
-   `~/.gmail/token.json` (chmod 600).
+   This opens a browser window for OAuth consent. Select your Google account,
+   grant permissions, and you'll be redirected to a success page. The token is
+   saved to `~/.gmail/token.json` (chmod 600).
+
+   **If you get a 403 error:** Make sure you completed step 2 (enable Gmail API)
+   and step 3 (OAuth consent screen). The consent screen must be saved before
+   credentials work.
 
 3. **Optional — store refresh token in Keychain:**
    ```bash
