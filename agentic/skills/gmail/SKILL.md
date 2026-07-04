@@ -250,6 +250,30 @@ gmail read --raw <id> | jq '.payload.headers'
 - **`Token expired`** — automatic refresh; if that fails, re-run `gmail login`
 - **`Gmail API error`** — network issue or API quota exceeded; retry
 
+### 403 Error (login fails with 403)
+
+If `gmail login` shows a 403 error in the redirect URL, check these:
+
+1. **Gmail API not enabled:** Go to **APIs & Services** → **Library** → search "Gmail API"
+   → click **Enable**. Wait 1-2 minutes after enabling.
+
+2. **OAuth consent screen incomplete:** Go to **APIs & Services** → **OAuth consent screen**.
+   Make sure you clicked **Save and Continue** through all sections (App info, Scopes,
+   Test users). The status will show as "Testing" — that's fine for personal use.
+
+3. **Add yourself as a test user** (if consent screen is in "Testing" mode):
+   - **OAuth consent screen** → **Test users** section
+   - Click **Add Users**
+   - Add your Gmail address
+   - Click **Save**
+   - Wait 1-2 minutes, then try `gmail login` again
+
+4. **Wrong project selected:** Make sure you're in the correct project when enabling
+   the API (check the project dropdown at the top matches `gmail-cli-501412`).
+
+5. **Billing not required:** The Gmail API is free for reasonable usage — you do NOT
+   need to enable billing for basic send/read operations.
+
 ## Etiquette & security
 
 - **Email is sensitive.** Never paste message contents, addresses, or tokens into
