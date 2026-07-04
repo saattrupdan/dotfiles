@@ -51,7 +51,14 @@ def login() -> Credentials:
             f"{CREDENTIALS_FILE}"
         )
     flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
-    creds = flow.run_local_server(port=0, open_browser=False)
+    # Use a fixed redirect_uri for desktop apps
+    creds = flow.run_local_server(
+        port=0,
+        bind_addr="127.0.0.1",
+        open_browser=True,
+        authorization_prompt_message="Opening browser...",
+        success_message="Success! You can close this browser tab and return to the terminal.",
+    )
     save_credentials(creds)
     return creds
 
