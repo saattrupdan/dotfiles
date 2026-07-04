@@ -18,7 +18,7 @@ SCOPES = [
 
 TOKEN_DIR = Path.home() / ".gmail"
 TOKEN_FILE = TOKEN_DIR / "token.json"
-CREDENTIALS_FILE = Path(__file__).parent.parent / "credentials.json"
+CREDENTIALS_FILE = TOKEN_DIR / "credentials.json"
 
 
 def get_credentials() -> Credentials | None:
