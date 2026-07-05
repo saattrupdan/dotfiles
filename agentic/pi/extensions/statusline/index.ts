@@ -154,6 +154,12 @@ function joinWithSeparator(theme: ExtensionContext["ui"]["theme"], parts: string
 	return parts.filter(Boolean).join(theme.fg("dim", "  │  "));
 }
 
+// ANSI color codes matching ~/.claude/statusline-command.sh
+const COLOR_GREEN = "\x1b[38;5;71m"; // 256-color green for <50%
+const COLOR_YELLOW = "\x1b[33m"; // ANSI yellow for 50-80%
+const COLOR_RED = "\x1b[31m"; // ANSI red for >80%
+const COLOR_RESET = "\x1b[0m";
+
 function progressBar(
 	percent: number | undefined,
 	theme: ExtensionContext["ui"]["theme"],
@@ -164,15 +170,17 @@ function progressBar(
 	const clamped = Math.max(0, Math.min(100, percent));
 	const filled = Math.round((clamped / 100) * BAR_WIDTH);
 
-	// Color the bar based on usage thresholds (matching Claude Code pattern)
-	let color: "success" | "warning" | "error" = "success";
+	// Color matching Claude Code: green <50%, yellow 50-80%, red >80%
+	let colorCode: string;
 	if (clamped >= 80) {
-		color = "error";
+		colorCode = COLOR_RED;
 	} else if (clamped >= 50) {
-		color = "warning";
+		colorCode = COLOR_YELLOW;
+	} else {
+		colorCode = COLOR_GREEN;
 	}
 
-	const barChar = theme.fg(color, "█");
+	const barChar = `${colorCode}█${COLOR_RESET}`;
 	const emptyChar = theme.fg("dim", "░");
 	return `[${barChar.repeat(filled)}${emptyChar.repeat(BAR_WIDTH - filled)}]`;
 }
