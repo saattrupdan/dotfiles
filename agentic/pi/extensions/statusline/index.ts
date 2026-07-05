@@ -75,7 +75,25 @@ function saveCachedQuota(quota: CodexQuota): void {
 	}
 }
 
+function hasQuotaData(quota: CodexQuota): boolean {
+	return Boolean(quota.session || quota.weekly || quota.credits);
+}
+
+function loadCachedQuotaIntoMemory(): void {
+	const cached = loadCachedQuota();
+	if (!cached || !hasQuotaData(cached)) return;
+
+	// Let fresh in-memory data win, while using the cache to fill first-render gaps.
+	codexQuota = { ...cached, ...codexQuota };
+}
+
 let maybeRender: (() => void) | undefined;
+let footerInstallId = 0;
+
+type SetupFooterOptions = {
+	force?: boolean;
+	allowWithoutMessages?: boolean;
+};
 
 export default function (pi: ExtensionAPI) {
 	maybeRender = () => {
@@ -84,31 +102,27 @@ export default function (pi: ExtensionAPI) {
 		}
 	};
 
-	const setupFooter = (ctx: ExtensionContext) => {
-		if (!ctx.hasUI || installed) return false;
+	const setupFooter = (ctx: ExtensionContext, options: SetupFooterOptions = {}) => {
+		if (!ctx.hasUI) return false;
+		if (installed && !options.force) return false;
 
-		// Only install once there's at least one message in history.
-		// This ensures splash screen stays visible until user submits first message.
-		const entries = ctx.sessionManager.getEntries();
-		const hasMessages = entries.some((e) => e.type === "message");
-		if (!hasMessages) return false;
+		// Only install once there's at least one message in history, except on
+		// generation events where the user has just submitted but the session
+		// entry may not be visible yet. This keeps the splash visible until submit.
+		if (!options.allowWithoutMessages) {
+			const entries = ctx.sessionManager.getEntries();
+			const hasMessages = entries.some((e) => e.type === "message");
+			if (!hasMessages) return false;
+		}
 
+		loadCachedQuotaIntoMemory();
+
+		const installId = footerInstallId + 1;
+		footerInstallId = installId;
 		installed = true;
 
 		ctx.ui.setFooter((tui, theme, footerData) => {
 			requestRender = () => tui.requestRender();
-
-			// Load cached quota from previous session immediately.
-			// This shows quota bars on first user message (before Codex writes new rollout file).
-			const cached = loadCachedQuota();
-			console.log("[statusline] Footer setup - cached:", !!cached, "session:", !!cached?.session, "weekly:", !!cached?.weekly, "codexQuota:", codexQuota);
-			if (cached && (cached.session || cached.weekly || cached.credits)) {
-				codexQuota = cached;
-				console.log("[statusline] Loaded cached quota:", JSON.stringify(cached));
-				requestRender(); // Request render after loading cached data
-			} else {
-				console.log("[statusline] No cached quota found");
-			}
 
 			// Also try to read fresh data from latest rollout file
 			readCodexQuotaDebounced();
@@ -120,7 +134,9 @@ export default function (pi: ExtensionAPI) {
 
 			return {
 				dispose() {
-					if (requestRender) requestRender = undefined;
+					if (installId !== footerInstallId) return;
+					installed = false;
+					requestRender = undefined;
 					if (pollTimer) {
 						clearInterval(pollTimer);
 						pollTimer = undefined;
@@ -133,14 +149,14 @@ export default function (pi: ExtensionAPI) {
 				},
 			};
 		});
+		maybeRender?.();
 
 		return true;
 	};
 
 	// Setup footer and load quota on various events
 	pi.on("agent_start", (_event, ctx) => {
-		if (setupFooter(ctx)) return;
-		// If already installed, just render
+		setupFooter(ctx, { force: true, allowWithoutMessages: true });
 		maybeRender?.();
 	});
 	pi.on("model_select", (_event, ctx) => {
@@ -156,12 +172,8 @@ export default function (pi: ExtensionAPI) {
 		// Setup/quota-load on user message end (not assistant)
 		if (event.message?.role !== "user") return;
 
-		const justInstalled = setupFooter(ctx);
-		if (!justInstalled) {
-			// If footer was already set up, request a render
-			maybeRender?.();
-		}
-		// If we just installed, the footer callback already loaded quota and called requestRender
+		setupFooter(ctx, { force: true, allowWithoutMessages: true });
+		maybeRender?.();
 		readCodexQuotaDebounced();
 	});
 
@@ -301,12 +313,8 @@ function buildStatusline(
 
 	// Show quota bars if we have cached/fresh data OR if it's a subscription model.
 	// Check cached data first - if we have it, show immediately (before model check passes).
-	const hasQuotaData = codexQuota.session || codexQuota.weekly || codexQuota.credits;
-	console.log("[statusline] buildStatusline - hasQuotaData:", hasQuotaData, "isSub:", isSubscription(ctx), "isCodex:", isCodex(ctx), "quota:", codexQuota);
-	if (hasQuotaData || isSubscription(ctx) || isCodex(ctx)) {
-		const codexParts = formatCodexQuota(theme, codexQuota);
-		console.log("[statusline] quota parts:", codexParts);
-		parts.push(...codexParts);
+	if (hasQuotaData(codexQuota) || isSubscription(ctx) || isCodex(ctx)) {
+		parts.push(...formatCodexQuota(theme, codexQuota));
 	}
 
 	parts.push(...formatExtensionStatuses(footerData));
