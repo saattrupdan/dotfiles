@@ -80,17 +80,29 @@ let releasesSeen = false;
 let holdTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingPressData: string | null = null;
 
+// Current transient status text ("🎙 recording…" etc.), mirrored so a custom
+// surface (e.g. splash's belowEditor widget) can display it where the real
+// footer isn't shown. Undefined when idle.
+let statusText: string | undefined;
+
 export function setLiveCtx(ctx: ExtensionContext): void {
 	liveCtx = ctx;
 }
 export function getState(): State {
 	return state;
 }
+/** The live PTT status line, or undefined when idle. */
+export function getStatusText(): string | undefined {
+	return statusText;
+}
 export function releasesAvailable(): boolean {
 	return isKittyProtocolActive() || releasesSeen;
 }
 
 function setStatus(ctx: ExtensionContext, text: string | undefined): void {
+	statusText = text;
+	// setStatus() calls requestRender() internally, so any custom surface that
+	// reads getStatusText() (splash's belowEditor widget) refreshes too.
 	if (ctx.hasUI) ctx.ui.setStatus(STATUS_KEY, text);
 }
 

@@ -25,12 +25,16 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 // Use the shared push-to-talk editor as the splash input box, so hold-to-talk
 // works on the splash screen too. This soft-couples splash to the voice-input
 // shared lib; if you remove _voice-input/, swap this back to CustomEditor.
-import { PttEditor, setLiveCtx } from "../_voice-input/ptt.ts";
+import { PttEditor, getStatusText, setLiveCtx } from "../_voice-input/ptt.ts";
 
 const EDITOR_WIDTH_FRACTION = 0.6;
 
 const LOGO_KEY = "splash-logo";
 const PAD_KEY = "splash-pad";
+// A minimal pseudo-footer rendered just below the input box. Defaults to no
+// content (renders zero lines); shows the voice-input status ("🎙 recording…")
+// when present, since the real footer is hidden on the splash.
+const FOOTER_KEY = "splash-footer";
 
 const GRID: ReadonlyArray<ReadonlyArray<0 | 1>> = [
 	[1, 1, 1, 0],
@@ -97,6 +101,7 @@ export default function (pi: ExtensionAPI) {
 			dismissed = true;
 			ctx.ui.setWidget(LOGO_KEY, undefined);
 			ctx.ui.setWidget(PAD_KEY, undefined);
+			ctx.ui.setWidget(FOOTER_KEY, undefined);
 			ctx.ui.setHeader(undefined);
 			ctx.ui.setFooter(undefined);
 			ctx.ui.setEditorComponent(undefined);
@@ -196,6 +201,25 @@ export default function (pi: ExtensionAPI) {
 				invalidate() {},
 			}),
 			{ placement: "aboveEditor" },
+		);
+
+		// Pseudo-footer just under the input box. Renders nothing by default;
+		// shows the voice-input status (e.g. "🎙 recording…") when active, centred
+		// under the input to match its width. Refreshes automatically because
+		// setStatus() requests a render.
+		ctx.ui.setWidget(
+			FOOTER_KEY,
+			(_tui: TUI, theme: Theme): Component => ({
+				render(width: number): string[] {
+					const text = getStatusText();
+					if (!text) return []; // default: no content
+					const targetW = Math.max(20, Math.floor(width * EDITOR_WIDTH_FRACTION));
+					const leftPad = " ".repeat(Math.max(0, Math.floor((width - targetW) / 2)));
+					return ["", leftPad + theme.fg("dim", text)];
+				},
+				invalidate() {},
+			}),
+			{ placement: "belowEditor" },
 		);
 
 		// Dismiss when the user actually submits a prompt — not on keystroke.
