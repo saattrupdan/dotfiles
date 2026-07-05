@@ -13,7 +13,7 @@
  *     PI_PTT_HOLD_MS (default 700) records. Needs key-release events.
  *   • Stopping is robust: the held key's auto-repeats act as a keep-alive, and
  *     when they cease (you let go) a watchdog stops recording even if the actual
- *     release event was dropped/batched. Escape also cancels a recording.
+ *     release event was dropped/batched.
  *   • Transcribe via whisper.cpp (default) or $PI_PTT_TRANSCRIBE_CMD.
  */
 
@@ -315,28 +315,6 @@ async function stopAndTranscribe(ctx: ExtensionContext): Promise<void> {
 	}
 }
 
-/** Abort an in-flight recording without transcribing (Escape / cleanup). */
-function cancelRecording(ctx: ExtensionContext): void {
-	clearHoldWatchdog();
-	if (maxDurationTimer) {
-		clearTimeout(maxDurationTimer);
-		maxDurationTimer = null;
-	}
-	if (recorder) {
-		try {
-			recorder.kill("SIGINT");
-		} catch {
-			// already gone
-		}
-		recorder = null;
-	}
-	fs.rmSync(WAV_PATH, { force: true });
-	state = "idle";
-	dbg("CANCELLED");
-	setStatus(ctx, undefined);
-	notify(ctx, "voice-input: recording cancelled.", "info");
-}
-
 /** Begin recording if idle and the toolchain is ready; otherwise nudge. */
 function beginIfReady(ctx: ExtensionContext): void {
 	if (!ctx.hasUI || state !== "idle") return;
@@ -396,12 +374,6 @@ export class PttEditor extends CustomEditor {
 				` hold=${holdTimer !== null} wd=${holdWatchdog !== null}`,
 		);
 		try {
-			// Escape always cancels an active recording — a reliable manual stop
-			// that doesn't depend on a (possibly dropped) key-release event.
-			if (liveCtx && state === "recording" && matchesKey(data, "escape")) {
-				cancelRecording(liveCtx);
-				return;
-			}
 			if (liveCtx && matchesKey(data, CONFIG.key)) {
 				if (this.handlePtt(data, liveCtx)) return; // fully handled → consume
 			} else {
