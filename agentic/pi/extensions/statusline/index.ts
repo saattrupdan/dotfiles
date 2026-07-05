@@ -59,10 +59,9 @@ export default function (pi: ExtensionAPI) {
 
 		installed = true;
 
-		// Read quota immediately on install (for OAuth/Codex models)
-		if (isSubscription(ctx) || isCodex(ctx)) {
-			readCodexQuotaDebounced();
-		}
+		// Read quota immediately on install - always try to read from rollout files
+		// The quota display will only show if data is available (handled in formatCodexQuota)
+		readCodexQuotaDebounced();
 
 		ctx.ui.setFooter((tui, theme, footerData) => {
 			requestRender = () => tui.requestRender();
