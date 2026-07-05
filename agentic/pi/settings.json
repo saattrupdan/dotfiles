@@ -2,7 +2,7 @@
   "lastChangelogVersion": "0.80.3",
   "defaultProvider": "inference",
   "defaultModel": "qwen3.5-397b",
-  "defaultThinkingLevel": "medium",
+  "defaultThinkingLevel": "high",
   "httpIdleTimeoutMs": 0,
   "hideThinkingBlock": true,
   "quietStartup": true,
@@ -11,6 +11,7 @@
     "clearOnShrink": true
   },
   "packages": [
-    "npm:pi-opencode-provider"
+    "npm:pi-opencode-provider",
+    "npm:pi-mcp-adapter"
   ]
 }
