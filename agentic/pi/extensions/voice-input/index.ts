@@ -1,51 +1,54 @@
 /**
- * Push-to-talk voice input — dictate into the input box with a single key.
+ * Push-to-talk voice input — dictate into the input box by holding a key.
  *
- * Hold the PTT key (default F8) to record from the microphone; release to stop,
- * transcribe, and paste the text into the editor at the cursor. `/talk` triggers
- * the same flow for terminals/keys where the hotkey can't be used.
+ * Hold the PTT key (default: space) to record from the microphone; release to
+ * stop, transcribe, and paste the text into the editor at the cursor. `/talk`
+ * triggers the same flow for terminals/keys where the hotkey can't be used.
  *
- * ── How "hold" works across terminals (this is the whole trick) ──────────────
- * A terminal only emits a key-RELEASE event if it speaks the Kitty keyboard
- * protocol (Ghostty, Kitty, WezTerm, foot; NOT most builds of iTerm2/Terminal).
- * pi already negotiates that protocol with flag 7 (includes release reporting),
- * so this extension keys off `isKittyProtocolActive()` at runtime:
+ * ── SPACE as the PTT key (tap vs hold) ───────────────────────────────────────
+ * Space is also a typing key, so a *quick tap* inserts a normal space and only a
+ * *held* space (past ~250ms) starts recording. This disambiguation needs the
+ * terminal to emit key-RELEASE events (Kitty keyboard protocol); in a legacy
+ * terminal (no releases) space simply types a space — space-hold PTT is
+ * physically impossible there, so use `/talk` or set PI_PTT_KEY to a non-typing
+ * key (e.g. f8). Run verify-key-release.py to see which mode your terminal gives.
  *
- *   • Protocol active  → TRUE hold-to-talk. Key-down starts recording, the
- *                        matching key-up stops it. Repeats while held are ignored.
- *   • Protocol absent  → the SAME key auto-degrades to tap-to-toggle: press to
- *                        start, press again to stop. Auto-repeat bursts while a
- *                        key is held are debounced so they don't thrash.
+ * ── How "hold" works across terminals ────────────────────────────────────────
+ * pi negotiates the Kitty protocol with flag 7 (includes release reporting), so
+ * we key off `isKittyProtocolActive()` at runtime:
+ *   • Protocol active  → real hold-to-talk (key-down/up, tap-vs-hold for space).
+ *   • Protocol absent  → a NON-typing PTT key degrades to tap-to-toggle; a typing
+ *                        key (space) just types normally (no PTT).
  *
- * There is no in-terminal way to detect "key released" without release events,
- * so tap-to-toggle is the honest fallback rather than a fragile timing hack.
- * Run `verify-key-release.py` in your terminal to see which mode you'll get.
+ * ── Coexisting with the splash extension ─────────────────────────────────────
+ * Both this and `splash` customise the editor via setEditorComponent, and there
+ * is only one editor slot. splash owns the editor during the fresh-session
+ * splash screen and clears it on first submit. So we DON'T install our editor on
+ * a fresh session_start — we wait for the first agent_start (splash is gone by
+ * then). On a session that already has messages (splash is skipped) we install
+ * immediately. This keeps splash's narrow box intact and lets it dismiss.
  *
  * Implemented by subclassing pi's `CustomEditor` and overriding `handleInput`
  * for the PTT key only — every other key defers to `super`, and pi copies all
- * app handlers (submit/escape/ctrl-d/shortcuts/autocomplete) onto our subclass,
- * so normal editing is untouched. The override is wrapped in try/catch: any
- * failure falls through to normal editing, so a bug here can never brick typing.
+ * app handlers (submit/escape/ctrl-d/shortcuts/autocomplete) onto our subclass.
+ * The override is try/caught: any failure falls through to normal editing, so a
+ * bug here can never brick typing.
  *
  * ── Transcription backend (priority order) ───────────────────────────────────
  *   1. $PI_PTT_TRANSCRIBE_CMD — a `sh -c` command; the WAV path is exported as
- *      $PI_PTT_AUDIO and stdout is used as the transcript. Plug in a cloud API
- *      (OpenAI/Groq Whisper) or any other tool here.
+ *      $PI_PTT_AUDIO and stdout is used as the transcript (plug in a cloud API).
  *   2. whisper.cpp — $PI_PTT_WHISPER_BIN (default `whisper-cli`) with model
  *      $PI_PTT_WHISPER_MODEL (default ~/.cache/whisper/ggml-base.en.bin).
- *      Setup: `brew install whisper-cpp sox`, then download a model, e.g.
- *        mkdir -p ~/.cache/whisper && curl -L -o ~/.cache/whisper/ggml-base.en.bin \
- *          https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
- *      (ggml-base.en.bin is English-only; use ggml-small.bin for Danish/other.)
  *
  * ── Config via environment ───────────────────────────────────────────────────
- *   PI_PTT_KEY             PTT KeyId (default "f8"; e.g. "ctrl+space", "f5")
+ *   PI_PTT_KEY             PTT KeyId (default "space"; e.g. "f8", "ctrl+space")
+ *   PI_PTT_HOLD_MS         tap-vs-hold threshold for typing keys (default 250)
  *   PI_PTT_TRANSCRIBE_CMD  custom transcription command (see above)
  *   PI_PTT_WHISPER_BIN     whisper.cpp binary (default "whisper-cli")
  *   PI_PTT_WHISPER_MODEL   model path (default ~/.cache/whisper/ggml-base.en.bin)
  *   PI_PTT_REC_BIN         recorder binary (default "rec"; SoX)
  *
- * Interactive + orchestrator only: it needs the TUI editor and a real mic, so it
+ * Interactive + orchestrator only: needs the TUI editor and a real mic, so it
  * stays inert in print/RPC mode and for subagents.
  */
 
@@ -55,13 +58,14 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import { CustomEditor, type EditorFactory, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { isKeyRelease, isKittyProtocolActive, matchesKey } from "@earendil-works/pi-tui";
+import { isKeyRelease, isKeyRepeat, isKittyProtocolActive, matchesKey } from "@earendil-works/pi-tui";
 
 const STATUS_KEY = "voice-input";
 
 /** Resolved once at load — env is stable for the process lifetime. */
 const CONFIG = {
-	key: process.env.PI_PTT_KEY?.trim() || "f8",
+	key: process.env.PI_PTT_KEY?.trim() || "space",
+	holdMs: Number(process.env.PI_PTT_HOLD_MS) || 250,
 	transcribeCmd: process.env.PI_PTT_TRANSCRIBE_CMD?.trim() || "",
 	whisperBin: process.env.PI_PTT_WHISPER_BIN?.trim() || "whisper-cli",
 	whisperModel:
@@ -69,6 +73,9 @@ const CONFIG = {
 		path.join(os.homedir(), ".cache", "whisper", "ggml-base.en.bin"),
 	recBin: process.env.PI_PTT_REC_BIN?.trim() || "rec",
 };
+
+/** A "typing key" produces text, so it needs tap-vs-hold disambiguation. */
+const KEY_IS_TYPING = CONFIG.key === "space" || CONFIG.key.length === 1;
 
 /** Debounce for legacy toggle mode: auto-repeat is fast (~30-60ms); a deliberate
  *  second tap is far slower, so anything within this window is treated as repeat. */
@@ -87,6 +94,20 @@ let lastToggleAt = 0;
 let maxDurationTimer: ReturnType<typeof setTimeout> | null = null;
 /** Latest interactive context, so the editor subclass can drive recording. */
 let liveCtx: ExtensionContext | null = null;
+/** Whether our PttEditor is currently the installed editor component. */
+let editorInstalled = false;
+/** Set once we've actually observed a key-release event, so we don't rely solely
+ *  on pi's protocol-capability probe (which can under-detect a terminal that
+ *  emits releases but doesn't answer the query — e.g. some iTerm2 setups). */
+let releasesSeen = false;
+/** Are key-release events available? Trust pi's probe, or anything we've seen. */
+function releasesAvailable(): boolean {
+	return isKittyProtocolActive() || releasesSeen;
+}
+
+// Tap-vs-hold state for a typing PTT key (e.g. space).
+let holdTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingPressData: string | null = null;
 
 function setStatus(ctx: ExtensionContext, text: string | undefined): void {
 	if (ctx.hasUI) ctx.ui.setStatus(STATUS_KEY, text);
@@ -272,7 +293,7 @@ function beginIfReady(ctx: ExtensionContext): void {
 	startRecording(ctx);
 }
 
-/** Tap-to-toggle entry point (legacy terminals, `/talk`). */
+/** Tap-to-toggle entry point (legacy terminals with a non-typing key, `/talk`). */
 function toggle(ctx: ExtensionContext): void {
 	if (!ctx.hasUI || state === "transcribing") return;
 	if (state === "recording") void stopAndTranscribe(ctx);
@@ -286,15 +307,22 @@ function nudge(ctx: ExtensionContext, msg: string): void {
 }
 
 /**
- * Editor that turns the PTT key into hold-to-talk (or toggle, per terminal
- * capability). Every non-PTT key defers to CustomEditor untouched.
+ * Editor that turns the PTT key into hold-to-talk. Every non-PTT key defers to
+ * CustomEditor untouched; the PTT branch is try/caught by the caller.
  */
 class PttEditor extends CustomEditor {
 	override handleInput(data: string): void {
+		// Learn the terminal's capability from real traffic: any release event
+		// (for any key) proves hold-to-talk is possible.
+		if (!releasesSeen && isKeyRelease(data)) releasesSeen = true;
 		try {
-			if (matchesKey(data, CONFIG.key) && liveCtx) {
-				this.handlePtt(data, liveCtx);
-				return;
+			if (liveCtx && matchesKey(data, CONFIG.key)) {
+				if (this.handlePtt(data, liveCtx)) return; // fully handled → consume
+			} else if (holdTimer) {
+				// A different key arrived while a space press was deferred → the
+				// space was a tap, not a hold. Flush it in order, THEN this key,
+				// so fast typing (space+letter rollover) is never transposed.
+				this.flushPendingSpace();
 			}
 		} catch {
 			// Never let a PTT bug break typing — fall through to normal editing.
@@ -302,44 +330,108 @@ class PttEditor extends CustomEditor {
 		super.handleInput(data);
 	}
 
-	private handlePtt(data: string, ctx: ExtensionContext): void {
-		if (isKittyProtocolActive()) {
-			// Real hold-to-talk: key-down starts, key-up stops, repeats ignored.
+	/** Returns true if the key was consumed; false to let it type normally. */
+	private handlePtt(data: string, ctx: ExtensionContext): boolean {
+		const releases = releasesAvailable();
+
+		// A typing key (space) can only be PTT where releases exist; otherwise it
+		// must type normally.
+		if (KEY_IS_TYPING) {
+			if (!releases) return false; // let space type
+			return this.handleTypingHold(data, ctx);
+		}
+
+		// Non-typing key (f8, etc.).
+		if (releases) {
 			if (isKeyRelease(data)) {
 				if (state === "recording") void stopAndTranscribe(ctx);
-			} else {
+			} else if (!isKeyRepeat(data)) {
 				beginIfReady(ctx);
 			}
-			return;
+			return true;
 		}
-		// Legacy terminal: same key toggles, with auto-repeat debounced out.
+		// Legacy: toggle, debouncing auto-repeat bursts.
 		const now = Date.now();
-		if (now - lastToggleAt < TOGGLE_DEBOUNCE_MS) {
+		if (now - lastToggleAt >= TOGGLE_DEBOUNCE_MS) {
 			lastToggleAt = now;
-			return;
+			toggle(ctx);
+		} else {
+			lastToggleAt = now;
 		}
-		lastToggleAt = now;
-		toggle(ctx);
+		return true;
+	}
+
+	/** Insert a deferred (tapped) space press in order and clear the pending state. */
+	private flushPendingSpace(): void {
+		if (holdTimer) {
+			clearTimeout(holdTimer);
+			holdTimer = null;
+		}
+		const press = pendingPressData;
+		pendingPressData = null;
+		if (press) super.handleInput(press);
+	}
+
+	/** Tap-vs-hold for a typing key, using key-release events. */
+	private handleTypingHold(data: string, ctx: ExtensionContext): boolean {
+		if (isKeyRelease(data)) {
+			if (holdTimer) {
+				// Released before the threshold → it was a TAP: type the key.
+				this.flushPendingSpace();
+			} else if (state === "recording") {
+				// Released after a hold → stop dictation.
+				void stopAndTranscribe(ctx);
+			}
+			return true;
+		}
+		if (isKeyRepeat(data)) return true; // held; the timer decides. Consume.
+		// Press: defer. Start recording only if still held past the threshold.
+		if (state === "idle" && !holdTimer) {
+			pendingPressData = data;
+			holdTimer = setTimeout(() => {
+				holdTimer = null;
+				pendingPressData = null;
+				beginIfReady(ctx);
+			}, CONFIG.holdMs);
+		}
+		return true;
 	}
 }
 
 function installEditor(ctx: ExtensionContext): void {
 	liveCtx = ctx;
-	if (!ctx.hasUI) return;
+	if (!ctx.hasUI || editorInstalled) return;
 	const factory: EditorFactory = (tui, theme, keybindings) =>
 		new PttEditor(tui, theme, keybindings);
 	ctx.ui.setEditorComponent(factory);
+	editorInstalled = true;
+}
+
+/** Does the current session already contain messages? (splash is skipped then.) */
+function sessionHasMessages(ctx: ExtensionContext): boolean {
+	try {
+		return ctx.sessionManager.getEntries().some((e) => e.type === "message");
+	} catch {
+		return false;
+	}
 }
 
 export default function (pi: ExtensionAPI) {
 	// Subagents share the parent's machine and have no interactive editor.
 	if (process.env.PI_SUBAGENT_CHILD === "1") return;
 
-	// Install our editor on startup, and re-install after resets (/reload,
-	// session switch both fire session_start again).
-	pi.on("session_start", async (_event, ctx) => installEditor(ctx));
-	pi.on("agent_start", async (_event, ctx) => {
+	pi.on("session_start", async (_event, ctx) => {
 		liveCtx = ctx;
+		// A reset cleared any editor we installed; if splash is skipped (session
+		// already has messages) we can safely own the editor now. On a fresh
+		// session we wait for agent_start so splash keeps its splash-screen editor.
+		editorInstalled = false;
+		if (sessionHasMessages(ctx)) installEditor(ctx);
+	});
+	pi.on("agent_start", async (_event, ctx) => {
+		// By the first agent_start the splash has dismissed its editor, so it's
+		// safe to install ours.
+		installEditor(ctx);
 	});
 
 	pi.registerCommand("talk", {
@@ -352,9 +444,14 @@ export default function (pi: ExtensionAPI) {
 				const backend = CONFIG.transcribeCmd
 					? "custom command ($PI_PTT_TRANSCRIBE_CMD)"
 					: `whisper.cpp (${CONFIG.whisperBin}, model ${CONFIG.whisperModel})`;
-				const mode = isKittyProtocolActive()
-					? "hold-to-talk (terminal reports key releases)"
-					: "tap-to-toggle (terminal has no key-release events)";
+				const releases = releasesAvailable();
+				const mode = KEY_IS_TYPING
+					? releases
+						? `hold-to-talk (tap "${CONFIG.key}" = type, hold = record)`
+						: `typing only — "${CONFIG.key}" can't be PTT without key-releases; use /talk`
+					: releases
+						? "hold-to-talk (terminal reports key releases)"
+						: "tap-to-toggle (terminal has no key-release events)";
 				const lines = [
 					`Voice input — PTT key: ${CONFIG.key}`,
 					`Mode: ${mode}`,
@@ -375,6 +472,10 @@ export default function (pi: ExtensionAPI) {
 
 	// Clean up any in-flight recording on shutdown.
 	pi.on("session_shutdown", async () => {
+		if (holdTimer) {
+			clearTimeout(holdTimer);
+			holdTimer = null;
+		}
 		if (maxDurationTimer) {
 			clearTimeout(maxDurationTimer);
 			maxDurationTimer = null;
