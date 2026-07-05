@@ -87,19 +87,19 @@ export default function (pi: ExtensionAPI) {
 
 		installed = true;
 
-		// Load cached quota from previous session immediately.
-		// This shows quota bars on first user message (before Codex writes new rollout file).
-		const cached = loadCachedQuota();
-		if (cached && (cached.session || cached.weekly || cached.credits)) {
-			codexQuota = cached;
-			requestRender?.();
-		}
-
-		// Also try to read fresh data from latest rollout file
-		readCodexQuotaDebounced();
-
 		ctx.ui.setFooter((tui, theme, footerData) => {
 			requestRender = () => tui.requestRender();
+
+			// Load cached quota from previous session immediately.
+			// This shows quota bars on first user message (before Codex writes new rollout file).
+			const cached = loadCachedQuota();
+			if (cached && (cached.session || cached.weekly || cached.credits)) {
+				codexQuota = cached;
+				requestRender(); // Now requestRender is defined, so this will work
+			}
+
+			// Also try to read fresh data from latest rollout file
+			readCodexQuotaDebounced();
 
 			// Poll quota periodically (every 30s)
 			if (!pollTimer) {
