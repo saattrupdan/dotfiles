@@ -183,6 +183,20 @@ export default function (pi: ExtensionAPI) {
 		}
 		if (fired.length === 0) return null;
 
+		// CAP at 3 memories per injection event to prevent context explosion
+		// when multiple patterns narrowly match. Highest-priority memories first.
+		const MAX_PER_INJECTION = 3;
+		if (fired.length > MAX_PER_INJECTION) {
+			// Prioritize: "always" > "once", then by description length (shorter = more important)
+			fired.sort((a, b) => {
+				const aAlways = a.triggerFrequency === "always" ? 1 : 0;
+				const bAlways = b.triggerFrequency === "always" ? 1 : 0;
+				if (aAlways !== bAlways) return bAlways - aAlways;
+				return a.description.length - b.description.length;
+			});
+			fired.splice(MAX_PER_INJECTION);
+		}
+
 		// Track once-semantics memories in the injected set so they don't re-fire.
 		for (const m of fired) {
 			if (forceOnce || m.triggerFrequency !== "always") injected.add(memKey(m));
@@ -277,8 +291,18 @@ export default function (pi: ExtensionAPI) {
 	// Auto-inject on tool output: tool + pattern triggers (matched against the
 	// tool name and its textual output). Appended to the tool result content so
 	// pattern triggers can fire on what a tool actually produced.
+	//
+	// CASCADE PREVENTION: memory tools (memory_read, memory_index, memory_suggest)
+	// are excluded from pattern触发 to prevent recursive injection loops where
+	// reading memories triggers more memories ad infinitum.
 	pi.on("tool_result", async (event, ctx) => {
 		if (!hasUI) return undefined;
+		
+		// Skip memory tools to prevent cascade injection
+		if (event.toolName === "memory_read" || event.toolName === "memory_index" || event.toolName === "memory_suggest") {
+			return undefined;
+		}
+		
 		const output = event.content
 			.filter((c): c is { type: "text"; text: string } => c.type === "text")
 			.map((c) => c.text)
