@@ -109,17 +109,6 @@ function releasesAvailable(): boolean {
 let holdTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingPressData: string | null = null;
 
-/** Opt-in diagnostic log (PI_PTT_DEBUG=1) to /tmp/pi-voice-input-debug.log. */
-const DEBUG_LOG = "/tmp/pi-voice-input-debug.log";
-function dbg(line: string): void {
-	if (!process.env.PI_PTT_DEBUG) return;
-	try {
-		fs.appendFileSync(DEBUG_LOG, line + "\n");
-	} catch {
-		// best effort
-	}
-}
-
 function setStatus(ctx: ExtensionContext, text: string | undefined): void {
 	if (ctx.hasUI) ctx.ui.setStatus(STATUS_KEY, text);
 }
@@ -207,13 +196,45 @@ async function transcribe(): Promise<string> {
 		});
 	} else {
 		// whisper.cpp prints the transcription (no timestamps with -nt) to stdout.
+		// -sns suppresses non-speech tokens like "(dramatic music)" / "[BLANK_AUDIO]"
+		// that whisper hallucinates on silence.
 		raw = await run(
 			CONFIG.whisperBin,
-			["-m", CONFIG.whisperModel, "-f", WAV_PATH, "-nt", "-np"],
+			["-m", CONFIG.whisperModel, "-f", WAV_PATH, "-nt", "-np", "-sns"],
 			{ timeoutMs: 120_000 },
 		);
 	}
 	return raw.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Common whole-transcript hallucinations whisper emits on silence/noise even
+ * with -sns (real words, so the structural checks below can't catch them). Only
+ * matched when they're the ENTIRE transcript, so genuine dictation is untouched.
+ */
+const NOISE_PHRASES = new Set([
+	"you",
+	"thank you",
+	"thanks for watching",
+	"thanks for watching!",
+	"bye",
+	"bye.",
+	"okay",
+	"so",
+]);
+
+/**
+ * True if the transcript is a non-speech artefact rather than dictated words:
+ * whisper emits "(dramatic music)", "[BLANK_AUDIO]", bare punctuation, or a
+ * stock filler phrase when handed silence. A real utterance is never wholly
+ * wrapped in brackets/parens and always contains a letter or digit.
+ */
+function isNonSpeech(text: string): boolean {
+	if (!text) return true;
+	if (/^[[(].*[)\]]$/.test(text)) return true; // wholly bracketed/parenthesised
+	if (!/[\p{L}\p{N}]/u.test(text)) return true; // punctuation-only
+	const norm = text.toLowerCase().replace(/[\s.!?,]+$/u, "").trim();
+	return NOISE_PHRASES.has(norm);
 }
 
 /** Start recording. Assumes preconditions were already checked. */
@@ -238,7 +259,6 @@ function startRecording(ctx: ExtensionContext): void {
 		setStatus(ctx, undefined);
 	});
 	state = "recording";
-	dbg("REC START");
 	setStatus(ctx, "🎙 recording…");
 	maxDurationTimer = setTimeout(() => {
 		if (state === "recording") void stopAndTranscribe(ctx);
@@ -247,7 +267,6 @@ function startRecording(ctx: ExtensionContext): void {
 
 /** Stop recording (finalising the WAV), then transcribe and paste. */
 async function stopAndTranscribe(ctx: ExtensionContext): Promise<void> {
-	dbg("STOP called");
 	if (maxDurationTimer) {
 		clearTimeout(maxDurationTimer);
 		maxDurationTimer = null;
@@ -281,10 +300,10 @@ async function stopAndTranscribe(ctx: ExtensionContext): Promise<void> {
 
 	try {
 		const text = await transcribe();
-		if (text) {
-			ctx.ui.pasteToEditor(text);
+		if (isNonSpeech(text)) {
+			notify(ctx, "voice-input: no speech detected.", "info");
 		} else {
-			notify(ctx, "voice-input: nothing was transcribed.", "info");
+			ctx.ui.pasteToEditor(text);
 		}
 	} catch (err) {
 		notify(ctx, `voice-input: transcription failed: ${String(err)}`, "error");
@@ -332,11 +351,6 @@ class PttEditor extends CustomEditor {
 		// Learn the terminal's capability from real traffic: any release event
 		// (for any key) proves hold-to-talk is possible.
 		if (!releasesSeen && isKeyRelease(data)) releasesSeen = true;
-		dbg(
-			`in ${JSON.stringify(data)} rel=${isKeyRelease(data)} rep=${isKeyRepeat(data)}` +
-				` match=${matchesKey(data, CONFIG.key)} state=${state} kitty=${isKittyProtocolActive()}` +
-				` seen=${releasesSeen} wkr=${this.wantsKeyRelease} holdTimer=${holdTimer !== null}`,
-		);
 		try {
 			if (liveCtx && matchesKey(data, CONFIG.key)) {
 				if (this.handlePtt(data, liveCtx)) return; // fully handled → consume
