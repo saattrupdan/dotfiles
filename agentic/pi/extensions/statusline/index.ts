@@ -313,12 +313,12 @@ function formatQuotaBucket(
 			// Session: show time only (or "soon" if within 1 hour)
 			const minsUntilReset = Math.floor((bucket.resetAt - now.getTime()) / 60000);
 			if (minsUntilReset <= 60) {
-				text += ` ${theme.fg("dim", `↻ ${minsUntilReset}m`)}`;
+				text += ` ${theme.fg("dim", `(↻ ${minsUntilReset}m)` )}`;
 				return text;
 			}
 			format = isToday ? { hour: "2-digit", minute: "2-digit" } : { hour: "2-digit", minute: "2-digit" };
 		}
-		text += ` ${theme.fg("dim", `↻ ${resetDate.toLocaleString(undefined, format)}`)}`;
+		text += ` ${theme.fg("dim", `(↻ ${resetDate.toLocaleString(undefined, format)})`)}`;
 	}
 
 	return text;
