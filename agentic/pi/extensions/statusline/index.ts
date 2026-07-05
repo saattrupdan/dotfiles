@@ -161,7 +161,7 @@ function readCodexQuotaDebounced() {
 		const quota = readCodexQuotaFromFile();
 		if (quota.session || quota.weekly || quota.credits) {
 			codexQuota = { ...codexQuota, ...quota };
-			saveCachedQuota(quota); // Cache for next session
+			saveCachedQuota(codexQuota); // Cache merged state for next session
 		}
 		rolloutReadPending = false;
 		requestRender?.();
@@ -208,32 +208,37 @@ function readCodexQuotaFromFile(): CodexQuota {
 function parseCodexRateLimits(raw: Record<string, unknown>): CodexQuota {
 	const result: CodexQuota = {};
 
+	// Type guards for safe property access
+	const credits = raw.credits as Record<string, unknown> | undefined;
+	const primary = raw.primary as Record<string, unknown> | undefined;
+	const secondary = raw.secondary as Record<string, unknown> | undefined;
+
 	// Credits-based quota (when rate limited)
-	if (raw.credits) {
+	if (credits) {
 		result.credits = {
-			balance: parseFloat(raw.credits.balance) || 0,
-			unlimited: raw.credits.unlimited || false,
+			balance: parseFloat(credits.balance as string) || 0,
+			unlimited: (credits.unlimited as boolean) || false,
 		};
 	}
 
 	// Window-based limits (session + weekly)
-	if (raw.primary) {
+	if (primary) {
 		result.session = {
-			used: raw.primary.used_percent,
-			remaining: 100 - (raw.primary.used_percent || 0),
-			percent: raw.primary.used_percent,
-			resetAt: raw.primary.resets_at ? Math.floor(raw.primary.resets_at * 1000) : undefined,
-			window: classifyWindow(raw.primary.window_minutes),
+			used: primary.used_percent as number | undefined,
+			remaining: 100 - (primary.used_percent as number || 0),
+			percent: primary.used_percent as number | undefined,
+			resetAt: primary.resets_at ? Math.floor(primary.resets_at as number * 1000) : undefined,
+			window: classifyWindow(primary.window_minutes as number | undefined),
 		};
 	}
 
-	if (raw.secondary) {
+	if (secondary) {
 		result.weekly = {
-			used: raw.secondary.used_percent,
-			remaining: 100 - (raw.secondary.used_percent || 0),
-			percent: raw.secondary.used_percent,
-			resetAt: raw.secondary.resets_at ? Math.floor(raw.secondary.resets_at * 1000) : undefined,
-			window: classifyWindow(raw.secondary.window_minutes),
+			used: secondary.used_percent as number | undefined,
+			remaining: 100 - (secondary.used_percent as number || 0),
+			percent: secondary.used_percent as number | undefined,
+			resetAt: secondary.resets_at ? Math.floor(secondary.resets_at as number * 1000) : undefined,
+			window: classifyWindow(secondary.window_minutes as number | undefined),
 		};
 	}
 
@@ -327,7 +332,7 @@ function formatQuotaBucket(
 	theme: ExtensionContext["ui"]["theme"],
 	label: string,
 	bucket: QuotaBucket,
-): string {
+): string | undefined {
 	// Use "remaining" percent for the bar (100% = full, 0% = empty)
 	const remainingPercent = bucket.remaining ?? bucketPercent(bucket);
 	if (remainingPercent === undefined && bucket.resetAt === undefined) return undefined;
