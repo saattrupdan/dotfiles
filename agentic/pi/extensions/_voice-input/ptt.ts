@@ -60,7 +60,7 @@ export const CONFIG = {
 	whisperBin: process.env.PI_PTT_WHISPER_BIN?.trim() || "whisper-cli",
 	whisperModel:
 		process.env.PI_PTT_WHISPER_MODEL?.trim() ||
-		path.join(os.homedir(), ".cache", "whisper", "ggml-base.en.bin"),
+		path.join(os.homedir(), "local-models", "ggml-large-v3-turbo.bin"),
 	recBin: process.env.PI_PTT_REC_BIN?.trim() || "rec",
 };
 
