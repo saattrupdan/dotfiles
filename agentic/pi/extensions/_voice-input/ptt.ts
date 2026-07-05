@@ -632,7 +632,11 @@ async function stopAndTranscribe(ctx: ExtensionContext): Promise<void> {
 		} else if (liveEditor) {
 			// Check if editor content changed during transcription (e.g., user submitted/cleared)
 			const currentText = liveEditor.getText();
-			const editorWasCleared = textAtTranscribeStart !== null && currentText === "";
+			// Only skip insertion if editor HAD content at transcribe start and is now empty
+			// (user cleared/submitted). If it was empty from the start, still insert.
+			const editorWasCleared = textAtTranscribeStart !== null && 
+				textAtTranscribeStart !== "" && 
+				currentText === "";
 			
 			// If streaming was active with inline partials, replace at the partial position
 			if (streamSession && streamSession.partialStart >= 0 && !editorWasCleared) {
