@@ -134,6 +134,11 @@ export default function (pi: ExtensionAPI) {
 		// Give the shared PTT editor a context so hold-to-talk works on the splash.
 		setLiveCtx(pi, ctx);
 
+		// Reset the editor component before installing the splash editor.
+		// This ensures the TUI properly re-renders the narrow editor on /new,
+		// not just on initial session start.
+		ctx.ui.setEditorComponent(undefined);
+
 		// Wipe the terminal and scrollback so the splash is the only thing
 		// visible — no chance of scrolling up to previous shell output.
 		// \x1b[2J clears the screen, \x1b[H homes the cursor, \x1b[3J clears
