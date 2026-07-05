@@ -19,9 +19,13 @@
  */
 
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
-import { CustomEditor } from "@earendil-works/pi-coding-agent";
 import type { TUI, Component } from "@earendil-works/pi-tui";
 import { visibleWidth } from "@earendil-works/pi-tui";
+
+// Use the shared push-to-talk editor as the splash input box, so hold-to-talk
+// works on the splash screen too. This soft-couples splash to the voice-input
+// shared lib; if you remove _voice-input/, swap this back to CustomEditor.
+import { PttEditor, setLiveCtx } from "../_voice-input/ptt.ts";
 
 const EDITOR_WIDTH_FRACTION = 0.6;
 
@@ -77,6 +81,9 @@ export default function (pi: ExtensionAPI) {
 		const hasMessages = entries.some((e) => e.type === "message");
 		if (hasMessages) return;
 
+		// Give the shared PTT editor a context so hold-to-talk works on the splash.
+		setLiveCtx(ctx);
+
 		// Wipe the terminal and scrollback so the splash is the only thing
 		// visible — no chance of scrolling up to previous shell output.
 		// \x1b[2J clears the screen, \x1b[H homes the cursor, \x1b[3J clears
@@ -104,7 +111,7 @@ export default function (pi: ExtensionAPI) {
 		// below; we wrap each content line with vertical bars and replace the
 		// rules with corner-capped versions to make a proper box.
 		ctx.ui.setEditorComponent((tui, editorTheme, keybindings) => {
-			const inner = new CustomEditor(tui, editorTheme, keybindings);
+			const inner = new PttEditor(tui, editorTheme, keybindings);
 			const innerRender = inner.render.bind(inner);
 			// Horizontal padding inside the box, matching the visual breathing
 			// room provided by the top/bottom rules. Done in the wrapper rather
