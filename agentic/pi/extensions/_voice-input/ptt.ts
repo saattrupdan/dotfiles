@@ -618,8 +618,12 @@ async function fallbackTranscribeFromStream(ctx: ExtensionContext, reason: strin
 	const chunks = streamSession?.pcmChunks ?? [];
 	if (chunks.length === 0 || Buffer.concat(chunks).length < 1024) return "";
 	writeWavFromPcm(WAV_PATH, chunks);
-	if (reason) notify(ctx, `voice-input: streaming failed; falling back (${reason}).`, "info");
-	return transcribe();
+	const text = transcribe();
+	// Only notify if streaming actually failed (not just "no final transcript") or fallback produced no text
+	if (reason && (streamSession?.failed || !text)) {
+		notify(ctx, `voice-input: streaming failed; falling back (${reason}).`, "info");
+	}
+	return text;
 }
 
 /** Stop recording (finalising audio), then transcribe and paste. */
