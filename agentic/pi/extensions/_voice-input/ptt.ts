@@ -661,6 +661,9 @@ async function stopAndTranscribe(ctx: ExtensionContext): Promise<void> {
 		if (isNonSpeech(text)) {
 			notify(ctx, "voice-input: no speech detected.", "info");
 		} else if (liveEditor) {
+			// Check if this is a slash command
+			const isCommand = text.trim().startsWith("/");
+			
 			// Check if editor content changed during transcription (e.g., user submitted/cleared)
 			const currentText = liveEditor.getText();
 			// Only skip insertion if editor HAD content at transcribe start and is now empty
@@ -686,17 +689,20 @@ async function stopAndTranscribe(ctx: ExtensionContext): Promise<void> {
 					liveEditor.setText(currentText + separator + text);
 				}
 				
-				// Auto-send after a brief delay to allow user to review/cancel if needed
-				// If user already submitted (editor cleared), this is skipped via editorWasCleared check above
-				setTimeout(() => {
-					// Double-check editor wasn't cleared during the delay
-					if (liveEditor && liveEditor.getText() !== "") {
-						const finalText = liveEditor.getText();
-						liveEditor.setText(""); // Clear editor
-						// Send as "steer" to interject into the current conversation flow
-						livePi?.sendUserMessage(finalText, { deliverAs: "steer" });
-					}
-				}, AUTO_SEND_DELAY_MS);
+				// Commands require explicit confirmation - don't auto-send
+				// Regular text is auto-sent after a brief delay for review/cancel
+				if (!isCommand) {
+					setTimeout(() => {
+						// Double-check editor wasn't cleared during the delay
+						if (liveEditor && liveEditor.getText() !== "") {
+							const finalText = liveEditor.getText();
+							liveEditor.setText(""); // Clear editor
+							// Send as "steer" to interject into the current conversation flow
+							livePi?.sendUserMessage(finalText, { deliverAs: "steer" });
+						}
+					}, AUTO_SEND_DELAY_MS);
+				}
+				// For commands: leave in editor for user to review and press Enter to execute
 			}
 			// If editor was cleared, skip insertion and auto-send - user already submitted
 		} else {
