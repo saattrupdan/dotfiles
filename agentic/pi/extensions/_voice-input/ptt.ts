@@ -86,16 +86,6 @@ let pendingPressData: string | null = null;
 // when it stops, this fires and stops recording (covers dropped release events).
 let holdWatchdog: ReturnType<typeof setTimeout> | null = null;
 
-/** Opt-in diagnostic log (PI_PTT_DEBUG=1). */
-function dbg(line: string): void {
-	if (!process.env.PI_PTT_DEBUG) return;
-	try {
-		fs.appendFileSync("/tmp/pi-voice-input-debug.log", line + "\n");
-	} catch {
-		// best effort
-	}
-}
-
 export function setLiveCtx(ctx: ExtensionContext): void {
 	liveCtx = ctx;
 }
@@ -230,7 +220,6 @@ function armHoldWatchdog(ctx: ExtensionContext): void {
 	holdWatchdog = setTimeout(() => {
 		holdWatchdog = null;
 		if (state === "recording") {
-			dbg("WATCHDOG stop (held key stopped repeating)");
 			void stopAndTranscribe(ctx);
 		}
 	}, HOLD_WATCHDOG_MS);
@@ -258,7 +247,6 @@ function startRecording(ctx: ExtensionContext): void {
 		setStatus(ctx, undefined);
 	});
 	state = "recording";
-	dbg("REC START");
 	setStatus(ctx, "🎙 recording…");
 	maxDurationTimer = setTimeout(() => {
 		if (state === "recording") void stopAndTranscribe(ctx);
@@ -267,7 +255,6 @@ function startRecording(ctx: ExtensionContext): void {
 
 /** Stop recording (finalising the WAV), then transcribe and paste. */
 async function stopAndTranscribe(ctx: ExtensionContext): Promise<void> {
-	dbg("STOP called");
 	clearHoldWatchdog();
 	if (maxDurationTimer) {
 		clearTimeout(maxDurationTimer);
@@ -368,11 +355,6 @@ export class PttEditor extends CustomEditor {
 
 	override handleInput(data: string): void {
 		if (!releasesSeen && isKeyRelease(data)) releasesSeen = true;
-		dbg(
-			`in ${JSON.stringify(data)} rel=${isKeyRelease(data)} rep=${isKeyRepeat(data)}` +
-				` match=${matchesKey(data, CONFIG.key)} state=${state} kitty=${isKittyProtocolActive()}` +
-				` hold=${holdTimer !== null} wd=${holdWatchdog !== null}`,
-		);
 		try {
 			if (liveCtx && matchesKey(data, CONFIG.key)) {
 				if (this.handlePtt(data, liveCtx)) return; // fully handled → consume
