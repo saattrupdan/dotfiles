@@ -275,8 +275,10 @@ function buildStatusline(
 		`${theme.fg("muted", "context")} ${progressBar(contextPercent, theme)} ${theme.fg("dim", contextText)}${contextPercentText}`,
 	];
 
-	// Show quota bars for subscription models (OAuth) or Codex
-	if (isSubscription(ctx) || isCodex(ctx)) {
+	// Show quota bars if we have cached/fresh data OR if it's a subscription model.
+	// Check cached data first - if we have it, show immediately (before model check passes).
+	const hasQuotaData = codexQuota.session || codexQuota.weekly || codexQuota.credits;
+	if (hasQuotaData || isSubscription(ctx) || isCodex(ctx)) {
 		const codexParts = formatCodexQuota(theme, codexQuota);
 		parts.push(...codexParts);
 	}
