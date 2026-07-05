@@ -88,6 +88,16 @@ let textBeforeSpace: string | null = null;
 // when it stops, this fires and stops recording (covers dropped release events).
 let holdWatchdog: ReturnType<typeof setTimeout> | null = null;
 
+/** Opt-in diagnostic log (PI_PTT_DEBUG=1). */
+function dbg(line: string): void {
+	if (!process.env.PI_PTT_DEBUG) return;
+	try {
+		fs.appendFileSync("/tmp/pi-voice-input-debug.log", `${Date.now() % 100000} ${line}\n`);
+	} catch {
+		// best effort
+	}
+}
+
 export function setLiveCtx(ctx: ExtensionContext): void {
 	liveCtx = ctx;
 }
@@ -366,6 +376,10 @@ export class PttEditor extends CustomEditor {
 
 	override handleInput(data: string): void {
 		if (!releasesSeen && isKeyRelease(data)) releasesSeen = true;
+		dbg(
+			`in ${JSON.stringify(data)} rel=${isKeyRelease(data)} rep=${isKeyRepeat(data)}` +
+				` match=${matchesKey(data, CONFIG.key)} state=${state} hold=${holdTimer !== null}`,
+		);
 		try {
 			if (liveCtx && matchesKey(data, CONFIG.key)) {
 				if (this.handlePtt(data, liveCtx)) return; // fully handled → consume
@@ -443,6 +457,7 @@ export class PttEditor extends CustomEditor {
 			super.handleInput(data); // insert the space immediately
 			holdTimer = setTimeout(() => {
 				holdTimer = null;
+				dbg("HOLD TIMER FIRED -> recording");
 				// Became a hold: remove the space we optimistically typed, then record.
 				if (textBeforeSpace !== null) {
 					this.setText(textBeforeSpace);
