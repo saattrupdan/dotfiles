@@ -388,7 +388,7 @@ function startRawRecorder(ctx: ExtensionContext): ChildProcess | null {
 	try {
 		return spawn(
 			CONFIG.recBin,
-			["-q", "-c", "1", "-r", "16000", "-b", "16", "-e", "signed-integer", "-t", "raw", "-"],
+			["-q", "-c", "1", "-r", "16000", "-b", "16", "-e", "signed-integer", "-L", "-t", "raw", "-"],
 			{ stdio: ["ignore", "pipe", "ignore"] },
 		);
 	} catch (err) {
@@ -538,9 +538,9 @@ async function stopStreamingBackend(ctx: ExtensionContext): Promise<string> {
 			// already closed
 		}
 		await waitForClose(proc, 1500);
-		if (proc.exitCode === null && !proc.killed) proc.kill("SIGTERM");
+		if (proc.exitCode === null) proc.kill("SIGTERM");
 		await waitForClose(proc, 500);
-		if (proc.exitCode === null && !proc.killed) proc.kill("SIGKILL");
+		if (proc.exitCode === null) proc.kill("SIGKILL");
 		flushStreamLine(ctx);
 	}
 	streamBackend = null;
