@@ -51,7 +51,9 @@ export default function (pi: ExtensionAPI) {
 		});
 	};
 
-	pi.on("session_start", (_event, ctx) => install(ctx));
+	// Install on agent_start (processing user message) and model_select.
+	// NOT on session_start - splash screen also sets footer there and
+	// should remain visible until user submits first message.
 	pi.on("agent_start", (_event, ctx) => install(ctx));
 	pi.on("model_select", (_event, ctx) => install(ctx));
 	pi.on("turn_end", (_event, _ctx) => requestRender?.());
