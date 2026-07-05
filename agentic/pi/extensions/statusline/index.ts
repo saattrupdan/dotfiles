@@ -17,6 +17,8 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { spawnSync } from "child_process";
+import { readFileSync, writeFileSync, mkdirSync } from "fs";
+import { dirname } from "path";
 
 type QuotaBucket = {
 	used?: number;
@@ -54,7 +56,6 @@ let rolloutReadPending = false;
  */
 function loadCachedQuota(): CodexQuota | undefined {
 	try {
-		const { readFileSync } = require("fs") as typeof import("fs");
 		const data = readFileSync(CACHE_FILE, "utf-8");
 		return JSON.parse(data) as CodexQuota;
 	} catch {
@@ -67,8 +68,6 @@ function loadCachedQuota(): CodexQuota | undefined {
  */
 function saveCachedQuota(quota: CodexQuota): void {
 	try {
-		const { writeFileSync, mkdirSync } = require("fs") as typeof import("fs");
-		const { dirname } = require("path") as typeof import("path");
 		mkdirSync(dirname(CACHE_FILE), { recursive: true });
 		writeFileSync(CACHE_FILE, JSON.stringify(quota), "utf-8");
 	} catch {
