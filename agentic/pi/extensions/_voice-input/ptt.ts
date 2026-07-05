@@ -8,7 +8,7 @@
  * as an extension factory. Import it explicitly from the sibling extensions.
  *
  * Behaviour:
- *   • Hold the PTT key (default: space) to record; release to transcribe+paste.
+ *   • Hold the PTT key (default: space) to record; release to transcribe+auto-send.
  *   • Space uses tap-vs-hold: a quick tap types a space, a hold past
  *     PI_PTT_HOLD_MS (default 700) records. Two mechanisms cover both terminals:
  *     a release-driven one where key releases arrive (iTerm2), and an OS
@@ -17,6 +17,8 @@
  *   • Stopping is robust: the held key's auto-repeats act as a keep-alive, and
  *     when they cease (you let go) a watchdog stops recording — this is also how
  *     dictation ends in terminals that never send a release event.
+ *   • Auto-send: transcription is automatically sent after PI_PTT_AUTO_SEND_DELAY_MS
+ *     (default 500ms). Cancel by clearing the editor during the delay.
  *   • Default: streaming mode using whisper-stream.sh wrapper around whisper-server
  *     (if the wrapper exists). Records raw PCM s16le mono 16 kHz, streams to
  *     whisper-server in chunks, shows partials in status, pastes final on release.
@@ -74,6 +76,8 @@ const TOGGLE_DEBOUNCE_MS = 350;
  *  treat the key as released and stop — the safety net for dropped/batched
  *  release events. Must exceed the OS key-repeat interval. */
 const HOLD_WATCHDOG_MS = 700;
+/** Delay before auto-sending the transcription (ms). Configurable via PI_PTT_AUTO_SEND_DELAY_MS. */
+const AUTO_SEND_DELAY_MS = Number(process.env.PI_PTT_AUTO_SEND_DELAY_MS) || 500;
 /** Repeat-only fallback (Neovim's :terminal): the first OS repeat can be
  *  delayed longer than the steady-state repeat cadence, especially with custom
  *  keyboard settings. */
@@ -664,7 +668,7 @@ async function stopAndTranscribe(ctx: ExtensionContext): Promise<void> {
 						liveEditor.setText(""); // Clear editor
 						ctx.sendUserMessage(finalText); // Auto-send the transcription
 					}
-				}, 500);
+				}, AUTO_SEND_DELAY_MS);
 			}
 			// If editor was cleared, skip insertion and auto-send - user already submitted
 		} else {
