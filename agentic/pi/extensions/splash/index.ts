@@ -132,7 +132,7 @@ export default function (pi: ExtensionAPI) {
 		if (hasMessages) return;
 
 		// Give the shared PTT editor a context so hold-to-talk works on the splash.
-		setLiveCtx(ctx);
+		setLiveCtx(pi, ctx);
 
 		// Wipe the terminal and scrollback so the splash is the only thing
 		// visible — no chance of scrolling up to previous shell output.

@@ -35,7 +35,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { CustomEditor, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { CustomEditor } from "@earendil-works/pi-coding-agent";
 import {
 	isKeyRelease,
 	isKeyRepeat,
@@ -162,8 +163,10 @@ let spaceRepeatFlushTimer: ReturnType<typeof setTimeout> | null = null;
 // Repeat-gap watchdog: while recording from a hold, the held key keeps firing;
 // when it stops, this fires and stops recording (covers dropped release events).
 let holdWatchdog: ReturnType<typeof setTimeout> | null = null;
+let livePi: ExtensionAPI | null = null;
 
-export function setLiveCtx(ctx: ExtensionContext): void {
+export function setLiveCtx(pi: ExtensionAPI, ctx: ExtensionContext): void {
+	livePi = pi;
 	liveCtx = ctx;
 }
 export function getState(): State {
@@ -666,7 +669,7 @@ async function stopAndTranscribe(ctx: ExtensionContext): Promise<void> {
 					if (liveEditor && liveEditor.getText() !== "") {
 						const finalText = liveEditor.getText();
 						liveEditor.setText(""); // Clear editor
-						ctx.sendUserMessage(finalText); // Auto-send the transcription
+						livePi?.sendUserMessage(finalText); // Auto-send the transcription
 					}
 				}, AUTO_SEND_DELAY_MS);
 			}

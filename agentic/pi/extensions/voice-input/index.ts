@@ -73,9 +73,11 @@ import {
 
 /** Whether our PttEditor is currently the installed editor component. */
 let editorInstalled = false;
+let piApi: ExtensionAPI | null = null;
 
 function installEditor(ctx: ExtensionContext): void {
-	setLiveCtx(ctx);
+	if (!piApi) return;
+	setLiveCtx(piApi, ctx);
 	if (!ctx.hasUI || editorInstalled) return;
 	const factory: NonNullable<Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]> = (
 		tui,
@@ -96,11 +98,12 @@ function sessionHasMessages(ctx: ExtensionContext): boolean {
 }
 
 export default function (pi: ExtensionAPI) {
+	piApi = pi;
 	// Subagents share the parent's machine and have no interactive editor.
 	if (process.env.PI_SUBAGENT_CHILD === "1") return;
 
 	pi.on("session_start", async (_event, ctx) => {
-		setLiveCtx(ctx);
+		setLiveCtx(pi, ctx);
 		// A reset cleared any editor we installed; if splash is skipped (session
 		// already has messages) we can own the editor now. On a fresh session we
 		// wait for agent_start so splash keeps its splash-screen editor.
@@ -110,12 +113,10 @@ export default function (pi: ExtensionAPI) {
 	pi.on("agent_start", async (_event, ctx) => {
 		// By the first agent_start the splash has dismissed its editor.
 		installEditor(ctx);
-	});
-
-	pi.registerCommand("talk", {
-		description: "Voice dictation: toggle recording (or `status`).",
-		async handler(args, ctx) {
-			setLiveCtx(ctx);
+	});		pi.registerCommand("talk", {
+			description: "Voice dictation: toggle recording (or `status`).",
+			async handler(args, ctx) {
+				setLiveCtx(pi, ctx);
 			const arg = args.trim().toLowerCase();
 			if (arg === "status") {
 				const problem = checkReady();
