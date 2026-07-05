@@ -79,9 +79,11 @@ let liveCtx: ExtensionContext | null = null;
 let releasesSeen = false;
 let statusText: string | undefined;
 
-// Tap-vs-hold state for a typing PTT key (e.g. space).
+// Tap-vs-hold state for a typing PTT key (e.g. space). The space is inserted
+// immediately on press (so typing feels instant); textBeforeSpace snapshots the
+// editor so we can remove that space again if the press turns into a hold.
 let holdTimer: ReturnType<typeof setTimeout> | null = null;
-let pendingPressData: string | null = null;
+let textBeforeSpace: string | null = null;
 // Repeat-gap watchdog: while recording from a hold, the held key keeps firing;
 // when it stops, this fires and stops recording (covers dropped release events).
 let holdWatchdog: ReturnType<typeof setTimeout> | null = null;
@@ -205,6 +207,15 @@ function isNonSpeech(text: string): boolean {
 	if (!/[\p{L}\p{N}]/u.test(text)) return true; // punctuation-only
 	const norm = text.toLowerCase().replace(/[\s.!?,]+$/u, "").trim();
 	return NOISE_PHRASES.has(norm);
+}
+
+/** Abandon a pending hold (the space was a tap): keep the already-typed space. */
+function cancelHoldDetection(): void {
+	if (holdTimer) {
+		clearTimeout(holdTimer);
+		holdTimer = null;
+	}
+	textBeforeSpace = null;
 }
 
 function clearHoldWatchdog(): void {
@@ -359,10 +370,10 @@ export class PttEditor extends CustomEditor {
 			if (liveCtx && matchesKey(data, CONFIG.key)) {
 				if (this.handlePtt(data, liveCtx)) return; // fully handled → consume
 			} else {
-				// A different key arrived while a space press was deferred → the
-				// space was a tap, not a hold. Flush it in order, THEN this key,
-				// so fast typing (space+letter rollover) is never transposed.
-				if (holdTimer) this.flushPendingSpace();
+				// A different key arrived while a space's hold timer was pending →
+				// the space was a tap. It's already inserted, so just cancel the
+				// hold detection and let this key type normally.
+				if (holdTimer) cancelHoldDetection();
 				// We only want the PTT key's release; drop every other release,
 				// because the base editor never normally receives releases and
 				// could double-process a keystroke if handed one.
@@ -403,40 +414,40 @@ export class PttEditor extends CustomEditor {
 		return true;
 	}
 
-	/** Insert a deferred (tapped) space press in order and clear pending state. */
-	private flushPendingSpace(): void {
-		if (holdTimer) {
-			clearTimeout(holdTimer);
-			holdTimer = null;
-		}
-		const press = pendingPressData;
-		pendingPressData = null;
-		if (press) super.handleInput(press);
-	}
-
-	/** Tap-vs-hold for a typing key, using key-release events + a repeat watchdog. */
+	/**
+	 * Tap-vs-hold for a typing key. The space is inserted immediately on the
+	 * first press (so typing feels instant, no release-lag); if the key is still
+	 * held past the threshold it becomes a hold — we remove that one space and
+	 * start recording. Release before the threshold leaves the space as typed.
+	 */
 	private handleTypingHold(data: string, ctx: ExtensionContext): boolean {
 		if (isKeyRelease(data)) {
 			if (holdTimer) {
-				this.flushPendingSpace(); // released before threshold → it was a TAP
+				cancelHoldDetection(); // released before threshold → it was a TAP
 			} else if (state === "recording") {
 				void stopAndTranscribe(ctx); // released after a hold → stop dictation
 			}
 			return true;
 		}
-		// Press or repeat of the held key while recording → keep-alive: the
-		// watchdog stops recording once these cease, even if the release is lost.
+		// Repeat of the held key while recording → keep-alive; the watchdog stops
+		// recording once these cease, even if the release event is lost.
 		if (state === "recording") {
 			armHoldWatchdog(ctx);
 			return true;
 		}
-		if (isKeyRepeat(data)) return true; // held; the timer decides. Consume.
-		// Press: defer. Start recording only if still held past the threshold.
-		if (state === "idle" && !holdTimer) {
-			pendingPressData = data;
+		if (holdTimer) return true; // repeat within the press window → suppress
+		if (isKeyRepeat(data)) return true; // kitty repeat safety
+		// First press: type the space now, then watch for a hold.
+		if (state === "idle") {
+			textBeforeSpace = this.getText();
+			super.handleInput(data); // insert the space immediately
 			holdTimer = setTimeout(() => {
 				holdTimer = null;
-				pendingPressData = null;
+				// Became a hold: remove the space we optimistically typed, then record.
+				if (textBeforeSpace !== null) {
+					this.setText(textBeforeSpace);
+					textBeforeSpace = null;
+				}
 				beginIfReady(ctx);
 			}, CONFIG.holdMs);
 		}
