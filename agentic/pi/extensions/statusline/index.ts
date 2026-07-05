@@ -59,12 +59,16 @@ export default function (pi: ExtensionAPI) {
 
 		installed = true;
 
+		// Read quota immediately on install (for OAuth/Codex models)
+		if (isSubscription(ctx) || isCodex(ctx)) {
+			readCodexQuotaDebounced();
+		}
+
 		ctx.ui.setFooter((tui, theme, footerData) => {
 			requestRender = () => tui.requestRender();
 
-			// Read Codex quota periodically (every 30s) and on install
+			// Poll quota periodically (every 30s)
 			if (!pollTimer) {
-				readCodexQuotaDebounced();
 				pollTimer = setInterval(() => readCodexQuotaDebounced(), 30000);
 			}
 
