@@ -50,12 +50,11 @@ export default function (pi: ExtensionAPI) {
 
 			return {
 				dispose() {
-					if (requestRender) requestRender = undefined;
-				},
-				invalidate() {},
+					if (requestRender) requestRender = undefined;			},
+			invalidate() {},
 			render(width: number): string[] {
 				const line = buildStatusline(ctx, theme, footerData);
-				return [' ' + truncateToWidth(line, width - 1)];
+				return ['', ' ' + truncateToWidth(line, width - 1), ''];
 			},
 			};
 		});
