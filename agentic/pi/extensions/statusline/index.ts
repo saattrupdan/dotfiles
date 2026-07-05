@@ -50,12 +50,13 @@ export default function (pi: ExtensionAPI) {
 
 			return {
 				dispose() {
-					if (requestRender) requestRender = undefined;			},
-			invalidate() {},
-			render(width: number): string[] {
-				const line = buildStatusline(ctx, theme, footerData);
-				return ['', ' ' + truncateToWidth(line, width - 1), ''];
-			},
+					if (requestRender) requestRender = undefined;
+				},
+				invalidate() {},
+				render(width: number): string[] {
+					const line = buildStatusline(ctx, theme, footerData);
+					return ['', ' ' + truncateToWidth(line, width - 1), ''];
+				},
 			};
 		});
 	};
