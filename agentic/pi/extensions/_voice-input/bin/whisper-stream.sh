@@ -2,21 +2,25 @@
 # whisper-stream.sh — streaming wrapper for whisper-server
 # Reads raw PCM s16le mono 16000 from stdin
 # Emits JSONL {"type":"partial"|"final","text":"..."} events
-#
-# Usage: PI_PTT_STREAM_CMD="$PWD/bin/whisper-stream.sh" pi
-#
-# Buffers audio in ~1s chunks, calls whisper-server for partials.
-# On stdin EOF, emits final transcription of all accumulated audio.
+# Tries whisper-server on 8081 (or PI_PTT_WHISPER_SERVER_URL), falls back gracefully
 
 set -euo pipefail
 
-CHUNK_BYTES=32000           # ~1 second at 16kHz * 2 bytes/sample
+# Server URL (can be overridden via env)
+WHISPER_SERVER_URL="${PI_PTT_WHISPER_SERVER_URL:-http://localhost:8081}"
+
+CHUNK_BYTES=32000
 TEMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TEMP_DIR"' EXIT
 
 CHUNK_FILE="$TEMP_DIR/chunk.pcm"
 ALL_AUDIO="$TEMP_DIR/all.pcm"
 : > "$ALL_AUDIO"
+
+# Check if whisper-server is available
+check_server() {
+    curl -s --connect-timeout 2 "$WHISPER_SERVER_URL/health" >/dev/null 2>&1
+}
 
 process_partial() {
     local chunk_file="$1"
@@ -35,7 +39,7 @@ process_partial() {
     
     # Call whisper-server
     local result
-    result=$(curl -s -X POST "http://localhost:8080/inference" \
+    result=$(curl -s --connect-timeout 5 -X POST "$WHISPER_SERVER_URL/inference" \
         -F "file=@$wav_file" \
         -F "response_format=json" \
         -F "suppress_nst=true" 2>/dev/null) || return 0
@@ -69,7 +73,7 @@ emit_final() {
     
     # Transcribe with whisper-server
     local result
-    result=$(curl -s -X POST "http://localhost:8080/inference" \
+    result=$(curl -s --connect-timeout 5 -X POST "$WHISPER_SERVER_URL/inference" \
         -F "file=@$wav_file" \
         -F "response_format=json" \
         -F "suppress_nst=true" 2>/dev/null) || { echo '{"type":"final","text":""}'; return 0; }
@@ -85,6 +89,15 @@ emit_final() {
         echo '{"type":"final","text":""}'
     fi
 }
+
+# If no server, just collect audio and emit empty final (Pi will use WAV fallback)
+if ! check_server; then
+    # Server not available: drain stdin to ALL_AUDIO, then emit empty final
+    # Pi's fallbackTranscribeFromStream will handle the actual transcription
+    cat > "$ALL_AUDIO"
+    echo '{"type":"final","text":""}'
+    exit 0
+fi
 
 # Stream: read chunks, emit partials
 while dd if=/dev/stdin bs=4096 count=$((CHUNK_BYTES / 4096)) 2>/dev/null > "$CHUNK_FILE"; do
