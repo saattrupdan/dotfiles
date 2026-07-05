@@ -312,20 +312,21 @@ function applyStreamEvent(ctx: ExtensionContext, event: StreamEvent): void {
 			const after = currentText.slice(streamSession.partialStart + streamSession.partialLen);
 			liveEditor.setText(before + streamSession.finalText + after);
 			streamSession.partialLen = streamSession.finalText.length;
-			setStatus(ctx, `🎙 final: ${streamSession.finalText}`);
+			setStatus(ctx, `🎙 finalizing…`);
 		}
 		return;
 	}
 	if (parsed.kind === "partial") {
 		streamSession.partialText = parsed.text;
-		// Insert/update partial inline in editor
+		// Insert/update partial inline in editor only (no footer spam)
 		const currentText = liveEditor.getText();
 		const before = currentText.slice(0, streamSession.partialStart);
 		const after = currentText.slice(streamSession.partialStart + streamSession.partialLen);
 		const newText = streamSession.prefixText + (streamSession.partialText ? " " + streamSession.partialText : "");
 		liveEditor.setText(before + newText + after);
 		streamSession.partialLen = newText.length;
-		setStatus(ctx, `🎙 ${streamSession.partialText}`);
+		// Status just shows streaming indicator, not the actual text
+		setStatus(ctx, `🎙 streaming…`);
 	}
 }
 
