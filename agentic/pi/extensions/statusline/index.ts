@@ -16,26 +16,14 @@ import type {
 	ReadonlyFooterDataProvider,
 } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
-import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "fs";
-import { dirname, join } from "path";
-
-type QuotaBucket = {
-	used?: number;
-	limit?: number;
-	remaining?: number;
-	percent?: number;
-	resetAt?: number;
-	window?: "5min" | "5h" | "12h" | "24h" | "7d" | "30d";
-};
-
-type CodexQuota = {
-	session?: QuotaBucket;
-	weekly?: QuotaBucket;
-	credits?: {
-		balance: number;
-		unlimited: boolean;
-	};
-};
+import { mkdirSync, readFileSync, writeFileSync } from "fs";
+import { dirname } from "path";
+import {
+	bucketRemainingPercent,
+	readCodexQuotaFromDirectory,
+	type CodexQuota,
+	type QuotaBucket,
+} from "./codexQuota.ts";
 
 const BAR_WIDTH = 10;
 const CODEX_SESSIONS_DIR = `${process.env.HOME}/.codex/sessions`;
@@ -210,135 +198,7 @@ function readCodexQuotaDebounced() {
  * Read Codex quota from the most recent rollout JSONL data.
  */
 function readCodexQuotaFromFile(): CodexQuota {
-	const rateLimits = readLatestCodexRateLimits();
-	return rateLimits ? parseCodexRateLimits(rateLimits) : {};
-}
-
-type RolloutFile = {
-	path: string;
-	mtimeMs: number;
-};
-
-function readLatestCodexRateLimits(): Record<string, unknown> | undefined {
-	const rolloutFiles = findCodexRolloutFiles(CODEX_SESSIONS_DIR)
-		.sort((a, b) => b.mtimeMs - a.mtimeMs);
-
-	for (const file of rolloutFiles) {
-		const rateLimits = readLastRateLimitsEvent(file.path);
-		if (rateLimits) return rateLimits;
-	}
-
-	return undefined;
-}
-
-function findCodexRolloutFiles(dir: string): RolloutFile[] {
-	try {
-		return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-			const path = join(dir, entry.name);
-			if (entry.isDirectory()) return findCodexRolloutFiles(path);
-			if (!entry.isFile() || !entry.name.startsWith("rollout-") || !entry.name.endsWith(".jsonl")) return [];
-
-			try {
-				return [{ path, mtimeMs: statSync(path).mtimeMs }];
-			} catch {
-				return [];
-			}
-		});
-	} catch {
-		return [];
-	}
-}
-
-function readLastRateLimitsEvent(path: string): Record<string, unknown> | undefined {
-	let latest: Record<string, unknown> | undefined;
-
-	try {
-		for (const line of readFileSync(path, "utf-8").split("\n")) {
-			if (!line.includes("rate_limits")) continue;
-			const rateLimits = parseRateLimitsLine(line);
-			if (rateLimits) latest = rateLimits;
-		}
-	} catch {
-		return undefined;
-	}
-
-	return latest;
-}
-
-function parseRateLimitsLine(line: string): Record<string, unknown> | undefined {
-	try {
-		const event = JSON.parse(line) as unknown;
-		if (!isRecord(event)) return undefined;
-		const payload = event.payload;
-		if (!isRecord(payload)) return undefined;
-		return isRecord(payload.rate_limits) ? payload.rate_limits : undefined;
-	} catch {
-		return undefined;
-	}
-}
-
-/**
- * Parse raw rate_limits JSON into our CodexQuota structure.
- */
-function parseCodexRateLimits(raw: Record<string, unknown>): CodexQuota {
-	const result: CodexQuota = {};
-	const credits = raw.credits;
-	const primary = raw.primary;
-	const secondary = raw.secondary;
-
-	// Credits-based quota (when rate limited)
-	if (isRecord(credits)) {
-		result.credits = {
-			balance: parseFiniteNumber(credits.balance) ?? 0,
-			unlimited: credits.unlimited === true,
-		};
-	}
-
-	// Window-based limits (session + weekly)
-	if (isRecord(primary)) result.session = parseCodexBucket(primary);
-	if (isRecord(secondary)) result.weekly = parseCodexBucket(secondary);
-
-	return result;
-}
-
-function parseCodexBucket(raw: Record<string, unknown>): QuotaBucket {
-	const usedPercent = parseFiniteNumber(raw.used_percent);
-	const resetAt = parseFiniteNumber(raw.resets_at);
-	const windowMinutes = parseFiniteNumber(raw.window_minutes);
-
-	return {
-		used: usedPercent,
-		remaining: usedPercent === undefined ? undefined : 100 - clampPercent(usedPercent),
-		percent: usedPercent,
-		resetAt: resetAt === undefined ? undefined : Math.floor(resetAt * 1000),
-		window: classifyWindow(windowMinutes),
-	};
-}
-
-function parseFiniteNumber(value: unknown): number | undefined {
-	if (typeof value === "number" && Number.isFinite(value)) return value;
-	if (typeof value === "string") {
-		const parsed = Number.parseFloat(value);
-		if (Number.isFinite(parsed)) return parsed;
-	}
-	return undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/**
- * Classify window_minutes into human-readable label.
- */
-function classifyWindow(minutes: number | undefined): QuotaBucket["window"] {
-	if (minutes === undefined) return undefined;
-	if (minutes <= 5) return "5min";
-	if (minutes <= 300) return "5h";
-	if (minutes <= 720) return "12h";
-	if (minutes <= 1440) return "24h";
-	if (minutes <= 10080) return "7d";
-	return "30d";
+	return readCodexQuotaFromDirectory(CODEX_SESSIONS_DIR);
 }
 
 function buildStatusline(
@@ -551,17 +411,4 @@ function shouldPollQuota(ctx: ExtensionContext): boolean {
 	if (isInferenceProvider(ctx)) return false;
 	if (isCodex(ctx) || isSubscription(ctx)) return true;
 	return !ctx.model && hasQuotaData(codexQuota);
-}
-
-function bucketRemainingPercent(bucket: QuotaBucket): number | undefined {
-	if (bucket.remaining !== undefined) return clampPercent(bucket.remaining);
-	if (bucket.percent !== undefined) return 100 - clampPercent(bucket.percent);
-	if (bucket.used !== undefined && bucket.limit !== undefined && bucket.limit > 0) {
-		return 100 - clampPercent((bucket.used / bucket.limit) * 100);
-	}
-	return undefined;
-}
-
-function clampPercent(percent: number): number {
-	return Math.max(0, Math.min(100, percent));
 }
