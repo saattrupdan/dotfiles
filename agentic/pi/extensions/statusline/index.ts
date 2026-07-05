@@ -228,7 +228,7 @@ function buildStatusline(
 	const contextPercentText = contextPercent !== undefined ? ` ${theme.fg("dim", `(${Math.round(contextPercent)}%)`)}` : "";
 	const parts = [
 		theme.fg("accent", modelName),
-		`${theme.fg("muted", "ctx")} ${progressBar(contextPercent, theme)} ${theme.fg("dim", contextText)}${contextPercentText}`,
+		`${theme.fg("muted", "context")} ${progressBar(contextPercent, theme)} ${theme.fg("dim", contextText)}${contextPercentText}`,
 	];
 
 	// Show quota bars for subscription models (OAuth) or Codex
@@ -266,18 +266,18 @@ function formatCodexQuota(theme: ExtensionContext["ui"]["theme"], quota: CodexQu
 		const creditText = quota.credits.unlimited
 			? "∞"
 			: quota.credits.balance.toString();
-		parts.push(`${theme.fg("muted", "cr")} ${theme.fg("accent", creditText)}`);
+		parts.push(`${theme.fg("muted", "credits")} ${theme.fg("accent", creditText)}`);
 	}
 
 	// Show session limit
 	if (quota.session) {
-		const session = formatQuotaBucket(theme, "ses", quota.session);
+		const session = formatQuotaBucket(theme, "session", quota.session);
 		if (session) parts.push(session);
 	}
 
 	// Show weekly limit
 	if (quota.weekly) {
-		const weekly = formatQuotaBucket(theme, "wk", quota.weekly);
+		const weekly = formatQuotaBucket(theme, "weekly", quota.weekly);
 		if (weekly) parts.push(weekly);
 	}
 
