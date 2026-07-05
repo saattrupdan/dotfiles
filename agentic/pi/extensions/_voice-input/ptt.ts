@@ -122,6 +122,8 @@ type StreamSession = {
 	partialStart: number; // character index where partial text starts
 	partialLen: number; // length of current partial text in editor
 };
+/** Snapshot of editor text when transcription started - used to detect if user cleared/submitted during transcription. */
+let textAtTranscribeStart: string | null = null;
 let state: State = "idle";
 let recorder: ChildProcess | null = null;
 let streamBackend: ChildProcess | null = null;
@@ -602,6 +604,9 @@ async function stopAndTranscribe(ctx: ExtensionContext): Promise<void> {
 	state = "transcribing";
 	setStatus(ctx, "⏳ transcribing…");
 
+	// Snapshot editor content to detect if user submits/clears during transcription
+	textAtTranscribeStart = liveEditor?.getText() ?? null;
+
 	await stopRecorder();
 
 	try {
@@ -624,10 +629,13 @@ async function stopAndTranscribe(ctx: ExtensionContext): Promise<void> {
 
 		if (isNonSpeech(text)) {
 			notify(ctx, "voice-input: no speech detected.", "info");
-		} else {
+		} else if (liveEditor) {
+			// Check if editor content changed during transcription (e.g., user submitted/cleared)
+			const currentText = liveEditor.getText();
+			const editorWasCleared = textAtTranscribeStart !== null && currentText === "";
+			
 			// If streaming was active with inline partials, replace at the partial position
-			if (streamSession && streamSession.partialStart >= 0 && liveEditor) {
-				const currentText = liveEditor.getText();
+			if (streamSession && streamSession.partialStart >= 0 && !editorWasCleared) {
 				const before = currentText.slice(0, streamSession.partialStart);
 				const after = currentText.slice(streamSession.partialStart + streamSession.partialLen);
 				// Ensure a space between prefix and new text if needed
@@ -636,9 +644,14 @@ async function stopAndTranscribe(ctx: ExtensionContext): Promise<void> {
 					finalText = " " + finalText;
 				}
 				liveEditor.setText(before + finalText + after);
-			} else {
-				ctx.ui.pasteToEditor(text);
+			} else if (!editorWasCleared) {
+				// Non-streaming path: append to current editor content
+				const separator = currentText && !currentText.endsWith(" ") && text && !text.startsWith(" ") ? " " : "";
+				liveEditor.setText(currentText + separator + text);
 			}
+			// If editor was cleared, skip insertion - user already submitted the content
+		} else {
+			ctx.ui.pasteToEditor(text);
 		}
 	} catch (err) {
 		notify(ctx, `voice-input: transcription failed: ${String(err)}`, "error");
@@ -646,6 +659,7 @@ async function stopAndTranscribe(ctx: ExtensionContext): Promise<void> {
 		fs.rmSync(WAV_PATH, { force: true });
 		streamSession = null;
 		streamBackend = null;
+		textAtTranscribeStart = null;
 		state = "idle";
 		setStatus(ctx, undefined);
 	}
