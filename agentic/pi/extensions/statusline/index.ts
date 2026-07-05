@@ -52,10 +52,11 @@ export default function (pi: ExtensionAPI) {
 				dispose() {
 					if (requestRender) requestRender = undefined;
 				},
-				invalidate() {},			render(width: number): string[] {
-				const line = buildStatusline(ctx, theme, footerData);
-				return [' ' + truncateToWidth(line, width - 1)];
-			},
+				invalidate() {},
+				render(width: number): string[] {
+					const line = buildStatusline(ctx, theme, footerData);
+					return [' ' + truncateToWidth(line, width - 1), ''];
+				},
 			};
 		});
 	};
@@ -104,7 +105,8 @@ function buildStatusline(
 		`${theme.fg("muted", "ctx")} ${progressBar(contextPercent, theme)} ${theme.fg("dim", contextText)}${contextPercentText}`,
 	];
 
-	if (isCodex(ctx)) {
+	// Show quota bars for subscription models (OAuth) or Codex
+	if (isSubscription(ctx) || isCodex(ctx)) {
 		const codexParts = formatCodexQuota(theme, codexQuota);
 		parts.push(...codexParts);
 	}
@@ -204,6 +206,11 @@ function formatTokens(value: number | null | undefined): string {
 
 function isCodex(ctx: ExtensionContext): boolean {
 	return ctx.model?.provider === "openai-codex" || ctx.model?.api === "openai-codex-responses";
+}
+
+function isSubscription(ctx: ExtensionContext): boolean {
+	if (!ctx.model) return false;
+	return ctx.modelRegistry.isUsingOAuth(ctx.model);
 }
 
 function parseCodexQuota(headers: Record<string, string>): CodexQuota {
