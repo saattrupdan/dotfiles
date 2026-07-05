@@ -25,7 +25,7 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 // Use the shared push-to-talk editor as the splash input box, so hold-to-talk
 // works on the splash screen too. This soft-couples splash to the voice-input
 // shared lib; if you remove _voice-input/, swap this back to CustomEditor.
-import { PttEditor, setLiveCtx } from "../_voice-input/ptt.ts";
+import { PttEditor, setLiveCtx, getStatusText } from "../_voice-input/ptt.ts";
 
 const EDITOR_WIDTH_FRACTION = 0.6;
 
@@ -202,19 +202,21 @@ export default function (pi: ExtensionAPI) {
 			{ placement: "aboveEditor" },
 		);
 
-		// Pseudo-footer just under the input box. Shows only the model name,
-		// centred under the input to match its width. It intentionally does not
-		// read footerData/getStatusText(), so other extension status segments do
-		// not leak onto the splash screen.
+		// Pseudo-footer just under the input box. Shows model name + voice status.
+		// Reads getStatusText() from voice-input so streaming/recording shows here too.
 		ctx.ui.setWidget(
 			FOOTER_KEY,
 			(_tui: TUI, theme: Theme): Component => ({
 				render(width: number): string[] {
-					const text = ctx.model?.name || ctx.model?.id;
-					if (!text) return [];
+					const modelText = ctx.model?.name || ctx.model?.id;
+					const voiceStatus = getStatusText();
+					const line = voiceStatus
+						? `${modelText || ""} — ${voiceStatus}`
+						: (modelText || "");
+					if (!line) return [];
 					const targetW = Math.max(20, Math.floor(width * EDITOR_WIDTH_FRACTION));
 					const leftPad = " ".repeat(Math.max(0, Math.floor((width - targetW) / 2)));
-					return ["", leftPad + theme.fg("dim", text)];
+					return ["", leftPad + theme.fg("dim", line)];
 				},
 				invalidate() {},
 			}),
