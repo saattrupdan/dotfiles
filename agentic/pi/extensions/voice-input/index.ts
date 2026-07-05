@@ -109,6 +109,17 @@ function releasesAvailable(): boolean {
 let holdTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingPressData: string | null = null;
 
+/** Opt-in diagnostic log (PI_PTT_DEBUG=1) to /tmp/pi-voice-input-debug.log. */
+const DEBUG_LOG = "/tmp/pi-voice-input-debug.log";
+function dbg(line: string): void {
+	if (!process.env.PI_PTT_DEBUG) return;
+	try {
+		fs.appendFileSync(DEBUG_LOG, line + "\n");
+	} catch {
+		// best effort
+	}
+}
+
 function setStatus(ctx: ExtensionContext, text: string | undefined): void {
 	if (ctx.hasUI) ctx.ui.setStatus(STATUS_KEY, text);
 }
@@ -227,6 +238,7 @@ function startRecording(ctx: ExtensionContext): void {
 		setStatus(ctx, undefined);
 	});
 	state = "recording";
+	dbg("REC START");
 	setStatus(ctx, "🎙 recording…");
 	maxDurationTimer = setTimeout(() => {
 		if (state === "recording") void stopAndTranscribe(ctx);
@@ -235,6 +247,7 @@ function startRecording(ctx: ExtensionContext): void {
 
 /** Stop recording (finalising the WAV), then transcribe and paste. */
 async function stopAndTranscribe(ctx: ExtensionContext): Promise<void> {
+	dbg("STOP called");
 	if (maxDurationTimer) {
 		clearTimeout(maxDurationTimer);
 		maxDurationTimer = null;
@@ -319,6 +332,11 @@ class PttEditor extends CustomEditor {
 		// Learn the terminal's capability from real traffic: any release event
 		// (for any key) proves hold-to-talk is possible.
 		if (!releasesSeen && isKeyRelease(data)) releasesSeen = true;
+		dbg(
+			`in ${JSON.stringify(data)} rel=${isKeyRelease(data)} rep=${isKeyRepeat(data)}` +
+				` match=${matchesKey(data, CONFIG.key)} state=${state} kitty=${isKittyProtocolActive()}` +
+				` seen=${releasesSeen} wkr=${this.wantsKeyRelease} holdTimer=${holdTimer !== null}`,
+		);
 		try {
 			if (liveCtx && matchesKey(data, CONFIG.key)) {
 				if (this.handlePtt(data, liveCtx)) return; // fully handled → consume
