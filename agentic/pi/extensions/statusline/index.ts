@@ -52,11 +52,10 @@ export default function (pi: ExtensionAPI) {
 				dispose() {
 					if (requestRender) requestRender = undefined;
 				},
-				invalidate() {},
-				render(width: number): string[] {
-					const line = buildStatusline(ctx, theme, footerData);
-					return ['', ' ' + truncateToWidth(line, width - 1), ''];
-				},
+				invalidate() {},			render(width: number): string[] {
+				const line = buildStatusline(ctx, theme, footerData);
+				return [' ' + truncateToWidth(line, width - 1)];
+			},
 			};
 		});
 	};
@@ -198,13 +197,9 @@ function progressBar(
 
 function formatTokens(value: number | null | undefined): string {
 	if (value === undefined || value === null || !Number.isFinite(value)) return "?";
-	if (value >= 1_000_000) return `${trimFixed(value / 1_000_000)}M`;
-	if (value >= 1_000) return `${trimFixed(value / 1_000)}k`;
+	if (value >= 1_000_000) return `${Math.round(value / 1_000_000)}M`;
+	if (value >= 1_000) return `${Math.round(value / 1_000)}k`;
 	return String(Math.round(value));
-}
-
-function trimFixed(value: number): string {
-	return value.toFixed(1).replace(/\.0$/, "");
 }
 
 function isCodex(ctx: ExtensionContext): boolean {
