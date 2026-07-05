@@ -58,11 +58,17 @@ const TOGGLE_DEBOUNCE_MS = 350;
  *  treat the key as released and stop — the safety net for dropped/batched
  *  release events. Must exceed the OS key-repeat interval. */
 const HOLD_WATCHDOG_MS = 700;
-/** Repeat-only fallback (Neovim's :terminal): a gap between two Space bytes
- *  longer than this means the key was physically released between them — the OS
- *  auto-repeat interval is well under this, a human's repeated taps are not
- *  always, so it also caps how long a broken run stays "held". */
+/** Repeat-only fallback (Neovim's :terminal): after the first repeat proves
+ *  the OS has started key repeat, later repeat gaps must stay below this. */
 const REPEAT_MAX_GAP_MS = 300;
+/** The first OS repeat should not arrive immediately; repeated human taps can. */
+const REPEAT_MIN_INITIAL_GAP_MS = 250;
+/** Once OS repeat starts, following gaps should be much shorter than tap cadence. */
+const REPEAT_MAX_CONTINUATION_GAP_MS = 175;
+/** Consecutive OS repeat gaps should be reasonably regular. */
+const REPEAT_MAX_JITTER_MS = 80;
+/** OS continuation repeat should be clearly faster than its initial delay. */
+const REPEAT_MIN_INITIAL_TO_CONTINUATION_RATIO = 2;
 /** Safety cap: auto-stop recording if everything else somehow misses. */
 const MAX_RECORDING_MS = 120_000;
 
@@ -99,13 +105,16 @@ let statusText: string | undefined;
 let holdTimer: ReturnType<typeof setTimeout> | null = null;
 let textBeforeSpace: string | null = null;
 // Repeat-only fallback state (terminals that report the key event but never a
-// release, e.g. Neovim's :terminal). A held key streams auto-repeat bytes; a tap
-// is a single byte. We treat a run of same-key bytes (gaps < REPEAT_MAX_GAP_MS)
-// held past CONFIG.holdMs as a hold. spaceRunStartAt anchors the run; spaceRunLen
-// counts its bytes (≥2 proves auto-repeat, so a lone tap can never record).
+// release, e.g. Neovim's :terminal). A held key streams OS auto-repeat bytes; a
+// tap is a single byte. We require the first repeat to arrive after an initial
+// repeat delay, then require short/regular continuation gaps. Human tap runs are
+// flushed back to normal typed spaces instead of being allowed to become holds.
 let spaceRunStartAt = 0;
 let spaceRunLen = 0;
 let lastSpaceAt = 0;
+let spaceRepeatCandidate = false;
+let initialRepeatGap = 0;
+let lastContinuationGap = 0;
 // Repeat-gap watchdog: while recording from a hold, the held key keeps firing;
 // when it stops, this fires and stops recording (covers dropped release events).
 let holdWatchdog: ReturnType<typeof setTimeout> | null = null;
@@ -404,7 +413,7 @@ export class PttEditor extends CustomEditor {
 				if (holdTimer) cancelHoldDetection();
 				// A different key also ends any in-progress Space auto-repeat run
 				// (fallback path) — so the next Space starts fresh and types.
-				spaceRunLen = 0;
+				this.resetSpaceRepeatRun();
 				// We only want the PTT key's release; drop every other release,
 				// because the base editor never normally receives releases and
 				// could double-process a keystroke if handed one.
@@ -414,6 +423,24 @@ export class PttEditor extends CustomEditor {
 			// Never let a PTT bug break typing — fall through to normal editing.
 		}
 		super.handleInput(data);
+	}
+
+	private startSpaceTapRun(data: string, now: number): void {
+		spaceRunStartAt = now;
+		lastSpaceAt = now;
+		spaceRunLen = 1;
+		spaceRepeatCandidate = false;
+		initialRepeatGap = 0;
+		lastContinuationGap = 0;
+		textBeforeSpace = this.getText();
+		super.handleInput(data);
+	}
+
+	private resetSpaceRepeatRun(): void {
+		spaceRunLen = 0;
+		spaceRepeatCandidate = false;
+		initialRepeatGap = 0;
+		lastContinuationGap = 0;
 	}
 
 	/** Returns true if the key was consumed; false to let it type normally. */
@@ -456,10 +483,9 @@ export class PttEditor extends CustomEditor {
 	 *     the space), a release after is the end of dictation. Flicker-free.
 	 *   • Auto-repeat fallback (Neovim's :terminal reports the protocol active but
 	 *     never sends releases): a held key streams repeat bytes, a tap is one
-	 *     byte. We require a run of same-key bytes (gaps < REPEAT_MAX_GAP_MS) held
-	 *     past CONFIG.holdMs — i.e. ≥2 bytes AND enough elapsed — before recording.
-	 *     A lone tap (one byte, then a pause) can never satisfy that, and stopping
-	 *     falls back to the repeat keep-alive watchdog.
+	 *     byte. We require timing that looks like OS auto-repeat: an initial repeat
+	 *     delay, then short/regular continuation gaps held past CONFIG.holdMs.
+	 *     Human tap runs are reset and typed as spaces rather than recording.
 	 */
 	private handleTypingHold(data: string, ctx: ExtensionContext): boolean {
 		if (isKeyRelease(data)) {
@@ -468,7 +494,7 @@ export class PttEditor extends CustomEditor {
 			} else if (state === "recording") {
 				void stopAndTranscribe(ctx); // released after a hold → stop dictation
 			}
-			spaceRunLen = 0;
+			this.resetSpaceRepeatRun();
 			return true;
 		}
 		// Repeat/press of the held key while recording → keep-alive; the watchdog
@@ -496,32 +522,52 @@ export class PttEditor extends CustomEditor {
 			return true;
 		}
 
-		// Auto-repeat fallback: no releases, so infer hold from a sustained run.
+		// Auto-repeat fallback: no releases, so infer hold from OS-repeat timing.
 		const now = Date.now();
-		if (now - lastSpaceAt > REPEAT_MAX_GAP_MS) {
-			spaceRunLen = 0; // gap too long → the previous run ended (key was up)
-		}
-		lastSpaceAt = now;
-		spaceRunLen += 1;
-		if (spaceRunLen === 1) {
-			// First byte of a run: type the space (a normal space until proven a
-			// hold) and anchor the run. Extra bytes below are auto-repeat, so we
-			// suppress them — consecutive spaces are meaningless in the input box,
-			// which also means a stray tap-run leaves just the one typed space.
-			spaceRunStartAt = now;
-			textBeforeSpace = this.getText();
-			super.handleInput(data);
+		const gap = lastSpaceAt ? now - lastSpaceAt : 0;
+		if (spaceRunLen === 0) {
+			this.startSpaceTapRun(data, now);
 			return true;
 		}
-		// spaceRunLen ≥ 2 → the key auto-repeated (it is genuinely held). Once the
-		// run has lasted past the hold threshold, it's a hold: strip the space we
-		// typed on the first byte and start recording.
-		if (now - spaceRunStartAt >= CONFIG.holdMs) {
+
+		if (!spaceRepeatCandidate) {
+			const firstRepeatMaxGap = Math.max(CONFIG.holdMs, REPEAT_MAX_GAP_MS);
+			if (gap < REPEAT_MIN_INITIAL_GAP_MS || gap > firstRepeatMaxGap) {
+				// Too fast for the first OS repeat, or too slow to be the same hold:
+				// treat this as another tap and type it rather than suppressing it.
+				this.startSpaceTapRun(data, now);
+				return true;
+			}
+			spaceRepeatCandidate = true;
+			initialRepeatGap = gap;
+			spaceRunLen += 1;
+			lastSpaceAt = now;
+			return true;
+		}
+
+		const tooSlow = gap > Math.min(REPEAT_MAX_GAP_MS, REPEAT_MAX_CONTINUATION_GAP_MS);
+		const tooCloseToInitialDelay =
+			gap * REPEAT_MIN_INITIAL_TO_CONTINUATION_RATIO > initialRepeatGap;
+		const tooIrregular =
+			lastContinuationGap > 0 &&
+			Math.abs(gap - lastContinuationGap) > REPEAT_MAX_JITTER_MS;
+		if (tooSlow || tooCloseToInitialDelay || tooIrregular) {
+			// Looks like tapping, not OS repeat. Flush the previous candidate and
+			// let this byte become a normal typed space.
+			this.startSpaceTapRun(data, now);
+			return true;
+		}
+
+		spaceRunLen += 1;
+		lastSpaceAt = now;
+		lastContinuationGap = gap;
+		// Require at least two continuation repeats as well as elapsed hold time.
+		if (spaceRunLen >= 4 && now - spaceRunStartAt >= CONFIG.holdMs) {
 			if (textBeforeSpace !== null) {
 				this.setText(textBeforeSpace);
 				textBeforeSpace = null;
 			}
-			spaceRunLen = 0;
+			this.resetSpaceRepeatRun();
 			beginIfReady(ctx);
 			// In the no-release fallback, this first recording frame may also be the
 			// last repeat before the user lets go. Arm immediately so release is still
