@@ -17,10 +17,17 @@
  *   • Stopping is robust: the held key's auto-repeats act as a keep-alive, and
  *     when they cease (you let go) a watchdog stops recording — this is also how
  *     dictation ends in terminals that never send a release event.
- *   • Transcribe via whisper.cpp (default) or $PI_PTT_TRANSCRIBE_CMD.
+ *   • Default: record a temp WAV, then transcribe via whisper.cpp or
+ *     $PI_PTT_TRANSCRIBE_CMD.
+ *   • If $PI_PTT_STREAM_CMD is set, record raw PCM s16le mono 16 kHz and
+ *     stream it to that local command's stdin. Its stdout must be JSONL events
+ *     such as {"type":"partial","text":"..."} and {"type":"final","text":"..."}.
+ *     Partial text is shown only in status; on release the final text is pasted.
+ *     Failures/no-final fall back to the WAV transcription path.
  */
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { once } from "node:events";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -41,6 +48,7 @@ export const CONFIG = {
 	key: process.env.PI_PTT_KEY?.trim() || "space",
 	holdMs: Number(process.env.PI_PTT_HOLD_MS) || 700,
 	transcribeCmd: process.env.PI_PTT_TRANSCRIBE_CMD?.trim() || "",
+	streamCmd: process.env.PI_PTT_STREAM_CMD?.trim() || "",
 	whisperBin: process.env.PI_PTT_WHISPER_BIN?.trim() || "whisper-cli",
 	whisperModel:
 		process.env.PI_PTT_WHISPER_MODEL?.trim() ||
@@ -93,14 +101,26 @@ const NOISE_PHRASES = new Set([
 ]);
 
 type State = "idle" | "recording" | "transcribing";
+type StreamEvent = { type?: unknown; text?: unknown; partial?: unknown; final?: unknown; is_final?: unknown };
+export type ParsedStreamEvent = { kind: "partial" | "final"; text: string } | { kind: "ignore" };
+type StreamSession = {
+	pcmChunks: Buffer[];
+	stdoutBuffer: string;
+	partialText: string;
+	finalText: string;
+	failed: boolean;
+	failureReason: string;
+};
 let state: State = "idle";
 let recorder: ChildProcess | null = null;
+let streamBackend: ChildProcess | null = null;
 let nudged = false;
 let lastToggleAt = 0;
 let maxDurationTimer: ReturnType<typeof setTimeout> | null = null;
 let liveCtx: ExtensionContext | null = null;
 let releasesSeen = false;
 let statusText: string | undefined;
+let streamSession: StreamSession | null = null;
 
 // Tap-vs-hold state for a typing PTT key (e.g. space). The space is inserted
 // immediately on press (so typing feels instant); textBeforeSpace snapshots the
@@ -157,6 +177,14 @@ function notify(ctx: ExtensionContext, msg: string, type: "info" | "error" = "in
 }
 
 /** Is a binary on PATH (or an absolute path that exists)? */
+function killQuietly(proc: ChildProcess): void {
+	try {
+		proc.kill("SIGKILL");
+	} catch {
+		// already gone
+	}
+}
+
 function haveBinary(bin: string): boolean {
 	if (bin.includes("/")) return fs.existsSync(bin);
 	try {
@@ -223,6 +251,152 @@ function run(
 	});
 }
 
+
+export function writeWavFromPcm(pathname: string, chunks: Buffer[]): void {
+	const pcm = Buffer.concat(chunks);
+	const header = Buffer.alloc(44);
+	header.write("RIFF", 0, "ascii");
+	header.writeUInt32LE(36 + pcm.length, 4);
+	header.write("WAVE", 8, "ascii");
+	header.write("fmt ", 12, "ascii");
+	header.writeUInt32LE(16, 16); // PCM fmt chunk length
+	header.writeUInt16LE(1, 20); // PCM
+	header.writeUInt16LE(1, 22); // mono
+	header.writeUInt32LE(16_000, 24);
+	header.writeUInt32LE(16_000 * 2, 28); // byte rate
+	header.writeUInt16LE(2, 32); // block align
+	header.writeUInt16LE(16, 34); // bits/sample
+	header.write("data", 36, "ascii");
+	header.writeUInt32LE(pcm.length, 40);
+	fs.writeFileSync(pathname, Buffer.concat([header, pcm]));
+}
+
+function streamText(value: unknown): string | null {
+	return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : null;
+}
+
+export function parseStreamEvent(event: StreamEvent): ParsedStreamEvent {
+	const typed = typeof event.type === "string" ? event.type : "";
+	const finalText = streamText(event.final) ?? (event.is_final === true ? streamText(event.text) : null);
+	const partialText = streamText(event.partial);
+	if (typed === "final" || finalText !== null) {
+		return { kind: "final", text: streamText(event.text) ?? finalText ?? "" };
+	}
+	if (typed === "partial" || partialText !== null) {
+		return { kind: "partial", text: streamText(event.text) ?? partialText ?? "" };
+	}
+	return { kind: "ignore" };
+}
+
+function applyStreamEvent(ctx: ExtensionContext, event: StreamEvent): void {
+	if (!streamSession) return;
+	const parsed = parseStreamEvent(event);
+	if (parsed.kind === "final") {
+		streamSession.finalText = parsed.text;
+		if (streamSession.finalText) setStatus(ctx, `🎙 final: ${streamSession.finalText}`);
+		return;
+	}
+	if (parsed.kind === "partial") {
+		streamSession.partialText = parsed.text;
+		if (streamSession.partialText) setStatus(ctx, `🎙 ${streamSession.partialText}`);
+	}
+}
+
+function parseStreamLines(ctx: ExtensionContext, text: string): void {
+	if (!streamSession) return;
+	streamSession.stdoutBuffer += text;
+	for (;;) {
+		const newline = streamSession.stdoutBuffer.indexOf("\n");
+		if (newline < 0) break;
+		const line = streamSession.stdoutBuffer.slice(0, newline).trim();
+		streamSession.stdoutBuffer = streamSession.stdoutBuffer.slice(newline + 1);
+		if (!line) continue;
+		try {
+			applyStreamEvent(ctx, JSON.parse(line) as StreamEvent);
+		} catch (err) {
+			streamSession.failed = true;
+			streamSession.failureReason = `malformed stream JSONL: ${String(err)}`;
+		}
+	}
+}
+
+function flushStreamLine(ctx: ExtensionContext): void {
+	if (!streamSession) return;
+	const line = streamSession.stdoutBuffer.trim();
+	streamSession.stdoutBuffer = "";
+	if (!line) return;
+	try {
+		applyStreamEvent(ctx, JSON.parse(line) as StreamEvent);
+	} catch (err) {
+		streamSession.failed = true;
+		streamSession.failureReason = `malformed stream JSONL: ${String(err)}`;
+	}
+}
+
+async function waitForClose(proc: ChildProcess, timeoutMs: number): Promise<void> {
+	if (proc.exitCode !== null) return;
+	let timer: ReturnType<typeof setTimeout> | null = null;
+	try {
+		await Promise.race([
+			once(proc, "close"),
+			new Promise<void>((resolve) => {
+				timer = setTimeout(resolve, timeoutMs);
+			}),
+		]);
+	} finally {
+		if (timer) clearTimeout(timer);
+	}
+}
+
+function startStreamingBackend(ctx: ExtensionContext): void {
+	if (!streamSession || !CONFIG.streamCmd) return;
+	try {
+		streamBackend = spawn("sh", ["-c", CONFIG.streamCmd], {
+			stdio: ["pipe", "pipe", "pipe"],
+			env: { ...process.env, PI_PTT_AUDIO_FORMAT: "s16le", PI_PTT_AUDIO_RATE: "16000", PI_PTT_AUDIO_CHANNELS: "1" },
+		});
+	} catch (err) {
+		streamSession.failed = true;
+		streamSession.failureReason = `failed to start stream backend: ${String(err)}`;
+		return;
+	}
+	streamBackend.stdin?.on("error", (err) => {
+		if (!streamSession) return;
+		streamSession.failed = true;
+		streamSession.failureReason = `stream backend stdin error: ${err.message}`;
+	});
+	streamBackend.stdout?.on("data", (d) => parseStreamLines(ctx, d.toString()));
+	streamBackend.stderr?.on("data", () => {
+		// Keep stderr drained so a chatty backend cannot block.
+	});
+	streamBackend.on("error", (err) => {
+		if (!streamSession) return;
+		streamSession.failed = true;
+		streamSession.failureReason = `stream backend error: ${err.message}`;
+	});
+	streamBackend.on("close", (code) => {
+		if (!streamSession) return;
+		flushStreamLine(ctx);
+		if (code !== 0 && !streamSession.finalText) {
+			streamSession.failed = true;
+			streamSession.failureReason = `stream backend exited with code ${code}`;
+		}
+	});
+}
+
+function startRawRecorder(ctx: ExtensionContext): ChildProcess | null {
+	try {
+		return spawn(
+			CONFIG.recBin,
+			["-q", "-c", "1", "-r", "16000", "-b", "16", "-e", "signed-integer", "-t", "raw", "-"],
+			{ stdio: ["ignore", "pipe", "ignore"] },
+		);
+	} catch (err) {
+		notify(ctx, `voice-input: failed to start recorder: ${String(err)}`, "error");
+		return null;
+	}
+}
+
 /** Transcribe the recorded WAV to text using the configured backend. */
 async function transcribe(): Promise<string> {
 	let raw: string;
@@ -282,32 +456,107 @@ function armHoldWatchdog(ctx: ExtensionContext): void {
 /** Start recording. Assumes preconditions were already checked. */
 function startRecording(ctx: ExtensionContext): void {
 	fs.rmSync(WAV_PATH, { force: true });
-	try {
-		recorder = spawn(
-			CONFIG.recBin,
-			["-q", "-c", "1", "-r", "16000", "-b", "16", WAV_PATH],
-			{ stdio: "ignore" },
-		);
-	} catch (err) {
-		notify(ctx, `voice-input: failed to start recorder: ${String(err)}`, "error");
-		state = "idle";
-		setStatus(ctx, undefined);
-		return;
+	streamSession = null;
+	streamBackend = null;
+
+	if (CONFIG.streamCmd) {
+		streamSession = {
+			pcmChunks: [],
+			stdoutBuffer: "",
+			partialText: "",
+			finalText: "",
+			failed: false,
+			failureReason: "",
+		};
+		startStreamingBackend(ctx);
+		recorder = startRawRecorder(ctx);
+		if (!recorder) {
+			if (streamBackend) killQuietly(streamBackend);
+			streamBackend = null;
+			streamSession = null;
+			state = "idle";
+			setStatus(ctx, undefined);
+			return;
+		}
+		recorder.stdout?.on("data", (chunk: Buffer) => {
+			streamSession?.pcmChunks.push(Buffer.from(chunk));
+			if (streamBackend?.stdin?.writable && !streamBackend.stdin.destroyed) {
+				streamBackend.stdin.write(chunk);
+			}
+		});
+	} else {
+		try {
+			recorder = spawn(
+				CONFIG.recBin,
+				["-q", "-c", "1", "-r", "16000", "-b", "16", WAV_PATH],
+				{ stdio: "ignore" },
+			);
+		} catch (err) {
+			notify(ctx, `voice-input: failed to start recorder: ${String(err)}`, "error");
+			state = "idle";
+			setStatus(ctx, undefined);
+			return;
+		}
 	}
+
 	recorder.on("error", (err) => {
 		notify(ctx, `voice-input: recorder error: ${err.message}`, "error");
 		recorder = null;
+		if (streamBackend) killQuietly(streamBackend);
+		streamBackend = null;
+		streamSession = null;
 		state = "idle";
 		setStatus(ctx, undefined);
 	});
 	state = "recording";
-	setStatus(ctx, "🎙 recording…");
+	setStatus(ctx, CONFIG.streamCmd ? "🎙 streaming…" : "🎙 recording…");
 	maxDurationTimer = setTimeout(() => {
 		if (state === "recording") void stopAndTranscribe(ctx);
 	}, MAX_RECORDING_MS);
 }
 
-/** Stop recording (finalising the WAV), then transcribe and paste. */
+async function stopRecorder(): Promise<void> {
+	if (!recorder) return;
+	const proc = recorder;
+	try {
+		proc.kill("SIGINT");
+	} catch {
+		// already gone
+	}
+	await waitForClose(proc, 3000);
+	if (recorder === proc) recorder = null;
+}
+
+async function stopStreamingBackend(ctx: ExtensionContext): Promise<string> {
+	const session = streamSession;
+	const proc = streamBackend;
+	if (!session) return "";
+	if (proc) {
+		try {
+			proc.stdin?.end();
+		} catch {
+			// already closed
+		}
+		await waitForClose(proc, 1500);
+		if (proc.exitCode === null && !proc.killed) proc.kill("SIGTERM");
+		await waitForClose(proc, 500);
+		if (proc.exitCode === null && !proc.killed) proc.kill("SIGKILL");
+		flushStreamLine(ctx);
+	}
+	streamBackend = null;
+	if (session.finalText && !session.failed) return session.finalText;
+	return "";
+}
+
+async function fallbackTranscribeFromStream(ctx: ExtensionContext, reason: string): Promise<string> {
+	const chunks = streamSession?.pcmChunks ?? [];
+	if (chunks.length === 0 || Buffer.concat(chunks).length < 1024) return "";
+	writeWavFromPcm(WAV_PATH, chunks);
+	if (reason) notify(ctx, `voice-input: streaming failed; falling back (${reason}).`, "info");
+	return transcribe();
+}
+
+/** Stop recording (finalising audio), then transcribe and paste. */
 async function stopAndTranscribe(ctx: ExtensionContext): Promise<void> {
 	clearHoldWatchdog();
 	if (maxDurationTimer) {
@@ -317,31 +566,26 @@ async function stopAndTranscribe(ctx: ExtensionContext): Promise<void> {
 	state = "transcribing";
 	setStatus(ctx, "⏳ transcribing…");
 
-	// SoX flushes and writes the WAV trailer on SIGINT; wait for it to exit.
-	if (recorder) {
-		const proc = recorder;
-		await new Promise<void>((resolve) => {
-			const done = () => resolve();
-			proc.once("close", done);
-			try {
-				proc.kill("SIGINT");
-			} catch {
-				done();
-			}
-			setTimeout(done, 3000); // backstop if the recorder ignores the signal
-		});
-		recorder = null;
-	}
-
-	if (!fs.existsSync(WAV_PATH) || fs.statSync(WAV_PATH).size < 1024) {
-		notify(ctx, "voice-input: no audio captured.", "error");
-		state = "idle";
-		setStatus(ctx, undefined);
-		return;
-	}
+	await stopRecorder();
 
 	try {
-		const text = await transcribe();
+		let text = "";
+		if (streamSession) {
+			text = await stopStreamingBackend(ctx);
+			if (!text) {
+				const reason = streamSession.failed
+					? streamSession.failureReason || "stream backend failed"
+					: "no final transcript";
+				text = await fallbackTranscribeFromStream(ctx, reason);
+			}
+		} else {
+			if (!fs.existsSync(WAV_PATH) || fs.statSync(WAV_PATH).size < 1024) {
+				notify(ctx, "voice-input: no audio captured.", "error");
+				return;
+			}
+			text = await transcribe();
+		}
+
 		if (isNonSpeech(text)) {
 			notify(ctx, "voice-input: no speech detected.", "info");
 		} else {
@@ -351,6 +595,8 @@ async function stopAndTranscribe(ctx: ExtensionContext): Promise<void> {
 		notify(ctx, `voice-input: transcription failed: ${String(err)}`, "error");
 	} finally {
 		fs.rmSync(WAV_PATH, { force: true });
+		streamSession = null;
+		streamBackend = null;
 		state = "idle";
 		setStatus(ctx, undefined);
 	}
@@ -391,13 +637,14 @@ export function cleanup(): void {
 		maxDurationTimer = null;
 	}
 	if (recorder) {
-		try {
-			recorder.kill("SIGKILL");
-		} catch {
-			// already gone
-		}
+		killQuietly(recorder);
 		recorder = null;
 	}
+	if (streamBackend) {
+		killQuietly(streamBackend);
+		streamBackend = null;
+	}
+	streamSession = null;
 	fs.rmSync(WAV_PATH, { force: true });
 }
 

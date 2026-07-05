@@ -27,15 +27,25 @@
  * immediately when the session already has messages (splash is skipped).
  *
  * ── Transcription backend ────────────────────────────────────────────────────
+ * Default (when $PI_PTT_STREAM_CMD is unset): record a temp WAV on release, then
+ * transcribe it with either:
  *   1. $PI_PTT_TRANSCRIBE_CMD — a `sh -c` command; WAV path in $PI_PTT_AUDIO,
- *      stdout is the transcript (plug in a cloud API).
+ *      stdout is the transcript (intended for local/self-hosted backends).
  *   2. whisper.cpp — $PI_PTT_WHISPER_BIN (default `whisper-cli`) + model
  *      $PI_PTT_WHISPER_MODEL (default ~/.cache/whisper/ggml-base.en.bin).
  *      ggml-base.en.bin is English-only; use ggml-small.bin+ for Danish.
  *
+ * Streaming: set $PI_PTT_STREAM_CMD to a local command that reads raw PCM s16le
+ * mono 16 kHz from stdin and writes JSONL transcript events to stdout, e.g.
+ * {"type":"partial","text":"..."} and {"type":"final","text":"..."}.
+ * Partial text is shown in status only. On release, final text is pasted; on
+ * stream failure/malformed JSON/no final, the captured PCM is written as WAV and
+ * the default transcription path above is used as fallback.
+ *
  * ── Config via environment ───────────────────────────────────────────────────
- *   PI_PTT_KEY, PI_PTT_HOLD_MS, PI_PTT_TRANSCRIBE_CMD, PI_PTT_WHISPER_BIN,
- *   PI_PTT_WHISPER_MODEL, PI_PTT_REC_BIN — see ../_voice-input/ptt.ts.
+ *   PI_PTT_KEY, PI_PTT_HOLD_MS, PI_PTT_STREAM_CMD, PI_PTT_TRANSCRIBE_CMD,
+ *   PI_PTT_WHISPER_BIN, PI_PTT_WHISPER_MODEL, PI_PTT_REC_BIN — see
+ *   ../_voice-input/ptt.ts.
  *
  * Interactive + orchestrator only: needs the TUI editor and a real mic, so it
  * stays inert in print/RPC mode and for subagents.
@@ -104,9 +114,12 @@ export default function (pi: ExtensionAPI) {
 			const arg = args.trim().toLowerCase();
 			if (arg === "status") {
 				const problem = checkReady();
-				const backend = CONFIG.transcribeCmd
+				const finalBackend = CONFIG.transcribeCmd
 					? "custom command ($PI_PTT_TRANSCRIBE_CMD)"
 					: `whisper.cpp (${CONFIG.whisperBin}, model ${CONFIG.whisperModel})`;
+				const backend = CONFIG.streamCmd
+					? `streaming ($PI_PTT_STREAM_CMD; fallback: ${finalBackend})`
+					: finalBackend;
 				const kitty = isKittyProtocolActive();
 				const releases = releasesAvailable();
 				const mode = KEY_IS_TYPING
