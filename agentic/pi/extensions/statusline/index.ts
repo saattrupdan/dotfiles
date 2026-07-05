@@ -35,14 +35,6 @@ export default function (pi: ExtensionAPI) {
 	const install = (ctx: ExtensionContext) => {
 		if (!ctx.hasUI) return;
 
-		// Don't overwrite splash's EMPTY_COMPONENT footer on fresh sessions.
-		// If there are no messages yet (splash is showing), skip installing
-		// the footer - it will be installed later on agent_start or model_select
-		// when there ARE messages.
-		const entries = ctx.sessionManager.getEntries();
-		const hasMessages = entries.some((e) => e.type === "message");
-		if (!hasMessages) return;
-
 		ctx.ui.setFooter((tui, theme, footerData) => {
 			requestRender = () => tui.requestRender();
 
