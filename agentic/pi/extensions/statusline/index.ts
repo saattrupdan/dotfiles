@@ -294,7 +294,7 @@ function formatQuotaBucket(
 	if (remainingPercent === undefined && bucket.resetAt === undefined) return undefined;
 
 	// Build the bar showing REMAINING quota (not used)
-	let text = `${theme.fg("muted", label)} ${progressBar(remainingPercent, theme)}`;
+	let text = `${theme.fg("muted", label)} ${quotaBar(remainingPercent, theme)}`;
 	if (remainingPercent !== undefined) {
 		text += ` ${theme.fg("dim", `${Math.round(remainingPercent)}%`)}`;
 	}
@@ -328,13 +328,16 @@ function joinWithSeparator(theme: ExtensionContext["ui"]["theme"], parts: string
 	return parts.filter(Boolean).join(theme.fg("dim", "  │  "));
 }
 
-// ANSI color codes for quota remaining bars
-// Green when >50% remaining, yellow 20-50%, red <20%
+// ANSI color codes
 const COLOR_GREEN = "\x1b[38;5;71m"; // 256-color green
 const COLOR_YELLOW = "\x1b[33m"; // ANSI yellow
 const COLOR_RED = "\x1b[31m"; // ANSI red
 const COLOR_RESET = "\x1b[0m";
 
+/**
+ * Progress bar for context usage (goes UP as you use more).
+ * Colors: green <50%, yellow 50-80%, red >80% used.
+ */
 function progressBar(
 	percent: number | undefined,
 	theme: ExtensionContext["ui"]["theme"],
@@ -345,8 +348,38 @@ function progressBar(
 	const clamped = Math.max(0, Math.min(100, percent));
 	const filled = Math.round((clamped / 100) * BAR_WIDTH);
 
+	// Color based on USAGE percentage:
+	// Green <50%, yellow 50-80%, red >80%
+	let colorCode: string;
+	if (clamped > 80) {
+		colorCode = COLOR_RED;
+	} else if (clamped >= 50) {
+		colorCode = COLOR_YELLOW;
+	} else {
+		colorCode = COLOR_GREEN;
+	}
+
+	const barChar = `${colorCode}█${COLOR_RESET}`;
+	const emptyChar = theme.fg("dim", "░");
+	return `[${barChar.repeat(filled)}${emptyChar.repeat(BAR_WIDTH - filled)}]`;
+}
+
+/**
+ * Progress bar for quota remaining (goes DOWN as you use more).
+ * Colors: green >50% remaining, yellow 20-50%, red <20%.
+ */
+function quotaBar(
+	percent: number | undefined,
+	theme: ExtensionContext["ui"]["theme"],
+): string {
+	if (percent === undefined || !Number.isFinite(percent)) {
+		return `[${"·".repeat(BAR_WIDTH)}]`;
+	}
+	const clamped = Math.max(0, Math.min(100, percent));
+	const filled = Math.round((clamped / 100) * BAR_WIDTH);
+
 	// Color based on REMAINING percentage:
-	// Green when >50% remaining, yellow 20-50%, red <20%
+	// Green >50%, yellow 20-50%, red <20%
 	let colorCode: string;
 	if (clamped >= 50) {
 		colorCode = COLOR_GREEN;
