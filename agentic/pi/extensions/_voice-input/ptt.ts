@@ -79,20 +79,21 @@ const TOGGLE_DEBOUNCE_MS = 350;
 const HOLD_WATCHDOG_MS = 700;
 /** Delay before auto-sending the transcription (ms). Configurable via PI_PTT_AUTO_SEND_DELAY_MS. */
 const AUTO_SEND_DELAY_MS = Number(process.env.PI_PTT_AUTO_SEND_DELAY_MS) || 500;
-/** Repeat-only fallback (Neovim's :terminal): the first OS repeat can be
- *  delayed longer than the steady-state repeat cadence, especially with custom
- *  keyboard settings. */
-const REPEAT_MAX_INITIAL_GAP_MS = 1_100;
-/** The first OS repeat should not arrive immediately; repeated human taps can. */
-const REPEAT_MIN_INITIAL_GAP_MS = 250;
-/** Once OS repeat starts, following gaps should be much shorter than tap cadence. */
-const REPEAT_MAX_CONTINUATION_GAP_MS = 220;
+// Repeat-only fallback timing (terminals without key-release events, e.g. Neovim's :terminal).
+// These tolerances are deliberately lenient to accommodate custom macOS keyboard settings,
+// accessibility configurations, and the natural ramp-up of the OS key repeater.
+/** Repeat-only fallback: max initial repeat delay (accommodates slow initial repeat). */
+const REPEAT_MAX_INITIAL_GAP_MS = 1_400;
+/** Repeat-only fallback: min initial repeat delay (human taps can be this fast). */
+const REPEAT_MIN_INITIAL_GAP_MS = 200;
+/** Repeat-only fallback: max continuation gap (must be < typical human tap cadence). */
+const REPEAT_MAX_CONTINUATION_GAP_MS = 250;
 /** If a plausible repeat candidate stalls, flush it back as typed spaces. */
-const REPEAT_CANDIDATE_STALL_MS = REPEAT_MAX_CONTINUATION_GAP_MS + 120;
+const REPEAT_CANDIDATE_STALL_MS = REPEAT_MAX_CONTINUATION_GAP_MS + 150;
 /** Consecutive OS repeat gaps should be reasonably regular. */
-const REPEAT_MAX_JITTER_MS = 100;
+const REPEAT_MAX_JITTER_MS = 120;
 /** OS continuation repeat should be noticeably faster than its initial delay. */
-const REPEAT_MAX_CONTINUATION_TO_INITIAL_RATIO = 0.8;
+const REPEAT_MAX_CONTINUATION_TO_INITIAL_RATIO = 0.85;
 /** Safety cap: auto-stop recording if everything else somehow misses. */
 const MAX_RECORDING_MS = 120_000;
 
@@ -931,7 +932,10 @@ export class PttEditor extends CustomEditor {
 		}
 
 		const tooSlow = gap > REPEAT_MAX_CONTINUATION_GAP_MS;
+		// Only apply the ratio check after we've seen at least 2 continuation gaps;
+		// the first continuation can vary widely as the OS repeater ramps up.
 		const tooCloseToInitialDelay =
+			continuationRepeatCount >= 2 &&
 			gap > initialRepeatGap * REPEAT_MAX_CONTINUATION_TO_INITIAL_RATIO;
 		const tooIrregular =
 			lastContinuationGap > 0 &&
