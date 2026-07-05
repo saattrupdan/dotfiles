@@ -10,10 +10,13 @@
  * Behaviour:
  *   • Hold the PTT key (default: space) to record; release to transcribe+paste.
  *   • Space uses tap-vs-hold: a quick tap types a space, a hold past
- *     PI_PTT_HOLD_MS (default 700) records. Needs key-release events.
+ *     PI_PTT_HOLD_MS (default 700) records. Two mechanisms cover both terminals:
+ *     a release-driven one where key releases arrive (iTerm2), and an OS
+ *     auto-repeat fallback where they don't (Neovim's :terminal reports the
+ *     Kitty protocol active but forwards only bare press bytes).
  *   • Stopping is robust: the held key's auto-repeats act as a keep-alive, and
- *     when they cease (you let go) a watchdog stops recording even if the actual
- *     release event was dropped/batched.
+ *     when they cease (you let go) a watchdog stops recording — this is also how
+ *     dictation ends in terminals that never send a release event.
  *   • Transcribe via whisper.cpp (default) or $PI_PTT_TRANSCRIBE_CMD.
  */
 
@@ -23,7 +26,13 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import { CustomEditor, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { isKeyRelease, isKeyRepeat, isKittyProtocolActive, matchesKey } from "@earendil-works/pi-tui";
+import {
+	isKeyRelease,
+	isKeyRepeat,
+	isKittyProtocolActive,
+	type KeyId,
+	matchesKey,
+} from "@earendil-works/pi-tui";
 
 const STATUS_KEY = "voice-input";
 
@@ -49,6 +58,11 @@ const TOGGLE_DEBOUNCE_MS = 350;
  *  treat the key as released and stop — the safety net for dropped/batched
  *  release events. Must exceed the OS key-repeat interval. */
 const HOLD_WATCHDOG_MS = 700;
+/** Repeat-only fallback (Neovim's :terminal): a gap between two Space bytes
+ *  longer than this means the key was physically released between them — the OS
+ *  auto-repeat interval is well under this, a human's repeated taps are not
+ *  always, so it also caps how long a broken run stays "held". */
+const REPEAT_MAX_GAP_MS = 300;
 /** Safety cap: auto-stop recording if everything else somehow misses. */
 const MAX_RECORDING_MS = 120_000;
 
@@ -84,19 +98,17 @@ let statusText: string | undefined;
 // editor so we can remove that space again if the press turns into a hold.
 let holdTimer: ReturnType<typeof setTimeout> | null = null;
 let textBeforeSpace: string | null = null;
+// Repeat-only fallback state (terminals that report the key event but never a
+// release, e.g. Neovim's :terminal). A held key streams auto-repeat bytes; a tap
+// is a single byte. We treat a run of same-key bytes (gaps < REPEAT_MAX_GAP_MS)
+// held past CONFIG.holdMs as a hold. spaceRunStartAt anchors the run; spaceRunLen
+// counts its bytes (≥2 proves auto-repeat, so a lone tap can never record).
+let spaceRunStartAt = 0;
+let spaceRunLen = 0;
+let lastSpaceAt = 0;
 // Repeat-gap watchdog: while recording from a hold, the held key keeps firing;
 // when it stops, this fires and stops recording (covers dropped release events).
 let holdWatchdog: ReturnType<typeof setTimeout> | null = null;
-
-/** Opt-in diagnostic log (PI_PTT_DEBUG=1). */
-function dbg(line: string): void {
-	if (!process.env.PI_PTT_DEBUG) return;
-	try {
-		fs.appendFileSync("/tmp/pi-voice-input-debug.log", `${Date.now() % 100000} ${line}\n`);
-	} catch {
-		// best effort
-	}
-}
 
 export function setLiveCtx(ctx: ExtensionContext): void {
 	liveCtx = ctx;
@@ -109,7 +121,13 @@ export function getStatusText(): string | undefined {
 	return statusText;
 }
 export function releasesAvailable(): boolean {
-	return isKittyProtocolActive() || releasesSeen;
+	// True once we have ACTUALLY observed a key-release event — not merely
+	// because the terminal *claims* the Kitty protocol is active. iTerm2 delivers
+	// releases; Neovim's :terminal answers the Kitty negotiation (so
+	// isKittyProtocolActive() reports true) yet forwards every key as a bare press
+	// byte — no release, no repeat. So this selects the tap/hold ALGORITHM: a
+	// release-driven one when releases arrive, else the auto-repeat fallback.
+	return releasesSeen;
 }
 
 function setStatus(ctx: ExtensionContext, text: string | undefined): void {
@@ -376,18 +394,17 @@ export class PttEditor extends CustomEditor {
 
 	override handleInput(data: string): void {
 		if (!releasesSeen && isKeyRelease(data)) releasesSeen = true;
-		dbg(
-			`in ${JSON.stringify(data)} rel=${isKeyRelease(data)} rep=${isKeyRepeat(data)}` +
-				` match=${matchesKey(data, CONFIG.key)} state=${state} hold=${holdTimer !== null}`,
-		);
 		try {
-			if (liveCtx && matchesKey(data, CONFIG.key)) {
+			if (liveCtx && matchesKey(data, CONFIG.key as KeyId)) {
 				if (this.handlePtt(data, liveCtx)) return; // fully handled → consume
 			} else {
 				// A different key arrived while a space's hold timer was pending →
 				// the space was a tap. It's already inserted, so just cancel the
 				// hold detection and let this key type normally.
 				if (holdTimer) cancelHoldDetection();
+				// A different key also ends any in-progress Space auto-repeat run
+				// (fallback path) — so the next Space starts fresh and types.
+				spaceRunLen = 0;
 				// We only want the PTT key's release; drop every other release,
 				// because the base editor never normally receives releases and
 				// could double-process a keystroke if handed one.
@@ -401,13 +418,16 @@ export class PttEditor extends CustomEditor {
 
 	/** Returns true if the key was consumed; false to let it type normally. */
 	private handlePtt(data: string, ctx: ExtensionContext): boolean {
-		const releases = releasesAvailable();
 		if (KEY_IS_TYPING) {
-			if (!releases) return false; // let space type (can't PTT without releases)
+			// Space needs a terminal that at least negotiated the Kitty protocol,
+			// so we get a discrete event per keystroke to time (iTerm2 AND Neovim's
+			// :terminal both qualify). In a bare legacy terminal it just types — use
+			// /talk. The tap/hold ALGORITHM then adapts to whether releases arrive.
+			if (!isKittyProtocolActive()) return false;
 			return this.handleTypingHold(data, ctx);
 		}
 		// Non-typing key (f8, etc.).
-		if (releases) {
+		if (releasesAvailable()) {
 			if (isKeyRelease(data)) {
 				if (state === "recording") void stopAndTranscribe(ctx);
 			} else if (state === "recording") {
@@ -429,10 +449,17 @@ export class PttEditor extends CustomEditor {
 	}
 
 	/**
-	 * Tap-vs-hold for a typing key. The space is inserted immediately on the
-	 * first press (so typing feels instant, no release-lag); if the key is still
-	 * held past the threshold it becomes a hold — we remove that one space and
-	 * start recording. Release before the threshold leaves the space as typed.
+	 * Tap-vs-hold for a typing key, with two mechanisms because terminals differ:
+	 *
+	 *   • Release-driven (iTerm2, Kitty flag 2): the space is inserted on press
+	 *     so typing feels instant; a release before CONFIG.holdMs is a TAP (keep
+	 *     the space), a release after is the end of dictation. Flicker-free.
+	 *   • Auto-repeat fallback (Neovim's :terminal reports the protocol active but
+	 *     never sends releases): a held key streams repeat bytes, a tap is one
+	 *     byte. We require a run of same-key bytes (gaps < REPEAT_MAX_GAP_MS) held
+	 *     past CONFIG.holdMs — i.e. ≥2 bytes AND enough elapsed — before recording.
+	 *     A lone tap (one byte, then a pause) can never satisfy that, and stopping
+	 *     falls back to the repeat keep-alive watchdog.
 	 */
 	private handleTypingHold(data: string, ctx: ExtensionContext): boolean {
 		if (isKeyRelease(data)) {
@@ -441,23 +468,24 @@ export class PttEditor extends CustomEditor {
 			} else if (state === "recording") {
 				void stopAndTranscribe(ctx); // released after a hold → stop dictation
 			}
+			spaceRunLen = 0;
 			return true;
 		}
-		// Repeat of the held key while recording → keep-alive; the watchdog stops
-		// recording once these cease, even if the release event is lost.
+		// Repeat/press of the held key while recording → keep-alive; the watchdog
+		// stops recording once these cease (covers terminals with no release event).
 		if (state === "recording") {
 			armHoldWatchdog(ctx);
 			return true;
 		}
-		if (holdTimer) return true; // repeat within the press window → suppress
-		if (isKeyRepeat(data)) return true; // kitty repeat safety
-		// First press: type the space now, then watch for a hold.
-		if (state === "idle") {
+
+		if (releasesSeen) {
+			// Release-driven path: the release above cancels a tap or ends a hold.
+			if (holdTimer) return true; // repeat within the press window → suppress
+			if (isKeyRepeat(data)) return true; // kitty repeat safety
 			textBeforeSpace = this.getText();
 			super.handleInput(data); // insert the space immediately
 			holdTimer = setTimeout(() => {
 				holdTimer = null;
-				dbg("HOLD TIMER FIRED -> recording");
 				// Became a hold: remove the space we optimistically typed, then record.
 				if (textBeforeSpace !== null) {
 					this.setText(textBeforeSpace);
@@ -465,6 +493,40 @@ export class PttEditor extends CustomEditor {
 				}
 				beginIfReady(ctx);
 			}, CONFIG.holdMs);
+			return true;
+		}
+
+		// Auto-repeat fallback: no releases, so infer hold from a sustained run.
+		const now = Date.now();
+		if (now - lastSpaceAt > REPEAT_MAX_GAP_MS) {
+			spaceRunLen = 0; // gap too long → the previous run ended (key was up)
+		}
+		lastSpaceAt = now;
+		spaceRunLen += 1;
+		if (spaceRunLen === 1) {
+			// First byte of a run: type the space (a normal space until proven a
+			// hold) and anchor the run. Extra bytes below are auto-repeat, so we
+			// suppress them — consecutive spaces are meaningless in the input box,
+			// which also means a stray tap-run leaves just the one typed space.
+			spaceRunStartAt = now;
+			textBeforeSpace = this.getText();
+			super.handleInput(data);
+			return true;
+		}
+		// spaceRunLen ≥ 2 → the key auto-repeated (it is genuinely held). Once the
+		// run has lasted past the hold threshold, it's a hold: strip the space we
+		// typed on the first byte and start recording.
+		if (now - spaceRunStartAt >= CONFIG.holdMs) {
+			if (textBeforeSpace !== null) {
+				this.setText(textBeforeSpace);
+				textBeforeSpace = null;
+			}
+			spaceRunLen = 0;
+			beginIfReady(ctx);
+			// In the no-release fallback, this first recording frame may also be the
+			// last repeat before the user lets go. Arm immediately so release is still
+			// inferred from silence rather than waiting for one more repeat byte.
+			if (getState() === "recording") armHoldWatchdog(ctx);
 		}
 		return true;
 	}

@@ -11,8 +11,11 @@
  *
  * ── SPACE as the PTT key (tap vs hold) ───────────────────────────────────────
  * Space is also a typing key, so a *quick tap* inserts a normal space and only a
- * *held* space (past PI_PTT_HOLD_MS, default 500ms) starts recording. This needs
- * key-release events (Kitty keyboard protocol; confirmed in iTerm2 3.6.11). In a
+ * *held* space (past PI_PTT_HOLD_MS, default 700ms) starts recording. This works
+ * in any terminal that negotiates the Kitty keyboard protocol: iTerm2 sends key
+ * releases (release-driven detection), while Neovim's :terminal reports the
+ * protocol active but forwards only bare press bytes, so we fall back to OS key
+ * auto-repeat to tell a hold from a tap (see ../_voice-input/ptt.ts). In a bare
  * legacy terminal space just types — use /talk or set PI_PTT_KEY to a non-typing
  * key (e.g. f8), which then hold-to-talks (or tap-toggles in legacy terminals).
  *
@@ -38,7 +41,7 @@
  * stays inert in print/RPC mode and for subagents.
  */
 
-import type { EditorFactory, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isKittyProtocolActive } from "@earendil-works/pi-tui";
 
 import {
@@ -48,6 +51,7 @@ import {
 	checkReady,
 	cleanup,
 	getState,
+	releasesAvailable,
 	setLiveCtx,
 	toggle,
 } from "../_voice-input/ptt.ts";
@@ -58,7 +62,11 @@ let editorInstalled = false;
 function installEditor(ctx: ExtensionContext): void {
 	setLiveCtx(ctx);
 	if (!ctx.hasUI || editorInstalled) return;
-	const factory: EditorFactory = (tui, theme, keybindings) => new PttEditor(tui, theme, keybindings);
+	const factory: NonNullable<Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]> = (
+		tui,
+		theme,
+		keybindings,
+	) => new PttEditor(tui, theme, keybindings);
 	ctx.ui.setEditorComponent(factory);
 	editorInstalled = true;
 }
@@ -99,11 +107,14 @@ export default function (pi: ExtensionAPI) {
 				const backend = CONFIG.transcribeCmd
 					? "custom command ($PI_PTT_TRANSCRIBE_CMD)"
 					: `whisper.cpp (${CONFIG.whisperBin}, model ${CONFIG.whisperModel})`;
-				const releases = isKittyProtocolActive();
+				const kitty = isKittyProtocolActive();
+				const releases = releasesAvailable();
 				const mode = KEY_IS_TYPING
-					? releases
-						? `hold-to-talk (tap "${CONFIG.key}" = type, hold ${CONFIG.holdMs}ms = record)`
-						: `typing only — "${CONFIG.key}" can't be PTT without key-releases; use /talk`
+					? kitty
+						? releases
+							? `hold-to-talk (tap "${CONFIG.key}" = type, hold ${CONFIG.holdMs}ms = record; release-driven)`
+							: `hold-to-talk (tap "${CONFIG.key}" = type, hold ${CONFIG.holdMs}ms = record; auto-repeat fallback — no key-releases)`
+						: `typing only — "${CONFIG.key}" can't be PTT in this terminal; use /talk`
 					: releases
 						? "hold-to-talk (terminal reports key releases)"
 						: "tap-to-toggle (terminal has no key-release events)";
