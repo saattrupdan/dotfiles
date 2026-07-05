@@ -52,9 +52,10 @@ export default function (pi: ExtensionAPI) {
 				dispose() {
 					if (requestRender) requestRender = undefined;
 				},
-				invalidate() {},			render(width: number): string[] {
+				invalidate() {},
+			render(width: number): string[] {
 				const line = buildStatusline(ctx, theme, footerData);
-				return [truncateToWidth(line, width), ''];
+				return ['', truncateToWidth(line, width), ''];
 			},
 			};
 		});
