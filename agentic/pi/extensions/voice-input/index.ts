@@ -27,20 +27,25 @@
  * immediately when the session already has messages (splash is skipped).
  *
  * ── Transcription backend ────────────────────────────────────────────────────
- * Default (when $PI_PTT_STREAM_CMD is unset): record a temp WAV on release, then
- * transcribe it with either:
+ * Default: streaming mode using whisper-stream.sh wrapper (if present).
+ * Records raw PCM s16le mono 16 kHz, streams to whisper-server in ~1s chunks,
+ * shows partials in status, pastes final text on release. Falls back to WAV
+ * transcription on stream failure or no final.
+ *
+ * Fallback (when $PI_PTT_STREAM_CMD is unset AND wrapper missing): record a temp
+ * WAV on release, then transcribe with either:
  *   1. $PI_PTT_TRANSCRIBE_CMD — a `sh -c` command; WAV path in $PI_PTT_AUDIO,
  *      stdout is the transcript (intended for local/self-hosted backends).
  *   2. whisper.cpp — $PI_PTT_WHISPER_BIN (default `whisper-cli`) + model
  *      $PI_PTT_WHISPER_MODEL (default ~/.cache/whisper/ggml-base.en.bin).
  *      ggml-base.en.bin is English-only; use ggml-small.bin+ for Danish.
  *
- * Streaming: set $PI_PTT_STREAM_CMD to a local command that reads raw PCM s16le
- * mono 16 kHz from stdin and writes JSONL transcript events to stdout, e.g.
- * {"type":"partial","text":"..."} and {"type":"final","text":"..."}.
+ * Custom streaming: set $PI_PTT_STREAM_CMD to a local command that reads raw PCM
+ * s16le mono 16 kHz from stdin and writes JSONL transcript events to stdout,
+ * e.g. {"type":"partial","text":"..."} and {"type":"final","text":"..."}.
  * Partial text is shown in status only. On release, final text is pasted; on
  * stream failure/malformed JSON/no final, the captured PCM is written as WAV and
- * the default transcription path above is used as fallback.
+ * the fallback transcription path above is used.
  *
  * ── Config via environment ───────────────────────────────────────────────────
  *   PI_PTT_KEY, PI_PTT_HOLD_MS, PI_PTT_STREAM_CMD, PI_PTT_TRANSCRIBE_CMD,

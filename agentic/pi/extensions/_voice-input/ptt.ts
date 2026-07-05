@@ -17,13 +17,14 @@
  *   • Stopping is robust: the held key's auto-repeats act as a keep-alive, and
  *     when they cease (you let go) a watchdog stops recording — this is also how
  *     dictation ends in terminals that never send a release event.
- *   • Default: record a temp WAV, then transcribe via whisper.cpp or
- *     $PI_PTT_TRANSCRIBE_CMD.
- *   • If $PI_PTT_STREAM_CMD is set, record raw PCM s16le mono 16 kHz and
- *     stream it to that local command's stdin. Its stdout must be JSONL events
- *     such as {"type":"partial","text":"..."} and {"type":"final","text":"..."}.
- *     Partial text is shown only in status; on release the final text is pasted.
- *     Failures/no-final fall back to the WAV transcription path.
+ *   • Default: streaming mode using whisper-stream.sh wrapper around whisper-server
+ *     (if the wrapper exists). Records raw PCM s16le mono 16 kHz, streams to
+ *     whisper-server in chunks, shows partials in status, pastes final on release.
+ *   • Fallback: if $PI_PTT_STREAM_CMD is unset or wrapper missing, records a temp
+ *     WAV then transcribes via whisper-cli or $PI_PTT_TRANSCRIBE_CMD.
+ *   • Streaming backend contract: stdin raw PCM s16le mono 16 kHz,
+ *     stdout JSONL events {"type":"partial"|"final","text":"..."}.
+ *     Partials are status-only; final is pasted. Failures fall back to WAV path.
  */
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
@@ -44,11 +45,15 @@ import {
 const STATUS_KEY = "voice-input";
 
 /** Resolved once at load — env is stable for the process lifetime. */
+const EXTENSION_DIR = path.join(os.homedir(), "gitsky", "dotfiles", "agentic", "pi", "extensions", "_voice-input");
+const DEFAULT_STREAM_WRAPPER = path.join(EXTENSION_DIR, "bin", "whisper-stream.sh");
+const HAS_STREAM_WRAPPER = fs.existsSync(DEFAULT_STREAM_WRAPPER);
+
 export const CONFIG = {
 	key: process.env.PI_PTT_KEY?.trim() || "space",
 	holdMs: Number(process.env.PI_PTT_HOLD_MS) || 700,
 	transcribeCmd: process.env.PI_PTT_TRANSCRIBE_CMD?.trim() || "",
-	streamCmd: process.env.PI_PTT_STREAM_CMD?.trim() || "",
+	streamCmd: process.env.PI_PTT_STREAM_CMD?.trim() || (HAS_STREAM_WRAPPER ? DEFAULT_STREAM_WRAPPER : ""),
 	whisperBin: process.env.PI_PTT_WHISPER_BIN?.trim() || "whisper-cli",
 	whisperModel:
 		process.env.PI_PTT_WHISPER_MODEL?.trim() ||
