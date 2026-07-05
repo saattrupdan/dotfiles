@@ -3,8 +3,12 @@
  *
  * Replaces Pi's built-in interactive footer with a single statusline containing
  * the active model, context window, and context usage. For OAuth subscription models
- * (e.g., OpenAI Codex, Anthropic Claude Pro), renders quota bars by reading from
- * Codex session rollout files (~/.codex/sessions/rollout-*.jsonl).
+ * (e.g., OpenAI Codex, Anthropic Claude Pro), renders quota bars by fetching live
+ * quota from the Codex responses API (the `x-codex-*` rate-limit response headers).
+ *
+ * Pi issues its own codex requests over WebSocket and never writes ~/.codex
+ * rollout files, so the bars are refreshed by making a minimal request of our own
+ * after each turn and on a slow idle timer (see codexQuota.ts).
  *
  * Quota bars show "remaining" (not used): 100% when full, counting down.
  * Colors: green > 50%, yellow 20-50%, red < 20%.
@@ -20,13 +24,12 @@ import { mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname } from "path";
 import {
 	bucketRemainingPercent,
-	readCodexQuotaFromDirectory,
+	fetchCodexQuotaFromApi,
 	type CodexQuota,
 	type QuotaBucket,
 } from "./codexQuota.ts";
 
 const BAR_WIDTH = 10;
-const CODEX_SESSIONS_DIR = `${process.env.HOME}/.codex/sessions`;
 const CACHE_FILE = `${process.env.HOME}/.pi/agent/state/statusline/codex-quota-cache.json`;
 
 let codexQuota: CodexQuota = {};
@@ -34,9 +37,12 @@ let requestRender: (() => void) | undefined;
 let pollTimer: NodeJS.Timeout | undefined;
 let installed = false;
 
-// Debounce timeout for reading rollout files (ms)
-const ROLLOUT_READ_DELAY_MS = 500;
-let rolloutReadPending = false;
+// Re-render cadence (keeps reset countdowns fresh).
+const RENDER_TICK_MS = 60_000;
+// Minimum spacing between non-forced (background) quota probes.
+const BACKGROUND_FETCH_INTERVAL_MS = 5 * 60_000;
+let quotaFetchInFlight = false;
+let lastQuotaFetchMs = 0;
 
 /**
  * Load cached quota data from previous sessions.
@@ -112,14 +118,15 @@ export default function (pi: ExtensionAPI) {
 		ctx.ui.setFooter((tui, theme, footerData) => {
 			requestRender = () => tui.requestRender();
 
-			// Also try to read fresh data from latest rollout file.
-			if (shouldPollQuota(ctx)) readCodexQuotaDebounced();
+			// Populate live quota as soon as the footer installs.
+			refreshCodexQuota(ctx, { force: true });
 
-			// Poll quota periodically (every 30s)
+			// Keep reset countdowns fresh, and probe quota on a slow cadence.
 			if (!pollTimer) {
 				pollTimer = setInterval(() => {
-					if (shouldPollQuota(ctx)) readCodexQuotaDebounced();
-				}, 30000);
+					refreshCodexQuota(ctx);
+					maybeRender?.();
+				}, RENDER_TICK_MS);
 			}
 
 			return {
@@ -151,11 +158,14 @@ export default function (pi: ExtensionAPI) {
 	});
 	pi.on("model_select", (_event, ctx) => {
 		if (setupFooter(ctx)) return;
+		// Switched model — if it's codex, refresh against the right account.
+		refreshCodexQuota(ctx, { force: true });
 		maybeRender?.();
 	});
 	pi.on("turn_end", (_event, ctx) => {
 		if (setupFooter(ctx)) return;
-		readCodexQuotaDebounced();
+		// Usage just changed on the backend — refresh now.
+		refreshCodexQuota(ctx, { force: true });
 		maybeRender?.();
 	});
 	pi.on("message_end", (event, ctx) => {
@@ -164,41 +174,39 @@ export default function (pi: ExtensionAPI) {
 
 		setupFooter(ctx, { force: true, allowWithoutMessages: true });
 		maybeRender?.();
-		readCodexQuotaDebounced();
-	});
-
-	// Also try to read quota after provider response
-	pi.on("after_provider_response", (_event, ctx) => {
-		if (!shouldPollQuota(ctx)) return;
-		readCodexQuotaDebounced();
-		maybeRender?.();
+		refreshCodexQuota(ctx, { force: true });
 	});
 }
 
 /**
- * Debounced Codex quota read - avoids file thrashing during active streaming.
+ * Fetch live Codex quota from the responses API and update the bars.
+ *
+ * Non-forced calls are throttled to BACKGROUND_FETCH_INTERVAL_MS so idle polling
+ * stays cheap; forced calls (after a turn / on install) always run.
  */
-function readCodexQuotaDebounced() {
-	if (rolloutReadPending) return;
-	rolloutReadPending = true;
+function refreshCodexQuota(ctx: ExtensionContext, options: { force?: boolean } = {}): void {
+	// Only codex exposes the x-codex-* quota headers we read.
+	if (!isCodex(ctx)) return;
+	if (quotaFetchInFlight) return;
 
-	// Small delay so we read after Codex has written the rollout file
-	setTimeout(() => {
-		const quota = readCodexQuotaFromFile();
-		if (hasQuotaData(quota)) {
-			codexQuota = quota;
-			saveCachedQuota(codexQuota);
-		}
-		rolloutReadPending = false;
-		maybeRender?.();
-	}, ROLLOUT_READ_DELAY_MS);
-}
+	const now = Date.now();
+	if (!options.force && now - lastQuotaFetchMs < BACKGROUND_FETCH_INTERVAL_MS) return;
 
-/**
- * Read Codex quota from the most recent rollout JSONL data.
- */
-function readCodexQuotaFromFile(): CodexQuota {
-	return readCodexQuotaFromDirectory(CODEX_SESSIONS_DIR);
+	quotaFetchInFlight = true;
+	lastQuotaFetchMs = now;
+	const model = ctx.model?.id;
+
+	void fetchCodexQuotaFromApi(model)
+		.then((quota) => {
+			if (quota && hasQuotaData(quota)) {
+				codexQuota = quota;
+				saveCachedQuota(codexQuota);
+				maybeRender?.();
+			}
+		})
+		.finally(() => {
+			quotaFetchInFlight = false;
+		});
 }
 
 function buildStatusline(
@@ -405,10 +413,4 @@ function shouldShowQuota(ctx: ExtensionContext, quota: CodexQuota): boolean {
 	if (isInferenceProvider(ctx)) return false;
 	if (isCodex(ctx) || isSubscription(ctx)) return true;
 	return !ctx.model && hasQuotaData(quota);
-}
-
-function shouldPollQuota(ctx: ExtensionContext): boolean {
-	if (isInferenceProvider(ctx)) return false;
-	if (isCodex(ctx) || isSubscription(ctx)) return true;
-	return !ctx.model && hasQuotaData(codexQuota);
 }

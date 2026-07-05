@@ -1,5 +1,4 @@
-import { readdirSync, readFileSync, statSync } from "fs";
-import { join } from "path";
+import { readFileSync } from "fs";
 
 export type QuotaBucket = {
 	used?: number;
@@ -19,199 +18,165 @@ export type CodexQuota = {
 	};
 };
 
-type RolloutFile = {
-	path: string;
-	mtimeMs: number;
-};
+const PI_AUTH_FILE = `${process.env.HOME}/.pi/agent/auth.json`;
+const CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
+const PROBE_TIMEOUT_MS = 12_000;
 
-export type CodexRateLimitsEvent = {
-	rateLimits: Record<string, unknown>;
-	path: string;
-	lineNumber: number;
-	fileMtimeMs: number;
-	timestampMs?: number;
-};
+// The Codex backend only reports live quota in the `x-codex-*` response headers
+// of POST /codex/responses (never a cheap GET), and it returns them even on a
+// 429. Pi issues its own codex requests over WebSocket, so it never writes
+// ~/.codex rollout files and never surfaces those headers to extensions. To keep
+// the bars fresh we make our own minimal request and read just the headers.
 
-/**
- * Read Codex quota from the freshest rollout JSONL data in a sessions directory.
- */
-export function readCodexQuotaFromDirectory(dir: string): CodexQuota {
-	const rateLimits = readLatestCodexRateLimits(dir);
-	return rateLimits ? parseCodexRateLimits(rateLimits) : {};
-}
+type HeaderGetter = { get(name: string): string | null };
 
-export function readLatestCodexRateLimits(dir: string): Record<string, unknown> | undefined {
-	return findLatestCodexRateLimitsEvent(dir)?.rateLimits;
-}
-
-export function findLatestCodexRateLimitsEvent(dir: string): CodexRateLimitsEvent | undefined {
-	let latest: CodexRateLimitsEvent | undefined;
-
-	for (const file of findCodexRolloutFiles(dir)) {
-		for (const event of readRateLimitsEvents(file)) {
-			if (!latest || isNewerRateLimitsEvent(event, latest)) {
-				latest = event;
-			}
-		}
-	}
-
-	return latest;
-}
-
-function findCodexRolloutFiles(dir: string): RolloutFile[] {
-	try {
-		return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-			const path = join(dir, entry.name);
-			if (entry.isDirectory()) return findCodexRolloutFiles(path);
-			if (!entry.isFile() || !entry.name.startsWith("rollout-") || !entry.name.endsWith(".jsonl")) return [];
-
-			try {
-				return [{ path, mtimeMs: statSync(path).mtimeMs }];
-			} catch {
-				return [];
-			}
-		});
-	} catch {
-		return [];
-	}
-}
-
-function readRateLimitsEvents(file: RolloutFile): CodexRateLimitsEvent[] {
-	const events: CodexRateLimitsEvent[] = [];
-
-	try {
-		const lines = readFileSync(file.path, "utf-8").split("\n");
-		lines.forEach((line, index) => {
-			if (!line.includes("rate_limits")) return;
-			const event = parseRateLimitsLine(line, file, index + 1);
-			if (event) events.push(event);
-		});
-	} catch {
-		return [];
-	}
-
-	return events;
-}
-
-function parseRateLimitsLine(
-	line: string,
-	file: RolloutFile,
-	lineNumber: number,
-): CodexRateLimitsEvent | undefined {
-	try {
-		const event = JSON.parse(line) as unknown;
-		if (!isRecord(event)) return undefined;
-		const payload = event.payload;
-		if (!isRecord(payload)) return undefined;
-		const rateLimits = payload.rate_limits;
-		if (!isRecord(rateLimits) || !hasRateLimitBuckets(rateLimits)) return undefined;
-
-		return {
-			rateLimits,
-			path: file.path,
-			lineNumber,
-			fileMtimeMs: file.mtimeMs,
-			timestampMs: parseEventTimestampMs(event, payload),
-		};
-	} catch {
-		return undefined;
-	}
-}
-
-function hasRateLimitBuckets(rateLimits: Record<string, unknown>): boolean {
-	return isRecord(rateLimits.primary) || isRecord(rateLimits.secondary) || isRecord(rateLimits.credits);
-}
-
-function parseEventTimestampMs(
-	event: Record<string, unknown>,
-	payload: Record<string, unknown>,
-): number | undefined {
-	return parseTimestampMs(event.timestamp)
-		?? parseTimestampMs(event.created_at)
-		?? parseTimestampMs(event.createdAt)
-		?? parseTimestampMs(payload.timestamp)
-		?? parseTimestampMs(payload.created_at)
-		?? parseTimestampMs(payload.createdAt);
-}
-
-function parseTimestampMs(value: unknown): number | undefined {
-	if (typeof value === "number") return normalizeEpochMs(value);
-	if (typeof value !== "string") return undefined;
-
-	const trimmed = value.trim();
-	if (!trimmed) return undefined;
-
-	if (/^\d+(?:\.\d+)?$/.test(trimmed)) {
-		return normalizeEpochMs(Number.parseFloat(trimmed));
-	}
-
-	const parsed = Date.parse(trimmed);
-	return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function normalizeEpochMs(value: number): number | undefined {
-	if (!Number.isFinite(value)) return undefined;
-	return value > 1_000_000_000_000 ? value : value * 1000;
-}
-
-function isNewerRateLimitsEvent(
-	candidate: CodexRateLimitsEvent,
-	current: CodexRateLimitsEvent,
-): boolean {
-	const candidateFreshnessMs = candidate.timestampMs ?? candidate.fileMtimeMs;
-	const currentFreshnessMs = current.timestampMs ?? current.fileMtimeMs;
-	if (candidateFreshnessMs !== currentFreshnessMs) {
-		return candidateFreshnessMs > currentFreshnessMs;
-	}
-
-	if (candidate.fileMtimeMs !== current.fileMtimeMs) {
-		return candidate.fileMtimeMs > current.fileMtimeMs;
-	}
-
-	if (candidate.path !== current.path) {
-		return candidate.path > current.path;
-	}
-
-	return candidate.lineNumber > current.lineNumber;
+function asHeaderGetter(headers: Headers | Record<string, string>): HeaderGetter {
+	if (typeof (headers as Headers).get === "function") return headers as Headers;
+	const record = headers as Record<string, string>;
+	const lower: Record<string, string> = {};
+	for (const key of Object.keys(record)) lower[key.toLowerCase()] = record[key];
+	return { get: (name) => lower[name.toLowerCase()] ?? null };
 }
 
 /**
- * Parse raw rate_limits JSON into our CodexQuota structure.
+ * Parse the `x-codex-*` rate-limit headers from a /codex/responses response
+ * into our CodexQuota structure.
  */
-export function parseCodexRateLimits(raw: Record<string, unknown>): CodexQuota {
+export function parseCodexQuotaHeaders(headers: Headers | Record<string, string>): CodexQuota {
+	const h = asHeaderGetter(headers);
 	const result: CodexQuota = {};
-	const credits = raw.credits;
-	const primary = raw.primary;
-	const secondary = raw.secondary;
 
-	// Credits-based quota (when rate limited)
-	if (isRecord(credits)) {
-		result.credits = {
-			balance: parseFiniteNumber(credits.balance) ?? 0,
-			unlimited: credits.unlimited === true,
-		};
+	const session = parseHeaderBucket(h, "primary");
+	if (session) result.session = session;
+
+	const weekly = parseHeaderBucket(h, "secondary");
+	if (weekly) result.weekly = weekly;
+
+	const balance = parseFiniteNumber(h.get("x-codex-credits-balance"));
+	const unlimited = parseBoolean(h.get("x-codex-credits-unlimited"));
+	const hasCredits = parseBoolean(h.get("x-codex-credits-has-credits"));
+	// Only surface credits when meaningful — avoid a noisy "credits 0" chip.
+	if (unlimited || hasCredits || (balance !== undefined && balance > 0)) {
+		result.credits = { balance: balance ?? 0, unlimited };
 	}
-
-	// Window-based limits (session + weekly)
-	if (isRecord(primary)) result.session = parseCodexBucket(primary);
-	if (isRecord(secondary)) result.weekly = parseCodexBucket(secondary);
 
 	return result;
 }
 
-function parseCodexBucket(raw: Record<string, unknown>): QuotaBucket {
-	const usedPercent = parseFiniteNumber(raw.used_percent);
-	const resetAt = parseFiniteNumber(raw.resets_at);
-	const windowMinutes = parseFiniteNumber(raw.window_minutes);
+function parseHeaderBucket(h: HeaderGetter, prefix: "primary" | "secondary"): QuotaBucket | undefined {
+	const usedPercent = parseFiniteNumber(h.get(`x-codex-${prefix}-used-percent`));
+	const windowMinutes = parseFiniteNumber(h.get(`x-codex-${prefix}-window-minutes`));
+	const resetAtSeconds = parseFiniteNumber(h.get(`x-codex-${prefix}-reset-at`));
+	const resetAfterSeconds = parseFiniteNumber(h.get(`x-codex-${prefix}-reset-after-seconds`));
+
+	if (usedPercent === undefined && windowMinutes === undefined && resetAtSeconds === undefined) {
+		return undefined;
+	}
+
+	const resetAt = resetAtSeconds !== undefined
+		? Math.floor(resetAtSeconds * 1000)
+		: resetAfterSeconds !== undefined
+			? Date.now() + resetAfterSeconds * 1000
+			: undefined;
 
 	return {
 		used: usedPercent,
 		remaining: usedPercent === undefined ? undefined : 100 - clampPercent(usedPercent),
 		// Historical cache entries use `percent`; keep it as usage, not remaining.
 		percent: usedPercent,
-		resetAt: resetAt === undefined ? undefined : Math.floor(resetAt * 1000),
+		resetAt,
 		window: classifyWindow(windowMinutes),
 	};
+}
+
+type CodexAuth = { access: string; accountId: string };
+
+function loadCodexAuth(): CodexAuth | undefined {
+	try {
+		const raw = JSON.parse(readFileSync(PI_AUTH_FILE, "utf-8")) as unknown;
+		if (!isRecord(raw)) return undefined;
+		const codex = raw["openai-codex"];
+		if (!isRecord(codex)) return undefined;
+
+		const access = typeof codex.access === "string" ? codex.access : undefined;
+		if (!access) return undefined;
+
+		// If the token is expired (or about to be), skip — pi refreshes it on its
+		// next real request, and our next probe will pick up the fresh one.
+		const expires = typeof codex.expires === "number" ? codex.expires : undefined;
+		if (expires !== undefined && expires <= Date.now() + 60_000) return undefined;
+
+		const accountId = typeof codex.accountId === "string"
+			? codex.accountId
+			: extractAccountIdFromJwt(access);
+		if (!accountId) return undefined;
+
+		return { access, accountId };
+	} catch {
+		return undefined;
+	}
+}
+
+function extractAccountIdFromJwt(token: string): string | undefined {
+	try {
+		const payload = token.split(".")[1];
+		if (!payload) return undefined;
+		const json = JSON.parse(Buffer.from(payload, "base64").toString("utf-8")) as unknown;
+		if (!isRecord(json)) return undefined;
+		const auth = json["https://api.openai.com/auth"];
+		if (!isRecord(auth)) return undefined;
+		return typeof auth.chatgpt_account_id === "string" ? auth.chatgpt_account_id : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * Fetch live Codex quota by making a minimal /codex/responses request and
+ * reading the `x-codex-*` rate-limit headers. The request stream is aborted as
+ * soon as the headers arrive, so it consumes negligible quota (and a 429 while
+ * rate limited consumes none). Returns undefined on any failure.
+ */
+export async function fetchCodexQuotaFromApi(model = "gpt-5.5"): Promise<CodexQuota | undefined> {
+	const auth = loadCodexAuth();
+	if (!auth) return undefined;
+
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
+	try {
+		const response = await fetch(CODEX_RESPONSES_URL, {
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${auth.access}`,
+				"chatgpt-account-id": auth.accountId,
+				originator: "pi",
+				"OpenAI-Beta": "responses=experimental",
+				accept: "text/event-stream",
+				"content-type": "application/json",
+			},
+			body: JSON.stringify({
+				model,
+				store: false,
+				stream: true,
+				instructions: "You are a helpful assistant.",
+				input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "hi" }] }],
+				text: { verbosity: "low" },
+				tool_choice: "auto",
+				parallel_tool_calls: true,
+			}),
+			signal: controller.signal,
+		});
+
+		const quota = parseCodexQuotaHeaders(response.headers);
+		// We only need the headers; abort the body so the model doesn't generate.
+		controller.abort();
+
+		return quota.session || quota.weekly || quota.credits ? quota : undefined;
+	} catch {
+		return undefined;
+	} finally {
+		clearTimeout(timer);
+	}
 }
 
 function parseFiniteNumber(value: unknown): number | undefined {
@@ -221,6 +186,10 @@ function parseFiniteNumber(value: unknown): number | undefined {
 		if (Number.isFinite(parsed)) return parsed;
 	}
 	return undefined;
+}
+
+function parseBoolean(value: string | null): boolean {
+	return value !== null && /^true$/i.test(value.trim());
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -32,14 +32,25 @@ Quota bars show **remaining** quota (not used):
 
 ## How It Works
 
-For **Codex**, quota data is read from rollout JSONL files at:
+For **Codex**, live quota is only reported in the `x-codex-*` rate-limit response
+headers of `POST https://chatgpt.com/backend-api/codex/responses` (there is no
+cheap GET, and the headers are returned even on a `429`).
 
-```text
-~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl
-```
+Pi issues its own codex requests over WebSocket, so it never writes the
+`~/.codex/sessions/**/rollout-*.jsonl` files and never surfaces those headers to
+extensions. To keep the bars fresh, the extension makes its own minimal request
+and reads just the headers, aborting the stream as soon as they arrive so it
+consumes negligible quota (and none while rate limited). It authenticates with
+pi's own codex token from `~/.pi/agent/auth.json` (skipping the probe if the
+token is missing/expired — pi refreshes it on its next real request).
 
-The extension polls these files every 30 seconds and after each provider response.
-Fresh rollout data replaces in-memory quota state and is cached for first render at:
+Refreshes happen:
+
+- after each turn (`turn_end` / user `message_end`) — usage just changed
+- on footer install and model switch
+- on a slow idle timer (every 5 minutes)
+
+The freshest quota is cached for first render at:
 
 ```text
 ~/.pi/agent/state/statusline/codex-quota-cache.json
@@ -49,15 +60,3 @@ No quota cache should live under the extension source tree.
 
 Quota bars are hidden for the `inference` provider because it is not
 subscription-based.
-
-For **other OAuth models**, quota data comes from HTTP response headers in the
-`after_provider_response` event.
-
-## Commands
-
-View quota from the terminal:
-```bash
-codex-quota
-```
-
-This reads the same rollout files and shows session + weekly remaining percentages.
