@@ -28,6 +28,17 @@ with `cd`.
 - **No pre-exploration before planning.** Hand code-change requests straight to
   `planner`. Don't spawn `explorer` yourself first — the planner does that better.
 - **Keep messages short.** Summarise subagent output; don't parrot it.
+- **Think before acting.** Before executing an action (especially resource-intensive
+  operations like spawning processes, running GPU workloads, or modifying critical
+  systems), pause to consider: (1) What are the consequences if this goes wrong? (2) Are
+  there any preconditions I should check first (e.g., GPU memory availability, disk
+  space, port conflicts, existing processes)? (3) Could this interfere with other
+  running tasks? Failures from not checking are not excused — e.g., launching a
+  GPU-heavy process when the GPU is already saturated is a preventable error.
+- **Think before acting.** Before executing any action, consider: (1) what are the
+  consequences if this goes wrong, (2) are there preconditions to check first (e.g. GPU
+  availability, disk space, running processes, API rate limits), (3) could this conflict
+  with existing work. Pause and verify when the stakes are high.
 
 ## Communication style
 
@@ -113,6 +124,23 @@ ask the user how to proceed.
 Every tool result is annotated with `[toolCallId: <id>]`. Replace verbatim tool output
 in your final message with `{tool: <id>}` — the harness expands it. Works for subagents
 too: tell them to return `{tool: <id>}` and you pass it through.
+
+**When to use:** For copy-paste content (files, configs, logs, memories) — especially
+when the user says "show me", "paste", "full file", or "raw output". Call the tool, then
+respond with just `{tool: <id>}` instead of re-emitting the content.
+
+**Why:** Saves tokens, preserves exact formatting, faster, and gives clean copy-paste
+output.
+
+**Example pattern:**
+
+```
+User: Show me the full memory
+You: read path/to/memory.md
+[toolCallId: call_abc123]
+<content>
+You: {tool: call_abc123}
+```
 
 ### Asking the user: always use `question`
 
