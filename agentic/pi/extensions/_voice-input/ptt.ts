@@ -314,7 +314,8 @@ function applyStreamEvent(ctx: ExtensionContext, event: StreamEvent): void {
 	if (!streamSession || !liveEditor) return;
 	const parsed = parseStreamEvent(event);
 	if (parsed.kind === "final") {
-		streamSession.finalText = parsed.text;
+		// Post-process final text (slash -> /, strip trailing punctuation)
+		streamSession.finalText = postProcessTranscript(parsed.text);
 		if (streamSession.finalText) {
 			// Replace partial with final in editor
 			const currentText = liveEditor.getText();
@@ -327,7 +328,8 @@ function applyStreamEvent(ctx: ExtensionContext, event: StreamEvent): void {
 		return;
 	}
 	if (parsed.kind === "partial") {
-		streamSession.partialText = parsed.text;
+		// Post-process partial text for consistency (slash -> /, strip trailing punctuation)
+		streamSession.partialText = postProcessTranscript(parsed.text);
 		// Insert/update partial inline in editor only (no footer spam)
 		const currentText = liveEditor.getText();
 		const before = currentText.slice(0, streamSession.partialStart);
@@ -462,6 +464,24 @@ function isNonSpeech(text: string): boolean {
 	if (!/[\p{L}\p{N}]/u.test(text)) return true; // punctuation-only
 	const norm = text.toLowerCase().replace(/[\s.!?,]+$/u, "").trim();
 	return NOISE_PHRASES.has(norm);
+}
+
+/**
+ * Post-process transcription for command recognition.
+ * - Replaces all occurrences of "slash " with "/" (for slash commands like "/compact")
+ * - Strips trailing punctuation (. ! ?) and whitespace that ASR often adds
+ */
+function postProcessTranscript(text: string): string {
+	// Replace all occurrences of "slash " with "/"
+	text = text.replace(/slash\s+/gi, "/");
+
+	// Strip trailing punctuation that ASR often adds
+	text = text.replace(/[.!?]\s*$/, "");
+
+	// Trim any trailing whitespace
+	text = text.trim();
+
+	return text;
 }
 
 /** Abandon a pending hold (the space was a tap): keep the already-typed space. */
@@ -634,6 +654,9 @@ async function stopAndTranscribe(ctx: ExtensionContext): Promise<void> {
 			}
 			text = await transcribe();
 		}
+
+		// Post-process for command recognition (slash -> /, strip trailing punctuation)
+		text = postProcessTranscript(text);
 
 		if (isNonSpeech(text)) {
 			notify(ctx, "voice-input: no speech detected.", "info");
