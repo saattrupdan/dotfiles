@@ -101,9 +101,13 @@ export default function (pi: ExtensionAPI) {
 			// Load cached quota from previous session immediately.
 			// This shows quota bars on first user message (before Codex writes new rollout file).
 			const cached = loadCachedQuota();
+			console.log("[statusline] Footer setup - cached:", !!cached, "session:", !!cached?.session, "weekly:", !!cached?.weekly, "codexQuota:", codexQuota);
 			if (cached && (cached.session || cached.weekly || cached.credits)) {
 				codexQuota = cached;
+				console.log("[statusline] Loaded cached quota:", JSON.stringify(cached));
 				requestRender(); // Request render after loading cached data
+			} else {
+				console.log("[statusline] No cached quota found");
 			}
 
 			// Also try to read fresh data from latest rollout file
@@ -298,8 +302,10 @@ function buildStatusline(
 	// Show quota bars if we have cached/fresh data OR if it's a subscription model.
 	// Check cached data first - if we have it, show immediately (before model check passes).
 	const hasQuotaData = codexQuota.session || codexQuota.weekly || codexQuota.credits;
+	console.log("[statusline] buildStatusline - hasQuotaData:", hasQuotaData, "isSub:", isSubscription(ctx), "isCodex:", isCodex(ctx), "quota:", codexQuota);
 	if (hasQuotaData || isSubscription(ctx) || isCodex(ctx)) {
 		const codexParts = formatCodexQuota(theme, codexQuota);
+		console.log("[statusline] quota parts:", codexParts);
 		parts.push(...codexParts);
 	}
 
