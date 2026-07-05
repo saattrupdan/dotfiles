@@ -55,7 +55,7 @@ export default function (pi: ExtensionAPI) {
 				invalidate() {},
 			render(width: number): string[] {
 				const line = buildStatusline(ctx, theme, footerData);
-				return ['', truncateToWidth(line, width), ''];
+				return [' ' + truncateToWidth(line, width - 1)];
 			},
 			};
 		});
