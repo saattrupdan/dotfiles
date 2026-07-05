@@ -75,15 +75,23 @@ function saveCachedQuota(quota: CodexQuota): void {
 	}
 }
 
+let maybeRender: (() => void) | undefined;
+
 export default function (pi: ExtensionAPI) {
-	const install = (ctx: ExtensionContext) => {
-		if (!ctx.hasUI || installed) return;
+	maybeRender = () => {
+		if (installed && requestRender) {
+			requestRender();
+		}
+	};
+
+	const setupFooter = (ctx: ExtensionContext) => {
+		if (!ctx.hasUI || installed) return false;
 
 		// Only install once there's at least one message in history.
 		// This ensures splash screen stays visible until user submits first message.
 		const entries = ctx.sessionManager.getEntries();
 		const hasMessages = entries.some((e) => e.type === "message");
-		if (!hasMessages) return;
+		if (!hasMessages) return false;
 
 		installed = true;
 
@@ -95,7 +103,7 @@ export default function (pi: ExtensionAPI) {
 			const cached = loadCachedQuota();
 			if (cached && (cached.session || cached.weekly || cached.credits)) {
 				codexQuota = cached;
-				requestRender(); // Now requestRender is defined, so this will work
+				requestRender(); // Request render after loading cached data
 			}
 
 			// Also try to read fresh data from latest rollout file
@@ -121,24 +129,35 @@ export default function (pi: ExtensionAPI) {
 				},
 			};
 		});
+
+		return true;
 	};
 
-	// Install on agent_start (processing user message), model_select, and turn_end.
-	// Install on message_end (when user message is stored) to show footer immediately.
-	// NOT on session_start - splash screen also sets footer there and
-	// should remain visible until user submits first message.
-	pi.on("agent_start", (_event, ctx) => install(ctx));
-	pi.on("model_select", (_event, ctx) => install(ctx));
+	// Setup footer and load quota on various events
+	pi.on("agent_start", (_event, ctx) => {
+		if (setupFooter(ctx)) return;
+		// If already installed, just render
+		maybeRender?.();
+	});
+	pi.on("model_select", (_event, ctx) => {
+		if (setupFooter(ctx)) return;
+		maybeRender?.();
+	});
 	pi.on("turn_end", (_event, ctx) => {
-		install(ctx);
-		requestRender?.();
+		if (setupFooter(ctx)) return;
 		readCodexQuotaDebounced();
+		maybeRender?.();
 	});
 	pi.on("message_end", (event, ctx) => {
-		// Only install when user message ends (not assistant messages)
+		// Setup/quota-load on user message end (not assistant)
 		if (event.message?.role !== "user") return;
-		install(ctx);
-		requestRender?.();
+
+		const justInstalled = setupFooter(ctx);
+		if (!justInstalled) {
+			// If footer was already set up, request a render
+			maybeRender?.();
+		}
+		// If we just installed, the footer callback already loaded quota and called requestRender
 		readCodexQuotaDebounced();
 	});
 
@@ -146,6 +165,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("after_provider_response", (event, ctx) => {
 		if (!isCodex(ctx) && !isSubscription(ctx)) return;
 		readCodexQuotaDebounced();
+		maybeRender?.();
 	});
 }
 
@@ -164,7 +184,7 @@ function readCodexQuotaDebounced() {
 			saveCachedQuota(codexQuota); // Cache merged state for next session
 		}
 		rolloutReadPending = false;
-		requestRender?.();
+		maybeRender?.();
 	}, ROLLOUT_READ_DELAY_MS);
 }
 
@@ -359,7 +379,7 @@ function formatQuotaBucket(
 			// Session: show time only (or "soon" if within 1 hour)
 			const minsUntilReset = Math.floor((bucket.resetAt - now.getTime()) / 60000);
 			if (minsUntilReset <= 60) {
-				text += ` ${theme.fg("dim", `(↻ ${minsUntilReset}m)` )}`;
+				text += ` ${theme.fg("dim", `(↻ ${minsUntilReset}m)`)}`;
 				return text;
 			}
 			format = isToday ? { hour: "2-digit", minute: "2-digit" } : { hour: "2-digit", minute: "2-digit" };
