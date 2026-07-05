@@ -6,7 +6,11 @@
  * also renders quota bars when the provider exposes reset/usage headers.
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type {
+	ExtensionAPI,
+	ExtensionContext,
+	ReadonlyFooterDataProvider,
+} from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 
 type QuotaBucket = {
@@ -31,7 +35,7 @@ export default function (pi: ExtensionAPI) {
 	const install = (ctx: ExtensionContext) => {
 		if (!ctx.hasUI) return;
 
-		ctx.ui.setFooter((tui, theme) => {
+		ctx.ui.setFooter((tui, theme, footerData) => {
 			requestRender = () => tui.requestRender();
 
 			return {
@@ -40,7 +44,7 @@ export default function (pi: ExtensionAPI) {
 				},
 				invalidate() {},
 				render(width: number): string[] {
-					const line = buildStatusline(ctx, theme);
+					const line = buildStatusline(ctx, theme, footerData);
 					return [truncateToWidth(line, width)];
 				},
 			};
@@ -63,7 +67,11 @@ export default function (pi: ExtensionAPI) {
 	});
 }
 
-function buildStatusline(ctx: ExtensionContext, theme: ExtensionContext["ui"]["theme"]): string {
+function buildStatusline(
+	ctx: ExtensionContext,
+	theme: ExtensionContext["ui"]["theme"],
+	footerData: ReadonlyFooterDataProvider,
+): string {
 	const model = ctx.model;
 	const modelName = model?.name || model?.id || "no model";
 	const contextWindow = model?.contextWindow ?? ctx.getContextUsage()?.contextWindow;
@@ -80,7 +88,20 @@ function buildStatusline(ctx: ExtensionContext, theme: ExtensionContext["ui"]["t
 		parts.push(...codexParts);
 	}
 
+	parts.push(...formatExtensionStatuses(footerData));
+
 	return joinWithSeparator(theme, parts);
+}
+
+function formatExtensionStatuses(footerData: ReadonlyFooterDataProvider): string[] {
+	return Array.from(footerData.getExtensionStatuses().entries())
+		.sort(([a], [b]) => a.localeCompare(b))
+		.map(([, text]) => sanitizeStatusText(text))
+		.filter((text) => text.length > 0);
+}
+
+function sanitizeStatusText(text: string): string {
+	return text.replace(/[\r\n\t]/g, " ").replace(/ +/g, " ").trim();
 }
 
 function formatCodexQuota(theme: ExtensionContext["ui"]["theme"], quota: CodexQuota): string[] {
