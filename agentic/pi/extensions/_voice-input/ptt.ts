@@ -693,7 +693,8 @@ async function stopAndTranscribe(ctx: ExtensionContext): Promise<void> {
 					if (liveEditor && liveEditor.getText() !== "") {
 						const finalText = liveEditor.getText();
 						liveEditor.setText(""); // Clear editor
-						livePi?.sendUserMessage(finalText); // Auto-send the transcription
+						// Send as "steer" to interject into the current conversation flow
+						livePi?.sendUserMessage(finalText, { deliverAs: "steer" });
 					}
 				}, AUTO_SEND_DELAY_MS);
 			}
