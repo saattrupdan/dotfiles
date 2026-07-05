@@ -20,7 +20,7 @@
 
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import type { TUI, Component } from "@earendil-works/pi-tui";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { visibleWidth, truncateToWidth } from "@earendil-works/pi-tui";
 
 // Use the shared push-to-talk editor as the splash input box, so hold-to-talk
 // works on the splash screen too. This soft-couples splash to the voice-input
@@ -72,6 +72,53 @@ const EMPTY_COMPONENT: Component = {
 	},
 	invalidate() {},
 };
+
+// Helper functions for statusline footer (mirrored from statusline extension).
+const BAR_WIDTH = 10;
+const COLOR_GREEN = "\x1b[38;5;71m";
+const COLOR_YELLOW = "\x1b[33m";
+const COLOR_RED = "\x1b[31m";
+const COLOR_RESET = "\x1b[0m";
+
+function formatTokens(value: number | null | undefined): string {
+	if (value === undefined || value === null || !Number.isFinite(value)) return "?";
+	if (value >= 1_000_000) return `${Math.round(value / 1_000_000)}M`;
+	if (value >= 1_000) return `${Math.round(value / 1_000)}k`;
+	return String(Math.round(value));
+}
+
+function progressBar(
+	percent: number | undefined,
+	theme: { fg(key: string, text: string): string },
+): string {
+	if (percent === undefined || !Number.isFinite(percent)) {
+		return `[${"·".repeat(BAR_WIDTH)}]`;
+	}
+	const clamped = Math.max(0, Math.min(100, percent));
+	const filled = Math.round((clamped / 100) * BAR_WIDTH);
+	let colorCode: string;
+	if (clamped >= 80) {
+		colorCode = COLOR_RED;
+	} else if (clamped >= 50) {
+		colorCode = COLOR_YELLOW;
+	} else {
+		colorCode = COLOR_GREEN;
+	}
+	const barChar = `${colorCode}█${COLOR_RESET}`;
+	const emptyChar = theme.fg("dim", "░");
+	return `[${barChar.repeat(filled)}${emptyChar.repeat(BAR_WIDTH - filled)}]`;
+}
+
+function formatExtensionStatuses(footerData: { getExtensionStatuses(): Map<string, string> }): string[] {
+	return Array.from(footerData.getExtensionStatuses().entries())
+		.sort(([a], [b]) => a.localeCompare(b))
+		.map(([ext, text]) => {
+			const sanitized = text.replace(/[\r\n\t]/g, " ").replace(/ +/g, " ").trim();
+			if (ext === "mcp" && sanitized.includes("0/")) return "";
+			return sanitized;
+		})
+		.filter((text) => text.length > 0);
+}
 
 export default function (pi: ExtensionAPI) {
 	pi.on("session_start", async (event, ctx) => {
@@ -226,8 +273,32 @@ export default function (pi: ExtensionAPI) {
 		// Dismiss when the user actually submits a prompt — not on keystroke.
 		// `input` fires on submit, before skill/template expansion. Return
 		// undefined so the input passes through unchanged.
-		pi.on("input", async () => {
+		pi.on("input", async (_event, ctx) => {
 			dismiss();
+			// Set up the statusline footer immediately so it's visible before
+			// the assistant starts processing. The statusline extension also
+			// installs on agent_start/turn_end/message_end, but we set it here
+			// to ensure it appears as soon as the splash is dismissed.
+			ctx.ui.setFooter((tui, theme, footerData) => ({
+				dispose() {},
+				invalidate() {},
+				render(width: number): string[] {
+					const model = ctx.model;
+					const modelName = model?.name || model?.id || "no model";
+					const contextWindow = model?.contextWindow ?? ctx.getContextUsage()?.contextWindow;
+					const context = ctx.getContextUsage();
+					const contextPercent = context?.percent ?? undefined;
+					const contextText = `${formatTokens(context?.tokens)} / ${formatTokens(contextWindow)}`;
+					const contextPercentText = contextPercent !== undefined ? ` ${theme.fg("dim", `(${Math.round(contextPercent)}%)`)}` : "";
+					const parts = [
+						theme.fg("accent", modelName),
+						`${theme.fg("muted", "ctx")} ${progressBar(contextPercent, theme)} ${theme.fg("dim", contextText)}${contextPercentText}`,
+					];
+					parts.push(...formatExtensionStatuses(footerData));
+					const line = parts.filter(Boolean).join(theme.fg("dim", "  │  "));
+					return [' ' + truncateToWidth(line, width - 1)];
+				},
+			}));
 			return undefined;
 		});
 	});
