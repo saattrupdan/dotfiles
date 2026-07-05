@@ -94,9 +94,10 @@ function buildStatusline(
 	const context = ctx.getContextUsage();
 	const contextPercent = context?.percent ?? undefined;
 	const contextText = `${formatTokens(context?.tokens)} / ${formatTokens(contextWindow)}`;
+	const contextPercentText = contextPercent !== undefined ? ` ${theme.fg("dim", `(${Math.round(contextPercent)}%)`)}` : "";
 	const parts = [
 		theme.fg("accent", modelName),
-		`${theme.fg("muted", "ctx")} ${progressBar(contextPercent, theme)} ${theme.fg("dim", contextText)}`,
+		`${theme.fg("muted", "ctx")} ${progressBar(contextPercent, theme)} ${theme.fg("dim", contextText)}${contextPercentText}`,
 	];
 
 	if (isCodex(ctx)) {
