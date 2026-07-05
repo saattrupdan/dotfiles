@@ -16,9 +16,8 @@ import type {
 	ReadonlyFooterDataProvider,
 } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
-import { spawnSync } from "child_process";
-import { readFileSync, writeFileSync, mkdirSync } from "fs";
-import { dirname } from "path";
+import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "fs";
+import { dirname, join } from "path";
 
 type QuotaBucket = {
 	used?: number;
@@ -39,6 +38,7 @@ type CodexQuota = {
 };
 
 const BAR_WIDTH = 10;
+const CODEX_SESSIONS_DIR = `${process.env.HOME}/.codex/sessions`;
 const CACHE_FILE = `${process.env.HOME}/.pi/agent/state/statusline/codex-quota-cache.json`;
 
 let codexQuota: CodexQuota = {};
@@ -124,12 +124,14 @@ export default function (pi: ExtensionAPI) {
 		ctx.ui.setFooter((tui, theme, footerData) => {
 			requestRender = () => tui.requestRender();
 
-			// Also try to read fresh data from latest rollout file
-			readCodexQuotaDebounced();
+			// Also try to read fresh data from latest rollout file.
+			if (shouldPollQuota(ctx)) readCodexQuotaDebounced();
 
 			// Poll quota periodically (every 30s)
 			if (!pollTimer) {
-				pollTimer = setInterval(() => readCodexQuotaDebounced(), 30000);
+				pollTimer = setInterval(() => {
+					if (shouldPollQuota(ctx)) readCodexQuotaDebounced();
+				}, 30000);
 			}
 
 			return {
@@ -178,8 +180,8 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	// Also try to read quota after provider response
-	pi.on("after_provider_response", (event, ctx) => {
-		if (!isCodex(ctx) && !isSubscription(ctx)) return;
+	pi.on("after_provider_response", (_event, ctx) => {
+		if (!shouldPollQuota(ctx)) return;
 		readCodexQuotaDebounced();
 		maybeRender?.();
 	});
@@ -195,9 +197,9 @@ function readCodexQuotaDebounced() {
 	// Small delay so we read after Codex has written the rollout file
 	setTimeout(() => {
 		const quota = readCodexQuotaFromFile();
-		if (quota.session || quota.weekly || quota.credits) {
-			codexQuota = { ...codexQuota, ...quota };
-			saveCachedQuota(codexQuota); // Cache merged state for next session
+		if (hasQuotaData(quota)) {
+			codexQuota = quota;
+			saveCachedQuota(codexQuota);
 		}
 		rolloutReadPending = false;
 		maybeRender?.();
@@ -205,36 +207,73 @@ function readCodexQuotaDebounced() {
 }
 
 /**
- * Read Codex quota from the most recent rollout file.
- * Uses `find` and `jq` to parse the rate_limits event.
+ * Read Codex quota from the most recent rollout JSONL data.
  */
 function readCodexQuotaFromFile(): CodexQuota {
+	const rateLimits = readLatestCodexRateLimits();
+	return rateLimits ? parseCodexRateLimits(rateLimits) : {};
+}
+
+type RolloutFile = {
+	path: string;
+	mtimeMs: number;
+};
+
+function readLatestCodexRateLimits(): Record<string, unknown> | undefined {
+	const rolloutFiles = findCodexRolloutFiles(CODEX_SESSIONS_DIR)
+		.sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+	for (const file of rolloutFiles) {
+		const rateLimits = readLastRateLimitsEvent(file.path);
+		if (rateLimits) return rateLimits;
+	}
+
+	return undefined;
+}
+
+function findCodexRolloutFiles(dir: string): RolloutFile[] {
 	try {
-		// Find the most recent rollout file with rate_limits data
-		const findCmd = `find ~/.codex/sessions -name 'rollout-*.jsonl' -type f -exec sh -c 'grep -q "rate_limits" "$1" && echo "$1"' _ {} \\; 2>/dev/null | sort -r | head -1`;
-		
-		const findResult = spawnSync("bash", ["-c", findCmd], {
-			encoding: "utf-8",
-			timeout: 2000,
+		return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+			const path = join(dir, entry.name);
+			if (entry.isDirectory()) return findCodexRolloutFiles(path);
+			if (!entry.isFile() || !entry.name.startsWith("rollout-") || !entry.name.endsWith(".jsonl")) return [];
+
+			try {
+				return [{ path, mtimeMs: statSync(path).mtimeMs }];
+			} catch {
+				return [];
+			}
 		});
-
-		const latestFile = findResult.stdout.trim();
-		if (!latestFile) return {};
-
-		// Extract the last rate_limits event using jq
-		const jqCmd = `grep "rate_limits" "${latestFile}" | tail -1 | jq -c '.payload.rate_limits'`;
-		const jqResult = spawnSync("bash", ["-c", jqCmd], {
-			encoding: "utf-8",
-			timeout: 2000,
-		});
-
-		if (!jqResult.stdout.trim()) return {};
-
-		const rateLimits = JSON.parse(jqResult.stdout.trim());
-		return parseCodexRateLimits(rateLimits);
 	} catch {
-		// Silently ignore errors (no Codex data, jq not available, etc.)
-		return {};
+		return [];
+	}
+}
+
+function readLastRateLimitsEvent(path: string): Record<string, unknown> | undefined {
+	let latest: Record<string, unknown> | undefined;
+
+	try {
+		for (const line of readFileSync(path, "utf-8").split("\n")) {
+			if (!line.includes("rate_limits")) continue;
+			const rateLimits = parseRateLimitsLine(line);
+			if (rateLimits) latest = rateLimits;
+		}
+	} catch {
+		return undefined;
+	}
+
+	return latest;
+}
+
+function parseRateLimitsLine(line: string): Record<string, unknown> | undefined {
+	try {
+		const event = JSON.parse(line) as unknown;
+		if (!isRecord(event)) return undefined;
+		const payload = event.payload;
+		if (!isRecord(payload)) return undefined;
+		return isRecord(payload.rate_limits) ? payload.rate_limits : undefined;
+	} catch {
+		return undefined;
 	}
 }
 
@@ -243,42 +282,50 @@ function readCodexQuotaFromFile(): CodexQuota {
  */
 function parseCodexRateLimits(raw: Record<string, unknown>): CodexQuota {
 	const result: CodexQuota = {};
-
-	// Type guards for safe property access
-	const credits = raw.credits as Record<string, unknown> | undefined;
-	const primary = raw.primary as Record<string, unknown> | undefined;
-	const secondary = raw.secondary as Record<string, unknown> | undefined;
+	const credits = raw.credits;
+	const primary = raw.primary;
+	const secondary = raw.secondary;
 
 	// Credits-based quota (when rate limited)
-	if (credits) {
+	if (isRecord(credits)) {
 		result.credits = {
-			balance: parseFloat(credits.balance as string) || 0,
-			unlimited: (credits.unlimited as boolean) || false,
+			balance: parseFiniteNumber(credits.balance) ?? 0,
+			unlimited: credits.unlimited === true,
 		};
 	}
 
 	// Window-based limits (session + weekly)
-	if (primary) {
-		result.session = {
-			used: primary.used_percent as number | undefined,
-			remaining: 100 - (primary.used_percent as number || 0),
-			percent: primary.used_percent as number | undefined,
-			resetAt: primary.resets_at ? Math.floor(primary.resets_at as number * 1000) : undefined,
-			window: classifyWindow(primary.window_minutes as number | undefined),
-		};
-	}
-
-	if (secondary) {
-		result.weekly = {
-			used: secondary.used_percent as number | undefined,
-			remaining: 100 - (secondary.used_percent as number || 0),
-			percent: secondary.used_percent as number | undefined,
-			resetAt: secondary.resets_at ? Math.floor(secondary.resets_at as number * 1000) : undefined,
-			window: classifyWindow(secondary.window_minutes as number | undefined),
-		};
-	}
+	if (isRecord(primary)) result.session = parseCodexBucket(primary);
+	if (isRecord(secondary)) result.weekly = parseCodexBucket(secondary);
 
 	return result;
+}
+
+function parseCodexBucket(raw: Record<string, unknown>): QuotaBucket {
+	const usedPercent = parseFiniteNumber(raw.used_percent);
+	const resetAt = parseFiniteNumber(raw.resets_at);
+	const windowMinutes = parseFiniteNumber(raw.window_minutes);
+
+	return {
+		used: usedPercent,
+		remaining: usedPercent === undefined ? undefined : 100 - clampPercent(usedPercent),
+		percent: usedPercent,
+		resetAt: resetAt === undefined ? undefined : Math.floor(resetAt * 1000),
+		window: classifyWindow(windowMinutes),
+	};
+}
+
+function parseFiniteNumber(value: unknown): number | undefined {
+	if (typeof value === "number" && Number.isFinite(value)) return value;
+	if (typeof value === "string") {
+		const parsed = Number.parseFloat(value);
+		if (Number.isFinite(parsed)) return parsed;
+	}
+	return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**
@@ -311,9 +358,9 @@ function buildStatusline(
 		`${theme.fg("muted", "context")} ${progressBar(contextPercent, theme)} ${theme.fg("dim", contextText)}${contextPercentText}`,
 	];
 
-	// Show quota bars if we have cached/fresh data OR if it's a subscription model.
-	// Check cached data first - if we have it, show immediately (before model check passes).
-	if (hasQuotaData(codexQuota) || isSubscription(ctx) || isCodex(ctx)) {
+	// Show cached quota immediately for Codex/subscription providers, but never
+	// for explicit non-subscription inference models.
+	if (shouldShowQuota(ctx, codexQuota)) {
 		parts.push(...formatCodexQuota(theme, codexQuota));
 	}
 
@@ -370,7 +417,7 @@ function formatQuotaBucket(
 	bucket: QuotaBucket,
 ): string | undefined {
 	// Use "remaining" percent for the bar (100% = full, 0% = empty)
-	const remainingPercent = bucket.remaining ?? bucketPercent(bucket);
+	const remainingPercent = bucketRemainingPercent(bucket);
 	if (remainingPercent === undefined && bucket.resetAt === undefined) return undefined;
 
 	// Build the bar showing REMAINING quota (not used)
@@ -485,16 +532,36 @@ function isCodex(ctx: ExtensionContext): boolean {
 	return ctx.model?.provider === "openai-codex" || ctx.model?.api === "openai-codex-responses";
 }
 
+function isInferenceProvider(ctx: ExtensionContext): boolean {
+	return ctx.model?.provider === "inference";
+}
+
 function isSubscription(ctx: ExtensionContext): boolean {
 	if (!ctx.model) return false;
 	return ctx.modelRegistry.isUsingOAuth(ctx.model);
 }
 
-function bucketPercent(bucket: QuotaBucket): number | undefined {
-	if (bucket.percent !== undefined) return bucket.percent > 1 ? bucket.percent : bucket.percent * 100;
-	if (bucket.used !== undefined && bucket.limit !== undefined && bucket.limit > 0) return (bucket.used / bucket.limit) * 100;
-	if (bucket.remaining !== undefined && bucket.limit !== undefined && bucket.limit > 0) {
-		return ((bucket.limit - bucket.remaining) / bucket.limit) * 100;
+function shouldShowQuota(ctx: ExtensionContext, quota: CodexQuota): boolean {
+	if (isInferenceProvider(ctx)) return false;
+	if (isCodex(ctx) || isSubscription(ctx)) return true;
+	return !ctx.model && hasQuotaData(quota);
+}
+
+function shouldPollQuota(ctx: ExtensionContext): boolean {
+	if (isInferenceProvider(ctx)) return false;
+	if (isCodex(ctx) || isSubscription(ctx)) return true;
+	return !ctx.model && hasQuotaData(codexQuota);
+}
+
+function bucketRemainingPercent(bucket: QuotaBucket): number | undefined {
+	if (bucket.remaining !== undefined) return clampPercent(bucket.remaining);
+	if (bucket.percent !== undefined) return 100 - clampPercent(bucket.percent);
+	if (bucket.used !== undefined && bucket.limit !== undefined && bucket.limit > 0) {
+		return 100 - clampPercent((bucket.used / bucket.limit) * 100);
 	}
 	return undefined;
+}
+
+function clampPercent(percent: number): number {
+	return Math.max(0, Math.min(100, percent));
 }

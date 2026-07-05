@@ -32,14 +32,26 @@ Quota bars show **remaining** quota (not used):
 
 ## How It Works
 
-For **Codex**, quota data is read from rollout files at:
-```
+For **Codex**, quota data is read from rollout JSONL files at:
+
+```text
 ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl
 ```
 
 The extension polls these files every 30 seconds and after each provider response.
+Fresh rollout data replaces in-memory quota state and is cached for first render at:
 
-For **other OAuth models**, quota data comes from HTTP response headers in the `after_provider_response` event.
+```text
+~/.pi/agent/state/statusline/codex-quota-cache.json
+```
+
+No quota cache should live under the extension source tree.
+
+Quota bars are hidden for the `inference` provider because it is not
+subscription-based.
+
+For **other OAuth models**, quota data comes from HTTP response headers in the
+`after_provider_response` event.
 
 ## Commands
 
