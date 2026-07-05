@@ -8,4 +8,10 @@ llamacpp:
 		--flash-attn on \
 		--cache-type-k q8_0 \
 		--cache-type-v q8_0 \
-		--webui-mcp-proxy
+		--webui-mcp-proxy \
+		--gpu-layers 99 \
+		--reasoning-preserve
+
+whisper:
+	@echo "Starting whisper-server on port 8081 with large-v3-turbo..."
+	@whisper-server -m ./ggml-large-v3-turbo.bin --port 8081

@@ -35,6 +35,14 @@ export default function (pi: ExtensionAPI) {
 	const install = (ctx: ExtensionContext) => {
 		if (!ctx.hasUI) return;
 
+		// Don't overwrite splash's EMPTY_COMPONENT footer on fresh sessions.
+		// If there are no messages yet (splash is showing), skip installing
+		// the footer - it will be installed later on agent_start or model_select
+		// when there ARE messages.
+		const entries = ctx.sessionManager.getEntries();
+		const hasMessages = entries.some((e) => e.type === "message");
+		if (!hasMessages) return;
+
 		ctx.ui.setFooter((tui, theme, footerData) => {
 			requestRender = () => tui.requestRender();
 
@@ -80,7 +88,7 @@ function buildStatusline(
 	const contextText = `${formatTokens(context?.tokens)} / ${formatTokens(contextWindow)}`;
 	const parts = [
 		theme.fg("accent", modelName),
-		`${theme.fg("muted", "ctx")} ${progressBar(contextPercent)} ${theme.fg("dim", contextText)}`,
+		`${theme.fg("muted", "ctx")} ${progressBar(contextPercent, theme)} ${theme.fg("dim", contextText)}`,
 	];
 
 	if (isCodex(ctx)) {
@@ -123,7 +131,7 @@ function formatQuotaBucket(
 	const percent = bucketPercent(bucket);
 	if (percent === undefined && bucket.resetAt === undefined) return undefined;
 
-	let text = `${theme.fg("muted", label)} ${progressBar(percent)}`;
+	let text = `${theme.fg("muted", label)} ${progressBar(percent, theme)}`;
 	if (percent !== undefined) text += ` ${theme.fg("dim", `${Math.round(percent)}%`)}`;
 	if (bucket.resetAt !== undefined) {
 		const format: Intl.DateTimeFormatOptions = includeTime
@@ -138,13 +146,27 @@ function joinWithSeparator(theme: ExtensionContext["ui"]["theme"], parts: string
 	return parts.filter(Boolean).join(theme.fg("dim", "  │  "));
 }
 
-function progressBar(percent: number | undefined): string {
+function progressBar(
+	percent: number | undefined,
+	theme: ExtensionContext["ui"]["theme"],
+): string {
 	if (percent === undefined || !Number.isFinite(percent)) {
 		return `[${"·".repeat(BAR_WIDTH)}]`;
 	}
 	const clamped = Math.max(0, Math.min(100, percent));
 	const filled = Math.round((clamped / 100) * BAR_WIDTH);
-	return `[${"█".repeat(filled)}${"░".repeat(BAR_WIDTH - filled)}]`;
+
+	// Color the bar based on usage thresholds (matching Claude Code pattern)
+	let color: "success" | "warning" | "error" = "success";
+	if (clamped >= 80) {
+		color = "error";
+	} else if (clamped >= 50) {
+		color = "warning";
+	}
+
+	const barChar = theme.fg(color, "█");
+	const emptyChar = theme.fg("dim", "░");
+	return `[${barChar.repeat(filled)}${emptyChar.repeat(BAR_WIDTH - filled)}]`;
 }
 
 function formatTokens(value: number | null | undefined): string {
