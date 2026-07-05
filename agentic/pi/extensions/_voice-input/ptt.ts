@@ -40,7 +40,10 @@ import {
 	isKittyProtocolActive,
 	type KeyId,
 	matchesKey,
+	type TUI,
+	type EditorTheme,
 } from "@earendil-works/pi-tui";
+import type { KeybindingsManager } from "@earendil-works/pi-coding-agent";
 
 const STATUS_KEY = "voice-input";
 
@@ -115,6 +118,9 @@ type StreamSession = {
 	finalText: string;
 	failed: boolean;
 	failureReason: string;
+	prefixText: string; // text in editor before recording started
+	partialStart: number; // character index where partial text starts
+	partialLen: number; // length of current partial text in editor
 };
 let state: State = "idle";
 let recorder: ChildProcess | null = null;
@@ -123,6 +129,7 @@ let nudged = false;
 let lastToggleAt = 0;
 let maxDurationTimer: ReturnType<typeof setTimeout> | null = null;
 let liveCtx: ExtensionContext | null = null;
+let liveEditor: PttEditor | null = null; // current editor instance for inline updates
 let releasesSeen = false;
 let statusText: string | undefined;
 let streamSession: StreamSession | null = null;
@@ -294,16 +301,31 @@ export function parseStreamEvent(event: StreamEvent): ParsedStreamEvent {
 }
 
 function applyStreamEvent(ctx: ExtensionContext, event: StreamEvent): void {
-	if (!streamSession) return;
+	if (!streamSession || !liveEditor) return;
 	const parsed = parseStreamEvent(event);
 	if (parsed.kind === "final") {
 		streamSession.finalText = parsed.text;
-		if (streamSession.finalText) setStatus(ctx, `🎙 final: ${streamSession.finalText}`);
+		if (streamSession.finalText) {
+			// Replace partial with final in editor
+			const currentText = liveEditor.getText();
+			const before = currentText.slice(0, streamSession.partialStart);
+			const after = currentText.slice(streamSession.partialStart + streamSession.partialLen);
+			liveEditor.setText(before + streamSession.finalText + after);
+			streamSession.partialLen = streamSession.finalText.length;
+			setStatus(ctx, `🎙 final: ${streamSession.finalText}`);
+		}
 		return;
 	}
 	if (parsed.kind === "partial") {
 		streamSession.partialText = parsed.text;
-		if (streamSession.partialText) setStatus(ctx, `🎙 ${streamSession.partialText}`);
+		// Insert/update partial inline in editor
+		const currentText = liveEditor.getText();
+		const before = currentText.slice(0, streamSession.partialStart);
+		const after = currentText.slice(streamSession.partialStart + streamSession.partialLen);
+		const newText = streamSession.prefixText + (streamSession.partialText ? " " + streamSession.partialText : "");
+		liveEditor.setText(before + newText + after);
+		streamSession.partialLen = newText.length;
+		setStatus(ctx, `🎙 ${streamSession.partialText}`);
 	}
 }
 
@@ -465,6 +487,11 @@ function startRecording(ctx: ExtensionContext): void {
 	streamBackend = null;
 
 	if (CONFIG.streamCmd) {
+		// Capture prefix and insert a space to separate streaming text from prior content
+		const prefixText = liveEditor ? liveEditor.getText() : "";
+		if (liveEditor && prefixText && !prefixText.endsWith(" ")) {
+			liveEditor.setText(prefixText + " ");
+		}
 		streamSession = {
 			pcmChunks: [],
 			stdoutBuffer: "",
@@ -472,6 +499,9 @@ function startRecording(ctx: ExtensionContext): void {
 			finalText: "",
 			failed: false,
 			failureReason: "",
+			prefixText: prefixText,
+			partialStart: prefixText.length + (prefixText && !prefixText.endsWith(" ") ? 1 : 0),
+			partialLen: 0,
 		};
 		startStreamingBackend(ctx);
 		recorder = startRawRecorder(ctx);
@@ -594,7 +624,20 @@ async function stopAndTranscribe(ctx: ExtensionContext): Promise<void> {
 		if (isNonSpeech(text)) {
 			notify(ctx, "voice-input: no speech detected.", "info");
 		} else {
-			ctx.ui.pasteToEditor(text);
+			// If streaming was active with inline partials, replace at the partial position
+			if (streamSession && streamSession.partialStart >= 0 && liveEditor) {
+				const currentText = liveEditor.getText();
+				const before = currentText.slice(0, streamSession.partialStart);
+				const after = currentText.slice(streamSession.partialStart + streamSession.partialLen);
+				// Ensure a space between prefix and new text if needed
+				let finalText = text;
+				if (before && !before.endsWith(" ") && finalText && !finalText.startsWith(" ")) {
+					finalText = " " + finalText;
+				}
+				liveEditor.setText(before + finalText + after);
+			} else {
+				ctx.ui.pasteToEditor(text);
+			}
 		}
 	} catch (err) {
 		notify(ctx, `voice-input: transcription failed: ${String(err)}`, "error");
@@ -650,6 +693,7 @@ export function cleanup(): void {
 		streamBackend = null;
 	}
 	streamSession = null;
+	liveEditor = null;
 	fs.rmSync(WAV_PATH, { force: true });
 }
 
@@ -662,6 +706,12 @@ export class PttEditor extends CustomEditor {
 	// Opt into key-release delivery — the TUI otherwise filters releases out
 	// before handleInput, so key-up (which stops a hold) would never arrive.
 	wantsKeyRelease = true;
+
+	constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) {
+		super(tui, theme, keybindings);
+		// eslint-disable-next-line @typescript-eslint/no-this-alias
+		liveEditor = this;
+	}
 
 	override handleInput(data: string): void {
 		if (!releasesSeen && isKeyRelease(data)) releasesSeen = true;
