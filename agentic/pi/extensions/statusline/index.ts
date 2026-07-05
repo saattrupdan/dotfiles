@@ -39,7 +39,7 @@ type CodexQuota = {
 };
 
 const BAR_WIDTH = 10;
-const CACHE_FILE = `${process.env.HOME}/.pi/agent/extensions/statusline/codex-quota-cache.json`;
+const CACHE_FILE = `${process.env.HOME}/.pi/agent/state/statusline/codex-quota-cache.json`;
 
 let codexQuota: CodexQuota = {};
 let requestRender: (() => void) | undefined;
