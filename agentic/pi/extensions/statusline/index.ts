@@ -37,6 +37,7 @@ type CodexQuota = {
 };
 
 const BAR_WIDTH = 10;
+const CACHE_FILE = `${process.env.HOME}/.pi/agent/extensions/statusline/codex-quota-cache.json`;
 
 let codexQuota: CodexQuota = {};
 let requestRender: (() => void) | undefined;
@@ -46,6 +47,34 @@ let installed = false;
 // Debounce timeout for reading rollout files (ms)
 const ROLLOUT_READ_DELAY_MS = 500;
 let rolloutReadPending = false;
+
+/**
+ * Load cached quota data from previous sessions.
+ * Used to show quota bars immediately (before Codex writes new rollout file).
+ */
+function loadCachedQuota(): CodexQuota | undefined {
+	try {
+		const { readFileSync } = require("fs") as typeof import("fs");
+		const data = readFileSync(CACHE_FILE, "utf-8");
+		return JSON.parse(data) as CodexQuota;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * Cache quota data for next session (before rollout file is written).
+ */
+function saveCachedQuota(quota: CodexQuota): void {
+	try {
+		const { writeFileSync, mkdirSync } = require("fs") as typeof import("fs");
+		const { dirname } = require("path") as typeof import("path");
+		mkdirSync(dirname(CACHE_FILE), { recursive: true });
+		writeFileSync(CACHE_FILE, JSON.stringify(quota), "utf-8");
+	} catch {
+		// Silently ignore (cache is non-essential)
+	}
+}
 
 export default function (pi: ExtensionAPI) {
 	const install = (ctx: ExtensionContext) => {
@@ -59,8 +88,15 @@ export default function (pi: ExtensionAPI) {
 
 		installed = true;
 
-		// Read quota immediately on install - always try to read from rollout files
-		// The quota display will only show if data is available (handled in formatCodexQuota)
+		// Load cached quota from previous session immediately.
+		// This shows quota bars on first user message (before Codex writes new rollout file).
+		const cached = loadCachedQuota();
+		if (cached && (cached.session || cached.weekly || cached.credits)) {
+			codexQuota = cached;
+			requestRender?.();
+		}
+
+		// Also try to read fresh data from latest rollout file
 		readCodexQuotaDebounced();
 
 		ctx.ui.setFooter((tui, theme, footerData) => {
@@ -126,6 +162,7 @@ function readCodexQuotaDebounced() {
 		const quota = readCodexQuotaFromFile();
 		if (quota.session || quota.weekly || quota.credits) {
 			codexQuota = { ...codexQuota, ...quota };
+			saveCachedQuota(quota); // Cache for next session
 		}
 		rolloutReadPending = false;
 		requestRender?.();
