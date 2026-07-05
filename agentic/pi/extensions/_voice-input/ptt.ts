@@ -638,22 +638,35 @@ async function stopAndTranscribe(ctx: ExtensionContext): Promise<void> {
 				textAtTranscribeStart !== "" && 
 				currentText === "";
 			
-			// If streaming was active with inline partials, replace at the partial position
-			if (streamSession && streamSession.partialStart >= 0 && !editorWasCleared) {
-				const before = currentText.slice(0, streamSession.partialStart);
-				const after = currentText.slice(streamSession.partialStart + streamSession.partialLen);
-				// Ensure a space between prefix and new text if needed
-				let finalText = text;
-				if (before && !before.endsWith(" ") && finalText && !finalText.startsWith(" ")) {
-					finalText = " " + finalText;
+			if (!editorWasCleared) {
+				// If streaming was active with inline partials, replace at the partial position
+				if (streamSession && streamSession.partialStart >= 0) {
+					const before = currentText.slice(0, streamSession.partialStart);
+					const after = currentText.slice(streamSession.partialStart + streamSession.partialLen);
+					// Ensure a space between prefix and new text if needed
+					let finalText = text;
+					if (before && !before.endsWith(" ") && finalText && !finalText.startsWith(" ")) {
+						finalText = " " + finalText;
+					}
+					liveEditor.setText(before + finalText + after);
+				} else {
+					// Non-streaming path: append to current editor content
+					const separator = currentText && !currentText.endsWith(" ") && text && !text.startsWith(" ") ? " " : "";
+					liveEditor.setText(currentText + separator + text);
 				}
-				liveEditor.setText(before + finalText + after);
-			} else if (!editorWasCleared) {
-				// Non-streaming path: append to current editor content
-				const separator = currentText && !currentText.endsWith(" ") && text && !text.startsWith(" ") ? " " : "";
-				liveEditor.setText(currentText + separator + text);
+				
+				// Auto-send after a brief delay to allow user to review/cancel if needed
+				// If user already submitted (editor cleared), this is skipped via editorWasCleared check above
+				setTimeout(() => {
+					// Double-check editor wasn't cleared during the delay
+					if (liveEditor && liveEditor.getText() !== "") {
+						const finalText = liveEditor.getText();
+						liveEditor.setText(""); // Clear editor
+						ctx.sendUserMessage(finalText); // Auto-send the transcription
+					}
+				}, 500);
 			}
-			// If editor was cleared, skip insertion - user already submitted the content
+			// If editor was cleared, skip insertion and auto-send - user already submitted
 		} else {
 			ctx.ui.pasteToEditor(text);
 		}
