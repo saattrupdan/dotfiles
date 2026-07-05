@@ -71,7 +71,9 @@ export default function (pi: ExtensionAPI) {
 		install(ctx);
 		requestRender?.();
 	});
-	pi.on("message_end", (_event, ctx) => {
+	pi.on("message_end", (event, ctx) => {
+		// Only install when user message ends (not assistant messages)
+		if (event.message?.role !== "user") return;
 		install(ctx);
 		requestRender?.();
 	});
