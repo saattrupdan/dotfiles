@@ -62,7 +62,7 @@ export default function (pi: ExtensionAPI) {
 	};
 
 	// Install on agent_start (processing user message), model_select, and turn_end.
-	// turn_end ensures installation after first message is stored in session.
+	// Install on message_end (when user message is stored) to show footer immediately.
 	// NOT on session_start - splash screen also sets footer there and
 	// should remain visible until user submits first message.
 	pi.on("agent_start", (_event, ctx) => install(ctx));
@@ -71,7 +71,10 @@ export default function (pi: ExtensionAPI) {
 		install(ctx);
 		requestRender?.();
 	});
-	pi.on("message_end", (_event, _ctx) => requestRender?.());
+	pi.on("message_end", (_event, ctx) => {
+		install(ctx);
+		requestRender?.();
+	});
 
 	pi.on("after_provider_response", (event, ctx) => {
 		if (!isCodex(ctx)) return;
