@@ -7,10 +7,13 @@
  * is deliberately NOT named index.ts, so pi's discovery doesn't try to load it
  * as an extension factory. Import it explicitly from the sibling extensions.
  *
- * See voice-input/index.ts for the full behaviour/config doc comment. Summary:
+ * Behaviour:
  *   • Hold the PTT key (default: space) to record; release to transcribe+paste.
  *   • Space uses tap-vs-hold: a quick tap types a space, a hold past
- *     PI_PTT_HOLD_MS (default 500) records. Needs key-release events.
+ *     PI_PTT_HOLD_MS (default 700) records. Needs key-release events.
+ *   • Stopping is robust: the held key's auto-repeats act as a keep-alive, and
+ *     when they cease (you let go) a watchdog stops recording even if the actual
+ *     release event was dropped/batched. Escape also cancels a recording.
  *   • Transcribe via whisper.cpp (default) or $PI_PTT_TRANSCRIBE_CMD.
  */
 
@@ -27,7 +30,7 @@ const STATUS_KEY = "voice-input";
 /** Resolved once at load — env is stable for the process lifetime. */
 export const CONFIG = {
 	key: process.env.PI_PTT_KEY?.trim() || "space",
-	holdMs: Number(process.env.PI_PTT_HOLD_MS) || 500,
+	holdMs: Number(process.env.PI_PTT_HOLD_MS) || 700,
 	transcribeCmd: process.env.PI_PTT_TRANSCRIBE_CMD?.trim() || "",
 	whisperBin: process.env.PI_PTT_WHISPER_BIN?.trim() || "whisper-cli",
 	whisperModel:
@@ -42,7 +45,11 @@ export const KEY_IS_TYPING = CONFIG.key === "space" || CONFIG.key.length === 1;
 /** Debounce for legacy toggle mode: auto-repeat is fast (~30-60ms); a deliberate
  *  second tap is far slower, so anything within this window is treated as repeat. */
 const TOGGLE_DEBOUNCE_MS = 350;
-/** Safety cap: auto-stop recording if a release is somehow missed. */
+/** How long after the last held-key event (repeat) with no further activity we
+ *  treat the key as released and stop — the safety net for dropped/batched
+ *  release events. Must exceed the OS key-repeat interval. */
+const HOLD_WATCHDOG_MS = 700;
+/** Safety cap: auto-stop recording if everything else somehow misses. */
 const MAX_RECORDING_MS = 120_000;
 
 /** The temp WAV for the current/last clip, keyed by pid to avoid collisions. */
@@ -68,22 +75,26 @@ let recorder: ChildProcess | null = null;
 let nudged = false;
 let lastToggleAt = 0;
 let maxDurationTimer: ReturnType<typeof setTimeout> | null = null;
-/** Latest interactive context, so the editor can drive recording. Set by both
- *  extensions on their lifecycle events, so it's valid on the splash screen and
- *  in the conversation regardless of which one installed the active editor. */
 let liveCtx: ExtensionContext | null = null;
-/** Set once we've observed a real key-release event, so we don't rely solely on
- *  pi's protocol-capability probe (which can under-detect). */
 let releasesSeen = false;
+let statusText: string | undefined;
 
 // Tap-vs-hold state for a typing PTT key (e.g. space).
 let holdTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingPressData: string | null = null;
+// Repeat-gap watchdog: while recording from a hold, the held key keeps firing;
+// when it stops, this fires and stops recording (covers dropped release events).
+let holdWatchdog: ReturnType<typeof setTimeout> | null = null;
 
-// Current transient status text ("🎙 recording…" etc.), mirrored so a custom
-// surface (e.g. splash's belowEditor widget) can display it where the real
-// footer isn't shown. Undefined when idle.
-let statusText: string | undefined;
+/** Opt-in diagnostic log (PI_PTT_DEBUG=1). */
+function dbg(line: string): void {
+	if (!process.env.PI_PTT_DEBUG) return;
+	try {
+		fs.appendFileSync("/tmp/pi-voice-input-debug.log", line + "\n");
+	} catch {
+		// best effort
+	}
+}
 
 export function setLiveCtx(ctx: ExtensionContext): void {
 	liveCtx = ctx;
@@ -206,6 +217,25 @@ function isNonSpeech(text: string): boolean {
 	return NOISE_PHRASES.has(norm);
 }
 
+function clearHoldWatchdog(): void {
+	if (holdWatchdog) {
+		clearTimeout(holdWatchdog);
+		holdWatchdog = null;
+	}
+}
+
+/** (Re)arm the watchdog that stops recording once the held key stops repeating. */
+function armHoldWatchdog(ctx: ExtensionContext): void {
+	clearHoldWatchdog();
+	holdWatchdog = setTimeout(() => {
+		holdWatchdog = null;
+		if (state === "recording") {
+			dbg("WATCHDOG stop (held key stopped repeating)");
+			void stopAndTranscribe(ctx);
+		}
+	}, HOLD_WATCHDOG_MS);
+}
+
 /** Start recording. Assumes preconditions were already checked. */
 function startRecording(ctx: ExtensionContext): void {
 	fs.rmSync(WAV_PATH, { force: true });
@@ -228,6 +258,7 @@ function startRecording(ctx: ExtensionContext): void {
 		setStatus(ctx, undefined);
 	});
 	state = "recording";
+	dbg("REC START");
 	setStatus(ctx, "🎙 recording…");
 	maxDurationTimer = setTimeout(() => {
 		if (state === "recording") void stopAndTranscribe(ctx);
@@ -236,6 +267,8 @@ function startRecording(ctx: ExtensionContext): void {
 
 /** Stop recording (finalising the WAV), then transcribe and paste. */
 async function stopAndTranscribe(ctx: ExtensionContext): Promise<void> {
+	dbg("STOP called");
+	clearHoldWatchdog();
 	if (maxDurationTimer) {
 		clearTimeout(maxDurationTimer);
 		maxDurationTimer = null;
@@ -282,6 +315,28 @@ async function stopAndTranscribe(ctx: ExtensionContext): Promise<void> {
 	}
 }
 
+/** Abort an in-flight recording without transcribing (Escape / cleanup). */
+function cancelRecording(ctx: ExtensionContext): void {
+	clearHoldWatchdog();
+	if (maxDurationTimer) {
+		clearTimeout(maxDurationTimer);
+		maxDurationTimer = null;
+	}
+	if (recorder) {
+		try {
+			recorder.kill("SIGINT");
+		} catch {
+			// already gone
+		}
+		recorder = null;
+	}
+	fs.rmSync(WAV_PATH, { force: true });
+	state = "idle";
+	dbg("CANCELLED");
+	setStatus(ctx, undefined);
+	notify(ctx, "voice-input: recording cancelled.", "info");
+}
+
 /** Begin recording if idle and the toolchain is ready; otherwise nudge. */
 function beginIfReady(ctx: ExtensionContext): void {
 	if (!ctx.hasUI || state !== "idle") return;
@@ -307,6 +362,7 @@ export function cleanup(): void {
 		clearTimeout(holdTimer);
 		holdTimer = null;
 	}
+	clearHoldWatchdog();
 	if (maxDurationTimer) {
 		clearTimeout(maxDurationTimer);
 		maxDurationTimer = null;
@@ -334,7 +390,18 @@ export class PttEditor extends CustomEditor {
 
 	override handleInput(data: string): void {
 		if (!releasesSeen && isKeyRelease(data)) releasesSeen = true;
+		dbg(
+			`in ${JSON.stringify(data)} rel=${isKeyRelease(data)} rep=${isKeyRepeat(data)}` +
+				` match=${matchesKey(data, CONFIG.key)} state=${state} kitty=${isKittyProtocolActive()}` +
+				` hold=${holdTimer !== null} wd=${holdWatchdog !== null}`,
+		);
 		try {
+			// Escape always cancels an active recording — a reliable manual stop
+			// that doesn't depend on a (possibly dropped) key-release event.
+			if (liveCtx && state === "recording" && matchesKey(data, "escape")) {
+				cancelRecording(liveCtx);
+				return;
+			}
 			if (liveCtx && matchesKey(data, CONFIG.key)) {
 				if (this.handlePtt(data, liveCtx)) return; // fully handled → consume
 			} else {
@@ -364,6 +431,8 @@ export class PttEditor extends CustomEditor {
 		if (releases) {
 			if (isKeyRelease(data)) {
 				if (state === "recording") void stopAndTranscribe(ctx);
+			} else if (state === "recording") {
+				armHoldWatchdog(ctx); // held-key repeat keep-alive
 			} else if (!isKeyRepeat(data)) {
 				beginIfReady(ctx);
 			}
@@ -391,7 +460,7 @@ export class PttEditor extends CustomEditor {
 		if (press) super.handleInput(press);
 	}
 
-	/** Tap-vs-hold for a typing key, using key-release events. */
+	/** Tap-vs-hold for a typing key, using key-release events + a repeat watchdog. */
 	private handleTypingHold(data: string, ctx: ExtensionContext): boolean {
 		if (isKeyRelease(data)) {
 			if (holdTimer) {
@@ -399,6 +468,12 @@ export class PttEditor extends CustomEditor {
 			} else if (state === "recording") {
 				void stopAndTranscribe(ctx); // released after a hold → stop dictation
 			}
+			return true;
+		}
+		// Press or repeat of the held key while recording → keep-alive: the
+		// watchdog stops recording once these cease, even if the release is lost.
+		if (state === "recording") {
+			armHoldWatchdog(ctx);
 			return true;
 		}
 		if (isKeyRepeat(data)) return true; // held; the timer decides. Consume.
