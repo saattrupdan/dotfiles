@@ -113,7 +113,12 @@ function buildStatusline(
 function formatExtensionStatuses(footerData: ReadonlyFooterDataProvider): string[] {
 	return Array.from(footerData.getExtensionStatuses().entries())
 		.sort(([a], [b]) => a.localeCompare(b))
-		.map(([, text]) => sanitizeStatusText(text))
+		.map(([ext, text]) => {
+			const sanitized = sanitizeStatusText(text);
+			// Hide MCP status when no servers are active (e.g. "MCP: 0/1 servers")
+			if (ext === "mcp" && sanitized.includes("0/")) return "";
+			return sanitized;
+		})
 		.filter((text) => text.length > 0);
 }
 
