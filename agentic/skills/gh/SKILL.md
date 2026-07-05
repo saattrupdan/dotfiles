@@ -1,6 +1,11 @@
 ---
 name: gh
-description: GitHub CLI (gh) — the official command-line interface to GitHub. Use when the user needs to create or manage pull requests, issues, repositories, GitHub Actions, gists, API calls, authentication, or any other GitHub workflow from the terminal. Also use for scripting GitHub automation, querying the GraphQL/REST API, managing forks/clones, and viewing workflow run logs. Prefer gh over web browsing or the raw REST API.
+description:
+  GitHub CLI (gh) — the official command-line interface to GitHub. Use when the user
+  needs to create or manage pull requests, issues, repositories, GitHub Actions, gists,
+  API calls, authentication, or any other GitHub workflow from the terminal. Also use
+  for scripting GitHub automation, querying the GraphQL/REST API, managing forks/clones,
+  and viewing workflow run logs. Prefer gh over web browsing or the raw REST API.
 tagline: Official GitHub CLI for PRs, issues, repos, Actions, API, and more
 triggers:
   - pattern: "(create|make|open|submit|push|get|prepare)\\s+(a|an|the\\s+)?(pr|pull\\s*request|pull-request)"
@@ -34,15 +39,15 @@ Headless: `GH_TOKEN`/`GITHUB_TOKEN`. Enterprise: `GH_ENTERPRISE_TOKEN` + `GH_HOS
 
 ## Key env vars
 
-| Variable | Purpose |
-|---|---|
+| Variable                    | Purpose                             |
+| --------------------------- | ----------------------------------- |
 | `GH_TOKEN` / `GITHUB_TOKEN` | Auth token (overrides stored creds) |
-| `GH_HOST` | Default hostname |
-| `GH_REPO` | Default `OWNER/REPO` |
-| `GH_EDITOR` / `GIT_EDITOR` | Text editor |
-| `GH_BROWSER` / `GH_PAGER` | Browser / pager |
-| `GH_DEBUG` / `DEBUG` | Verbose; `api` for HTTP traffic |
-| `GH_PROMPT_DISABLED` | Disable prompts |
+| `GH_HOST`                   | Default hostname                    |
+| `GH_REPO`                   | Default `OWNER/REPO`                |
+| `GH_EDITOR` / `GIT_EDITOR`  | Text editor                         |
+| `GH_BROWSER` / `GH_PAGER`   | Browser / pager                     |
+| `GH_DEBUG` / `DEBUG`        | Verbose; `api` for HTTP traffic     |
+| `GH_PROMPT_DISABLED`        | Disable prompts                     |
 
 ## Universal flags
 
@@ -76,7 +81,9 @@ gh pr edit 123 --body-file body.md  # Update body from file
 gh pr comment 123 -b $'Line 1\nLine 2'  # Use $'...' for newlines
 ```
 
-**Gotcha: Newlines in comments** — Literal `\n` in bash strings are *not* rendered as newlines by GitHub. For multi-line comments, use `$'...'` syntax for actual newlines, or use `--body-file`:
+**Gotcha: Newlines in comments** — Literal `\n` in bash strings are _not_ rendered as
+newlines by GitHub. For multi-line comments, use `$'...'` syntax for actual newlines, or
+use `--body-file`:
 
 ```bash
 gh pr comment <N> -b $'Line 1\nLine 2\nLine 3'  # ✓ Works
@@ -86,28 +93,28 @@ gh pr comment <N> --body-file comment.md        # ✓ Alternative
 
 ### PR description style
 
-Write PR descriptions that a human (or agent) can skim — focus on **what** the PR does, **why**, and **how to use it**. Avoid file-level diffs.
+Write PR descriptions that a human (or agent) can skim — focus on **what** the PR does,
+**why**, and **how to use it**. Avoid file-level diffs.
 
 Recommended structure:
 
 1. **What** — one paragraph on the core change or new capability
 2. **Key features** — bullet list of the most user-facing changes
 3. **Examples** — concrete CLI examples or API calls showing how it works
-4. **Why it helps** (optional) — one short paragraph on the motivation or
-   benefit
+4. **Why it helps** (optional) — one short paragraph on the motivation or benefit
 
-Less emphasis on technical internals — agents should know *what* the PR
-delivers, not *which files changed*. (The diffs page covers that.)
+Less emphasis on technical internals — agents should know _what_ the PR delivers, not
+_which files changed_. (The diffs page covers that.)
 
 ### Reviewers and assignment
 
 Always assign yourself (`@me`) to the PR as the author.
 
-Do not manually assign reviewers — GitHub's CODEOWNERS file handles automatic
-reviewer assignment based on changed files.
+Do not manually assign reviewers — GitHub's CODEOWNERS file handles automatic reviewer
+assignment based on changed files.
 
-Auto-close: `Fixes #N`, `Closes #N`, `Resolves #N` in body.
-Aliases: `gh pr new` = `create`, `gh pr co` = `checkout`.
+Auto-close: `Fixes #N`, `Closes #N`, `Resolves #N` in body. Aliases: `gh pr new` =
+`create`, `gh pr co` = `checkout`.
 
 ### Review cycle
 
@@ -118,10 +125,11 @@ gh pr status
 gh pr view <N> --json reviewDecision,reviews  # reviewDecision empty = not yet reviewed
 ```
 
-A `COMMENTED` review decision means inline comments were left (not approval).
-Always inspect and address them.
+A `COMMENTED` review decision means inline comments were left (not approval). Always
+inspect and address them.
 
-Note: You cannot submit a review (`gh pr review`) on your own PR — only post comments and resolve threads.
+Note: You cannot submit a review (`gh pr review`) on your own PR — only post comments
+and resolve threads.
 
 #### Copilot review workflow
 
@@ -131,8 +139,10 @@ Note: You cannot submit a review (`gh pr review`) on your own PR — only post c
    gh api repos/<org>/<repo>/pulls/<N>/reviews/<ID>/comments --jq '.[] | {path, line, body, id}'
    ```
 2. **Read the relevant code** and judge whether each comment makes sense.
-3. **Fix the code** if the feedback is valid (or improve it even if the suggestion isn't perfect).
-4. **Reply to ambiguous comments** — if a comment contains a question or is unclear, reply on that specific thread:
+3. **Fix the code** if the feedback is valid (or improve it even if the suggestion isn't
+   perfect).
+4. **Reply to ambiguous comments** — if a comment contains a question or is unclear,
+   reply on that specific thread:
    ```bash
    gh api repos/<org>/<repo>/pulls/<N>/comments -X POST -f body="Your clarification question here" -F in_reply_to=<COMMENT_ID>
    ```
@@ -154,19 +164,23 @@ Note: You cannot submit a review (`gh pr review`) on your own PR — only post c
    ```bash
    gh api repos/<org>/<repo>/pulls/<N>/reviews/<REVIEW_ID>/comments --jq '.[] | {id, path, line, body}'
    ```
-2. **Reply directly to each comment** — explain your fix or reasoning on the specific thread:
+2. **Reply directly to each comment** — explain your fix or reasoning on the specific
+   thread:
    ```bash
    gh api repos/<org>/<repo>/pulls/<N>/comments -X POST -f body="Your reply here" -F in_reply_to=<COMMENT_ID>
    ```
-3. **Do NOT resolve threads without replying** — resolve only for trivial nits you've immediately fixed. Otherwise, reply with context.
+3. **Do NOT resolve threads without replying** — resolve only for trivial nits you've
+   immediately fixed. Otherwise, reply with context.
 4. **No overall summary comment** — individual replies are sufficient.
 5. **Re-request the review** after addressing all comments:
    ```bash
    echo '{"reviewers":["<reviewer-login>"]}' | gh api --method POST repos/<org>/<repo>/pulls/<N>/requested_reviewers --input -
    ```
-   **Note:** `gh pr edit --add-reviewer` doesn't actually re-request — use the API endpoint directly.
+   **Note:** `gh pr edit --add-reviewer` doesn't actually re-request — use the API
+   endpoint directly.
 
-**Key principle:** Copilot → resolve threads + one summary tagged `@copilot`. Humans → reply to each thread, no summary, re-request review.
+**Key principle:** Copilot → resolve threads + one summary tagged `@copilot`. Humans →
+reply to each thread, no summary, re-request review.
 
 ## Issues
 
@@ -184,6 +198,21 @@ gh issue status                    # Assigned to you
 ```
 
 Aliases: `gh issue new` = `create`.
+
+### Gotchas
+
+**YAML frontmatter only works in web UI:** When using `gh issue create --body-file`,
+YAML frontmatter (like the template headers in `.github/ISSUE_TEMPLATE/`) is **not**
+parsed — it renders as raw text in the issue body. To use templates properly:
+
+- Use `gh issue create --template "Bug Report" --web` to open the browser with the
+  template
+- Or paste the body manually into the web form after selecting the template
+- The `--body` and `--body-file` flags bypass template processing entirely
+
+**Default repo is local git remote:** `gh issue create` without `--repo` uses the
+current directory's git remote. Always specify `--repo owner/repo` when creating issues
+in external repos to avoid accidental creation in the wrong place.
 
 ## Repositories
 
@@ -247,7 +276,8 @@ gh config set git_protocol ssh / editor vim / color_labels enabled
 gh config list / get git_protocol / clear-cache
 ```
 
-Keys: `git_protocol`, `editor`, `prompt`, `pager`, `browser`, `color_labels`, `telemetry`, `spinner`.
+Keys: `git_protocol`, `editor`, `prompt`, `pager`, `browser`, `color_labels`,
+`telemetry`, `spinner`.
 
 ## Search
 
@@ -267,4 +297,5 @@ gh completion -s bash | zsh | fish | powershell
 - `--web` opens the GitHub page in browser.
 - Project board membership needs `project` scope (`gh auth refresh -s project`).
 - Draft PRs show `[WIP]` in listings.
-- **Copilot reviews:** `state: COMMENTED` means *changes requested*, not approval. See the "Review cycle" section for the full workflow.
+- **Copilot reviews:** `state: COMMENTED` means _changes requested_, not approval. See
+  the "Review cycle" section for the full workflow.
