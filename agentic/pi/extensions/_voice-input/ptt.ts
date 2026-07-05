@@ -58,17 +58,20 @@ const TOGGLE_DEBOUNCE_MS = 350;
  *  treat the key as released and stop — the safety net for dropped/batched
  *  release events. Must exceed the OS key-repeat interval. */
 const HOLD_WATCHDOG_MS = 700;
-/** Repeat-only fallback (Neovim's :terminal): after the first repeat proves
- *  the OS has started key repeat, later repeat gaps must stay below this. */
-const REPEAT_MAX_GAP_MS = 300;
+/** Repeat-only fallback (Neovim's :terminal): the first OS repeat can be
+ *  delayed longer than the steady-state repeat cadence, especially with custom
+ *  keyboard settings. */
+const REPEAT_MAX_INITIAL_GAP_MS = 1_100;
 /** The first OS repeat should not arrive immediately; repeated human taps can. */
 const REPEAT_MIN_INITIAL_GAP_MS = 250;
 /** Once OS repeat starts, following gaps should be much shorter than tap cadence. */
-const REPEAT_MAX_CONTINUATION_GAP_MS = 175;
+const REPEAT_MAX_CONTINUATION_GAP_MS = 220;
+/** If a plausible repeat candidate stalls, flush it back as typed spaces. */
+const REPEAT_CANDIDATE_STALL_MS = REPEAT_MAX_CONTINUATION_GAP_MS + 120;
 /** Consecutive OS repeat gaps should be reasonably regular. */
-const REPEAT_MAX_JITTER_MS = 80;
-/** OS continuation repeat should be clearly faster than its initial delay. */
-const REPEAT_MIN_INITIAL_TO_CONTINUATION_RATIO = 2;
+const REPEAT_MAX_JITTER_MS = 100;
+/** OS continuation repeat should be noticeably faster than its initial delay. */
+const REPEAT_MAX_CONTINUATION_TO_INITIAL_RATIO = 0.8;
 /** Safety cap: auto-stop recording if everything else somehow misses. */
 const MAX_RECORDING_MS = 120_000;
 
@@ -115,6 +118,9 @@ let lastSpaceAt = 0;
 let spaceRepeatCandidate = false;
 let initialRepeatGap = 0;
 let lastContinuationGap = 0;
+let continuationRepeatCount = 0;
+let bufferedSpaceRepeats = 0;
+let spaceRepeatFlushTimer: ReturnType<typeof setTimeout> | null = null;
 // Repeat-gap watchdog: while recording from a hold, the held key keeps firing;
 // when it stops, this fires and stops recording (covers dropped release events).
 let holdWatchdog: ReturnType<typeof setTimeout> | null = null;
@@ -375,6 +381,10 @@ export function cleanup(): void {
 		clearTimeout(holdTimer);
 		holdTimer = null;
 	}
+	if (spaceRepeatFlushTimer) {
+		clearTimeout(spaceRepeatFlushTimer);
+		spaceRepeatFlushTimer = null;
+	}
 	clearHoldWatchdog();
 	if (maxDurationTimer) {
 		clearTimeout(maxDurationTimer);
@@ -412,7 +422,9 @@ export class PttEditor extends CustomEditor {
 				// hold detection and let this key type normally.
 				if (holdTimer) cancelHoldDetection();
 				// A different key also ends any in-progress Space auto-repeat run
-				// (fallback path) — so the next Space starts fresh and types.
+				// (fallback path). Flush buffered candidate repeats first so manual
+				// Space taps are preserved in order before this key types normally.
+				this.flushBufferedSpaceRepeats();
 				this.resetSpaceRepeatRun();
 				// We only want the PTT key's release; drop every other release,
 				// because the base editor never normally receives releases and
@@ -425,22 +437,52 @@ export class PttEditor extends CustomEditor {
 		super.handleInput(data);
 	}
 
+	private clearSpaceRepeatFlushTimer(): void {
+		if (spaceRepeatFlushTimer) {
+			clearTimeout(spaceRepeatFlushTimer);
+			spaceRepeatFlushTimer = null;
+		}
+	}
+
+	private flushBufferedSpaceRepeats(): void {
+		this.clearSpaceRepeatFlushTimer();
+		while (bufferedSpaceRepeats > 0) {
+			bufferedSpaceRepeats -= 1;
+			super.handleInput(" ");
+		}
+	}
+
+	private armSpaceRepeatFlush(): void {
+		this.clearSpaceRepeatFlushTimer();
+		spaceRepeatFlushTimer = setTimeout(() => {
+			spaceRepeatFlushTimer = null;
+			this.flushBufferedSpaceRepeats();
+			this.resetSpaceRepeatRun();
+		}, REPEAT_CANDIDATE_STALL_MS);
+	}
+
 	private startSpaceTapRun(data: string, now: number): void {
+		this.clearSpaceRepeatFlushTimer();
 		spaceRunStartAt = now;
 		lastSpaceAt = now;
 		spaceRunLen = 1;
 		spaceRepeatCandidate = false;
 		initialRepeatGap = 0;
 		lastContinuationGap = 0;
+		continuationRepeatCount = 0;
+		bufferedSpaceRepeats = 0;
 		textBeforeSpace = this.getText();
 		super.handleInput(data);
 	}
 
 	private resetSpaceRepeatRun(): void {
+		this.clearSpaceRepeatFlushTimer();
 		spaceRunLen = 0;
 		spaceRepeatCandidate = false;
 		initialRepeatGap = 0;
 		lastContinuationGap = 0;
+		continuationRepeatCount = 0;
+		bufferedSpaceRepeats = 0;
 	}
 
 	/** Returns true if the key was consumed; false to let it type normally. */
@@ -531,10 +573,10 @@ export class PttEditor extends CustomEditor {
 		}
 
 		if (!spaceRepeatCandidate) {
-			const firstRepeatMaxGap = Math.max(CONFIG.holdMs, REPEAT_MAX_GAP_MS);
-			if (gap < REPEAT_MIN_INITIAL_GAP_MS || gap > firstRepeatMaxGap) {
+			if (gap < REPEAT_MIN_INITIAL_GAP_MS || gap > REPEAT_MAX_INITIAL_GAP_MS) {
 				// Too fast for the first OS repeat, or too slow to be the same hold:
 				// treat this as another tap and type it rather than suppressing it.
+				this.flushBufferedSpaceRepeats();
 				this.startSpaceTapRun(data, now);
 				return true;
 			}
@@ -542,18 +584,21 @@ export class PttEditor extends CustomEditor {
 			initialRepeatGap = gap;
 			spaceRunLen += 1;
 			lastSpaceAt = now;
+			bufferedSpaceRepeats += 1;
+			this.armSpaceRepeatFlush();
 			return true;
 		}
 
-		const tooSlow = gap > Math.min(REPEAT_MAX_GAP_MS, REPEAT_MAX_CONTINUATION_GAP_MS);
+		const tooSlow = gap > REPEAT_MAX_CONTINUATION_GAP_MS;
 		const tooCloseToInitialDelay =
-			gap * REPEAT_MIN_INITIAL_TO_CONTINUATION_RATIO > initialRepeatGap;
+			gap > initialRepeatGap * REPEAT_MAX_CONTINUATION_TO_INITIAL_RATIO;
 		const tooIrregular =
 			lastContinuationGap > 0 &&
 			Math.abs(gap - lastContinuationGap) > REPEAT_MAX_JITTER_MS;
 		if (tooSlow || tooCloseToInitialDelay || tooIrregular) {
-			// Looks like tapping, not OS repeat. Flush the previous candidate and
+			// Looks like tapping, not OS repeat. Flush suppressed candidate spaces and
 			// let this byte become a normal typed space.
+			this.flushBufferedSpaceRepeats();
 			this.startSpaceTapRun(data, now);
 			return true;
 		}
@@ -561,8 +606,13 @@ export class PttEditor extends CustomEditor {
 		spaceRunLen += 1;
 		lastSpaceAt = now;
 		lastContinuationGap = gap;
-		// Require at least two continuation repeats as well as elapsed hold time.
-		if (spaceRunLen >= 4 && now - spaceRunStartAt >= CONFIG.holdMs) {
+		continuationRepeatCount += 1;
+		bufferedSpaceRepeats += 1;
+		this.armSpaceRepeatFlush();
+		// Require OS-repeat-like timing: plausible initial delay, at least one
+		// short continuation gap, and elapsed hold time. If the initial delay has
+		// already exceeded the threshold, the first continuation can confirm hold.
+		if (continuationRepeatCount >= 1 && now - spaceRunStartAt >= CONFIG.holdMs) {
 			if (textBeforeSpace !== null) {
 				this.setText(textBeforeSpace);
 				textBeforeSpace = null;
