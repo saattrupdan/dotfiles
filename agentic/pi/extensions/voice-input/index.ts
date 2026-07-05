@@ -311,6 +311,10 @@ function nudge(ctx: ExtensionContext, msg: string): void {
  * CustomEditor untouched; the PTT branch is try/caught by the caller.
  */
 class PttEditor extends CustomEditor {
+	// Opt into key-release delivery — the TUI otherwise filters releases out
+	// before handleInput, so key-up (which stops a hold) would never arrive.
+	wantsKeyRelease = true;
+
 	override handleInput(data: string): void {
 		// Learn the terminal's capability from real traffic: any release event
 		// (for any key) proves hold-to-talk is possible.
@@ -318,11 +322,15 @@ class PttEditor extends CustomEditor {
 		try {
 			if (liveCtx && matchesKey(data, CONFIG.key)) {
 				if (this.handlePtt(data, liveCtx)) return; // fully handled → consume
-			} else if (holdTimer) {
+			} else {
 				// A different key arrived while a space press was deferred → the
 				// space was a tap, not a hold. Flush it in order, THEN this key,
 				// so fast typing (space+letter rollover) is never transposed.
-				this.flushPendingSpace();
+				if (holdTimer) this.flushPendingSpace();
+				// We only want the PTT key's release; every OTHER release must be
+				// dropped, because the base editor never normally receives releases
+				// and could double-process a keystroke if handed one.
+				if (isKeyRelease(data)) return;
 			}
 		} catch {
 			// Never let a PTT bug break typing — fall through to normal editing.
