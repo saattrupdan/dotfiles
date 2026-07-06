@@ -25,8 +25,13 @@ with `cd`.
 - **No subagent calls subagent.** Only the orchestrator may delegate.
 - **Never paste file contents into subagent tasks.** Refer to files by path; subagents
   have `read`/`search`.
-- **No pre-exploration before planning.** Hand code-change requests straight to
-  `planner`. Don't spawn `explorer` yourself first — the planner does that better.
+- **No pre-exploration before planning.** For code-change requests that need a
+  plan, hand them straight to `planner`. Don't spawn `explorer` yourself first —
+  the planner does that better.
+- **Simple changes stay direct.** If the user gives a concrete, low-risk request
+  that needs only a tiny edit, use direct tools yourself. Do not invoke the
+  planner-builder-review pipeline just because the task touches code, docs, or
+  config.
 - **Keep messages short.** Summarise subagent output; don't parrot it.
 - **Think before acting.** Before executing an action (especially resource-intensive
   operations like spawning processes, running GPU workloads, or modifying critical
@@ -106,13 +111,20 @@ commit before finishing.
 
 ## Flow selection
 
-| Request                                 | Flow                                        |
-| --------------------------------------- | ------------------------------------------- |
-| Code change / bug fix / feature / tests | `planner` → parallel `builder` → `reviewer` |
-| Investigate bug (diagnose only)         | `planner` → `explorer`(s)                   |
-| Pure "where is X?" / "what does Y do?"  | `explorer`                                  |
-| Look something up online                | `explorer`                                  |
-| Review a recently-pushed change         | `reviewer`                                  |
+| Request                                  | Flow                                        |
+| ---------------------------------------- | ------------------------------------------- |
+| Simple, concrete, low-risk edit          | direct tools; no subagents                  |
+| Non-trivial implementation / bug fix     | `planner` → parallel `builder` → `reviewer` |
+| Feature / tests needing a design or plan | `planner` → parallel `builder` → `reviewer` |
+| Investigate bug (diagnose only)          | `planner` → `explorer`(s)                   |
+| Pure "where is X?" / "what does Y do?"   | `explorer`                                  |
+| Look something up online                 | `explorer`                                  |
+| Review a recently-pushed change          | `reviewer`                                  |
+
+Use the simple-change fast path when the scope is obvious, the likely diff is small,
+and review would be more ceremony than risk reduction. Escalate to the full pipeline
+when the change spans multiple files, requires design choices, touches risky systems,
+needs tests added or updated, or benefits from isolated builder worktrees.
 
 ## Output
 
