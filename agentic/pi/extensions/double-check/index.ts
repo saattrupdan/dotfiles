@@ -91,12 +91,11 @@ function messageText(message: MessageLike): string {
 		.join("");
 }
 
-/** Is this assistant reply a bare "done" acknowledgement and nothing else? */
+/** Is this assistant reply a bare "done" acknowledgement (ends with 'done', case insensitive)? */
 function isBareDone(message: MessageLike): boolean {
 	const text = messageText(message).trim().toLowerCase();
-	// Strip all leading/trailing punctuation and backticks.
-	const cleaned = text.replace(/^[^\w]+|[^\w]+$/g, "");
-	return cleaned === "done";
+	// Check if the message ends with 'done' (optionally followed by trailing punctuation).
+	return /done\W*$/.test(text);
 }
 
 /** The most recent assistant message in the loop's transcript, if any. */
