@@ -562,25 +562,27 @@ export default async function (pi: ExtensionAPI) {
 				return rendered;
 			}
 
-			// 3c. Verbatim extensions (LaTeX) → always return full content regardless of size.
+			// 4. Open the index (no full build) and determine repo membership.
+			// Use the session cwd (ctx.cwd), not process.cwd() — see the search
+			// extension for why the two can diverge.
+			const { repoRoot } = openIndex(ctx?.cwd ?? process.cwd());
+			const relPath = path.relative(repoRoot, absolutePath);
+			const isOutsideRepo = relPath.startsWith("..");
+
+			// 4a. Verbatim extensions (LaTeX) → always return full content regardless of size.
 			if (VERBATIM_EXTENSIONS.has(ext)) {
 				const content = fs.readFileSync(absolutePath, "utf-8");
 				const allLines = content.split("\n");
 				const totalLines = allLines.length;
-				const displayPath = path.basename(absolutePath);
+				const displayPath = isOutsideRepo ? path.basename(absolutePath) : relPath;
 				const banner = `# ${displayPath} (${totalLines} lines) — verbatim content (LaTeX extension)`;
 				const callIdx = ++callIndex.current;
 				dedupeCache.set(key, { sha, callIndex: callIdx, text: `${banner}\n${content}` });
 				return { content: [{ type: "text", text: `${banner}\n${content}` }] };
 			}
 
-			// 4. Open the index (no full build) and determine repo membership.
-			// Use the session cwd (ctx.cwd), not process.cwd() — see the search
-			// extension for why the two can diverge.
-			const { db, repoRoot } = openIndex(ctx?.cwd ?? process.cwd());
-			const relPath = path.relative(repoRoot, absolutePath);
-			if (relPath.startsWith("..")) {
-				// File lives outside the repo — fall back to verbatim/outline without the index.
+			// File lives outside the repo — fall back to verbatim/outline without the index.
+			if (isOutsideRepo) {
 				return readOutsideRepo(absolutePath, symbol, outline, collapsedView, key, sha);
 			}
 			refreshFile(db, repoRoot, relPath, outline);
