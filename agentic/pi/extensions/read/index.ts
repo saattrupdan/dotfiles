@@ -573,7 +573,7 @@ export default async function (pi: ExtensionAPI) {
 			const allLines = content.split("\n");
 			const totalLines = allLines.length;
 
-			// 3c. Verbatim extensions (LaTeX) → always return full content regardless of size.
+			// 4a. Verbatim extensions (LaTeX) → always return full content regardless of size.
 			if (VERBATIM_EXTENSIONS.has(ext)) {
 				const displayPath = isOutsideRepo ? absolutePath : relPath;
 				const banner = `# ${displayPath} (${totalLines} lines) — verbatim content (LaTeX extension)`;
@@ -835,7 +835,7 @@ function readOutsideRepo(
 	collapsedView: (typeof import("../_outliner/outliner.js"))["collapsedView"],
 	key: string,
 	sha: string,
-) {
+)	{
 	const content = fs.readFileSync(absolutePath, "utf-8");
 
 	return renderContent(absolutePath, absolutePath, content, symbol, outline, collapsedView, key, sha);
