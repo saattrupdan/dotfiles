@@ -57,12 +57,13 @@ The ordered fallback list is:
 
 Duplicates are removed while preserving the first occurrence.
 
-If a child Pi launch fails because the child process fails to spawn or exits
-non-zero, the subagent tool retries with the next fallback model. Refusal
-pattern short-circuits, parent aborts, and parameter validation errors are not
-retried. Failed worktree attempts are discarded; only a successful attempt is
-merged back into the parent worktree. If every model fails, the structured tool
-result is marked as an error and names every attempted model.
+If a child Pi launch fails because the child process fails to spawn, exits
+non-zero, or emits an assistant `stopReason: "error"`, the subagent tool retries
+with the next fallback model. Refusal pattern short-circuits, parent aborts, and
+parameter validation errors are not retried. Failed worktree attempts are
+discarded; only a successful attempt is merged back into the parent worktree. If
+every model fails, the structured tool result is marked as an error and names
+every attempted model.
 
 ## Skill scoping
 
