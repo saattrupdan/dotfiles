@@ -638,8 +638,8 @@ export default async function (pi: ExtensionAPI) {
 				dedupeCache.set(key, { sha, callIndex: callIdx, text: `# ${relPath} (${totalLines} lines, no sections — full contents)\n${content}` });
 				return { content: [{ type: "text", text: `# ${relPath} (${totalLines} lines, no sections — full contents)\n${content}` }] };
 			}
-			// For headings, show only root-level (e.g. \section not \subsection); user can request a section to see children.
-			const view = collapsedView(result, { hidePrivate: true, maxLines: 200, hideSubsections: true });
+			// Show all heading levels (section, subsection, subsubsection, etc.) for easier navigation.
+			const view = collapsedView(result, { hidePrivate: true, maxLines: 200 });
 			const outlineHeader = `# outline of ${relPath} (${totalLines} lines)`;
 			const footer = OUTLINE_FOOTER;
 			const callIdx = ++callIndex.current;
@@ -817,8 +817,8 @@ function renderContent(
 			content: [{ type: "text", text }],
 		};
 	}
-	// For headings, show only root-level (e.g. \section not \subsection); user can request a section to see children.
-	const view = collapsedView(result, { hidePrivate: true, maxLines: 200, hideSubsections: true });
+	// Show all heading levels (section, subsection, subsubsection, etc.) for easier navigation.
+	const view = collapsedView(result, { hidePrivate: true, maxLines: 200 });
 	const text = `# outline of ${displayPath} (${totalLines} lines)\n${view.join("\n")}\n${OUTLINE_FOOTER}`;
 	const callIdx = ++callIndex.current;
 	dedupeCache.set(key, { sha, callIndex: callIdx, text });
