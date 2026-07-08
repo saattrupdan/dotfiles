@@ -280,6 +280,7 @@ function sha256String(s: string): string {
 // ---------------------------------------------------------------------------
 
 const DOCUMENT_EXTENSIONS = new Set([".pdf", ".docx", ".xlsx", ".pptx"]);
+const VERBATIM_EXTENSIONS = new Set([".tex", ".latex", ".ltx", ".sty", ".cls"]);
 const URL_RE = /^https?:\/\//i;
 
 const DOC_CACHE_DIR = path.join(os.tmpdir(), "pi-read-doc-cache");
@@ -561,6 +562,16 @@ export default async function (pi: ExtensionAPI) {
 				return rendered;
 			}
 
+			// 3c. Verbatim extensions (LaTeX) → always return full content, bypass outline
+			if (VERBATIM_EXTENSIONS.has(ext)) {
+				const allLines = content.split("\n");
+				const totalLines = allLines.length;
+				const header = `# ${relPath} (${totalLines} lines)`;
+				const callIdx = ++callIndex.current;
+				dedupeCache.set(key, { sha, callIndex: callIdx, text: `${header}\n${content}` });
+				return { content: [{ type: "text", text: `${header}\n${content}` }] };
+			}
+
 			// 4. Open the index (no full build) and refresh just this file.
 			// Use the session cwd (ctx.cwd), not process.cwd() — see the search
 			// extension for why the two can diverge.
@@ -825,5 +836,18 @@ function readOutsideRepo(
 	sha: string,
 ) {
 	const content = fs.readFileSync(absolutePath, "utf-8");
+	const ext = path.extname(absolutePath).toLowerCase();
+
+	// Verbatim extensions (LaTeX) → always return full content, bypass outline
+	if (VERBATIM_EXTENSIONS.has(ext)) {
+		const allLines = content.split("\n");
+		const totalLines = allLines.length;
+		const header = `# ${absolutePath} (${totalLines} lines)`;
+		const text = `${header}\n${content}`;
+		const callIdx = ++callIndex.current;
+		dedupeCache.set(key, { sha, callIndex: callIdx, text });
+		return { content: [{ type: "text", text }] };
+	}
+
 	return renderContent(absolutePath, absolutePath, content, symbol, outline, collapsedView, key, sha);
 }
