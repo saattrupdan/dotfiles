@@ -12,6 +12,7 @@
   "type": "commonjs",
   "dependencies": {
     "@eslint/js": "^10.0.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@typescript-eslint/parser": "^8.60.0",
     "@typescript-eslint/utils": "^8.60.0",
     "eslint": "^10.4.0",

@@ -3,7 +3,7 @@
  *
  * Registers a `web_search` tool that:
  * 1. Tries DuckDuckGo's HTML endpoint first
- * 2. On rate limit/CAPTCHA, falls back to Tavily MCP if available
+ * 2. On rate limit/CAPTCHA, starts the configured Tavily MCP server and falls back to it
  *
  * Access control is enforced by pi's per-agent `--tools` allowlist:
  * only agents whose frontmatter lists `web_search` in `tools:` will see
@@ -11,8 +11,13 @@
  * subagent**.
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { Type } from "typebox";
 
 const DEFAULT_USER_AGENT =
@@ -69,6 +74,17 @@ interface TavilySearchResponse {
 	response_time?: number;
 	error?: string;
 	code?: string;
+}
+
+interface McpServerDefinition {
+	command?: unknown;
+	args?: unknown;
+	env?: unknown;
+	cwd?: unknown;
+}
+
+interface McpConfig {
+	mcpServers?: Record<string, McpServerDefinition>;
 }
 
 function decodeEntities(s: string): string {
@@ -159,30 +175,128 @@ function parseDuckDuckGoHtml(html: string, max: number): SearchResult[] {
 }
 
 /**
- * Check if Tavily MCP server is available and connected.
- * Attempts to connect if not already connected (servers are lazy by default).
+ * Shared type guard for parsed JSON and MCP responses.
  */
-async function isTavilyMcpAvailable(ctx: ExtensionContext): Promise<boolean> {
-	try {
-		// First, try to connect (idempotent - no-op if already connected)
-		await ctx.callTool({
-			name: "mcp",
-			arguments: { connect: "tavily" } as Record<string, unknown>,
-		});
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
-		// Then list tools to verify connection succeeded
-		const result = await ctx.callTool({
-			name: "mcp",
-			arguments: { server: "tavily" } as Record<string, unknown>,
-		});
+function resolveAgentDir(): string {
+	return process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
+}
 
-		// If we got a successful response with tools, Tavily is available
-		return result?.content?.some((c: { type: string; text?: string }) => 
-			c.type === "text" && c.text?.includes("tavily_search")
-		);
-	} catch {
-		return false;
+function resolveMcpConfigPath(pi: ExtensionAPI): string {
+	const configured = pi.getFlag("mcp-config");
+	return typeof configured === "string" && configured.trim().length > 0
+		? configured
+		: join(resolveAgentDir(), "mcp.json");
+}
+
+function asStringArray(value: unknown): string[] | undefined {
+	return Array.isArray(value) && value.every((item) => typeof item === "string")
+		? value
+		: undefined;
+}
+
+function resolveEnvValue(value: string, env: Record<string, string>): string {
+	return value.replace(
+		/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g,
+		(_match, braced: string | undefined, bare: string | undefined) => {
+			const key = braced ?? bare ?? "";
+			return env[key] ?? "";
+		},
+	);
+}
+
+function buildServerEnv(definition: McpServerDefinition): Record<string, string> {
+	const env: Record<string, string> = {};
+	for (const [key, value] of Object.entries(process.env)) {
+		if (value !== undefined) env[key] = value;
 	}
+
+	if (isRecord(definition.env)) {
+		for (const [key, value] of Object.entries(definition.env)) {
+			if (typeof value === "string") env[key] = resolveEnvValue(value, env);
+		}
+	}
+
+	return env;
+}
+
+async function loadTavilyServerDefinition(pi: ExtensionAPI): Promise<McpServerDefinition> {
+	const configPath = resolveMcpConfigPath(pi);
+	const raw = await readFile(configPath, "utf8");
+	const parsed = JSON.parse(raw) as unknown;
+	if (!isRecord(parsed)) throw new Error(`Invalid MCP config at ${configPath}`);
+
+	const config = parsed as McpConfig;
+	const definition = config.mcpServers?.tavily;
+	if (!definition) throw new Error(`Tavily MCP server is not configured in ${configPath}`);
+	if (typeof definition.command !== "string" || definition.command.trim().length === 0) {
+		throw new Error("Tavily MCP server has no command configured");
+	}
+	if (definition.args !== undefined && !asStringArray(definition.args)) {
+		throw new Error("Tavily MCP server args must be strings");
+	}
+	if (definition.cwd !== undefined && typeof definition.cwd !== "string") {
+		throw new Error("Tavily MCP server cwd must be a string");
+	}
+
+	return definition;
+}
+
+function parseTavilyResponse(value: unknown): TavilySearchResponse {
+	if (!isRecord(value)) throw new Error("Tavily MCP returned a non-object response");
+	if (typeof value.error === "string" || typeof value.code === "string") {
+		return {
+			error: typeof value.error === "string" ? value.error : undefined,
+			code: typeof value.code === "string" ? value.code : undefined,
+		};
+	}
+	const results = Array.isArray(value.results)
+		? value.results.filter((item): item is TavilySearchResult => {
+			return isRecord(item)
+				&& typeof item.title === "string"
+				&& typeof item.url === "string"
+				&& typeof item.content === "string";
+		})
+		: undefined;
+	return { results };
+}
+
+function extractTextContent(result: unknown): string | undefined {
+	if (!isRecord(result) || !Array.isArray(result.content)) return undefined;
+	const textBlock = result.content.find((item) => {
+		return isRecord(item) && item.type === "text" && typeof item.text === "string";
+	});
+	return isRecord(textBlock) && typeof textBlock.text === "string" ? textBlock.text : undefined;
+}
+
+function parseTavilyMcpResult(result: unknown): TavilySearchResponse {
+	if (isRecord(result) && result.isError === true) {
+		throw new Error(extractTextContent(result) ?? "Tavily MCP returned an error");
+	}
+
+	if (isRecord(result) && result.structuredContent !== undefined) {
+		return parseTavilyResponse(result.structuredContent);
+	}
+
+	const text = extractTextContent(result);
+	if (!text) throw new Error("Tavily MCP returned no text content");
+
+	return parseTavilyResponse(JSON.parse(text) as unknown);
+}
+
+function toSearchResults(tavilyResponse: TavilySearchResponse, max: number): SearchResult[] {
+	if (tavilyResponse.error || tavilyResponse.code) {
+		throw new Error(`Tavily error: ${tavilyResponse.error || tavilyResponse.code}`);
+	}
+
+	return (tavilyResponse.results ?? []).slice(0, max).map((r) => ({
+		title: r.title,
+		url: r.url,
+		snippet: r.content || "",
+	}));
 }
 
 /**
@@ -191,48 +305,39 @@ async function isTavilyMcpAvailable(ctx: ExtensionContext): Promise<boolean> {
 async function tavilyMcpSearch(
 	query: string,
 	max: number,
-	ctx: ExtensionContext,
+	pi: ExtensionAPI,
 	signal?: AbortSignal,
 ): Promise<SearchResult[]> {
+	const definition = await loadTavilyServerDefinition(pi);
+	const transport = new StdioClientTransport({
+		command: definition.command as string,
+		args: asStringArray(definition.args) ?? [],
+		env: buildServerEnv(definition),
+		cwd: typeof definition.cwd === "string" ? definition.cwd : undefined,
+		stderr: "pipe",
+	});
+	const client = new Client({ name: "pi-web-search", version: "1.0.0" });
+
 	try {
-		const result = await ctx.callTool({
-			name: "mcp",
-			arguments: {
-				tool: "tavily_tavily_search",
-				args: JSON.stringify({ query, max_results: max }),
-			} as Record<string, unknown>,
-		});
+		await client.connect(transport, { signal });
+		const tools = await client.listTools(undefined, { signal });
+		const toolName = tools.tools.find((tool) => tool.name === "tavily_search")?.name
+			?? tools.tools.find((tool) => tool.name === "tavily_tavily_search")?.name
+			?? tools.tools.find((tool) => tool.name.includes("search"))?.name;
 
-		if (!result?.content || result.content.length === 0) {
-			throw new Error("Tavily MCP returned empty response");
-		}
+		if (!toolName) throw new Error("Tavily MCP connected but did not advertise a search tool");
 
-		// Parse the JSON response from Tavily
-		const textContent = result.content.find((c: { type: string }) => c.type === "text");
-		if (!textContent || !textContent.text) {
-			throw new Error("Tavily MCP returned no text content");
-		}
+		const result = await client.callTool({
+			name: toolName,
+			arguments: { query, max_results: max },
+		}, undefined, { signal });
 
-		const tavilyResponse: TavilySearchResponse = JSON.parse(textContent.text);
-
-		// Check for error response
-		if (tavilyResponse.error || tavilyResponse.code) {
-			throw new Error(`Tavily error: ${tavilyResponse.error || tavilyResponse.code}`);
-		}
-
-		if (!tavilyResponse.results || tavilyResponse.results.length === 0) {
-			return [];
-		}
-
-		// Convert Tavily results to our SearchResult format
-		return tavilyResponse.results.slice(0, max).map((r) => ({
-			title: r.title,
-			url: r.url,
-			snippet: r.content || "",
-		}));
+		return toSearchResults(parseTavilyMcpResult(result), max);
 	} catch (err) {
 		const msg = (err as Error).message || String(err);
-		throw new Error(`Tavily MCP search failed: ${msg}`);
+		throw new Error(`Tavily MCP search failed: ${msg}`, { cause: err });
+	} finally {
+		await client.close().catch(() => undefined);
 	}
 }
 
@@ -304,12 +409,12 @@ export default function (pi: ExtensionAPI) {
 		name: "web_search",
 		label: "Web search",
 		description:
-			"Search the web via DuckDuckGo and return the top results (title, URL, snippet). Automatically falls back to Tavily MCP if DuckDuckGo rate limits. Use this to discover relevant pages, then fetch them with curl/wget through bash for the actual content.",
+			"Search the web via DuckDuckGo and return the top results (title, URL, snippet). Automatically starts and falls back to the configured Tavily MCP server if DuckDuckGo rate limits. Use this to discover relevant pages, then fetch them with curl/wget through bash for the actual content.",
 		parameters: Params,
 
-		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+		async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
 		const max = params.max_results ?? 10;
-		let lastError: Error | null = null;
+		let duckDuckGoMessage: string | undefined;
 
 		// Try DuckDuckGo first
 		try {
@@ -319,8 +424,8 @@ export default function (pi: ExtensionAPI) {
 				details: { query: params.query, count: results.length, results, source: "duckduckgo" },
 			};
 		} catch (err) {
-			lastError = err as Error;
-			const msg = lastError.message || String(err);
+			const msg = (err as Error).message || String(err);
+			duckDuckGoMessage = msg;
 			// Check if this is a rate limit / CAPTCHA error
 			const isRateLimited = 
 				msg.includes("rate limit") || 
@@ -339,15 +444,7 @@ export default function (pi: ExtensionAPI) {
 
 		// DuckDuckGo rate limited - try Tavily MCP fallback
 		try {
-			const tavilyAvailable = await isTavilyMcpAvailable(ctx);
-			if (!tavilyAvailable) {
-				return {
-					content: [{ type: "text", text: `Web search failed: ${lastError?.message}. Tavily MCP not available.` }],
-					details: { query: params.query, count: 0, results: [], error: lastError?.message, tavilyAvailable: false },
-				};
-			}
-
-			const results = await tavilyMcpSearch(params.query, max, ctx, signal);
+			const results = await tavilyMcpSearch(params.query, max, pi, signal);
 			return {
 				content: [{ type: "text", text: formatResultsMarkdown(params.query, results) }],
 				details: { query: params.query, count: results.length, results, source: "tavily-mcp" },
@@ -355,8 +452,8 @@ export default function (pi: ExtensionAPI) {
 		} catch (tavilyErr) {
 			const tavilyMsg = (tavilyErr as Error).message || String(tavilyErr);
 			return {
-				content: [{ type: "text", text: `Web search failed: ${lastError?.message}. Tavily fallback: ${tavilyMsg}` }],
-				details: { query: params.query, count: 0, results: [], error: lastError?.message, tavilyError: tavilyMsg },
+				content: [{ type: "text", text: `Web search failed: ${duckDuckGoMessage}. Tavily fallback: ${tavilyMsg}` }],
+				details: { query: params.query, count: 0, results: [], error: duckDuckGoMessage, tavilyError: tavilyMsg },
 			};
 		}
 	},
