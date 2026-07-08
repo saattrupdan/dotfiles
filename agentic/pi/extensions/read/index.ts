@@ -638,7 +638,8 @@ export default async function (pi: ExtensionAPI) {
 				dedupeCache.set(key, { sha, callIndex: callIdx, text: `# ${relPath} (${totalLines} lines, no sections — full contents)\n${content}` });
 				return { content: [{ type: "text", text: `# ${relPath} (${totalLines} lines, no sections — full contents)\n${content}` }] };
 			}
-			const view = collapsedView(result, { hidePrivate: true, maxLines: 200 });
+			// For headings, show only root-level (e.g. \section not \subsection); user can request a section to see children.
+			const view = collapsedView(result, { hidePrivate: true, maxLines: 200, hideSubsections: true });
 			const outlineHeader = `# outline of ${relPath} (${totalLines} lines)`;
 			const footer = OUTLINE_FOOTER;
 			const callIdx = ++callIndex.current;
@@ -777,6 +778,16 @@ function renderContent(
 		const header = `# ${displayPath}::${symbol}  lines ${hit.line}-${hit.lineEnd} (${hit.kind})`;
 		const meta: string[] = [];
 		if (hit.docFirstLine) meta.push(`Docstring: ${hit.docFirstLine}`);
+
+		// For headings: prepend a child outline (subsections) before the verbatim content.
+		if (hit.kind === "heading") {
+			const children = result.entries.filter((e) => e.kind === "heading" && e.parent === hit.name);
+			if (children.length > 0) {
+				const childView = collapsedView({ entries: children, moduleDoc: undefined }, { hidePrivate: false });
+				meta.push(`\nSubsections (${children.length}):\n${childView.join("\n")}`);
+			}
+		}
+
 		const preamble = meta.length > 0 ? `${header}\n${meta.join("\n")}\n` : `${header}\n`;
 		const numbered = slice.map((line, i) => `  ${hit.line + i}: ${line}`).join("\n");
 		const text = `${preamble}${numbered}`;
@@ -806,7 +817,8 @@ function renderContent(
 			content: [{ type: "text", text }],
 		};
 	}
-	const view = collapsedView(result, { hidePrivate: true, maxLines: 200 });
+	// For headings, show only root-level (e.g. \section not \subsection); user can request a section to see children.
+	const view = collapsedView(result, { hidePrivate: true, maxLines: 200, hideSubsections: true });
 	const text = `# outline of ${displayPath} (${totalLines} lines)\n${view.join("\n")}\n${OUTLINE_FOOTER}`;
 	const callIdx = ++callIndex.current;
 	dedupeCache.set(key, { sha, callIndex: callIdx, text });

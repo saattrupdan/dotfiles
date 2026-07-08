@@ -32,6 +32,8 @@ export type OutlineResult = {
 export type CollapsedViewOpts = {
 	maxLines?: number;
 	hidePrivate?: boolean;
+	/** For headings, show only root-level (no heading parent). Default false (show all levels). */
+	hideSubsections?: boolean;
 };
 
 const DOC_CAP = 120;
@@ -103,8 +105,20 @@ export function collapsedView(result: OutlineResult, opts: CollapsedViewOpts = {
 	const entries = result.entries;
 	const maxLines = opts.maxLines ?? 200;
 	const hidePrivate = opts.hidePrivate ?? true;
-	const filtered = hidePrivate ? entries.filter((e) => !e.name.startsWith("_")) : entries.slice();
+	const hideSubsections = opts.hideSubsections ?? false;
+	let filtered = hidePrivate ? entries.filter((e) => !e.name.startsWith("_")) : entries.slice();
 	filtered.sort((a, b) => a.line - b.line);
+
+	// For headings: filter to root-level only if requested (hideSubsections = true).
+	// A root heading has no parent, or its parent is not a heading.
+	if (hideSubsections) {
+		const headingNames = new Set(filtered.filter((e) => e.kind === "heading").map((e) => e.name));
+		filtered = filtered.filter((e) => {
+			if (e.kind !== "heading") return true;
+			if (!e.parent) return true;
+			return !headingNames.has(e.parent);
+		});
+	}
 
 	const collapsed = new Set<number>();
 	const renderable = () => renderEntries(filtered, collapsed, result.moduleDoc);
