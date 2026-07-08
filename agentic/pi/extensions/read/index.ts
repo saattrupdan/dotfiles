@@ -565,7 +565,7 @@ export default async function (pi: ExtensionAPI) {
 			// 4. Open the index (no full build) and determine repo membership.
 			// Use the session cwd (ctx.cwd), not process.cwd() — see the search
 			// extension for why the two can diverge.
-			const { repoRoot } = openIndex(ctx?.cwd ?? process.cwd());
+			const { db, repoRoot } = openIndex(ctx?.cwd ?? process.cwd());
 			const relPath = path.relative(repoRoot, absolutePath);
 			const isOutsideRepo = relPath.startsWith("..");
 
