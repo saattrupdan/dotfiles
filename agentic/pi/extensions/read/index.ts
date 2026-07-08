@@ -562,14 +562,15 @@ export default async function (pi: ExtensionAPI) {
 				return rendered;
 			}
 
-			// 3c. Verbatim extensions (LaTeX) → always return full content, bypass outline
+			// 3c. Verbatim extensions (LaTeX) → always return full content regardless of size.
 			if (VERBATIM_EXTENSIONS.has(ext)) {
+				const content = fs.readFileSync(absolutePath, "utf-8");
 				const allLines = content.split("\n");
 				const totalLines = allLines.length;
-				const header = `# ${relPath} (${totalLines} lines)`;
+				const banner = `# ${absolutePath} (${totalLines} lines) — verbatim content (LaTeX extension)`;
 				const callIdx = ++callIndex.current;
-				dedupeCache.set(key, { sha, callIndex: callIdx, text: `${header}\n${content}` });
-				return { content: [{ type: "text", text: `${header}\n${content}` }] };
+				dedupeCache.set(key, { sha, callIndex: callIdx, text: `${banner}\n${content}` });
+				return { content: [{ type: "text", text: `${banner}\n${content}` }] };
 			}
 
 			// 4. Open the index (no full build) and refresh just this file.
