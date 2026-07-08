@@ -374,7 +374,9 @@ function extractTsJs(root: Parser.SyntaxNode, source: string, lineOffset: number
 			}
 
 			if (target.type === "function_declaration" || target.type === "function_expression") {
-				const name = tsChildForField(target, "name")?.text ?? "<anon>";
+				const nameNode = tsChildForField(target, "name");
+				// function_expression without a name is an anonymous default export
+				const name = nameNode?.text ?? (target.type === "function_expression" ? "<default export>" : "<anon>");
 				const params = flattenSignature(tsChildForField(target, "parameters")?.text ?? "()");
 				// function_expression doesn't have return_type annotation at declaration level
 				const ret = tsChildForField(target, "return_type")?.text;
