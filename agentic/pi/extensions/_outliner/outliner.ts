@@ -338,14 +338,15 @@ function extractTsJs(root: Parser.SyntaxNode, source: string, lineOffset: number
 	const visit = (node: Parser.SyntaxNode, parent: string | undefined): void => {
 		for (let i = 0; i < node.namedChildCount; i++) {
 			const child = node.namedChild(i)!;
+			const directTopLevel = parent === undefined && node.type === "program";
 			let target: Parser.SyntaxNode = child;
 			if (child.type === "export_statement") {
-				const decl = findNamed(child, ["class_declaration", "function_declaration", "abstract_class_declaration"]);
+				const decl = findNamed(child, TS_DECLARATION_TYPES);
 				if (decl) target = decl;
 			}
 
 			if (target.type === "class_declaration" || target.type === "abstract_class_declaration") {
-				const name = target.childForFieldName("name")?.text ?? "<anon>";
+				const name = tsChildForField(target, "name")?.text ?? "<anon>";
 				out.push({
 					line: target.startPosition.row + 1 + lineOffset,
 					lineEnd: target.endPosition.row + 1 + lineOffset,
@@ -353,15 +354,15 @@ function extractTsJs(root: Parser.SyntaxNode, source: string, lineOffset: number
 					name,
 					docFirstLine: jsdocBefore(child, lines),
 				});
-				const body = target.childForFieldName("body");
+				const body = tsChildForField(target, "body");
 				if (body) visit(body, name);
 				continue;
 			}
 
 			if (target.type === "function_declaration") {
-				const name = target.childForFieldName("name")?.text ?? "<anon>";
-				const params = flattenSignature(target.childForFieldName("parameters")?.text ?? "()");
-				const ret = target.childForFieldName("return_type")?.text;
+				const name = tsChildForField(target, "name")?.text ?? "<anon>";
+				const params = flattenSignature(tsChildForField(target, "parameters")?.text ?? "()");
+				const ret = tsChildForField(target, "return_type")?.text;
 				const signature = ret ? `${params}${flattenSignature(ret)}` : params;
 				out.push({
 					line: target.startPosition.row + 1 + lineOffset,
@@ -375,9 +376,9 @@ function extractTsJs(root: Parser.SyntaxNode, source: string, lineOffset: number
 			}
 
 			if (target.type === "method_definition") {
-				const name = target.childForFieldName("name")?.text ?? "<anon>";
-				const params = flattenSignature(target.childForFieldName("parameters")?.text ?? "()");
-				const ret = target.childForFieldName("return_type")?.text;
+				const name = tsChildForField(target, "name")?.text ?? "<anon>";
+				const params = flattenSignature(tsChildForField(target, "parameters")?.text ?? "()");
+				const ret = tsChildForField(target, "return_type")?.text;
 				const signature = ret ? `${params}${flattenSignature(ret)}` : params;
 				out.push({
 					line: target.startPosition.row + 1 + lineOffset,
@@ -391,6 +392,25 @@ function extractTsJs(root: Parser.SyntaxNode, source: string, lineOffset: number
 				continue;
 			}
 
+			if (directTopLevel && (target.type === "interface_declaration" || target.type === "type_alias_declaration" || target.type === "enum_declaration")) {
+				const nameNode = tsChildForField(target, "name");
+				const name = nameNode?.text ?? "<anon>";
+				out.push({
+					line: target.startPosition.row + 1 + lineOffset,
+					lineEnd: target.endPosition.row + 1 + lineOffset,
+					kind: "block",
+					name,
+					signature: nameNode ? signatureAfterName(target, nameNode, source) : undefined,
+					docFirstLine: jsdocBefore(child, lines),
+				});
+				continue;
+			}
+
+			if (directTopLevel && (target.type === "lexical_declaration" || target.type === "variable_declaration")) {
+				pushTopLevelVariables(target, child, source, lines, lineOffset, out);
+				continue;
+			}
+
 			visit(target, parent);
 		}
 	};
@@ -399,12 +419,78 @@ function extractTsJs(root: Parser.SyntaxNode, source: string, lineOffset: number
 	return out;
 }
 
+const TS_DECLARATION_TYPES = [
+	"abstract_class_declaration",
+	"class_declaration",
+	"enum_declaration",
+	"function_declaration",
+	"interface_declaration",
+	"lexical_declaration",
+	"type_alias_declaration",
+	"variable_declaration",
+];
+
 function findNamed(node: Parser.SyntaxNode, types: string[]): Parser.SyntaxNode | null {
 	for (let i = 0; i < node.namedChildCount; i++) {
 		const c = node.namedChild(i)!;
 		if (types.includes(c.type)) return c;
 	}
 	return null;
+}
+
+function tsChildForField(node: Parser.SyntaxNode, field: "body" | "name" | "parameters" | "return_type"): Parser.SyntaxNode | undefined {
+	const nativeField = (node as { childForFieldName?: (name: string) => Parser.SyntaxNode | null }).childForFieldName?.(field);
+	if (nativeField) return nativeField;
+
+	for (let i = 0; i < node.namedChildCount; i++) {
+		const child = node.namedChild(i)!;
+		switch (field) {
+			case "body":
+				if (child.type === "class_body" || child.type === "statement_block" || child.type === "interface_body" || child.type === "enum_body") return child;
+				break;
+			case "name":
+				if (child.type === "identifier" || child.type === "type_identifier" || child.type === "property_identifier" || child.type === "private_property_identifier") return child;
+				break;
+			case "parameters":
+				if (child.type === "formal_parameters") return child;
+				break;
+			case "return_type":
+				if (child.type === "type_annotation") return child;
+				break;
+		}
+	}
+	return undefined;
+}
+
+function pushTopLevelVariables(
+	declaration: Parser.SyntaxNode,
+	originalNode: Parser.SyntaxNode,
+	source: string,
+	lines: string[],
+	lineOffset: number,
+	out: OutlineEntry[],
+): void {
+	for (let i = 0; i < declaration.namedChildCount; i++) {
+		const declarator = declaration.namedChild(i)!;
+		if (declarator.type !== "variable_declarator") continue;
+		const nameNode = tsChildForField(declarator, "name");
+		if (!nameNode || nameNode.type !== "identifier") continue;
+		out.push({
+			line: declaration.startPosition.row + 1 + lineOffset,
+			lineEnd: declaration.endPosition.row + 1 + lineOffset,
+			kind: "block",
+			name: nameNode.text,
+			signature: signatureAfterName(declarator, nameNode, source),
+			docFirstLine: jsdocBefore(originalNode, lines),
+		});
+	}
+}
+
+function signatureAfterName(node: Parser.SyntaxNode, nameNode: Parser.SyntaxNode, source: string): string | undefined {
+	const raw = source.slice(nameNode.endIndex, node.endIndex);
+	const firstLine = raw.split("\n", 1)[0]?.replace(/[;,{]\s*$/, "").trimEnd();
+	if (!firstLine || firstLine.trim().length === 0) return undefined;
+	return ` ${flattenSignature(firstLine)}`;
 }
 
 function jsdocBefore(node: Parser.SyntaxNode, lines: string[]): string | undefined {

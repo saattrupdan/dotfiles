@@ -5,11 +5,49 @@
  * can stay focused on the actual entry-extraction logic.
  */
 
+import { createRequire } from "node:module";
 import * as path from "node:path";
 import Parser from "tree-sitter";
 import Python from "tree-sitter-python";
 import JavaScript from "tree-sitter-javascript";
 import TypeScript from "tree-sitter-typescript";
+
+type ParserConstructor = new () => Parser;
+
+type ParserLanguage = {
+	language: unknown;
+	ParserCtor?: ParserConstructor;
+};
+
+type GrammarModule = Record<string, unknown> & {
+	default?: Record<string, unknown>;
+};
+
+const require = createRequire(import.meta.url);
+
+function loadTypeScriptParser(): ParserConstructor | undefined {
+	try {
+		return require("tree-sitter-typescript/node_modules/tree-sitter") as ParserConstructor;
+	} catch {
+		return undefined;
+	}
+}
+
+const typeScriptParser = loadTypeScriptParser();
+
+function parserLanguage(language: unknown, ParserCtor?: ParserConstructor): ParserLanguage {
+	return { language, ParserCtor };
+}
+
+function grammar(mod: unknown, key?: string): unknown {
+	const grammarModule = mod as GrammarModule;
+	if (key) return grammarModule[key] ?? grammarModule.default?.[key];
+	return grammarModule.default ?? mod;
+}
+
+function isParserLanguage(language: unknown): language is ParserLanguage {
+	return typeof language === "object" && language !== null && "language" in language;
+}
 
 export type LanguageKind =
 	| "python"
@@ -55,16 +93,16 @@ export function detectLanguage(filePath: string): LanguageInfo {
 	const ext = path.extname(filePath).toLowerCase();
 	switch (ext) {
 		case ".py":
-			return { kind: "python", parserLanguage: Python };
+			return { kind: "python", parserLanguage: parserLanguage(grammar(Python)) };
 		case ".ts":
-			return { kind: "typescript", parserLanguage: TypeScript.typescript };
+			return { kind: "typescript", parserLanguage: parserLanguage(grammar(TypeScript, "typescript"), typeScriptParser) };
 		case ".tsx":
-			return { kind: "tsx", parserLanguage: TypeScript.tsx };
+			return { kind: "tsx", parserLanguage: parserLanguage(grammar(TypeScript, "tsx"), typeScriptParser) };
 		case ".js":
 		case ".jsx":
 		case ".mjs":
 		case ".cjs":
-			return { kind: "javascript", parserLanguage: JavaScript };
+			return { kind: "javascript", parserLanguage: parserLanguage(grammar(JavaScript)) };
 		case ".vue":
 			return { kind: "vue" };
 		case ".md":
@@ -116,7 +154,11 @@ export function detectLanguage(filePath: string): LanguageInfo {
 }
 
 export function makeParser(language: unknown): Parser {
-	const parser = new Parser();
-	parser.setLanguage(language as never);
+	const parserLanguage = isParserLanguage(language)
+		? language
+		: { language } satisfies ParserLanguage;
+	const ParserCtor = parserLanguage.ParserCtor ?? Parser;
+	const parser = new ParserCtor();
+	parser.setLanguage(parserLanguage.language as never);
 	return parser;
 }

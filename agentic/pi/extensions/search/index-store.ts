@@ -8,7 +8,7 @@
  * Each repo gets its own index.db under `~/.pi/index/<repo-id>/`.
  */
 
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 import { execSync, spawn, ChildProcess } from "node:child_process";
 import * as crypto from "node:crypto";
