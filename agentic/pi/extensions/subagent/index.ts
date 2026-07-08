@@ -256,6 +256,21 @@ function isFailedResult(result: SingleResult): boolean {
 	return result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";
 }
 
+function isModelAttemptFailure(result: SingleResult): boolean {
+	return result.exitCode !== 0 || result.stopReason === "error";
+}
+
+function isRetryableModelAttemptFailure(result: SingleResult): boolean {
+	if (
+		result.stopReason === "aborted" ||
+		result.stopReason === "refused" ||
+		result.stopReason === "validation"
+	) {
+		return false;
+	}
+	return isModelAttemptFailure(result);
+}
+
 function getResultOutput(result: SingleResult): string {
 	if (isFailedResult(result)) {
 		return result.errorMessage || result.stderr || getFinalOutput(result.messages) || "(no output)";
@@ -928,17 +943,18 @@ async function runSingleAgent(
 				if (spawnErrorMessage && !currentResult.errorMessage) currentResult.errorMessage = spawnErrorMessage;
 
 				const parentAborted = wasAborted || signal?.aborted;
-				const childFailed = currentResult.exitCode !== 0;
+				const modelAttemptFailed = isModelAttemptFailure(currentResult);
+				const retryModelAttempt = isRetryableModelAttemptFailure(currentResult);
 				if (worktreeHandle) {
 					try {
-						const cleanup = childFailed || parentAborted
+						const cleanup = modelAttemptFailed || parentAborted
 							? await discardWorktreeAttempt(
 								worktreeHandle,
 								`Discarded worktree ${worktreeHandle.branchName} after failed model attempt.`,
 							)
 							: await mergeAndCleanup(worktreeHandle);
 						currentResult.worktreeCleanup = cleanup;
-						if (!childFailed && !parentAborted && !cleanup.merged && !cleanup.skipped) {
+						if (!modelAttemptFailed && !parentAborted && !cleanup.merged && !cleanup.skipped) {
 							currentResult.stderr = `${currentResult.stderr}\n[worktree] ${cleanup.message}`.trim();
 							if (currentResult.exitCode === 0) currentResult.exitCode = 1;
 							if (!currentResult.errorMessage) currentResult.errorMessage = cleanup.message;
@@ -955,10 +971,11 @@ async function runSingleAgent(
 					return currentResult;
 				}
 
+				const attemptFailed = isModelAttemptFailure(currentResult);
 				const attempt: ModelAttempt = {
 					model: childModel,
 					exitCode: currentResult.exitCode,
-					succeeded: !childFailed,
+					succeeded: !attemptFailed,
 					stopReason: currentResult.stopReason,
 					errorMessage: currentResult.errorMessage,
 				};
@@ -966,7 +983,7 @@ async function runSingleAgent(
 				currentResult.modelAttempts = [...attempts];
 				lastResult = currentResult;
 
-				if (!childFailed) return currentResult;
+				if (!retryModelAttempt) return currentResult;
 			} catch (err) {
 				if (worktreeHandle) {
 					try {
@@ -1332,6 +1349,7 @@ export default function (pi: ExtensionAPI) {
 						},
 					],
 					details: makeDetails("parallel")(results),
+					isError: successCount !== results.length,
 				};
 			}
 
