@@ -280,7 +280,6 @@ function sha256String(s: string): string {
 // ---------------------------------------------------------------------------
 
 const DOCUMENT_EXTENSIONS = new Set([".pdf", ".docx", ".xlsx", ".pptx"]);
-const VERBATIM_EXTENSIONS = new Set([".tex", ".latex", ".ltx", ".sty", ".cls"]);
 const URL_RE = /^https?:\/\//i;
 
 const DOC_CACHE_DIR = path.join(os.tmpdir(), "pi-read-doc-cache");
@@ -567,22 +566,8 @@ export default async function (pi: ExtensionAPI) {
 			// extension for why the two can diverge.
 			const { db, repoRoot } = openIndex(ctx?.cwd ?? process.cwd());
 			const relPath = path.relative(repoRoot, absolutePath);
-			const isOutsideRepo = relPath.startsWith("..");
-
-			// 4a. Verbatim extensions (LaTeX) → always return full content regardless of size.
-			if (VERBATIM_EXTENSIONS.has(ext)) {
-				const content = fs.readFileSync(absolutePath, "utf-8");
-				const allLines = content.split("\n");
-				const totalLines = allLines.length;
-				const displayPath = isOutsideRepo ? path.basename(absolutePath) : relPath;
-				const banner = `# ${displayPath} (${totalLines} lines) — verbatim content (LaTeX extension)`;
-				const callIdx = ++callIndex.current;
-				dedupeCache.set(key, { sha, callIndex: callIdx, text: `${banner}\n${content}` });
-				return { content: [{ type: "text", text: `${banner}\n${content}` }] };
-			}
-
-			// File lives outside the repo — fall back to verbatim/outline without the index.
-			if (isOutsideRepo) {
+			if (relPath.startsWith("..")) {
+				// File lives outside the repo — fall back to verbatim/outline without the index.
 				return readOutsideRepo(absolutePath, symbol, outline, collapsedView, key, sha);
 			}
 			refreshFile(db, repoRoot, relPath, outline);
