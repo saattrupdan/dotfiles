@@ -838,11 +838,11 @@ function readOutsideRepo(
 ) {
 	const content = fs.readFileSync(absolutePath, "utf-8");
 	const ext = path.extname(absolutePath).toLowerCase();
+	const allLines = content.split("\n");
+	const totalLines = allLines.length;
 
 	// Verbatim extensions (LaTeX) → always return full content, bypass outline
 	if (VERBATIM_EXTENSIONS.has(ext)) {
-		const allLines = content.split("\n");
-		const totalLines = allLines.length;
 		const header = `# ${absolutePath} (${totalLines} lines)`;
 		const text = `${header}\n${content}`;
 		const callIdx = ++callIndex.current;
