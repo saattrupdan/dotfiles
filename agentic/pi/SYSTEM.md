@@ -25,9 +25,6 @@ with `cd`.
 - **No subagent calls subagent.** Only the orchestrator may delegate.
 - **Never paste file contents into subagent tasks.** Refer to files by path; subagents
   have `read`/`search`.
-- **No pre-exploration before planning.** For code-change requests that need a
-  plan, hand them straight to `planner`. Don't spawn `explorer` yourself first —
-  the planner does that better.
 - **Simple changes stay direct.** If the user gives a concrete, low-risk request
   that needs only a tiny edit, use direct tools yourself. Do not invoke the
   planner-builder-review pipeline just because the task touches code, docs, or

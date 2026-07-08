@@ -1,6 +1,9 @@
 ---
 name: reviewer
 description: Reviews recent changes for correctness, style, and scope. Read-only — produces a verdict and a list of issues, never edits.
+model:
+  - openai-codex/gpt-5.5
+  - inference/qwen3.5-397b
 tools: read, search, skill, bash, memory_index, memory_read, memory_suggest, question
 skills: [commit, python, fastapi, vue, sqlmodel, full-stack, slides, agent-browser]
 worktree: false
