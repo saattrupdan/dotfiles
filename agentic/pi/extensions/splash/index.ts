@@ -334,13 +334,11 @@ function scheduleSplashReapply(pi: ExtensionAPI, ctx: ExtensionContext, clearScr
 		clearTimeout(splashReapplyTimer);
 		splashReapplyTimer = undefined;
 	}
-	const key = sessionKey(ctx);
 	splashReapplyTimer = setTimeout(() => {
 		splashReapplyTimer = undefined;
-		// Guard against race conditions when /reload and /new are called
-		// in quick succession: ensure we're still on the expected session
-		// and the splash hasn't been dismissed.
-		if (!ctx.hasUI || splashDismissed || !splashActive || splashSessionKey !== key) return;
+		// Get fresh session key at execution time to handle rapid /reload + /new
+		const currentKey = sessionKey(ctx);
+		if (!ctx.hasUI || splashDismissed || !splashActive || splashSessionKey !== currentKey) return;
 		installSplash(pi, ctx, clearScreen);
 	}, 50);
 }
