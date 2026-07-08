@@ -562,31 +562,31 @@ export default async function (pi: ExtensionAPI) {
 				return rendered;
 			}
 
+			// 4. Open the index (no full build) and determine repo membership.
+			// Use the session cwd (ctx.cwd), not process.cwd() — see the search
+			// extension for why the two can diverge.
+			const { db, repoRoot } = openIndex(ctx?.cwd ?? process.cwd());
+			const relPath = path.relative(repoRoot, absolutePath);
+			const isOutsideRepo = relPath.startsWith("..");
+
+			const content = fs.readFileSync(absolutePath, "utf-8");
+			const allLines = content.split("\n");
+			const totalLines = allLines.length;
+
 			// 3c. Verbatim extensions (LaTeX) → always return full content regardless of size.
 			if (VERBATIM_EXTENSIONS.has(ext)) {
-				const content = fs.readFileSync(absolutePath, "utf-8");
-				const allLines = content.split("\n");
-				const totalLines = allLines.length;
-				const banner = `# ${absolutePath} (${totalLines} lines) — verbatim content (LaTeX extension)`;
+				const displayPath = isOutsideRepo ? absolutePath : relPath;
+				const banner = `# ${displayPath} (${totalLines} lines) — verbatim content (LaTeX extension)`;
 				const callIdx = ++callIndex.current;
 				dedupeCache.set(key, { sha, callIndex: callIdx, text: `${banner}\n${content}` });
 				return { content: [{ type: "text", text: `${banner}\n${content}` }] };
 			}
 
-			// 4. Open the index (no full build) and refresh just this file.
-			// Use the session cwd (ctx.cwd), not process.cwd() — see the search
-			// extension for why the two can diverge.
-			const { db, repoRoot } = openIndex(ctx?.cwd ?? process.cwd());
-			const relPath = path.relative(repoRoot, absolutePath);
-			if (relPath.startsWith("..")) {
-				// File lives outside the repo — fall back to verbatim/outline without the index.
+			// File lives outside the repo — fall back to verbatim/outline without the index.
+			if (isOutsideRepo) {
 				return readOutsideRepo(absolutePath, symbol, outline, collapsedView, key, sha);
 			}
 			refreshFile(db, repoRoot, relPath, outline);
-
-			const content = fs.readFileSync(absolutePath, "utf-8");
-			const allLines = content.split("\n");
-			const totalLines = allLines.length;
 
 			// 5a. Preamble: everything before the first class/function.
 			if (symbol === "__preamble__") {
@@ -837,18 +837,6 @@ function readOutsideRepo(
 	sha: string,
 ) {
 	const content = fs.readFileSync(absolutePath, "utf-8");
-	const ext = path.extname(absolutePath).toLowerCase();
-	const allLines = content.split("\n");
-	const totalLines = allLines.length;
-
-	// Verbatim extensions (LaTeX) → always return full content, bypass outline
-	if (VERBATIM_EXTENSIONS.has(ext)) {
-		const header = `# ${absolutePath} (${totalLines} lines) — verbatim content (LaTeX extension)`;
-		const text = `${header}\n${content}`;
-		const callIdx = ++callIndex.current;
-		dedupeCache.set(key, { sha, callIndex: callIdx, text });
-		return { content: [{ type: "text", text }] };
-	}
 
 	return renderContent(absolutePath, absolutePath, content, symbol, outline, collapsedView, key, sha);
 }
