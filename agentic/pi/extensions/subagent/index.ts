@@ -32,6 +32,7 @@ import {
 	mergeAndCleanup,
 	sweepOrphanedSubagentArtifacts,
 	type WorktreeCleanupResult,
+	type WorktreeHandle,
 } from "./worktree.ts";
 import {
 	encodeResponse,
@@ -40,12 +41,6 @@ import {
 	type QuestionResponse,
 } from "../_question_protocol/protocol.ts";
 import { dispatchAsk } from "../question/index.ts";
-
-// Tool label for the footer spinner (used by thinking-status extension).
-// Without this, the spinner falls back to generic "Working...".
-const TOOL_LABELS: Record<string, string> = {
-	subagent: "Delegating...",
-};
 
 const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
@@ -204,6 +199,14 @@ interface UsageStats {
 	turns: number;
 }
 
+interface ModelAttempt {
+	model?: string;
+	exitCode: number;
+	succeeded: boolean;
+	stopReason?: string;
+	errorMessage?: string;
+}
+
 interface SingleResult {
 	agent: string;
 	agentSource: "user" | "project" | "unknown";
@@ -213,6 +216,7 @@ interface SingleResult {
 	stderr: string;
 	usage: UsageStats;
 	model?: string;
+	modelAttempts?: ModelAttempt[];
 	stopReason?: string;
 	errorMessage?: string;
 	step?: number;
@@ -381,6 +385,106 @@ function modelToCliPattern(model: CurrentModel | undefined): string | undefined 
 	return `${model.provider}/${model.id}`;
 }
 
+function normalizeRequestedModel(model: string | undefined): string | undefined {
+	const trimmed = model?.trim();
+	return trimmed ? trimmed : undefined;
+}
+
+function buildModelFallbacks(
+	requestedModel: string | undefined,
+	agentModels: string[] | undefined,
+	sessionModel: string | undefined,
+): (string | undefined)[] {
+	const candidates: string[] = [];
+	const requested = normalizeRequestedModel(requestedModel);
+	if (requested) candidates.push(requested);
+	if (agentModels && agentModels.length > 0) candidates.push(...agentModels);
+	else if (sessionModel) candidates.push(sessionModel);
+
+	const seen = new Set<string>();
+	const models: string[] = [];
+	for (const model of candidates) {
+		const trimmed = model.trim();
+		if (!trimmed || seen.has(trimmed)) continue;
+		seen.add(trimmed);
+		models.push(trimmed);
+	}
+	return models.length > 0 ? models : [undefined];
+}
+
+function formatAttemptModel(model: string | undefined): string {
+	return model ?? "(default)";
+}
+
+function formatModelAttempts(attempts: ModelAttempt[] | undefined): string | undefined {
+	if (!attempts || attempts.length <= 1) return undefined;
+	return attempts
+		.map((a) => {
+			const status = a.succeeded ? "ok" : `failed${a.stopReason ? `/${a.stopReason}` : ""}`;
+			return `${formatAttemptModel(a.model)}: ${status}`;
+		})
+		.join(", ");
+}
+
+interface GitCommandResult {
+	code: number;
+	stdout: string;
+	stderr: string;
+}
+
+function runGitForDiscard(cwd: string, args: string[]): Promise<GitCommandResult> {
+	return new Promise((resolve) => {
+		const proc = spawn("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+		let stdout = "";
+		let stderr = "";
+		proc.stdout.on("data", (d: Buffer) => {
+			stdout += d.toString();
+		});
+		proc.stderr.on("data", (d: Buffer) => {
+			stderr += d.toString();
+		});
+		proc.on("close", (code) => resolve({ code: code ?? 0, stdout, stderr }));
+		proc.on("error", (err) => resolve({ code: 1, stdout, stderr: stderr + err.message }));
+	});
+}
+
+async function discardWorktreeAttempt(
+	handle: WorktreeHandle,
+	reason: string,
+): Promise<WorktreeCleanupResult> {
+	const messages = [reason];
+	const rmRes = await runGitForDiscard(handle.parentRepoRoot, [
+		"worktree",
+		"remove",
+		"--force",
+		handle.worktreePath,
+	]);
+	if (rmRes.code !== 0) {
+		try {
+			await fs.promises.rm(handle.worktreePath, { recursive: true, force: true });
+		} catch {
+			/* ignore */
+		}
+		const pruneRes = await runGitForDiscard(handle.parentRepoRoot, ["worktree", "prune"]);
+		if (pruneRes.code !== 0) {
+			messages.push(`Failed to prune worktree records: ${pruneRes.stderr.trim() || pruneRes.stdout.trim()}`);
+		}
+	}
+
+	const brRes = await runGitForDiscard(handle.parentRepoRoot, ["branch", "-D", handle.branchName]);
+	if (brRes.code !== 0 && !brRes.stderr.includes("not found")) {
+		messages.push(`Failed to delete branch ${handle.branchName}: ${brRes.stderr.trim() || brRes.stdout.trim()}`);
+	}
+
+	try {
+		await fs.promises.rm(path.dirname(handle.worktreePath), { recursive: true, force: true });
+	} catch {
+		/* ignore */
+	}
+
+	return { merged: false, skipped: true, message: messages.join(" ") };
+}
+
 type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
 
 /**
@@ -405,6 +509,7 @@ async function runSingleAgent(
 	makeDetails: (results: SingleResult[]) => SubagentDetails,
 	fulfillQuestion: QuestionFulfiller | undefined,
 	sessionModel: string | undefined,
+	requestedModel?: string,
 	taskSkills?: string[],
 ): Promise<SingleResult> {
 	const agent = agents.find((a) => a.name === agentName);
@@ -454,10 +559,24 @@ async function runSingleAgent(
 		}
 	}
 
-	const args: string[] = ["--mode", "json", "-p", "--no-session"];
-	const childModel = agent.model ?? sessionModel;
-	if (childModel) args.push("--model", childModel);
-	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
+	if (signal?.aborted) {
+		return {
+			agent: agentName,
+			agentSource: agent.source,
+			task,
+			exitCode: 1,
+			messages: [],
+			stderr: "Subagent was aborted before launch.",
+			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
+			stopReason: "aborted",
+			errorMessage: "Subagent was aborted before launch.",
+			step,
+		};
+	}
+
+	const modelFallbacks = buildModelFallbacks(requestedModel, agent.model, sessionModel);
+	const baseArgs: string[] = ["--mode", "json", "-p", "--no-session"];
+	if (agent.tools && agent.tools.length > 0) baseArgs.push("--tools", agent.tools.join(","));
 
 	// Skill scoping.
 	//
@@ -475,13 +594,13 @@ async function runSingleAgent(
 	const hasAllowList = agent.skills !== undefined || (taskSkills && taskSkills.length > 0);
 	if (hasAllowList) {
 		const effectiveSkills = Array.from(new Set([...(agent.skills ?? []), ...(taskSkills ?? [])]));
-		args.push("--no-skills");
+		baseArgs.push("--no-skills");
 		const skillsRoot = path.join(getAgentDir(), "skills");
 		for (const name of effectiveSkills) {
 			const skillDir = path.join(skillsRoot, name);
 			const skillFile = path.join(skillDir, "SKILL.md");
 			if (fs.existsSync(skillFile)) {
-				args.push("--skill", skillDir);
+				baseArgs.push("--skill", skillDir);
 			} else {
 				console.error(`subagent: skill "${name}" not found at ${skillFile}; skipping for agent "${agent.name}".`);
 			}
@@ -490,61 +609,14 @@ async function runSingleAgent(
 
 	let tmpPromptDir: string | null = null;
 	let tmpPromptPath: string | null = null;
-	let worktreeHandle: Awaited<ReturnType<typeof createWorktree>> | null = null;
+	const attempts: ModelAttempt[] = [];
 
-	// If the agent declares worktree: true, spin up a fresh git worktree on a
-	// new branch and run the subagent there. Cleanup/merge happens in finally.
-	let effectiveCwd: string | undefined = cwd;
-	if (agent.worktree) {
-		const worktreeCwd = cwd ?? defaultCwd;
-		const repoRoot = await findRepoRoot(worktreeCwd);
-		if (!repoRoot) {
-			console.error("subagent: worktree requested but cwd is not a git repo; running in-place.");
-		} else {
-			// Reclaim any orphaned subagent worktrees/branches left behind by
-			// previous pi runs that died before they could clean up. Cheap,
-			// idempotent, runs at most once per repo per process.
-			await sweepOrphanedSubagentArtifacts(repoRoot);
-			try {
-				worktreeHandle = await createWorktree(worktreeCwd, agent.name);
-				effectiveCwd = worktreeHandle.worktreePath;
-			} catch (err) {
-				return {
-					agent: agentName,
-					agentSource: agent.source,
-					task,
-					exitCode: 1,
-					messages: [],
-					stderr: `Failed to create worktree: ${(err as Error).message}`,
-					usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
-					errorMessage: (err as Error).message,
-					step,
-				};
-			}
-		}
-	}
-
-	const currentResult: SingleResult = {
-		agent: agentName,
-		agentSource: agent.source,
-		task,
-		exitCode: 0,
-		messages: [],
-		stderr: "",
-		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
-		model: childModel,
-		step,
-		worktreePath: worktreeHandle?.worktreePath,
-		worktreeBranch: worktreeHandle?.branchName,
-	};
-
-	const emitUpdate = () => {
-		if (onUpdate) {
-			onUpdate({
-				content: [{ type: "text", text: getFinalOutput(currentResult.messages) || "(running...)" }],
-				details: makeDetails([currentResult]),
-			});
-		}
+	const appendAttemptSummary = (result: SingleResult): void => {
+		const attemptedModels = attempts.map((a) => formatAttemptModel(a.model)).join(", ");
+		const summary = `All model attempts failed. Attempted models: ${attemptedModels}.`;
+		result.modelAttempts = [...attempts];
+		result.errorMessage = result.errorMessage ? `${result.errorMessage}\n${summary}` : summary;
+		result.stderr = `${result.stderr}\n${summary}`.trim();
 	};
 
 	try {
@@ -552,233 +624,391 @@ async function runSingleAgent(
 			const tmp = await writePromptToTempFile(agent.name, agent.systemPrompt);
 			tmpPromptDir = tmp.dir;
 			tmpPromptPath = tmp.filePath;
-			args.push("--append-system-prompt", tmpPromptPath);
+			baseArgs.push("--append-system-prompt", tmpPromptPath);
 		}
 
-		args.push(`Task: ${task}`);
-		let wasAborted = false;
-		let exitTimeout: NodeJS.Timeout | undefined;
+		let lastResult: SingleResult | undefined;
+		for (let attemptIndex = 0; attemptIndex < modelFallbacks.length; attemptIndex++) {
+			const childModel = modelFallbacks[attemptIndex];
+			let worktreeHandle: Awaited<ReturnType<typeof createWorktree>> | null = null;
+			let effectiveCwd: string | undefined = cwd;
+			const currentResult: SingleResult = {
+				agent: agentName,
+				agentSource: agent.source,
+				task,
+				exitCode: 0,
+				messages: [],
+				stderr: "",
+				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
+				model: childModel,
+				step,
+			};
 
-		// Exit timeout: after the last message, give the subagent N seconds to exit
-		// cleanly, then force-kill. Prevents hanging when pi doesn't shut down cleanly
-		// (e.g., extension cleanup deadlock, open handles, undisposed resources).
-		// Default 30s, configurable via PI_SUBAGENT_EXIT_TIMEOUT_MS.
-		const exitTimeoutMs = process.env.PI_SUBAGENT_EXIT_TIMEOUT_MS
-			? parseInt(process.env.PI_SUBAGENT_EXIT_TIMEOUT_MS, 10)
-			: 30 * 1000;
+			const emitUpdate = () => {
+				if (onUpdate) {
+					onUpdate({
+						content: [{ type: "text", text: getFinalOutput(currentResult.messages) || "(running...)" }],
+						details: makeDetails([currentResult]),
+					});
+				}
+			};
 
-		const exitCode = await new Promise<number>((resolve) => {
-				const invocation = getPiInvocation(args);
-				// stdin stays "ignore" (= /dev/null in the child) so the child
-				// never blocks on a startup stdin read. The question bridge uses
-				// an extra pipe on fd 3 for parent→child responses; the child
-				// finds it via PI_QUESTION_RESPONSE_FD. Child→parent requests
-				// still travel on stderr as tagged lines.
-				const proc = spawn(invocation.command, invocation.args, {
-					cwd: effectiveCwd ?? defaultCwd,
-					shell: false,
-					stdio: ["ignore", "pipe", "pipe", "pipe"],
-					env: {
-						...process.env,
-						PI_SUBAGENT_CHILD: "1",
-						PI_QUESTION_RESPONSE_FD: "3",
-					},
-				});
+			try {
+				if (signal?.aborted) {
+					currentResult.exitCode = 1;
+					currentResult.stopReason = "aborted";
+					currentResult.errorMessage = "Subagent was aborted before launch.";
+					currentResult.stderr = currentResult.errorMessage;
+					return currentResult;
+				}
 
-				// Exit timeout: start after last message, clear on process exit.
-				const startExitTimeout = () => {
-					if (exitTimeout) clearTimeout(exitTimeout);
-					exitTimeout = setTimeout(() => {
-						proc.kill("SIGTERM");
-						setTimeout(() => {
-							if (!proc.killed) proc.kill("SIGKILL");
-						}, 5000);
-					}, exitTimeoutMs);
-				};
-				const clearExitTimeout = () => {
-					if (exitTimeout) {
-						clearTimeout(exitTimeout);
-						exitTimeout = undefined;
-					}
-				};
-				const responseChannel = proc.stdio[3] as NodeJS.WritableStream | null;
-				let buffer = "";
-
-				const processLine = (line: string) => {
-					if (!line.trim()) return;
-					let event: any;
-					try {
-						event = JSON.parse(line);
-					} catch {
-						return;
-					}
-
-					// Start exit timeout after the final message (agent_end).
-					// The subagent should exit shortly after this; if not, force-kill.
-					if (event.type === "agent_end") {
-						startExitTimeout();
-					}
-
-					if (event.type === "message_end" && event.message) {
-						const msg = event.message as Message;
-						currentResult.messages.push(msg);
-
-						if (msg.role === "assistant") {
-							currentResult.usage.turns++;
-							const usage = msg.usage;
-							if (usage) {
-								currentResult.usage.input += usage.input || 0;
-								currentResult.usage.output += usage.output || 0;
-								currentResult.usage.cacheRead += usage.cacheRead || 0;
-								currentResult.usage.cacheWrite += usage.cacheWrite || 0;
-								currentResult.usage.cost += usage.cost?.total || 0;
-								currentResult.usage.contextTokens = usage.totalTokens || 0;
-							}
-							if (!currentResult.model && msg.model) currentResult.model = msg.model;
-							if (msg.stopReason) currentResult.stopReason = msg.stopReason;
-							if (msg.errorMessage) currentResult.errorMessage = msg.errorMessage;
-						}
-						emitUpdate();
-					}
-
-					if (event.type === "tool_execution_end" && event.toolCallId) {
-						const tcid = event.toolCallId as string;
-						if (currentResult.partialResults) {
-							delete currentResult.partialResults[tcid];
-						}
-						emitUpdate();
-					}
-
-					// `tool_execution_update` carries the in-progress AgentToolResult
-					// emitted by an extension via `onUpdate`. For nested subagent
-					// calls, this is how we see the grandchild's live tool calls
-					// before the parent's `subagent` tool returns. Stash by
-					// toolCallId; the renderer falls back to this when the matching
-					// tool_result_end hasn't arrived yet.
-					if (event.type === "tool_execution_update" && event.toolCallId) {
-						const partial = event.partialResult;
-						if (partial) {
-							if (!currentResult.partialResults) currentResult.partialResults = {};
-							currentResult.partialResults[event.toolCallId] = {
-								content: partial.content,
-								details: partial.details,
-								isError: partial.isError,
+				// If the agent declares worktree: true, spin up a fresh git worktree on a
+				// new branch for this model attempt. Failed attempts are discarded below;
+				// only a successful child run is merged back into the parent worktree.
+				if (agent.worktree) {
+					const worktreeCwd = cwd ?? defaultCwd;
+					const repoRoot = await findRepoRoot(worktreeCwd);
+					if (!repoRoot) {
+						console.error("subagent: worktree requested but cwd is not a git repo; running in-place.");
+					} else {
+						await sweepOrphanedSubagentArtifacts(repoRoot);
+						try {
+							worktreeHandle = await createWorktree(worktreeCwd, agent.name);
+							effectiveCwd = worktreeHandle.worktreePath;
+							currentResult.worktreePath = worktreeHandle.worktreePath;
+							currentResult.worktreeBranch = worktreeHandle.branchName;
+						} catch (err) {
+							return {
+								agent: agentName,
+								agentSource: agent.source,
+								task,
+								exitCode: 1,
+								messages: [],
+								stderr: `Failed to create worktree: ${(err as Error).message}`,
+								usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
+								errorMessage: (err as Error).message,
+								step,
 							};
 						}
-						emitUpdate();
 					}
-				};
+				}
 
-				proc.stdout?.on("data", (data) => {
-					buffer += data.toString();
-					const lines = buffer.split("\n");
-					buffer = lines.pop() || "";
-					for (const line of lines) processLine(line);
-				});
+				const args = [...baseArgs];
+				if (childModel) args.push("--model", childModel);
+				args.push(`Task: ${task}`);
+				let wasAborted = false;
+				let spawnErrorMessage: string | undefined;
+				let exitTimeout: NodeJS.Timeout | undefined;
 
-				// Stderr carries both real diagnostics and (when the child calls the
-				// `question` tool) tagged protocol lines we must intercept. Buffer
-				// by line; route protocol lines to fulfillQuestion, append the rest
-				// to the visible stderr.
-				let stderrBuffer = "";
-				const handleStderrLine = (line: string) => {
-					const req = tryParseRequest(line);
-					if (!req) {
-						currentResult.stderr += `${line}\n`;
-						return;
-					}
-					if (!fulfillQuestion) {
-						const res: QuestionResponse = {
-							id: req.id,
-							error: "No question handler available in this parent process.",
+				// Exit timeout: after the last message, give the subagent N seconds to exit
+				// cleanly, then force-kill. Prevents hanging when pi doesn't shut down cleanly
+				// (e.g., extension cleanup deadlock, open handles, undisposed resources).
+				// Default 30s, configurable via PI_SUBAGENT_EXIT_TIMEOUT_MS.
+				const exitTimeoutMs = process.env.PI_SUBAGENT_EXIT_TIMEOUT_MS
+					? parseInt(process.env.PI_SUBAGENT_EXIT_TIMEOUT_MS, 10)
+					: 30 * 1000;
+
+				const exitCode = await new Promise<number>((resolve) => {
+					let resolved = false;
+					const resolveOnce = (code: number) => {
+						if (resolved) return;
+						resolved = true;
+						resolve(code);
+					};
+					const invocation = getPiInvocation(args);
+					// stdin stays "ignore" (= /dev/null in the child) so the child
+					// never blocks on a startup stdin read. The question bridge uses
+					// an extra pipe on fd 3 for parent→child responses; the child
+					// finds it via PI_QUESTION_RESPONSE_FD. Child→parent requests
+					// still travel on stderr as tagged lines.
+					const proc = spawn(invocation.command, invocation.args, {
+						cwd: effectiveCwd ?? defaultCwd,
+						shell: false,
+						stdio: ["ignore", "pipe", "pipe", "pipe"],
+						env: {
+							...process.env,
+							PI_SUBAGENT_CHILD: "1",
+							PI_QUESTION_RESPONSE_FD: "3",
+						},
+					});
+
+					// Exit timeout: start after last message, clear on process exit.
+					const startExitTimeout = () => {
+						if (exitTimeout) clearTimeout(exitTimeout);
+						exitTimeout = setTimeout(() => {
+							proc.kill("SIGTERM");
+							setTimeout(() => {
+								if (!proc.killed) proc.kill("SIGKILL");
+							}, 5000);
+						}, exitTimeoutMs);
+					};
+					const clearExitTimeout = () => {
+						if (exitTimeout) {
+							clearTimeout(exitTimeout);
+							exitTimeout = undefined;
+						}
+					};
+					const responseChannel = proc.stdio[3] as NodeJS.WritableStream | null;
+					let buffer = "";
+
+					const processLine = (line: string) => {
+						if (!line.trim()) return;
+						let event: any;
+						try {
+							event = JSON.parse(line);
+						} catch {
+							return;
+						}
+
+						// Start exit timeout after the final message (agent_end).
+						// The subagent should exit shortly after this; if not, force-kill.
+						if (event.type === "agent_end") {
+							startExitTimeout();
+						}
+
+						if (event.type === "message_end" && event.message) {
+							const msg = event.message as Message;
+							currentResult.messages.push(msg);
+
+							if (msg.role === "assistant") {
+								currentResult.usage.turns++;
+								const usage = msg.usage;
+								if (usage) {
+									currentResult.usage.input += usage.input || 0;
+									currentResult.usage.output += usage.output || 0;
+									currentResult.usage.cacheRead += usage.cacheRead || 0;
+									currentResult.usage.cacheWrite += usage.cacheWrite || 0;
+									currentResult.usage.cost += usage.cost?.total || 0;
+									currentResult.usage.contextTokens = usage.totalTokens || 0;
+								}
+								if (!currentResult.model && msg.model) currentResult.model = msg.model;
+								if (msg.stopReason) currentResult.stopReason = msg.stopReason;
+								if (msg.errorMessage) currentResult.errorMessage = msg.errorMessage;
+							}
+							emitUpdate();
+						}
+
+						if (event.type === "tool_execution_end" && event.toolCallId) {
+							const tcid = event.toolCallId as string;
+							if (currentResult.partialResults) {
+								delete currentResult.partialResults[tcid];
+							}
+							emitUpdate();
+						}
+
+						// `tool_execution_update` carries the in-progress AgentToolResult
+						// emitted by an extension via `onUpdate`. For nested subagent
+						// calls, this is how we see the grandchild's live tool calls
+						// before the parent's `subagent` tool returns. Stash by
+						// toolCallId; the renderer falls back to this when the matching
+						// tool_result_end hasn't arrived yet.
+						if (event.type === "tool_execution_update" && event.toolCallId) {
+							const partial = event.partialResult;
+							if (partial) {
+								if (!currentResult.partialResults) currentResult.partialResults = {};
+								currentResult.partialResults[event.toolCallId] = {
+									content: partial.content,
+									details: partial.details,
+									isError: partial.isError,
+								};
+							}
+							emitUpdate();
+						}
+					};
+
+					proc.stdout?.on("data", (data) => {
+						buffer += data.toString();
+						const lines = buffer.split("\n");
+						buffer = lines.pop() || "";
+						for (const line of lines) processLine(line);
+					});
+
+					// Stderr carries both real diagnostics and (when the child calls the
+					// `question` tool) tagged protocol lines we must intercept. Buffer
+					// by line; route protocol lines to fulfillQuestion, append the rest
+					// to the visible stderr.
+					let stderrBuffer = "";
+					const handleStderrLine = (line: string) => {
+						const req = tryParseRequest(line);
+						if (!req) {
+							currentResult.stderr += `${line}\n`;
+							return;
+						}
+						if (!fulfillQuestion) {
+							const res: QuestionResponse = {
+								id: req.id,
+								error: "No question handler available in this parent process.",
+							};
+							try {
+								responseChannel?.write(encodeResponse(res));
+							} catch {
+								/* ignore */
+							}
+							return;
+						}
+						void (async () => {
+							let out: { answers?: string[]; error?: string };
+							try {
+								out = await fulfillQuestion(req.questions, signal);
+							} catch (err) {
+								out = { error: `bridge failed: ${(err as Error).message}` };
+							}
+							const res: QuestionResponse = { id: req.id, ...out };
+							try {
+								responseChannel?.write(encodeResponse(res));
+							} catch {
+								/* child may have exited */
+							}
+						})();
+					};
+					proc.stderr?.on("data", (data) => {
+						stderrBuffer += data.toString();
+						let nl = stderrBuffer.indexOf("\n");
+						while (nl !== -1) {
+							handleStderrLine(stderrBuffer.slice(0, nl));
+							stderrBuffer = stderrBuffer.slice(nl + 1);
+							nl = stderrBuffer.indexOf("\n");
+						}
+					});
+
+					// Track stream completion separately from process exit. The `close`
+					// event fires when the process exits, but stdout/stderr may still
+					// have buffered data that hasn't been emitted via "data" events yet.
+					// We must wait for both streams to end before resolving.
+					let stdoutEnded = false;
+					let stderrEnded = false;
+					let exitCodeValue: number | null = null;
+
+					const tryResolve = () => {
+						if (!stdoutEnded || !stderrEnded || exitCodeValue === null) return;
+						// Process any remaining data in buffers
+						if (buffer.trim()) processLine(buffer);
+						if (stderrBuffer.trim()) handleStderrLine(stderrBuffer);
+						clearExitTimeout();
+						resolveOnce(exitCodeValue);
+					};
+
+					proc.stdout?.on("end", () => {
+						stdoutEnded = true;
+						tryResolve();
+					});
+
+					proc.stderr?.on("end", () => {
+						stderrEnded = true;
+						tryResolve();
+					});
+
+					proc.on("close", (code) => {
+						exitCodeValue = code ?? 0;
+						tryResolve();
+					});
+
+					proc.on("error", (err) => {
+						spawnErrorMessage = err.message;
+						currentResult.stderr += `${err.message}\n`;
+						clearExitTimeout();
+						resolveOnce(1);
+					});
+
+					if (signal) {
+						const killProc = () => {
+							wasAborted = true;
+							clearExitTimeout();
+							proc.kill("SIGTERM");
+							setTimeout(() => {
+								if (!proc.killed) proc.kill("SIGKILL");
+							}, 5000);
 						};
-						try {
-							responseChannel?.write(encodeResponse(res));
-						} catch {
-							/* ignore */
-						}
-						return;
-					}
-					void (async () => {
-						let out: { answers?: string[]; error?: string };
-						try {
-							out = await fulfillQuestion(req.questions, signal);
-						} catch (err) {
-							out = { error: `bridge failed: ${(err as Error).message}` };
-						}
-						const res: QuestionResponse = { id: req.id, ...out };
-						try {
-							responseChannel?.write(encodeResponse(res));
-						} catch {
-							/* child may have exited */
-						}
-					})();
-				};
-				proc.stderr?.on("data", (data) => {
-					stderrBuffer += data.toString();
-					let nl = stderrBuffer.indexOf("\n");
-					while (nl !== -1) {
-						handleStderrLine(stderrBuffer.slice(0, nl));
-						stderrBuffer = stderrBuffer.slice(nl + 1);
-						nl = stderrBuffer.indexOf("\n");
+						if (signal.aborted) killProc();
+						else signal.addEventListener("abort", killProc, { once: true });
 					}
 				});
 
-				// Track stream completion separately from process exit. The `close`
-				// event fires when the process exits, but stdout/stderr may still
-				// have buffered data that hasn't been emitted via "data" events yet.
-				// We must wait for both streams to end before resolving.
-				let stdoutEnded = false;
-				let stderrEnded = false;
-				let exitCodeValue: number | null = null;
+				currentResult.exitCode = exitCode;
+				if (spawnErrorMessage && !currentResult.errorMessage) currentResult.errorMessage = spawnErrorMessage;
 
-				const tryResolve = () => {
-					if (!stdoutEnded || !stderrEnded || exitCodeValue === null) return;
-					// Process any remaining data in buffers
-					if (buffer.trim()) processLine(buffer);
-					if (stderrBuffer.trim()) handleStderrLine(stderrBuffer);
-					clearExitTimeout();
-					resolve(exitCodeValue);
+				const parentAborted = wasAborted || signal?.aborted;
+				const childFailed = currentResult.exitCode !== 0;
+				if (worktreeHandle) {
+					try {
+						const cleanup = childFailed || parentAborted
+							? await discardWorktreeAttempt(
+								worktreeHandle,
+								`Discarded worktree ${worktreeHandle.branchName} after failed model attempt.`,
+							)
+							: await mergeAndCleanup(worktreeHandle);
+						currentResult.worktreeCleanup = cleanup;
+						if (!childFailed && !parentAborted && !cleanup.merged && !cleanup.skipped) {
+							currentResult.stderr = `${currentResult.stderr}\n[worktree] ${cleanup.message}`.trim();
+							if (currentResult.exitCode === 0) currentResult.exitCode = 1;
+							if (!currentResult.errorMessage) currentResult.errorMessage = cleanup.message;
+						}
+					} catch (err) {
+						currentResult.stderr = `${currentResult.stderr}\n[worktree] cleanup failed: ${(err as Error).message}`.trim();
+						if (currentResult.exitCode === 0) currentResult.exitCode = 1;
+					}
+				}
+
+				if (parentAborted) {
+					currentResult.stopReason = "aborted";
+					currentResult.errorMessage = currentResult.errorMessage || "Subagent was aborted";
+					return currentResult;
+				}
+
+				const attempt: ModelAttempt = {
+					model: childModel,
+					exitCode: currentResult.exitCode,
+					succeeded: !childFailed,
+					stopReason: currentResult.stopReason,
+					errorMessage: currentResult.errorMessage,
 				};
+				attempts.push(attempt);
+				currentResult.modelAttempts = [...attempts];
+				lastResult = currentResult;
 
-				proc.stdout?.on("end", () => {
-					stdoutEnded = true;
-					tryResolve();
-				});
-
-				proc.stderr?.on("end", () => {
-					stderrEnded = true;
-					tryResolve();
-				});
-
-				proc.on("close", (code) => {
-					exitCodeValue = code ?? 0;
-					tryResolve();
-				});
-
-				proc.on("error", () => {
-					exitCodeValue = 1;
-					tryResolve();
-				});
-
-			if (signal) {
-				const killProc = () => {
-					wasAborted = true;
-					clearExitTimeout();
-					proc.kill("SIGTERM");
-					setTimeout(() => {
-						if (!proc.killed) proc.kill("SIGKILL");
-					}, 5000);
+				if (!childFailed) return currentResult;
+			} catch (err) {
+				if (worktreeHandle) {
+					try {
+						currentResult.worktreeCleanup = await discardWorktreeAttempt(
+							worktreeHandle,
+							`Discarded worktree ${worktreeHandle.branchName} after failed model attempt.`,
+						);
+					} catch {
+						/* ignore; surface the original failure */
+					}
+				}
+				currentResult.exitCode = 1;
+				currentResult.errorMessage = (err as Error).message;
+				currentResult.stderr = `${currentResult.stderr}\n${(err as Error).message}`.trim();
+				const attempt: ModelAttempt = {
+					model: childModel,
+					exitCode: 1,
+					succeeded: false,
+					errorMessage: currentResult.errorMessage,
 				};
-				if (signal.aborted) killProc();
-				else signal.addEventListener("abort", killProc, { once: true });
+				attempts.push(attempt);
+				currentResult.modelAttempts = [...attempts];
+				lastResult = currentResult;
 			}
-		});
+		}
 
-		currentResult.exitCode = exitCode;
-		if (wasAborted) throw new Error("Subagent was aborted");
+		if (lastResult) {
+			appendAttemptSummary(lastResult);
+			return lastResult;
+		}
 
-		return currentResult;
+		return {
+			agent: agentName,
+			agentSource: agent.source,
+			task,
+			exitCode: 1,
+			messages: [],
+			stderr: "No model attempts were run.",
+			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
+			errorMessage: "No model attempts were run.",
+			step,
+		};
 	} finally {
 		if (tmpPromptPath)
 			try {
@@ -792,21 +1022,6 @@ async function runSingleAgent(
 			} catch {
 				/* ignore */
 			}
-		if (worktreeHandle) {
-			try {
-				const cleanup = await mergeAndCleanup(worktreeHandle);
-				currentResult.worktreeCleanup = cleanup;
-				if (!cleanup.merged && !cleanup.skipped) {
-					// Merge failed: surface in stderr so the orchestrator sees it.
-					currentResult.stderr = `${currentResult.stderr}\n[worktree] ${cleanup.message}`.trim();
-					if (currentResult.exitCode === 0) currentResult.exitCode = 1;
-					if (!currentResult.errorMessage) currentResult.errorMessage = cleanup.message;
-				}
-			} catch (err) {
-				currentResult.stderr = `${currentResult.stderr}\n[worktree] cleanup failed: ${(err as Error).message}`.trim();
-				if (currentResult.exitCode === 0) currentResult.exitCode = 1;
-			}
-		}
 	}
 }
 
@@ -814,6 +1029,7 @@ const TaskItem = Type.Object({
 	agent: Type.String({ description: "Name of the agent to invoke" }),
 	task: Type.String({ description: "Task to delegate to the agent" }),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
+	model: Type.Optional(Type.String({ description: "Preferred model for this task" })),
 	skills: Type.Optional(Type.Array(Type.String(), { description: "Override skills for this task" })),
 });
 
@@ -821,6 +1037,7 @@ const ChainItem = Type.Object({
 	agent: Type.String({ description: "Name of the agent to invoke" }),
 	task: Type.String({ description: "Task with optional {previous} placeholder for prior output" }),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
+	model: Type.Optional(Type.String({ description: "Preferred model for this step" })),
 	skills: Type.Optional(Type.Array(Type.String(), { description: "Override skills for this step" })),
 });
 
@@ -839,6 +1056,7 @@ const SubagentParams = Type.Object({
 		Type.Boolean({ description: "Prompt before running project-local agents. Default: true.", default: true }),
 	),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process (single mode)" })),
+	model: Type.Optional(Type.String({ description: "Preferred model for this call (single mode)" })),
 	skills: Type.Optional(Type.Array(Type.String(), { description: "Override skills for all tasks in this call" })),
 });
 
@@ -981,6 +1199,7 @@ export default function (pi: ExtensionAPI) {
 						makeDetails("chain"),
 						fulfillQuestion,
 						sessionModel,
+						step.model,
 						step.skills,
 					);
 					results.push(result);
@@ -1054,7 +1273,7 @@ export default function (pi: ExtensionAPI) {
 				const results = await mapWithConcurrencyLimit(
 					params.tasks ?? [],
 					MAX_CONCURRENCY,
-					async (t: { agent: string; task: string; cwd?: string; skills?: string[] }, index) => {
+					async (t: { agent: string; task: string; cwd?: string; model?: string; skills?: string[] }, index) => {
 						// Don't start new tasks if we've already failed
 						if (parallelController.signal.aborted) {
 							return {
@@ -1087,6 +1306,7 @@ export default function (pi: ExtensionAPI) {
 							makeDetails("parallel"),
 							fulfillQuestion,
 							sessionModel,
+							t.model,
 							t.skills,
 						);
 						allResults[index] = result;
@@ -1128,6 +1348,7 @@ export default function (pi: ExtensionAPI) {
 					makeDetails("single"),
 					fulfillQuestion,
 					sessionModel,
+					params.model,
 					params.skills,
 				);
 				const isError = isFailedResult(result);
@@ -1346,6 +1567,9 @@ export default function (pi: ExtensionAPI) {
 					let header = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
 					if (isError && r.stopReason) header += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
 					container.addChild(new Text(header, 0, 0));
+					const modelAttemptSummary = formatModelAttempts(r.modelAttempts);
+					if (modelAttemptSummary)
+						container.addChild(new Text(theme.fg("dim", `Models: ${modelAttemptSummary}`), 0, 0));
 					if (isError && r.errorMessage)
 						container.addChild(new Text(theme.fg("error", `Error: ${r.errorMessage}`), 0, 0));
 					container.addChild(new Spacer(1));
@@ -1381,6 +1605,8 @@ export default function (pi: ExtensionAPI) {
 
 				let text = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
 				if (isError && r.stopReason) text += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
+				const modelAttemptSummary = formatModelAttempts(r.modelAttempts);
+				if (modelAttemptSummary) text += `\n${theme.fg("dim", `Models: ${modelAttemptSummary}`)}`;
 				if (isError && r.errorMessage) text += `\n${theme.fg("error", `Error: ${r.errorMessage}`)}`;
 				else if (displayItems.length === 0) text += `\n${theme.fg("muted", "(no output)")}`;
 				else {
@@ -1436,6 +1662,9 @@ export default function (pi: ExtensionAPI) {
 							),
 						);
 						container.addChild(new Text(theme.fg("muted", "Task: ") + theme.fg("dim", r.task), 0, 0));
+						const modelAttemptSummary = formatModelAttempts(r.modelAttempts);
+						if (modelAttemptSummary)
+							container.addChild(new Text(theme.fg("dim", `Models: ${modelAttemptSummary}`), 0, 0));
 
 						// Show tool calls
 						for (const item of displayItems) {
@@ -1478,6 +1707,8 @@ export default function (pi: ExtensionAPI) {
 					const rIcon = r.exitCode === 0 ? theme.fg("success", "✓") : theme.fg("error", "✗");
 					const displayItems = getDisplayItems(r.messages, (r as any).partialResults);
 					text += `\n\n${theme.fg("muted", `─── Step ${r.step}: `)}${theme.fg("accent", r.agent)} ${rIcon}`;
+					const modelAttemptSummary = formatModelAttempts(r.modelAttempts);
+					if (modelAttemptSummary) text += `\n${theme.fg("dim", `Models: ${modelAttemptSummary}`)}`;
 					if (displayItems.length === 0) text += `\n${theme.fg("muted", "(no output)")}`;
 					else text += `\n${renderDisplayItems(displayItems, 5)}`;
 				}
@@ -1521,6 +1752,9 @@ export default function (pi: ExtensionAPI) {
 							new Text(`${theme.fg("muted", "─── ") + theme.fg("accent", r.agent)} ${rIcon}`, 0, 0),
 						);
 						container.addChild(new Text(theme.fg("muted", "Task: ") + theme.fg("dim", r.task), 0, 0));
+						const modelAttemptSummary = formatModelAttempts(r.modelAttempts);
+						if (modelAttemptSummary)
+							container.addChild(new Text(theme.fg("dim", `Models: ${modelAttemptSummary}`), 0, 0));
 
 						// Show tool calls
 						for (const item of displayItems) {
@@ -1564,6 +1798,8 @@ export default function (pi: ExtensionAPI) {
 								: theme.fg("success", "✓");
 					const displayItems = getDisplayItems(r.messages, (r as any).partialResults);
 					text += `\n\n${theme.fg("muted", "─── ")}${theme.fg("accent", r.agent)} ${rIcon}`;
+					const modelAttemptSummary = formatModelAttempts(r.modelAttempts);
+					if (modelAttemptSummary) text += `\n${theme.fg("dim", `Models: ${modelAttemptSummary}`)}`;
 					if (displayItems.length === 0)
 						text += `\n${theme.fg("muted", r.exitCode === -1 ? "(running...)" : "(no output)")}`;
 					else text += `\n${renderDisplayItems(displayItems, 5)}`;
