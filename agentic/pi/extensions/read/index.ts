@@ -280,6 +280,9 @@ function sha256String(s: string): string {
 // ---------------------------------------------------------------------------
 
 const DOCUMENT_EXTENSIONS = new Set([".pdf", ".docx", ".xlsx", ".pptx"]);
+// Note: LaTeX files (.tex, .latex, etc.) are NOT special-cased here — they
+// have outline support in _outliner (sections, preamble) and follow the
+// standard outline/verbatim flow like other source files.
 const URL_RE = /^https?:\/\//i;
 
 const DOC_CACHE_DIR = path.join(os.tmpdir(), "pi-read-doc-cache");
@@ -823,7 +826,7 @@ function readOutsideRepo(
 	collapsedView: (typeof import("../_outliner/outliner.js"))["collapsedView"],
 	key: string,
 	sha: string,
-)	{
+) {
 	const content = fs.readFileSync(absolutePath, "utf-8");
 
 	return renderContent(absolutePath, absolutePath, content, symbol, outline, collapsedView, key, sha);
