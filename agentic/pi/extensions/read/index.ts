@@ -843,7 +843,7 @@ function readOutsideRepo(
 
 	// Verbatim extensions (LaTeX) → always return full content, bypass outline
 	if (VERBATIM_EXTENSIONS.has(ext)) {
-		const header = `# ${absolutePath} (${totalLines} lines)`;
+		const header = `# ${absolutePath} (${totalLines} lines) — verbatim content (LaTeX extension)`;
 		const text = `${header}\n${content}`;
 		const callIdx = ++callIndex.current;
 		dedupeCache.set(key, { sha, callIndex: callIdx, text });
