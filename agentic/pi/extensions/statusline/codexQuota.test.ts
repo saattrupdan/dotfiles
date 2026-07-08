@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { bucketRemainingPercent, parseCodexQuotaHeaders } from "./codexQuota.ts";
+import { bucketRemainingPercent, parseClaudeUsageOutput, parseCodexQuotaHeaders } from "./codexQuota.ts";
 
 test("parses primary/secondary rate-limit headers into session/weekly buckets", () => {
 	const quota = parseCodexQuotaHeaders({
@@ -77,4 +77,23 @@ test("returns empty quota when no rate-limit headers are present", () => {
 	expect(quota.session).toBeUndefined();
 	expect(quota.weekly).toBeUndefined();
 	expect(quota.credits).toBeUndefined();
+});
+
+test("parses Claude Code /usage output into session and weekly buckets", () => {
+	const quota = parseClaudeUsageOutput(`You are currently using your subscription to power your Claude Code usage
+
+Current session: 61% used · resets Jul 8 at 9:39pm (Europe/Copenhagen)
+Current week (all models): 46% used · resets Jul 11 at 12:59am (Europe/Copenhagen)
+Current week (Fable): 2% used · resets Jul 11 at 12:59am (Europe/Copenhagen)
+`);
+
+	expect(quota.session?.used).toBe(61);
+	expect(quota.session?.remaining).toBe(39);
+	expect(quota.session?.window).toBe("5h");
+	expect(Number.isFinite(quota.session?.resetAt)).toBe(true);
+
+	expect(quota.weekly?.used).toBe(46);
+	expect(quota.weekly?.remaining).toBe(54);
+	expect(quota.weekly?.window).toBe("7d");
+	expect(Number.isFinite(quota.weekly?.resetAt)).toBe(true);
 });

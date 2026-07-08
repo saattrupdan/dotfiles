@@ -1,3 +1,4 @@
+import { spawn } from "child_process";
 import { readFileSync } from "fs";
 
 export type QuotaBucket = {
@@ -21,6 +22,7 @@ export type CodexQuota = {
 const PI_AUTH_FILE = `${process.env.HOME}/.pi/agent/auth.json`;
 const CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
 const PROBE_TIMEOUT_MS = 12_000;
+const CLAUDE_USAGE_TIMEOUT_MS = 12_000;
 
 // The Codex backend only reports live quota in the `x-codex-*` response headers
 // of POST /codex/responses (never a cheap GET), and it returns them even on a
@@ -177,6 +179,116 @@ export async function fetchCodexQuotaFromApi(model = "gpt-5.5"): Promise<CodexQu
 	} finally {
 		clearTimeout(timer);
 	}
+}
+
+/**
+ * Parse Claude Code's `/usage` command output into the same quota structure used
+ * for Codex footer bars. Claude reports used percentages; Pi displays remaining.
+ */
+export function parseClaudeUsageOutput(text: string): CodexQuota {
+	const result: CodexQuota = {};
+	const session = parseClaudeUsageLine(text, /^Current session:\s+/m, "5h");
+	if (session) result.session = session;
+
+	const weekly = parseClaudeUsageLine(text, /^Current week \(all models\):\s+/m, "7d");
+	if (weekly) result.weekly = weekly;
+
+	return result;
+}
+
+/**
+ * Fetch Claude Code subscription usage via the local `/usage` command. This is a
+ * local command (`duration_api_ms: 0`) and does not consume a model turn.
+ */
+export async function fetchClaudeQuotaFromCli(): Promise<CodexQuota | undefined> {
+	try {
+		const { stdout, code } = await runClaudeUsageCommand();
+		if (code !== 0 || !stdout.trim()) return undefined;
+
+		const parsed = JSON.parse(stdout) as unknown;
+		if (!isRecord(parsed)) return undefined;
+		const result = typeof parsed.result === "string" ? parsed.result : "";
+		const quota = parseClaudeUsageOutput(result);
+		return quota.session || quota.weekly ? quota : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function runClaudeUsageCommand(): Promise<{ stdout: string; code: number }> {
+	return new Promise((resolve, reject) => {
+		const proc = spawn("claude", [
+			"-p",
+			"/usage",
+			"--output-format",
+			"json",
+			"--dangerously-skip-permissions",
+			"--no-session-persistence",
+		], {
+			cwd: process.cwd(),
+			env: process.env,
+		});
+
+		let stdout = "";
+		const timer = setTimeout(() => {
+			proc.kill("SIGTERM");
+			reject(new Error("claude /usage timed out"));
+		}, CLAUDE_USAGE_TIMEOUT_MS);
+
+		proc.stdout?.on("data", (data: Buffer) => {
+			stdout += data.toString();
+		});
+		proc.on("error", (error) => {
+			clearTimeout(timer);
+			reject(error);
+		});
+		proc.on("close", (code) => {
+			clearTimeout(timer);
+			resolve({ stdout, code: code ?? 0 });
+		});
+	});
+}
+
+function parseClaudeUsageLine(
+	text: string,
+	prefix: RegExp,
+	window: QuotaBucket["window"],
+): QuotaBucket | undefined {
+	const line = text.split(/\r?\n/).find((candidate) => prefix.test(candidate));
+	if (!line) return undefined;
+
+	const match = line.match(/:\s*(\d+(?:\.\d+)?)% used(?:\s+·\s+resets\s+(.+))?$/);
+	if (!match) return undefined;
+
+	const usedPercent = parseFiniteNumber(match[1]);
+	if (usedPercent === undefined) return undefined;
+
+	return {
+		used: usedPercent,
+		remaining: 100 - clampPercent(usedPercent),
+		percent: usedPercent,
+		resetAt: parseClaudeResetAt(match[2]),
+		window,
+	};
+}
+
+function parseClaudeResetAt(value: string | undefined): number | undefined {
+	if (!value) return undefined;
+	const withoutZone = value.replace(/\s*\([^)]*\)\s*$/, "").trim();
+	const normalised = withoutZone
+		.replace(/\s+at\s+/i, " ")
+		.replace(/(\d)(am|pm)$/i, "$1 $2");
+
+	const now = new Date();
+	let parsed = Date.parse(`${normalised} ${now.getFullYear()}`);
+	if (!Number.isFinite(parsed)) return undefined;
+
+	// Reset dates are future times. Around New Year, a January reset shown in
+	// December belongs to next year.
+	if (parsed < now.getTime() - 60 * 60 * 1000) {
+		parsed = Date.parse(`${normalised} ${now.getFullYear() + 1}`);
+	}
+	return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function parseFiniteNumber(value: unknown): number | undefined {

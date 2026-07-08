@@ -2,13 +2,14 @@
  * Compact statusline footer.
  *
  * Replaces Pi's built-in interactive footer with a single statusline containing
- * the active model, context window, and context usage. For OAuth subscription models
- * (e.g., OpenAI Codex, Anthropic Claude Pro), renders quota bars by fetching live
- * quota from the Codex responses API (the `x-codex-*` rate-limit response headers).
+ * the active model, context window, and context usage. For subscription-backed
+ * providers, renders quota bars by fetching live quota from the provider's own
+ * local/account source: Codex response headers for OpenAI Codex, and Claude Code's
+ * local `/usage` command for Claude Code.
  *
  * Pi issues its own codex requests over WebSocket and never writes ~/.codex
- * rollout files, so the bars are refreshed by making a minimal request of our own
- * after each turn and on a slow idle timer (see codexQuota.ts).
+ * rollout files, so Codex bars are refreshed by making a minimal request of our
+ * own. Claude Code exposes the same subscription percentages through `/usage`.
  *
  * Quota bars show "remaining" (not used): 100% when full, counting down.
  * Colors: green > 50%, yellow 20-50%, red < 20%.
@@ -24,15 +25,20 @@ import { mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname } from "path";
 import {
 	bucketRemainingPercent,
+	fetchClaudeQuotaFromCli,
 	fetchCodexQuotaFromApi,
 	type CodexQuota,
 	type QuotaBucket,
 } from "./codexQuota.ts";
 
 const BAR_WIDTH = 10;
-const CACHE_FILE = `${process.env.HOME}/.pi/agent/state/statusline/codex-quota-cache.json`;
+const CODEX_CACHE_FILE = `${process.env.HOME}/.pi/agent/state/statusline/codex-quota-cache.json`;
+const CLAUDE_CACHE_FILE = `${process.env.HOME}/.pi/agent/state/statusline/claude-quota-cache.json`;
+
+type QuotaSource = "codex" | "claude";
 
 let codexQuota: CodexQuota = {};
+let claudeQuota: CodexQuota = {};
 let requestRender: (() => void) | undefined;
 let pollTimer: NodeJS.Timeout | undefined;
 let installed = false;
@@ -48,10 +54,11 @@ let lastQuotaFetchMs = 0;
  * Load cached quota data from previous sessions.
  * Used to show quota bars immediately (before Codex writes new rollout file).
  */
-function loadCachedQuota(): CodexQuota | undefined {
+function loadCachedQuota(source: QuotaSource): CodexQuota | undefined {
 	try {
-		const data = readFileSync(CACHE_FILE, "utf-8");
-		return JSON.parse(data) as CodexQuota;
+		const data = readFileSync(cacheFileForSource(source), "utf-8");
+		const parsed = JSON.parse(data) as CodexQuota;
+		return hasQuotaData(parsed) ? parsed : undefined;
 	} catch {
 		return undefined;
 	}
@@ -60,13 +67,18 @@ function loadCachedQuota(): CodexQuota | undefined {
 /**
  * Cache quota data for next session (before rollout file is written).
  */
-function saveCachedQuota(quota: CodexQuota): void {
+function saveCachedQuota(source: QuotaSource, quota: CodexQuota): void {
+	const cacheFile = cacheFileForSource(source);
 	try {
-		mkdirSync(dirname(CACHE_FILE), { recursive: true });
-		writeFileSync(CACHE_FILE, JSON.stringify(quota), "utf-8");
+		mkdirSync(dirname(cacheFile), { recursive: true });
+		writeFileSync(cacheFile, JSON.stringify(quota), "utf-8");
 	} catch {
 		// Silently ignore (cache is non-essential)
 	}
+}
+
+function cacheFileForSource(source: QuotaSource): string {
+	return source === "claude" ? CLAUDE_CACHE_FILE : CODEX_CACHE_FILE;
 }
 
 function hasQuotaData(quota: CodexQuota): boolean {
@@ -74,11 +86,16 @@ function hasQuotaData(quota: CodexQuota): boolean {
 }
 
 function loadCachedQuotaIntoMemory(): void {
-	const cached = loadCachedQuota();
-	if (!cached || !hasQuotaData(cached)) return;
+	const cachedCodex = loadCachedQuota("codex");
+	if (cachedCodex) {
+		// Let fresh in-memory data win, while using the cache to fill first-render gaps.
+		codexQuota = { ...cachedCodex, ...codexQuota };
+	}
 
-	// Let fresh in-memory data win, while using the cache to fill first-render gaps.
-	codexQuota = { ...cached, ...codexQuota };
+	const cachedClaude = loadCachedQuota("claude");
+	if (cachedClaude) {
+		claudeQuota = { ...cachedClaude, ...claudeQuota };
+	}
 }
 
 let maybeRender: (() => void) | undefined;
@@ -119,12 +136,12 @@ export default function (pi: ExtensionAPI) {
 			requestRender = () => tui.requestRender();
 
 			// Populate live quota as soon as the footer installs.
-			refreshCodexQuota(ctx, { force: true });
+			refreshQuota(ctx, { force: true });
 
 			// Keep reset countdowns fresh, and probe quota on a slow cadence.
 			if (!pollTimer) {
 				pollTimer = setInterval(() => {
-					refreshCodexQuota(ctx);
+					refreshQuota(ctx);
 					maybeRender?.();
 				}, RENDER_TICK_MS);
 			}
@@ -158,14 +175,14 @@ export default function (pi: ExtensionAPI) {
 	});
 	pi.on("model_select", (_event, ctx) => {
 		if (setupFooter(ctx)) return;
-		// Switched model — if it's codex, refresh against the right account.
-		refreshCodexQuota(ctx, { force: true });
+		// Switched model — refresh against the right account/source.
+		refreshQuota(ctx, { force: true });
 		maybeRender?.();
 	});
 	pi.on("turn_end", (_event, ctx) => {
 		if (setupFooter(ctx)) return;
 		// Usage just changed on the backend — refresh now.
-		refreshCodexQuota(ctx, { force: true });
+		refreshQuota(ctx, { force: true });
 		maybeRender?.();
 	});
 	pi.on("message_end", (event, ctx) => {
@@ -174,7 +191,7 @@ export default function (pi: ExtensionAPI) {
 
 		setupFooter(ctx, { force: true, allowWithoutMessages: true });
 		maybeRender?.();
-		refreshCodexQuota(ctx, { force: true });
+		refreshQuota(ctx, { force: true });
 	});
 }
 
@@ -184,9 +201,9 @@ export default function (pi: ExtensionAPI) {
  * Non-forced calls are throttled to BACKGROUND_FETCH_INTERVAL_MS so idle polling
  * stays cheap; forced calls (after a turn / on install) always run.
  */
-function refreshCodexQuota(ctx: ExtensionContext, options: { force?: boolean } = {}): void {
-	// Only codex exposes the x-codex-* quota headers we read.
-	if (!isCodex(ctx)) return;
+function refreshQuota(ctx: ExtensionContext, options: { force?: boolean } = {}): void {
+	const source = quotaSourceForContext(ctx);
+	if (!source) return;
 	if (quotaFetchInFlight) return;
 
 	const now = Date.now();
@@ -195,12 +212,15 @@ function refreshCodexQuota(ctx: ExtensionContext, options: { force?: boolean } =
 	quotaFetchInFlight = true;
 	lastQuotaFetchMs = now;
 	const model = ctx.model?.id;
+	const fetchQuota = source === "claude"
+		? fetchClaudeQuotaFromCli()
+		: fetchCodexQuotaFromApi(model);
 
-	void fetchCodexQuotaFromApi(model)
+	void fetchQuota
 		.then((quota) => {
 			if (quota && hasQuotaData(quota)) {
-				codexQuota = quota;
-				saveCachedQuota(codexQuota);
+				setQuotaForSource(source, quota);
+				saveCachedQuota(source, quota);
 				maybeRender?.();
 			}
 		})
@@ -226,10 +246,11 @@ function buildStatusline(
 		`${theme.fg("muted", "context")} ${progressBar(contextPercent, theme)} ${theme.fg("dim", contextText)}${contextPercentText}`,
 	];
 
-	// Show cached quota immediately for Codex/subscription providers, but never
-	// for explicit non-subscription inference models.
-	if (shouldShowQuota(ctx, codexQuota)) {
-		parts.push(...formatCodexQuota(theme, codexQuota));
+	// Show cached quota immediately for subscription providers, but never for
+	// explicit non-subscription inference models.
+	const quota = quotaForContext(ctx);
+	if (shouldShowQuota(ctx, quota)) {
+		parts.push(...formatCodexQuota(theme, quota));
 	}
 
 	parts.push(...formatExtensionStatuses(footerData));
@@ -396,8 +417,32 @@ function formatTokens(value: number | null | undefined): string {
 	return String(Math.round(value));
 }
 
+function quotaSourceForContext(ctx: ExtensionContext): QuotaSource | undefined {
+	if (isCodex(ctx)) return "codex";
+	if (isClaudeCode(ctx)) return "claude";
+	return undefined;
+}
+
+function quotaForContext(ctx: ExtensionContext): CodexQuota {
+	const source = quotaSourceForContext(ctx);
+	if (source === "claude") return claudeQuota;
+	return codexQuota;
+}
+
+function setQuotaForSource(source: QuotaSource, quota: CodexQuota): void {
+	if (source === "claude") {
+		claudeQuota = quota;
+		return;
+	}
+	codexQuota = quota;
+}
+
 function isCodex(ctx: ExtensionContext): boolean {
 	return ctx.model?.provider === "openai-codex" || ctx.model?.api === "openai-codex-responses";
+}
+
+function isClaudeCode(ctx: ExtensionContext): boolean {
+	return ctx.model?.provider === "claude-code" || ctx.model?.api === "claude-code-cli";
 }
 
 function isInferenceProvider(ctx: ExtensionContext): boolean {
@@ -411,6 +456,6 @@ function isSubscription(ctx: ExtensionContext): boolean {
 
 function shouldShowQuota(ctx: ExtensionContext, quota: CodexQuota): boolean {
 	if (isInferenceProvider(ctx)) return false;
-	if (isCodex(ctx) || isSubscription(ctx)) return true;
+	if (isCodex(ctx) || isClaudeCode(ctx) || isSubscription(ctx)) return true;
 	return !ctx.model && hasQuotaData(quota);
 }
