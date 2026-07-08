@@ -328,15 +328,21 @@ function installSplash(pi: ExtensionAPI, ctx: ExtensionContext, clearScreen: boo
 	);
 }
 
-function scheduleSplashReapply(pi: ExtensionAPI, ctx: ExtensionContext): void {
+function scheduleSplashReapply(pi: ExtensionAPI, ctx: ExtensionContext, clearScreen: boolean = false): void {
 	if (!ctx.hasUI) return;
-	if (splashReapplyTimer !== undefined) clearTimeout(splashReapplyTimer);
+	if (splashReapplyTimer !== undefined) {
+		clearTimeout(splashReapplyTimer);
+		splashReapplyTimer = undefined;
+	}
 	const key = sessionKey(ctx);
 	splashReapplyTimer = setTimeout(() => {
 		splashReapplyTimer = undefined;
+		// Guard against race conditions when /reload and /new are called
+		// in quick succession: ensure we're still on the expected session
+		// and the splash hasn't been dismissed.
 		if (!ctx.hasUI || splashDismissed || !splashActive || splashSessionKey !== key) return;
-		installSplash(pi, ctx, false);
-	}, 0);
+		installSplash(pi, ctx, clearScreen);
+	}, 50);
 }
 
 export default function (pi: ExtensionAPI) {
@@ -351,11 +357,17 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 
-		installSplash(pi, ctx, true);
-		// Session replacement resets extension UI as part of rebinding. Reapply the
-		// splash editor once the fresh/new session has settled so /new cannot leave
-		// the default full-width editor in place.
-		scheduleSplashReapply(pi, ctx);
+		// Mark splash as active for this session before scheduling. This ensures
+		// the guard in scheduleSplashReapply passes, and that rapid /reload + /new
+		// calls properly track the current session.
+		splashActive = true;
+		splashDismissed = false;
+		splashSessionKey = sessionKey(ctx);
+
+		// Defer splash installation to avoid race conditions when /reload and /new
+		// are called in quick succession. Pi's UI rebinding needs time to settle
+		// before we calculate editor width and terminal dimensions.
+		scheduleSplashReapply(pi, ctx, true);
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {

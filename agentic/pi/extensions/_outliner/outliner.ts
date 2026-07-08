@@ -373,9 +373,10 @@ function extractTsJs(root: Parser.SyntaxNode, source: string, lineOffset: number
 				continue;
 			}
 
-			if (target.type === "function_declaration") {
+			if (target.type === "function_declaration" || target.type === "function_expression") {
 				const name = tsChildForField(target, "name")?.text ?? "<anon>";
 				const params = flattenSignature(tsChildForField(target, "parameters")?.text ?? "()");
+				// function_expression doesn't have return_type annotation at declaration level
 				const ret = tsChildForField(target, "return_type")?.text;
 				const signature = ret ? `${params}${flattenSignature(ret)}` : params;
 				out.push({
@@ -438,6 +439,7 @@ const TS_DECLARATION_TYPES = [
 	"class_declaration",
 	"enum_declaration",
 	"function_declaration",
+	"function_expression", // for `export default function()` anonymous exports
 	"interface_declaration",
 	"lexical_declaration",
 	"type_alias_declaration",
