@@ -740,17 +740,20 @@ function latexCleanTitle(raw: string): string {
 function outlineLatex(source: string): OutlineEntry[] {
 	const out: OutlineEntry[] = [];
 	const lines = source.split("\n");
+	const rawEntries: { line: number; level: number; lineEnd: number; name: string; parent?: string }[] = [];
 	const stack: { idx: number; level: number }[] = [];
 	let inVerbatim = false;
+	let minLevel = Infinity;
 
 	// A section ends where the next section of equal-or-shallower level begins.
 	const closeTo = (level: number, endLine: number) => {
 		while (stack.length && stack[stack.length - 1]!.level >= level) {
 			const top = stack.pop()!;
-			out[top.idx]!.lineEnd = endLine;
+			rawEntries[top.idx]!.lineEnd = endLine;
 		}
 	};
 
+	// First pass: collect entries with raw LaTeX levels.
 	for (let i = 0; i < lines.length; i++) {
 		const line = lines[i]!;
 		if (LATEX_VERBATIM_BEGIN_RE.test(line)) { inVerbatim = true; continue; }
@@ -761,24 +764,37 @@ function outlineLatex(source: string): OutlineEntry[] {
 		const m = LATEX_SECTION_RE.exec(line);
 		if (!m) continue;
 		const level = LATEX_SECTION_LEVELS[m[1]!]!;
+		minLevel = Math.min(minLevel, level);
 		// The regex ends at the title's opening `{`; it's the last matched char.
 		const title = latexCleanTitle(readBraceGroup(line, m[0].length - 1));
 		const name = truncate(title || m[1]!, DOC_CAP);
 		closeTo(level, i);
 		const parentIdx = stack.length ? stack[stack.length - 1]!.idx : -1;
-		const parent = parentIdx >= 0 ? out[parentIdx]!.name : undefined;
-		const idx = out.length;
-		out.push({
+		const parent = parentIdx >= 0 ? rawEntries[parentIdx]!.name : undefined;
+		const idx = rawEntries.length;
+		rawEntries.push({
 			line: i + 1,
 			lineEnd: lines.length,
-			kind: "heading",
+			level,
 			name,
 			parent,
-			signature: "#".repeat(level),
 		});
 		stack.push({ idx, level });
 	}
 	closeTo(0, lines.length);
+
+	// Second pass: normalize levels so minimum becomes 1 (\section without \part/\chapter uses # not ###).
+	for (const entry of rawEntries) {
+		const normalizedLevel = entry.level - minLevel + 1;
+		out.push({
+			line: entry.line,
+			lineEnd: entry.lineEnd,
+			kind: "heading",
+			name: entry.name,
+			parent: entry.parent,
+			signature: "#".repeat(normalizedLevel),
+		});
+	}
 	return out;
 }
 
