@@ -562,31 +562,32 @@ export default async function (pi: ExtensionAPI) {
 				return rendered;
 			}
 
-			// 4. Open the index (no full build) and determine repo membership.
-			// Use the session cwd (ctx.cwd), not process.cwd() — see the search
-			// extension for why the two can diverge.
-			const { db, repoRoot } = openIndex(ctx?.cwd ?? process.cwd());
-			const relPath = path.relative(repoRoot, absolutePath);
-			const isOutsideRepo = relPath.startsWith("..");
-
-			const content = fs.readFileSync(absolutePath, "utf-8");
-			const allLines = content.split("\n");
-			const totalLines = allLines.length;
-
-			// 4a. Verbatim extensions (LaTeX) → always return full content regardless of size.
+			// 3c. Verbatim extensions (LaTeX) → always return full content regardless of size.
 			if (VERBATIM_EXTENSIONS.has(ext)) {
-				const displayPath = isOutsideRepo ? absolutePath : relPath;
+				const content = fs.readFileSync(absolutePath, "utf-8");
+				const allLines = content.split("\n");
+				const totalLines = allLines.length;
+				const displayPath = path.basename(absolutePath);
 				const banner = `# ${displayPath} (${totalLines} lines) — verbatim content (LaTeX extension)`;
 				const callIdx = ++callIndex.current;
 				dedupeCache.set(key, { sha, callIndex: callIdx, text: `${banner}\n${content}` });
 				return { content: [{ type: "text", text: `${banner}\n${content}` }] };
 			}
 
-			// File lives outside the repo — fall back to verbatim/outline without the index.
-			if (isOutsideRepo) {
+			// 4. Open the index (no full build) and determine repo membership.
+			// Use the session cwd (ctx.cwd), not process.cwd() — see the search
+			// extension for why the two can diverge.
+			const { db, repoRoot } = openIndex(ctx?.cwd ?? process.cwd());
+			const relPath = path.relative(repoRoot, absolutePath);
+			if (relPath.startsWith("..")) {
+				// File lives outside the repo — fall back to verbatim/outline without the index.
 				return readOutsideRepo(absolutePath, symbol, outline, collapsedView, key, sha);
 			}
 			refreshFile(db, repoRoot, relPath, outline);
+
+			const content = fs.readFileSync(absolutePath, "utf-8");
+			const allLines = content.split("\n");
+			const totalLines = allLines.length;
 
 			// 5a. Preamble: everything before the first class/function.
 			if (symbol === "__preamble__") {
