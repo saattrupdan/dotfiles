@@ -14,10 +14,12 @@ Agents are discovered from `~/.pi/agent/agents/*.md` (user scope) and, when
 name: builder
 description: One-line description shown to the orchestrator.
 tools: read, write, edit, bash           # optional, comma-separated allow-list
-model: anthropic/claude-sonnet-4-5       # optional explicit override; otherwise inherit current session model
-worktree: true                            # optional; run in a fresh git worktree
-skills: [commit, python, fastapi]         # optional; see "Skill scoping" below
-refuse:                                   # optional; see "Refusal patterns" below
+model:                                  # optional model fallback list
+  - anthropic/claude-sonnet-4-5
+  - claude-sonnet-4-5
+worktree: true                          # optional; fresh git worktree
+skills: [commit, python, fastapi]       # optional; see "Skill scoping" below
+refuse:                                 # optional; see "Refusal patterns" below
   - pattern: "full file contents?"
     message: "Ask me for paths and line ranges instead of file contents."
 ---
@@ -25,11 +27,42 @@ refuse:                                   # optional; see "Refusal patterns" bel
 Body becomes the agent's appended system prompt.
 ```
 
+`model:` may also be a single string for backwards compatibility:
+
+```yaml
+model: anthropic/claude-sonnet-4-5
+```
+
+String values are normalised to a one-item list. YAML lists preserve order;
+non-string or empty entries are warned to stderr and skipped.
+
 ## Model selection
 
-By default, subagents inherit the parent session's current model. If an agent
-frontmatter declares `model:`, that value is passed to the child process as an
-explicit override instead.
+By default, subagents inherit the parent session's current model. Agent
+frontmatter can declare `model:` as either a string or ordered YAML list. Each
+entry is passed unchanged to the child `pi --model` flag, so both
+`provider/model` and unique bare `model` names are resolved by the Pi CLI.
+
+Each tool call may also request a model:
+
+- top-level `params.model` in single mode,
+- `tasks[i].model` in parallel mode,
+- `chain[i].model` in chain mode.
+
+The ordered fallback list is:
+
+1. requested per-call model, if provided,
+2. the agent frontmatter model list, if present,
+3. otherwise the inherited current session model.
+
+Duplicates are removed while preserving the first occurrence.
+
+If a child Pi launch fails because the child process fails to spawn or exits
+non-zero, the subagent tool retries with the next fallback model. Refusal
+pattern short-circuits, parent aborts, and parameter validation errors are not
+retried. Failed worktree attempts are discarded; only a successful attempt is
+merged back into the parent worktree. If every model fails, the structured tool
+result is marked as an error and names every attempted model.
 
 ## Skill scoping
 
@@ -40,11 +73,11 @@ skill, so the child's `<available_skills>` block contains **only** those skills.
 
 Semantics:
 
-| Frontmatter                | Child's `<available_skills>`                                  |
-|----------------------------|----------------------------------------------------------------|
-| _(field omitted)_          | All skills discovered by the child (backwards compatible).     |
-| `skills: []`               | Empty — no skills available to the child.                      |
-| `skills: [a, b]`           | Exactly skills `a` and `b` (if they exist on disk).            |
+| Frontmatter       | Child's `<available_skills>`                              |
+|-------------------|-----------------------------------------------------------|
+| _(field omitted)_ | All skills discovered by the child.                       |
+| `skills: []`      | Empty — no skills available to the child.                 |
+| `skills: [a, b]`  | Exactly skills `a` and `b` if they exist on disk.         |
 
 Skills referenced in frontmatter but missing on disk are warned to stderr and
 skipped (the child still launches).
@@ -72,9 +105,9 @@ caller as the agent's error (`stopReason: "refused"`).
 ```yaml
 refuse:
   - pattern: "(full|entire|complete) file contents?"
-    message: "Refer to files by path and (optionally) symbol or line range — don't ask me to paste contents."
+    message: "Refer to files by path and range — don't ask me to paste contents."
   - pattern: "implement|write|edit|fix"
-    message: "I only locate and summarise. Hand implementation tasks to `builder`."
+    message: "I only locate and summarise. Hand implementation tasks to builder."
     flags: "i"                # optional; default is "i" (case-insensitive)
 ```
 
@@ -90,5 +123,6 @@ Invalid patterns are warned to stderr at load time and skipped. A missing
 ## Worktree mode
 
 When `worktree: true` is set, the subagent is spawned in a dedicated git
-worktree on a temporary branch. On exit, the branch is merged back into the
-parent worktree's HEAD and the temporary worktree is cleaned up.
+worktree on a temporary branch. On successful child exit, the branch is merged
+back into the parent worktree's HEAD and the temporary worktree is cleaned up.
+Failed model retry attempts are discarded without merging or applying changes.

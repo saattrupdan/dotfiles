@@ -23,7 +23,7 @@ export interface AgentConfig {
 	name: string;
 	description: string;
 	tools?: string[];
-	model?: string;
+	model?: string[];
 	worktree: boolean;
 	/**
 	 * Allow-list of skill names. Semantics:
@@ -57,6 +57,35 @@ function parseBool(v: unknown): boolean {
 		return s === "true" || s === "yes" || s === "1";
 	}
 	return false;
+}
+
+function parseModelList(raw: unknown, filePath: string): string[] | undefined {
+	if (raw === undefined || raw === null) return undefined;
+	if (typeof raw === "string") {
+		const model = raw.trim();
+		return model ? [model] : undefined;
+	}
+	if (!Array.isArray(raw)) {
+		console.error(
+			`subagent: invalid \`model:\` in ${filePath} — must be a string or YAML list; ignoring.`,
+		);
+		return undefined;
+	}
+
+	const models: string[] = [];
+	for (const entry of raw) {
+		if (typeof entry !== "string") {
+			console.error(`subagent: invalid model entry in ${filePath} — must be a string; skipping.`);
+			continue;
+		}
+		const model = entry.trim();
+		if (!model) {
+			console.error(`subagent: empty model entry in ${filePath}; skipping.`);
+			continue;
+		}
+		models.push(model);
+	}
+	return models.length > 0 ? models : undefined;
 }
 
 function parseRefuseRules(raw: unknown, filePath: string): RefuseRule[] | undefined {
@@ -144,13 +173,14 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
 			skills = [];
 		}
 
+		const models = parseModelList(frontmatter.model, filePath);
 		const refuse = parseRefuseRules(frontmatter.refuse, filePath);
 
 		agents.push({
 			name: String(frontmatter.name),
 			description: String(frontmatter.description),
 			tools: tools && tools.length > 0 ? tools : undefined,
-			model: frontmatter.model ? String(frontmatter.model) : undefined,
+			model: models,
 			worktree: parseBool(frontmatter.worktree),
 			skills,
 			refuse,
