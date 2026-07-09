@@ -395,9 +395,11 @@ interface CurrentModel {
 	id: string;
 }
 
-function modelToCliPattern(model: CurrentModel | undefined): string | undefined {
+function modelToCliPattern(model: CurrentModel | undefined, thinking?: string): string | undefined {
 	if (!model) return undefined;
-	return `${model.provider}/${model.id}`;
+	const base = `${model.provider}/${model.id}`;
+	if (thinking) return `${base}:${thinking}`;
+	return base;
 }
 
 function normalizeRequestedModel(model: string | undefined): string | undefined {
@@ -1220,7 +1222,7 @@ export default function (pi: ExtensionAPI) {
 			const discovery = discoverAgents(ctx.cwd, agentScope);
 			const agents = discovery.agents;
 			const confirmProjectAgents = params.confirmProjectAgents ?? true;
-			const sessionModel = modelToCliPattern(ctx.model);
+			const sessionModel = modelToCliPattern(ctx.model, pi.getThinkingLevel());
 
 			// Builds the per-call question fulfiller used when a child subagent
 			// emits a PI_QUESTION_REQUEST: defers to ctx.ui in the orchestrator,
