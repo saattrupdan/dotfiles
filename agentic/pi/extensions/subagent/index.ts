@@ -414,7 +414,9 @@ function buildModelFallbacks(
 	const requested = normalizeRequestedModel(requestedModel);
 	if (requested) candidates.push(requested);
 	if (agentModels && agentModels.length > 0) candidates.push(...agentModels);
-	else if (sessionModel) candidates.push(sessionModel);
+
+	// Always add session model as final fallback (deduped below)
+	if (sessionModel) candidates.push(sessionModel);
 
 	const seen = new Set<string>();
 	const models: string[] = [];
