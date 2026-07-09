@@ -21,21 +21,17 @@
  * Session strategy:
  * - Provider streams receive pi-ai Context, not ExtensionContext, so no Pi session
  *   manager is available here.
- * - Session ID is keyed to the first user message timestamp/content plus cwd.
+ * - Session ID is keyed to the first user message timestamp/content plus cwd (used for mutex only).
  * - Per-session mutex queue serialises concurrent calls sharing the same session ID.
- * - Claude Code maintains conversation history in its session storage.
- * - Only the latest user message is sent per turn (not full Pi conversation history).
- * - First attempt uses `--resume` (continues existing sessions); on "No conversation
- *   found" error, retries with `--session-id` (creates new sessions).
+ * - **Full Pi conversation history is sent each turn** — this includes tool calls and results,
+ *   so Claude Code sees the complete conversation state even though its own tools are disabled.
+ * - Session ID is used for mutex coordination; actual context comes from `context.messages`.
  *
- * Continuity limits:
- * - Only turns handled by this provider for the same Pi conversation are retained.
- * - Provider switches only preserve context after Claude Code has seen an earlier turn
- *   for the same conversation-derived session ID.
- * - `pi --continue` can reuse Claude Code context when Pi preserves the original
- *   first user message timestamp/content.
- * - `/new` or session changes get fresh Claude Code sessions because the first user
- *   message changes.
+ * Tool calling:
+ * - Model outputs zero-shot tool calls: `TOOL_CALL_START{"name":...,"arguments":...}TOOL_CALL_END`
+ * - Provider parses text for this pattern and emits Pi `toolcall_*` events
+ * - Pi executes tools and returns results in `context.messages` on next turn
+ * - Results are formatted as "Tool Result [name]: output" in conversation history
  *
  * Usage:
  *   pi -e ./extensions/claude-code-provider

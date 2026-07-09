@@ -73,8 +73,8 @@ const MEMORY_ROOT = path.join(os.homedir(), ".pi", "agent", "memories");
 const SLUG_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
 // LRU caps applied per scope after each save. Tuned for fast indexing on a
-// local LLM: ~50 small markdown files fit in a single prompt without bloat.
-const MAX_ENTRIES_PER_SCOPE = 50;
+// local LLM: ~100 small markdown files fit in a single prompt without bloat.
+const MAX_ENTRIES_PER_SCOPE = 100;
 const MAX_BYTES_PER_SCOPE = 256 * 1024;
 
 // A description is an index line, not the memory itself — it must stay a single
