@@ -7,6 +7,8 @@ Provides Claude Code CLI as a Pi provider backend.
 - Uses `claude -p <prompt>` command for LLM inference
 - **Uses Claude Code's native session mechanism** for conversation continuity
 - `--system-prompt` — Pi's system prompt (from `SYSTEM.md`) is passed to Claude Code **only via this flag** (not duplicated in the prompt)
+- `--tools ""` — Disables Claude Code's built-in tools
+- **Pi's tools passed via system prompt augmentation** so the model can call them
 - `--dangerously-skip-permissions` enabled by default
 - Model selection via `--model` flag
 - `--output-format stream-json --verbose --include-partial-messages` for realtime
@@ -150,12 +152,13 @@ filters these events:
 
 ## Important Notes
 
-### No Pi Tool Integration
+### Pi Tool Integration
 
-Claude Code has its own built-in tools. This provider:
-- Does NOT pass Pi tool definitions to Claude Code
-- Does NOT execute Pi tools from Claude Code responses
-- Parses Claude Code tool call syntax but doesn't action them
+Claude Code's built-in tools are disabled via `--tools ""`. Pi's tools are passed to the model via system prompt augmentation:
+- Pi tool definitions are appended to the system prompt
+- Model sees Pi's tools and can call them
+- Tool calls in Claude Code format are parsed and returned to Pi
+- Pi executes the actual tool calls
 
 ### System Prompt
 

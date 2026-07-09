@@ -11,7 +11,8 @@
  * - Per-session mutex queue prevents concurrent session ID conflicts
  * - Model selection via --model
  * - --dangerously-skip-permissions enabled
- * - No Pi tool descriptions passed (Claude Code has its own tools)
+ * - --tools "" to disable Claude Code's built-in tools
+ * - Pi's tools passed via system prompt augmentation
  * - Realtime streaming via --output-format stream-json
  * - First attempt uses `--resume` (continues existing sessions); on "No conversation
  *   found" error, retries with `--session-id` (creates new sessions)
@@ -54,6 +55,7 @@ import type {
 	TextContent,
 	ToolCall,
 	ThinkingContent,
+	Tool,
 } from "@earendil-works/pi-ai";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -223,6 +225,32 @@ function getLastUserMessage(messages: Context["messages"]): string {
 		}
 	}
 	return "";
+}
+
+/**
+ * Build system prompt with Pi's tool definitions appended.
+ * Claude Code's --tools "" disables its built-in tools, so we need to describe Pi's tools
+ * in the system prompt for the model to know what tools it can call.
+ */
+function buildSystemPromptWithTools(basePrompt: string | undefined, tools: Tool[] | undefined): string {
+	const sections: string[] = [];
+
+	// Base system prompt (Pi's SYSTEM.md content)
+	if (basePrompt && basePrompt.trim()) {
+		sections.push(basePrompt);
+	}
+
+	// Pi's tool definitions
+	if (tools && tools.length > 0) {
+		const toolDefinitions = tools.map((tool) => {
+			const params = tool.parameters ? JSON.stringify(tool.parameters, null, 2) : "{}";
+			return `- **${tool.name}**: ${tool.description}\n  Parameters: ${params}`;
+		}).join("\n");
+
+		sections.push(`## Available Tools\n\nYou have access to the following Pi tools. Call them using the tool name with the specified parameters:\n\n${toolDefinitions}`);
+	}
+
+	return sections.join("\n\n---\n\n");
 }
 
 /**
@@ -617,8 +645,10 @@ function streamClaudeCode(
 					baseArgs.push("--model", model.id);
 				}
 
-				if (context.systemPrompt && context.systemPrompt.trim()) {
-					baseArgs.push("--system-prompt", context.systemPrompt);
+				// Build system prompt: base prompt + Pi's tool definitions
+				const systemPrompt = buildSystemPromptWithTools(context.systemPrompt, context.tools);
+				if (systemPrompt && systemPrompt.trim()) {
+					baseArgs.push("--system-prompt", systemPrompt);
 				}
 
 				// Attempt 1: try --resume (continues existing sessions)
