@@ -257,8 +257,10 @@ function isResultEvent(data: unknown): data is ClaudeCodeResultEvent {
 interface ContentBlockMapping {
 	claudeIndex: number;
 	piIndex: number;
-	type: "text" | "thinking" | "toolCall";
-	text: string;
+	type: "text" | "thinking" | "toolCall" | "tool_use";
+	text?: string;
+	toolCall?: ToolCall;
+	partialJson?: string;
 }
 
 /** Parse a single JSONL line, returning null for incomplete/invalid lines */
@@ -563,6 +565,19 @@ async function runClaudeInvocation(
 						blockMappings.set(claudeIndex, { claudeIndex, piIndex, type: "text", text: "" });
 						textBuffers.set(claudeIndex, "");
 						stream.push({ type: "text_start", contentIndex: piIndex, partial: output });
+					} else if (blockType === "tool_use") {
+						// Handle tool_use blocks directly from Claude Code streaming
+						state.emittedAny = true;
+						const toolCallBlock = event.content_block as { id?: string; name?: string };
+						const toolCall: ToolCall = {
+							type: "toolCall",
+							id: toolCallBlock.id || uuidv4(),
+							name: toolCallBlock.name || "unknown",
+							arguments: {},
+						};
+						output.content.push(toolCall);
+						blockMappings.set(claudeIndex, { claudeIndex, piIndex, type: "tool_use", toolCall, partialJson: "" });
+						stream.push({ type: "toolcall_start", contentIndex: piIndex, partial: output });
 					}
 					return;
 				}
@@ -583,6 +598,23 @@ async function runClaudeInvocation(
 							state.emittedText = true;
 						}
 						stream.push({ type: "text_delta", contentIndex: mapping.piIndex, delta: event.delta.text, partial: output });
+					} else if (mapping && mapping.type === "tool_use" && event.delta.type === "tool_use_delta") {
+						// Handle streaming tool use arguments (partial JSON)
+						const delta = event.delta as { partial_json?: string };
+						if (delta.partial_json) {
+							const toolCall = output.content[mapping.piIndex] as ToolCall;
+							// Accumulate partial JSON string
+							const accumulatedJson = (mapping.partialJson || "") + delta.partial_json;
+							mapping.partialJson = accumulatedJson;
+							
+							// Try to parse and update arguments
+							try {
+								toolCall.arguments = JSON.parse(accumulatedJson);
+							} catch {
+								// Keep last valid arguments or empty object
+							}
+							stream.push({ type: "toolcall_delta", contentIndex: mapping.piIndex, delta: delta.partial_json, partial: output });
+						}
 					}
 					return;
 				}
@@ -591,6 +623,7 @@ async function runClaudeInvocation(
 					const mapping = blockMappings.get(event.index);
 					if (mapping && mapping.type === "text") {
 						// Check for tool call patterns in the accumulated text
+						// (fallback for models that don't emit tool_use blocks directly)
 						const finalText = textBuffers.get(event.index) || mapping.text;
 						const segments = parseTextWithToolCalls(finalText);
 
@@ -626,6 +659,11 @@ async function runClaudeInvocation(
 
 						blockMappings.delete(event.index);
 						textBuffers.delete(event.index);
+					} else if (mapping && mapping.type === "tool_use") {
+						// Finalize tool_use block from direct streaming
+						const toolCall = output.content[mapping.piIndex] as ToolCall;
+						stream.push({ type: "toolcall_end", contentIndex: mapping.piIndex, toolCall, partial: output });
+						blockMappings.delete(event.index);
 					}
 					return;
 				}
