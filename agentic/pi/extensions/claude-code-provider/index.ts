@@ -64,26 +64,47 @@ import { createHash } from "crypto";
 import { v4 as uuidv4 } from "uuid";
 
 /** Regex for zero-shot tool call pattern: TOOL_CALL_START{...}TOOL_CALL_END */
-const TOOL_CALL_PATTERN = /TOOL_CALL_START\s*(\{[^}]+\})\s*TOOL_CALL_END/g;
+const TOOL_CALL_START_MARKER = "TOOL_CALL_START";
+const TOOL_CALL_END_MARKER = "TOOL_CALL_END";
 
-/** Parse text for tool call patterns and return segments (text/toolCall) */
+/** Parse text for tool call patterns and return segments (text/toolCall)
+ * Does simple string matching instead of regex to avoid statefulness issues.
+ */
 function parseTextWithToolCalls(text: string): Array<{ type: "text"; content: string } | { type: "toolCall"; toolCall: ToolCall }> {
 	const segments: Array<{ type: "text"; content: string } | { type: "toolCall"; toolCall: ToolCall }> = [];
-	let lastIndex = 0;
-	let match: RegExpExecArray | null;
+	let remainingText = text;
 
-	while ((match = TOOL_CALL_PATTERN.exec(text)) !== null) {
-		// Add text before the tool call
-		if (match.index > lastIndex) {
-			const textBefore = text.slice(lastIndex, match.index);
-			if (textBefore.trim()) {
-				segments.push({ type: "text", content: textBefore });
+	while (true) {
+		const startIndex = remainingText.indexOf(TOOL_CALL_START_MARKER);
+		if (startIndex === -1) {
+			// No more tool calls, add remaining text
+			if (remainingText.trim()) {
+				segments.push({ type: "text", content: remainingText });
 			}
+			break;
 		}
 
-		// Parse the tool call JSON
+		// Add text before the tool call
+		const textBefore = remainingText.slice(0, startIndex);
+		if (textBefore.trim()) {
+			segments.push({ type: "text", content: textBefore });
+		}
+
+		// Find the end marker
+		const afterStartMarker = remainingText.slice(startIndex + TOOL_CALL_START_MARKER.length);
+		const endIndex = afterStartMarker.indexOf(TOOL_CALL_END_MARKER);
+
+		if (endIndex === -1) {
+			// No end marker found, treat rest as text
+			segments.push({ type: "text", content: remainingText });
+			break;
+		}
+
+		// Extract JSON between markers
+		const jsonText = afterStartMarker.slice(0, endIndex).trim();
+		
 		try {
-			const toolData = JSON.parse(match[1]) as { name: string; arguments: Record<string, unknown> };
+			const toolData = JSON.parse(jsonText) as { name: string; arguments: Record<string, unknown> };
 			segments.push({
 				type: "toolCall",
 				toolCall: {
@@ -94,19 +115,12 @@ function parseTextWithToolCalls(text: string): Array<{ type: "text"; content: st
 				},
 			});
 		} catch {
-			// Invalid JSON, treat as text
-			segments.push({ type: "text", content: match[0] });
+			// Invalid JSON, treat the whole thing as text
+			segments.push({ type: "text", content: remainingText.slice(startIndex, startIndex + TOOL_CALL_START_MARKER.length + endIndex + TOOL_CALL_END_MARKER.length) });
 		}
 
-		lastIndex = match.index + match[0].length;
-	}
-
-	// Add remaining text after last tool call
-	if (lastIndex < text.length) {
-		const textAfter = text.slice(lastIndex);
-		if (textAfter.trim()) {
-			segments.push({ type: "text", content: textAfter });
-		}
+		// Move past this tool call
+		remainingText = afterStartMarker.slice(endIndex + TOOL_CALL_END_MARKER.length);
 	}
 
 	return segments;
