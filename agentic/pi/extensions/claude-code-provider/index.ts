@@ -7,18 +7,18 @@
  * Features:
  * - Uses Claude Code's native session mechanism for conversation continuity
  * - System prompt passed via --system-prompt only (not duplicated in prompt)
- * - Deterministic session ID per process + cwd (isolated across subagents/parallel calls)
+ * - Valid UUID v4 session ID derived from pid + cwd (isolated across subagents/parallel calls)
  * - Model selection via --model
  * - --dangerously-skip-permissions enabled
  * - No Pi tool descriptions passed (Claude Code has its own tools)
  *
  * Session strategy:
- * - Session ID is derived from process.pid + cwd hash for isolation across:
- *   - Parent vs subagent processes (different PIDs)
- *   - Different working directories (different cwd hashes)
- * - Reused across all calls within the same process/cwd context
+ * - Session ID is a deterministic UUID v4 derived from process.pid + cwd hash
+ * - Parent process and subagents have different session IDs (different PIDs)
+ * - Different working directories get different session IDs
+ * - Session ID does NOT persist across process restarts (new PID = new session)
  * - Claude Code maintains conversation history in its session storage
- * - Only the latest user message is sent (not full Pi conversation history)
+ * - Only the latest user message is sent per turn (not full Pi conversation history)
  *
  * Usage:
  *   pi -e ./extensions/claude-code-provider
@@ -43,6 +43,32 @@ import { createAssistantMessageEventStream } from "@earendil-works/pi-ai/compat"
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { spawn } from "child_process";
 import { createHash } from "crypto";
+
+/**
+ * Generate a deterministic UUID v4 from process.pid + cwd.
+ * Uses first 16 bytes of SHA256 hash, then sets version/variant bits per RFC 4122.
+ * - Byte 6, high nibble: 0100 = version 4
+ * - Byte 8, high nibble: 10xx = variant (8, 9, a, or b)
+ */
+function generateDeterministicUUID(pid: number, cwd: string): string {
+	const hash = createHash("sha256").update(`${pid}:${cwd}`).digest("hex");
+	// Take first 32 hex chars (16 bytes) and format as UUID
+	let uuid =
+		hash.slice(0, 8) +
+		"-" +
+		hash.slice(8, 12) +
+		"-" +
+		hash.slice(12, 16) +
+		"-" +
+		hash.slice(16, 20) +
+		"-" +
+		hash.slice(20, 32);
+	// Set version bits (byte 6, high nibble = 4)
+	uuid = uuid.slice(0, 14) + "4" + uuid.slice(15);
+	// Set variant bits (byte 8, high nibble = 8-9-a-b; use "a")
+	uuid = uuid.slice(0, 19) + "a" + uuid.slice(20);
+	return uuid;
+}
 
 type ClaudeCodeUsage = {
 	inputTokens?: number;
@@ -137,17 +163,21 @@ function isClaudeCodeUsage(value: ClaudeCodeUsage | Record<string, ClaudeCodeUsa
 // =============================================================================
 
 /**
- * Module-level deterministic session ID - unique per process + cwd.
+ * Module-level deterministic UUID v4 session ID - unique per process + cwd combination.
+ *
+ * Generated from SHA256 hash of `${pid}:${cwd}`, formatted as RFC 4122 UUID v4.
  *
  * This ensures:
- * - Same session ID across all calls within the same Pi session (same process, same cwd)
- * - Different session IDs for subagents (different processes with different PIDs)
- * - Different session IDs for different cwd contexts (different working directories)
+ * - Parent process and subagents have different session IDs (different PIDs)
+ * - Different working directories get different session IDs
+ * - Session ID does NOT persist across process restarts (new PID = new session ID)
  *
- * Format: pi-<pid>-<cwd_hash_base64url_16chars>
- * Example: pi-12345-aG9tZS91c2VyL3Byb2o
+ * Semantics: This is process-level isolation, NOT Pi session persistence.
+ * A `pi --continue` that spawns a new process will get a new session ID.
+ * Claude Code's session storage persists on disk, but Pi does not track
+ * or reuse session IDs across its own session boundaries.
  */
-const CLAUDE_CODE_SESSION_ID = `pi-${process.pid}-${createHash("sha256").update(process.cwd()).digest("base64url").slice(0, 16)}`;
+const CLAUDE_CODE_SESSION_ID = generateDeterministicUUID(process.pid, process.cwd());
 
 // =============================================================================
 // Streaming Implementation
