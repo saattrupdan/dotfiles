@@ -609,6 +609,8 @@ function streamClaudeCode(
 					"stream-json",
 					"--verbose",
 					"--include-partial-messages",
+					// Disable Claude Code's built-in tools so only Pi's tools are visible to the model
+					"--tools", "",
 				];
 
 				if (model.id) {
