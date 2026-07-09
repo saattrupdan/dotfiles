@@ -12,6 +12,7 @@
  * - Model selection via --model
  * - --dangerously-skip-permissions enabled
  * - No Pi tool descriptions passed (Claude Code has its own tools)
+ * - Realtime streaming via --output-format stream-json
  *
  * Session strategy:
  * - Provider streams receive pi-ai Context, not ExtensionContext, so no Pi session
@@ -133,12 +134,83 @@ type ClaudeCodeUsage = {
 	cost_usd?: number;
 };
 
+/** Claude Code stream-json event types */
+interface ClaudeCodeStreamEvent {
+	type: "stream_event";
+	event: ClaudeCodeEvent;
+}
+
+interface ClaudeCodeResultEvent {
+	type: "result";
+	result?: string;
+	stop_reason?: string;
+	usage?: Record<string, ClaudeCodeUsage> | ClaudeCodeUsage;
+	modelUsage?: Record<string, ClaudeCodeUsage> | ClaudeCodeUsage;
+	total_cost_usd?: number;
+	is_error?: boolean;
+	error?: string;
+}
+
+interface ClaudeCodeContentBlockStartEvent {
+	type: "content_block_start";
+	index: number;
+	content_block: { type: "text" } | { type: "thinking" } | { type: "tool_use" };
+}
+
+interface ClaudeCodeTextDeltaEvent {
+	type: "content_block_delta";
+	index: number;
+	delta: { type: "text_delta"; text: string };
+}
+
+interface ClaudeCodeContentBlockStopEvent {
+	type: "content_block_stop";
+	index: number;
+}
+
+type ClaudeCodeEvent = ClaudeCodeContentBlockStartEvent | ClaudeCodeTextDeltaEvent | ClaudeCodeContentBlockStopEvent;
+
+/** Type guard for stream_event wrapper */
+function isStreamEvent(data: unknown): data is ClaudeCodeStreamEvent {
+	return (
+		typeof data === "object" &&
+		data !== null &&
+		"type" in data &&
+		data.type === "stream_event" &&
+		"event" in data
+	);
+}
+
+/** Type guard for result event */
+function isResultEvent(data: unknown): data is ClaudeCodeResultEvent {
+	return typeof data === "object" && data !== null && "type" in data && data.type === "result";
+}
+
+/** Mapping from Claude content block index to Pi content index */
+interface ContentBlockMapping {
+	claudeIndex: number;
+	piIndex: number;
+	type: "text" | "thinking" | "toolCall";
+	text: string;
+}
+
 type ClaudeCodeJsonOutput = {
 	result?: string;
 	usage?: Record<string, ClaudeCodeUsage> | ClaudeCodeUsage;
 	modelUsage?: Record<string, ClaudeCodeUsage> | ClaudeCodeUsage;
 	total_cost_usd?: number;
 };
+
+/** Parse a single JSONL line, returning null for incomplete/invalid lines */
+function parseJsonlLine(line: string): unknown | null {
+	const trimmed = line.trim();
+	if (!trimmed) return null;
+	try {
+		return JSON.parse(trimmed) as unknown;
+	} catch {
+		return null;
+	}
+}
 
 /**
  * Extract the last user message from the conversation for Claude Code.
@@ -296,14 +368,17 @@ function streamClaudeCode(
 				// Extract only the last user message - Claude Code maintains conversation history in session
 				const prompt = getLastUserMessage(context.messages);
 
-				// Build the claude command with JSON output for usage stats
+				// Build the claude command with stream-json output for realtime streaming
 				const args: string[] = [
 					"-p",
 					prompt,
 					"--dangerously-skip-permissions",
 					"--session-id",
 					sessionId,
-					"--output-format", "json",
+					"--output-format",
+					"stream-json",
+					"--verbose",
+					"--include-partial-messages",
 				];
 
 				// Add model if specified
@@ -316,17 +391,23 @@ function streamClaudeCode(
 					args.push("--system-prompt", context.systemPrompt);
 				}
 
-				// Execute claude CLI using spawn
-				const result = await new Promise<{ stdout: string; stderr: string; code: number }>((resolve, reject) => {
+				// Track content block mappings (Claude index -> Pi index)
+				const blockMappings: Map<number, ContentBlockMapping> = new Map();
+				let hasTextContent = false;
+				let resultEvent: ClaudeCodeResultEvent | null = null;
+
+				// Execute claude CLI using spawn with line-by-line JSONL parsing
+				await new Promise<void>((resolve, reject) => {
 					const proc = spawn("claude", args, {
 						cwd: process.cwd(),
 						env: process.env,
 					});
 
-					let stdout = "";
 					let stderr = "";
+					let stdoutBuffer = "";
 					let timeout: NodeJS.Timeout | undefined;
 					let settled = false;
+					let started = false;
 
 					const cleanup = () => {
 						if (timeout) clearTimeout(timeout);
@@ -338,19 +419,114 @@ function streamClaudeCode(
 						cleanup();
 						reject(error);
 					};
-					const succeed = (code: number | null) => {
+					const succeed = () => {
 						if (settled) return;
 						settled = true;
 						cleanup();
-						resolve({ stdout, stderr, code: code ?? 0 });
+						resolve();
 					};
 					function onAbort() {
 						proc.kill("SIGTERM");
 						fail(new Error("Request was aborted"));
 					}
 
+					// Process complete JSONL lines from stdout
+					const processLine = (line: string) => {
+						const data = parseJsonlLine(line);
+						if (data === null) return;
+
+						// Handle stream_event wrapper
+						if (isStreamEvent(data)) {
+							const event = data.event;
+
+							// Emit start only once, before any content
+							if (!started) {
+								started = true;
+								stream.push({ type: "start", partial: output });
+							}
+
+							// content_block_start: create Pi text block and push text_start
+							if (event.type === "content_block_start") {
+								const claudeIndex = event.index;
+								const blockType = event.content_block.type;
+								const piIndex = output.content.length;
+
+								if (blockType === "text") {
+									hasTextContent = true;
+									output.content.push({ type: "text", text: "" });
+									blockMappings.set(claudeIndex, { claudeIndex, piIndex, type: "text", text: "" });
+									stream.push({ type: "text_start", contentIndex: piIndex, partial: output });
+								}
+								// Ignore thinking/tool_use blocks for now
+								return;
+							}
+
+							// content_block_delta: append text and push text_delta
+							if (event.type === "content_block_delta") {
+								const mapping = blockMappings.get(event.index);
+								if (mapping && mapping.type === "text" && event.delta.type === "text_delta") {
+									const textBlock = output.content[mapping.piIndex] as TextContent;
+									textBlock.text += event.delta.text;
+									mapping.text += event.delta.text;
+									stream.push({ type: "text_delta", contentIndex: mapping.piIndex, delta: event.delta.text, partial: output });
+								}
+								return;
+							}
+
+							// content_block_stop: push text_end for matching block
+							if (event.type === "content_block_stop") {
+								const mapping = blockMappings.get(event.index);
+								if (mapping && mapping.type === "text") {
+									stream.push({ type: "text_end", contentIndex: mapping.piIndex, content: mapping.text, partial: output });
+									blockMappings.delete(event.index);
+								}
+								return;
+							}
+						}
+
+						// Handle final result event
+						if (isResultEvent(data)) {
+							resultEvent = data;
+
+							// Extract usage data
+							const usage = data.usage || data.modelUsage;
+							if (usage) {
+								const modelUsage = selectModelUsage(usage, model.id);
+								output.usage.input = modelUsage.inputTokens || modelUsage.input_tokens || 0;
+								output.usage.output = modelUsage.outputTokens || modelUsage.output_tokens || 0;
+								output.usage.cacheRead = modelUsage.cacheReadInputTokens || modelUsage.cache_read_input_tokens || 0;
+								output.usage.cacheWrite = modelUsage.cacheCreationInputTokens || modelUsage.cache_creation_input_tokens || 0;
+								output.usage.totalTokens = output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
+
+								// Calculate cost from USD
+								const costUsd = modelUsage.costUSD || modelUsage.cost_usd || data.total_cost_usd || 0;
+								output.usage.cost.total = costUsd;
+								output.usage.cost.input = costUsd * 0.2;
+								output.usage.cost.output = costUsd * 0.8;
+							}
+
+							// Set stop reason from result
+							if (data.stop_reason) {
+								output.stopReason = data.stop_reason === "end_turn" ? "stop" : data.stop_reason === "max_tokens" ? "length" : "stop";
+							}
+
+							// Check for error in result
+							if (data.is_error || data.error) {
+								fail(new Error(`Claude Code error: ${data.error || "Unknown error"}`));
+							}
+						}
+					};
+
 					proc.stdout?.on("data", (data) => {
-						stdout += data.toString();
+						stdoutBuffer += data.toString();
+
+						// Process complete lines
+						let newlineIndex: number;
+						while ((newlineIndex = stdoutBuffer.indexOf("\n")) !== -1) {
+							const line = stdoutBuffer.slice(0, newlineIndex);
+							stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
+							processLine(line);
+						}
 					});
 
 					proc.stderr?.on("data", (data) => {
@@ -361,7 +537,30 @@ function streamClaudeCode(
 						fail(new Error(`Failed to start claude: ${err.message}`));
 					});
 
-					proc.on("close", succeed);
+					proc.on("close", (code) => {
+						// Process any remaining buffer (last line without newline)
+						if (stdoutBuffer.trim()) {
+							processLine(stdoutBuffer);
+						}
+
+						// Handle non-zero exit
+						if (code !== 0 && !settled) {
+							const fallback = stderr || `claude exited with code ${code}`;
+							fail(new Error(`Claude Code error (exit ${code}): ${fallback}`));
+							return;
+						}
+
+						// If we never got a result event but have stderr, treat as error
+						if (!resultEvent && stderr.trim()) {
+							// Could be verbose output; only fail if no content was streamed
+							if (!hasTextContent) {
+								fail(new Error(`Claude Code error: ${stderr}`));
+								return;
+							}
+						}
+
+						succeed();
+					});
 
 					// Handle abort signal
 					if (options?.signal) {
@@ -381,73 +580,17 @@ function streamClaudeCode(
 					}
 				});
 
-				// Check for errors before parsing normal output.
-				if (result.code !== 0) {
-					const fallback = result.stderr || `claude exited with code ${result.code}`;
-					let message = fallback;
-					if (result.stdout) {
-						try {
-							const errorJson = JSON.parse(result.stdout) as { error?: unknown; message?: unknown };
-							message = String(errorJson.error || errorJson.message || fallback);
-						} catch {
-							// Keep stderr/exit-code fallback when stdout is not JSON.
-						}
-					}
-					throw new Error(`Claude Code error (exit ${result.code}): ${message}`);
+				// Emit start if no content was streamed but we have a result
+				if (!started) {
+					stream.push({ type: "start", partial: output });
 				}
 
-				// Parse JSON output
-				let jsonOutput: ClaudeCodeJsonOutput;
-				try {
-					jsonOutput = JSON.parse(result.stdout) as ClaudeCodeJsonOutput;
-				} catch (e) {
-					throw new Error(`Failed to parse Claude Code JSON output: ${e instanceof Error ? e.message : String(e)}`, { cause: e });
-				}
-
-				// Check for error in JSON response
-				if ("error" in jsonOutput && jsonOutput.error) {
-					throw new Error(`Claude Code error: ${jsonOutput.error}`);
-				}
-
-				// Extract usage data from JSON response
-				const usage = jsonOutput.usage || jsonOutput.modelUsage;
-				if (usage) {
-					// Handle both formats: claude-sonnet-5 nested or direct usage
-					const modelUsage = selectModelUsage(usage, model.id);
-					output.usage.input = modelUsage.inputTokens || modelUsage.input_tokens || 0;
-					output.usage.output = modelUsage.outputTokens || modelUsage.output_tokens || 0;
-					output.usage.cacheRead = modelUsage.cacheReadInputTokens || modelUsage.cache_read_input_tokens || 0;
-					output.usage.cacheWrite = modelUsage.cacheCreationInputTokens || modelUsage.cache_creation_input_tokens || 0;
-					output.usage.totalTokens = output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
-
-					// Calculate cost from USD
-					const costUsd = modelUsage.costUSD || modelUsage.cost_usd || jsonOutput.total_cost_usd || 0;
-					output.usage.cost.total = costUsd;
-					// Rough breakdown (Claude doesn't separate input/output costs in the API)
-					output.usage.cost.input = costUsd * 0.2;
-					output.usage.cost.output = costUsd * 0.8;
-				}
-
-				// Extract the result text
-				const text = jsonOutput.result || "";
-
-				// Emit start event
-				stream.push({ type: "start", partial: output });
-
-				// Stream text content
-				if (text) {
-					output.content.push({ type: "text", text: "" });
+				// Fallback: if no text content arrived but result has text, emit it
+				if (!hasTextContent && resultEvent?.result) {
+					const text = resultEvent.result;
+					output.content.push({ type: "text", text: text });
 					stream.push({ type: "text_start", contentIndex: 0, partial: output });
-
-					// Claude Code JSON output arrives after the CLI exits; replay it in chunks so Pi renders normal text deltas.
-					const chunks = text.split(/(\s+)/);
-					for (const chunk of chunks) {
-						if (chunk) {
-							(output.content[0] as TextContent).text += chunk;
-							stream.push({ type: "text_delta", contentIndex: 0, delta: chunk, partial: output });
-						}
-					}
-
+					stream.push({ type: "text_delta", contentIndex: 0, delta: text, partial: output });
 					stream.push({ type: "text_end", contentIndex: 0, content: text, partial: output });
 				}
 
@@ -457,8 +600,7 @@ function streamClaudeCode(
 				}
 
 				// Emit completion
-				output.stopReason = "stop";
-				stream.push({ type: "done", reason: output.stopReason, message: output });
+				stream.push({ type: "done", reason: output.stopReason as "stop" | "length" | "toolUse", message: output });
 				stream.end();
 			} finally {
 				// Always release mutex
