@@ -25,7 +25,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { type ExtensionAPI, getAgentDir, getMarkdownTheme, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
+import { type AgentConfig, type AgentScope, discoverAgents, findNearestProjectAgentsDir } from "./agents.ts";
 import {
 	createWorktree,
 	findRepoRoot,
@@ -528,6 +528,7 @@ async function runSingleAgent(
 	sessionModel: string | undefined,
 	requestedModel?: string,
 	taskSkills?: string[],
+	agentScope?: AgentScope,
 ): Promise<SingleResult> {
 	const agent = agents.find((a) => a.name === agentName);
 
@@ -620,6 +621,64 @@ async function runSingleAgent(
 				baseArgs.push("--skill", skillDir);
 			} else {
 				console.error(`subagent: skill "${name}" not found at ${skillFile}; skipping for agent "${agent.name}".`);
+			}
+		}
+	}
+
+	// Extension discovery and loading.
+	//
+	// Child pi accepts `--extension <path>` (repeatable; takes a path to an
+	// extension directory containing an index.ts entry point) plus
+	// `--no-extensions` to disable default discovery from
+	// `~/.pi/agent/extensions`. There is no `PI_EXTENSION_PATHS` env var;
+	// the CLI flags are the supported surface.
+	//
+	// Allow-list semantics (see agents.ts AgentConfig.extensions):
+	//   undefined  → no restriction; let the child discover extensions normally.
+	//   []         → strict empty allow-list; child sees no extensions.
+	//   ["a","b"]  → only those extensions (from user + project dirs based on agentScope).
+	const hasExtAllowList = agent.extensions !== undefined;
+	if (hasExtAllowList) {
+		const effectiveExtensions = agent.extensions ?? [];
+		baseArgs.push("--no-extensions");
+
+		// User extensions dir: ~/.pi/agent/extensions/
+		const userExtensionsRoot = path.join(getAgentDir(), "extensions");
+
+		// Project extensions dir: .pi/extensions/ (only if agentScope is 'project' or 'both')
+		const scope = agentScope ?? "user";
+		const projectAgentsDir = findNearestProjectAgentsDir(defaultCwd);
+		const projectExtensionsRoot =
+			scope === "project" || scope === "both" ? projectAgentsDir?.replace(/\/agents$/, "/extensions") ?? null : null;
+
+		// Build list of extension paths to load
+		for (const name of effectiveExtensions) {
+			let extensionPath: string | null = null;
+
+			// Check user extensions dir first
+			if (userExtensionsRoot) {
+				const userExtDir = path.join(userExtensionsRoot, name);
+				const userExtIndex = path.join(userExtDir, "index.ts");
+				if (fs.existsSync(userExtIndex)) {
+					extensionPath = userExtDir;
+				}
+			}
+
+			// Check project extensions dir if not found in user dir
+			if (!extensionPath && projectExtensionsRoot) {
+				const projExtDir = path.join(projectExtensionsRoot, name);
+				const projExtIndex = path.join(projExtDir, "index.ts");
+				if (fs.existsSync(projExtIndex)) {
+					extensionPath = projExtDir;
+				}
+			}
+
+			if (extensionPath) {
+				baseArgs.push("--extension", extensionPath);
+			} else {
+				console.error(
+					`subagent: extension "${name}" not found (no index.ts in user or project dir); skipping for agent "${agent.name}".`,
+				);
 			}
 		}
 	}
@@ -1204,23 +1263,22 @@ export default function (pi: ExtensionAPI) {
 									});
 								}
 							}
-						: undefined;
-
-					const result = await runSingleAgent(
-						ctx.cwd,
-						agents,
-						step.agent,
-						taskWithContext,
-						step.cwd,
-						i + 1,
-						signal,
-						chainUpdate,
-						makeDetails("chain"),
-						fulfillQuestion,
-						sessionModel,
-						step.model,
-						step.skills,
-					);
+						: undefined;				const result = await runSingleAgent(
+					ctx.cwd,
+					agents,
+					step.agent,
+					taskWithContext,
+					step.cwd,
+					i + 1,
+					signal,
+					chainUpdate,
+					makeDetails("chain"),
+					fulfillQuestion,
+					sessionModel,
+					step.model,
+					step.skills,
+					agentScope,
+				);
 					results.push(result);
 
 					const isError = isFailedResult(result);
@@ -1305,29 +1363,28 @@ export default function (pi: ExtensionAPI) {
 								stopReason: "aborted",
 								usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
 							} as SingleResult;
-						}
-
-						const result = await runSingleAgent(
-							ctx.cwd,
-							agents,
-							t.agent,
-							t.task,
-							t.cwd,
-							undefined,
-							parallelController.signal,
-							// Per-task update callback
-							(partial) => {
-								if (partial.details?.results[0]) {
-									allResults[index] = partial.details.results[0];
-									emitParallelUpdate();
-								}
-							},
-							makeDetails("parallel"),
-							fulfillQuestion,
-							sessionModel,
-							t.model,
-							t.skills,
-						);
+						}					const result = await runSingleAgent(
+						ctx.cwd,
+						agents,
+						t.agent,
+						t.task,
+						t.cwd,
+						undefined,
+						parallelController.signal,
+						// Per-task update callback
+						(partial) => {
+							if (partial.details?.results[0]) {
+								allResults[index] = partial.details.results[0];
+								emitParallelUpdate();
+							}
+						},
+						makeDetails("parallel"),
+						fulfillQuestion,
+						sessionModel,
+						t.model,
+						t.skills,
+						agentScope,
+					);
 						allResults[index] = result;
 						abortIfFailed(result);
 						emitParallelUpdate();
@@ -1370,6 +1427,7 @@ export default function (pi: ExtensionAPI) {
 					sessionModel,
 					params.model,
 					params.skills,
+					agentScope,
 				);
 				const isError = isFailedResult(result);
 				if (isError) {

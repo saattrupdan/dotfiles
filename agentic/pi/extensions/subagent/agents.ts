@@ -24,14 +24,20 @@ export interface AgentConfig {
 	description: string;
 	tools?: string[];
 	model?: string[];
-	worktree: boolean;
-	/**
+	worktree: boolean;	/**
 	 * Allow-list of skill names. Semantics:
 	 *  - undefined  → no `skills:` field in frontmatter; child sees all
-	 *                discovered skills (backwards compatible).
+	 *               discovered skills (backwards compatible).
 	 *  - string[]   → explicit allow-list (may be empty for "no skills").
 	 */
 	skills?: string[];
+	/**
+	 * Allow-list of extension names. Semantics:
+	 *  - undefined  → no `extensions:` field in frontmatter; child sees all
+	 *               discovered extensions (backwards compatible).
+	 *  - string[]   → explicit allow-list (may be empty for "no extensions").
+	 */
+	extensions?: string[];
 	/**
 	 * Optional list of regex patterns the agent will refuse to act on. When a
 	 * task matches, the subagent is not spawned; instead the configured
@@ -201,7 +207,7 @@ function isDirectory(p: string): boolean {
 	}
 }
 
-function findNearestProjectAgentsDir(cwd: string): string | null {
+export function findNearestProjectAgentsDir(cwd: string): string | null {
 	let currentDir = cwd;
 	while (true) {
 		const candidate = path.join(currentDir, ".pi", "agents");
