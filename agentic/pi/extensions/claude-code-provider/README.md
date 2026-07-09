@@ -126,6 +126,8 @@ filters these events:
   surfaced as Pi thinking or tool calls. This may be added in a future version.
 - The provider sends only the latest user message per turn, using Claude Code's
   `--session-id` for history continuity (see Session Strategy).
+- On follow-up turns, if Claude rejects `--session-id` with "already in use", the
+  provider automatically retries with `--resume` (no user action required).
 
 ## Important Notes
 
@@ -149,6 +151,10 @@ records with `is_error` are surfaced as errors rather than normal assistant mess
 
 - Session ID is keyed to the first user message and cwd, not PID
 - Per-session mutex queue serialises concurrent calls
+- First turn creates session with `--session-id`; follow-ups use `--resume` when Claude
+  reports "Session ID already in use"
+- Retry logic keeps the per-session mutex held across both attempts to prevent race
+  conditions
 - Claude Code maintains conversation history in its session storage (`~/.claude/` by
   default)
 - Only the latest user message is sent per turn (not full Pi history)
