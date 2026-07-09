@@ -9,6 +9,8 @@ Provides Claude Code CLI as a Pi provider backend.
 - `--system-prompt` — Pi's system prompt (from `SYSTEM.md`) is passed to Claude Code **only via this flag** (not duplicated in the prompt)
 - `--dangerously-skip-permissions` enabled by default
 - Model selection via `--model` flag
+- `--output-format stream-json --verbose --include-partial-messages` for realtime
+  streaming
 - `--output-format json` for accurate token/cost tracking in footer
 - **Session ID keyed to Pi session file** — isolated across Pi sessions, subagents, parallel calls
 - **Process-start random salt** prevents PID reuse collisions
@@ -74,21 +76,58 @@ Available models match what Claude Code CLI provides:
 
 ## Usage
 
-1. Ensure Claude Code CLI is installed and authenticated:
+1.  Ensure Claude Code CLI is installed and authenticated:
    ```bash
    claude --version
    claude login  # if needed
    ```
 
-2. Load the extension:
-   ```bash
-   pi -e ~/.pi/agent/extensions/claude-code-provider
-   ```
+2.  Load the extension:
 
-3. Select a model:
-   ```bash
-   /model claude-code/claude-sonnet-5
-   ```
+    ```bash
+    pi -e ~/.pi/agent/extensions/claude-code-provider
+    ```
+
+3.  Select a model:
+
+    ```bash
+    /model claude-code/claude-sonnet-5
+    ```
+
+## Streaming
+
+The provider streams Claude Code output in real time using JSONL format.
+
+### CLI Flags
+
+Streaming requires three flags:
+
+- `--output-format stream-json` — enables JSONL streaming output
+- `--verbose` — required when using `stream-json` in `--print` mode
+- `--include-partial-messages` — required for token-level text deltas
+
+### Event Format
+
+Claude Code writes newline-delimited JSON records. The provider parses and
+filters these events:
+
+- **`stream_event`** — streaming delta records. The provider yields visible text
+  from records where:
+  - `event.type === "content_block_delta"`
+  - `event.delta.type === "text_delta"`
+  - `event.delta.text` contains the text to display
+- **`assistant`** — snapshot records. Ignored by the provider to avoid duplicate
+  output alongside streaming deltas.
+- **`result`** — final record containing usage, cost, result, and stop reason.
+  Used for footer stats and context accounting.
+
+### Limitations
+
+- Streaming currently exposes only visible text deltas.
+- Thinking trace events and tool-call stream events from Claude Code are not
+  surfaced as Pi thinking or tool calls. This may be added in a future version.
+- The provider sends only the latest user message per turn, using Claude Code's
+  `--session-id` for history continuity (see Session Strategy).
 
 ## Important Notes
 
