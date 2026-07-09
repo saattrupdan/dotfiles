@@ -17,17 +17,19 @@ Provides Claude Code CLI as a Pi provider backend.
 
 ## Session Strategy
 
-The extension uses a **deterministic session ID** derived from `process.pid` + `cwd` hash:
+The extension uses a **deterministic UUID v4 session ID** derived from `process.pid` + `cwd`:
 
 ```
-pi-<pid>-<cwd_hash_base64url_16chars>
+<uuid-v4-format-derived-from-pid-and-cwd>
 ```
 
 This ensures:
 
-- **Same session ID** across all calls within the same Pi session (same process, same cwd)
-- **Different session IDs** for subagents (different processes with different PIDs)
-- **Different session IDs** for different cwd contexts (different working directories)
+- **Parent process and subagents have different session IDs** (different PIDs)
+- **Different working directories get different session IDs**
+- **Session ID does NOT persist across process restarts** (new PID = new session ID)
+
+**Important semantics:** This is **process-level isolation only**, not Pi session persistence. A `pi --continue` that spawns a new process will get a new session ID. Claude Code's session storage persists on disk, but Pi does not track or reuse session IDs across its own session boundaries.
 
 Claude Code maintains conversation history in its session storage on disk. Each Pi turn sends only the latest user message (not the full conversation history), relying on Claude Code's session mechanism for context continuity.
 
@@ -73,10 +75,11 @@ The Pi system prompt is passed **only via `--system-prompt`** to avoid duplicati
 
 ### Session Management
 
-- Session ID is deterministic per process + working directory
+- Session ID is a deterministic UUID v4 per process + working directory
 - Claude Code maintains conversation history in its session storage (`~/.claude/` by default)
 - Only the latest user message is sent per turn (not full Pi history)
 - Parallel subagents get isolated sessions (different PIDs + worktrees)
+- **Session ID does not persist across `pi --continue` or process restarts** (new PID = new session)
 
 ## Requirements
 
