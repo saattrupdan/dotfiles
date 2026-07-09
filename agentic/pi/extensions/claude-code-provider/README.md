@@ -10,28 +10,46 @@ Provides Claude Code CLI as a Pi provider backend.
 - `--dangerously-skip-permissions` enabled by default
 - Model selection via `--model` flag
 - `--output-format json` for accurate token/cost tracking in footer
-- **Deterministic session ID per process + cwd** — isolated across subagents/parallel calls
+- **Session ID keyed to Pi session file** — isolated across Pi sessions, subagents, parallel calls
+- **Process-start random salt** prevents PID reuse collisions
+- **Per-session mutex queue** prevents concurrent session ID conflicts
 - Context progress bar shows token usage vs model's context window
 - Cost tracking in footer (from Claude Code JSON usage)
 - Session/weekly subscription usage bars via the statusline extension's Claude `/usage` parser
 
 ## Session Strategy
 
-The extension uses a **deterministic UUID v4 session ID** derived from `process.pid` + `cwd`:
+The extension generates a **session ID per Pi session** using:
+
+1. **Pi session file path** (primary) or `sessionId` (fallback) — not PID
+2. **Process-start random salt** — prevents collisions when PIDs are reused
+3. **SHA256 hash** → UUID v4 format
 
 ```
-<uuid-v4-format-derived-from-pid-and-cwd>
+<uuid-v4-format-derived-from-session-file+cwd+salt>
 ```
 
 This ensures:
 
-- **Parent process and subagents have different session IDs** (different PIDs)
-- **Different working directories get different session IDs**
-- **Session ID does NOT persist across process restarts** (new PID = new session ID)
+- **Different Pi sessions get different session IDs** — keyed to session file, not process
+- **Parent process and subagents share the same Pi session ID** — same session file
+- **Different working directories get different session IDs** — cwd mixed into hash
+- **Process restarts with same Pi session get same ID** — session file unchanged
+- **Process-start salt prevents PID reuse attacks** — fresh salt each module load
+- **Concurrent calls with same session ID are serialised** — mutex queue prevents conflicts
 
-**Important semantics:** This is **process-level isolation only**, not Pi session persistence. A `pi --continue` that spawns a new process will get a new session ID. Claude Code's session storage persists on disk, but Pi does not track or reuse session IDs across its own session boundaries.
+### Continuity Limits
 
-Claude Code maintains conversation history in its session storage on disk. Each Pi turn sends only the latest user message (not the full conversation history), relying on Claude Code's session mechanism for context continuity.
+**Important:** Conversation continuity is **limited to the current Pi session**:
+
+- ✅ **Same Pi session, multiple turns** — Claude Code retains history
+- ✅ **Subagents in same Pi session** — share Claude Code session via same session file
+- ❌ **Provider switch** — switching to a different provider breaks continuity
+- ❌ **`pi --continue` in new process** — if it loads a different Pi session file, new Claude Code session
+- ❌ **`/new` or session switch** — new Pi session file = fresh Claude Code session
+- ❌ **Previous Pi session history** — not sent to Claude Code (only latest message per turn)
+
+The extension does **not** attempt to replay full Pi conversation history to Claude Code. It sends only the latest user message per turn, relying on Claude Code's session storage for continuity within the same active session.
 
 ## Models
 
@@ -73,13 +91,18 @@ Claude Code has its own built-in tools. This provider:
 
 The Pi system prompt is passed **only via `--system-prompt`** to avoid duplication. Claude Code may not follow it exactly as it has its own identity and instructions.
 
+### Error Handling
+
+Nonzero exit codes from Claude Code CLI are treated as errors. JSON error output is parsed and surfaced in the error message. The extension does not treat Claude Code error responses as normal assistant messages.
+
 ### Session Management
 
-- Session ID is a deterministic UUID v4 per process + working directory
+- Session ID is keyed to Pi session file path (not PID)
+- Process-start random salt prevents PID reuse collisions
+- Per-session mutex queue serialises concurrent calls
 - Claude Code maintains conversation history in its session storage (`~/.claude/` by default)
 - Only the latest user message is sent per turn (not full Pi history)
-- Parallel subagents get isolated sessions (different PIDs + worktrees)
-- **Session ID does not persist across `pi --continue` or process restarts** (new PID = new session)
+- Continuity limited to current Pi session — provider switches or session changes break continuity
 
 ## Requirements
 
