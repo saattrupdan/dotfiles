@@ -738,7 +738,7 @@ async function runSingleAgent(
 			const tmp = await writePromptToTempFile(agent.name, agent.systemPrompt);
 			tmpPromptDir = tmp.dir;
 			tmpPromptPath = tmp.filePath;
-			baseArgs.push("--append-system-prompt", tmpPromptPath);
+			baseArgs.push("--system-prompt", tmpPromptPath);
 		}
 
 		let lastResult: SingleResult | undefined;
