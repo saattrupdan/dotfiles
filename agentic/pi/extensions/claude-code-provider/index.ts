@@ -194,13 +194,6 @@ interface ContentBlockMapping {
 	text: string;
 }
 
-type ClaudeCodeJsonOutput = {
-	result?: string;
-	usage?: Record<string, ClaudeCodeUsage> | ClaudeCodeUsage;
-	modelUsage?: Record<string, ClaudeCodeUsage> | ClaudeCodeUsage;
-	total_cost_usd?: number;
-};
-
 /** Parse a single JSONL line, returning null for incomplete/invalid lines */
 function parseJsonlLine(line: string): unknown | null {
 	const trimmed = line.trim();
@@ -393,8 +386,13 @@ function streamClaudeCode(
 
 				// Track content block mappings (Claude index -> Pi index)
 				const blockMappings: Map<number, ContentBlockMapping> = new Map();
-				let hasTextContent = false;
-				let resultEvent: ClaudeCodeResultEvent | null = null;
+
+				// Outer state object visible to TypeScript outside the Promise callback
+				const state = {
+					hasTextContent: false,
+					resultEvent: null as ClaudeCodeResultEvent | null,
+					started: false,
+				};
 
 				// Execute claude CLI using spawn with line-by-line JSONL parsing
 				await new Promise<void>((resolve, reject) => {
@@ -407,7 +405,7 @@ function streamClaudeCode(
 					let stdoutBuffer = "";
 					let timeout: NodeJS.Timeout | undefined;
 					let settled = false;
-					let started = false;
+					let abortPending = false;
 
 					const cleanup = () => {
 						if (timeout) clearTimeout(timeout);
@@ -426,8 +424,11 @@ function streamClaudeCode(
 						resolve();
 					};
 					function onAbort() {
+						if (settled) return;
+						abortPending = true;
 						proc.kill("SIGTERM");
-						fail(new Error("Request was aborted"));
+						// Don't fail yet - wait for close event to ensure child is dead
+						// before releasing mutex
 					}
 
 					// Process complete JSONL lines from stdout
@@ -437,22 +438,18 @@ function streamClaudeCode(
 
 						// Handle stream_event wrapper
 						if (isStreamEvent(data)) {
-							const event = data.event;
-
-							// Emit start only once, before any content
-							if (!started) {
-								started = true;
-								stream.push({ type: "start", partial: output });
-							}
+							const event = data.event;						// Emit start only once, before any content
+						if (!state.started) {
+							state.started = true;
+							stream.push({ type: "start", partial: output });
+						}
 
 							// content_block_start: create Pi text block and push text_start
 							if (event.type === "content_block_start") {
 								const claudeIndex = event.index;
 								const blockType = event.content_block.type;
-								const piIndex = output.content.length;
-
-								if (blockType === "text") {
-									hasTextContent = true;
+								const piIndex = output.content.length;							if (blockType === "text") {
+								state.hasTextContent = true;
 									output.content.push({ type: "text", text: "" });
 									blockMappings.set(claudeIndex, { claudeIndex, piIndex, type: "text", text: "" });
 									stream.push({ type: "text_start", contentIndex: piIndex, partial: output });
@@ -482,11 +479,9 @@ function streamClaudeCode(
 								}
 								return;
 							}
-						}
-
-						// Handle final result event
-						if (isResultEvent(data)) {
-							resultEvent = data;
+						}					// Handle final result event
+					if (isResultEvent(data)) {
+						state.resultEvent = data;
 
 							// Extract usage data
 							const usage = data.usage || data.modelUsage;
@@ -543,7 +538,19 @@ function streamClaudeCode(
 							processLine(stdoutBuffer);
 						}
 
-						// Handle non-zero exit
+						// Handle abort/timeout that was pending - now safe to reject
+						// since child is confirmed closed
+						if (abortPending && !settled) {
+							settled = true;
+							cleanup();
+							const msg = options?.signal?.aborted
+								? "Request was aborted"
+								: `claude timed out after ${options?.timeoutMs}ms`;
+							reject(new Error(msg));
+							return;
+						}
+
+						// Handle non-zero exit (not from abort/timeout)
 						if (code !== 0 && !settled) {
 							const fallback = stderr || `claude exited with code ${code}`;
 							fail(new Error(`Claude Code error (exit ${code}): ${fallback}`));
@@ -551,9 +558,9 @@ function streamClaudeCode(
 						}
 
 						// If we never got a result event but have stderr, treat as error
-						if (!resultEvent && stderr.trim()) {
+						if (!state.resultEvent && stderr.trim()) {
 							// Could be verbose output; only fail if no content was streamed
-							if (!hasTextContent) {
+							if (!state.hasTextContent) {
 								fail(new Error(`Claude Code error: ${stderr}`));
 								return;
 							}
@@ -571,23 +578,25 @@ function streamClaudeCode(
 						}
 					}
 
-					// Handle timeout
+					// Handle timeout - kill and wait for close, don't release mutex early
 					if (options?.timeoutMs) {
 						timeout = setTimeout(() => {
+							if (settled) return;
+							abortPending = true;
 							proc.kill("SIGTERM");
-							fail(new Error(`claude timed out after ${options.timeoutMs}ms`));
+							// Wait for close event to ensure child is dead before rejecting
 						}, options.timeoutMs);
 					}
 				});
 
 				// Emit start if no content was streamed but we have a result
-				if (!started) {
+				if (!state.started) {
 					stream.push({ type: "start", partial: output });
 				}
 
 				// Fallback: if no text content arrived but result has text, emit it
-				if (!hasTextContent && resultEvent?.result) {
-					const text = resultEvent.result;
+				if (!state.hasTextContent && state.resultEvent?.result) {
+					const text = state.resultEvent.result;
 					output.content.push({ type: "text", text: text });
 					stream.push({ type: "text_start", contentIndex: 0, partial: output });
 					stream.push({ type: "text_delta", contentIndex: 0, delta: text, partial: output });

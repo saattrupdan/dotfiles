@@ -10,8 +10,7 @@ Provides Claude Code CLI as a Pi provider backend.
 - `--dangerously-skip-permissions` enabled by default
 - Model selection via `--model` flag
 - `--output-format stream-json --verbose --include-partial-messages` for realtime
-  streaming
-- `--output-format json` for accurate token/cost tracking in footer
+  streaming and token/cost tracking in footer
 - **Session ID keyed to Pi session file** — isolated across Pi sessions, subagents, parallel calls
 - **Process-start random salt** prevents PID reuse collisions
 - **Per-session mutex queue** prevents concurrent session ID conflicts
