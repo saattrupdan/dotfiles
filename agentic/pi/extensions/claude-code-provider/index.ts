@@ -5,11 +5,20 @@
  * Executes `claude -p <prompt>` with appropriate flags for each turn.
  *
  * Features:
- * - Session ID persistence across Pi conversation turns
- * - System prompt injection via --system-prompt
+ * - Uses Claude Code's native session mechanism for conversation continuity
+ * - System prompt passed via --system-prompt only (not duplicated in prompt)
+ * - Deterministic session ID per process + cwd (isolated across subagents/parallel calls)
  * - Model selection via --model
  * - --dangerously-skip-permissions enabled
  * - No Pi tool descriptions passed (Claude Code has its own tools)
+ *
+ * Session strategy:
+ * - Session ID is derived from process.pid + cwd hash for isolation across:
+ *   - Parent vs subagent processes (different PIDs)
+ *   - Different working directories (different cwd hashes)
+ * - Reused across all calls within the same process/cwd context
+ * - Claude Code maintains conversation history in its session storage
+ * - Only the latest user message is sent (not full Pi conversation history)
  *
  * Usage:
  *   pi -e ./extensions/claude-code-provider
@@ -33,6 +42,7 @@ import type {
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { spawn } from "child_process";
+import { createHash } from "crypto";
 
 type ClaudeCodeUsage = {
 	inputTokens?: number;
@@ -59,35 +69,19 @@ type ClaudeCodeJsonOutput = {
 // =============================================================================
 
 /**
- * Convert Pi messages to a prompt string for Claude Code.
- * Claude Code expects a conversational prompt format.
+ * Extract the last user message from the conversation for Claude Code.
+ * Claude Code maintains conversation history in its session storage,
+ * so we only send the latest user message (not the full Pi history).
  */
-function buildPrompt(messages: Context["messages"], systemPrompt?: string): string {
-	const parts: string[] = [];
-
-	// Add system prompt as context if provided (Claude Code will see it as context)
-	if (systemPrompt && systemPrompt.trim()) {
-		parts.push(`[System Context]\n${systemPrompt}\n`);
-	}
-
-	// Convert messages to conversational format
-	for (const msg of messages) {
+function getLastUserMessage(messages: Context["messages"]): string {
+	// Find the last user message
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const msg = messages[i];
 		if (msg.role === "user") {
-			const content = typeof msg.content === "string" ? msg.content : extractTextFromContent(msg.content);
-			parts.push(`User: ${content}`);
-		} else if (msg.role === "assistant") {
-			const content = extractTextFromContent(msg.content);
-			if (content.trim()) {
-				parts.push(`Assistant: ${content}`);
-			}
-		} else if (msg.role === "toolResult") {
-			// Tool results are shown as context for Claude Code
-			const content = extractTextFromContent(msg.content);
-			parts.push(`[Tool Result] ${content}`);
+			return typeof msg.content === "string" ? msg.content : extractTextFromContent(msg.content);
 		}
 	}
-
-	return parts.join("\n\n");
+	return "";
 }
 
 function extractTextFromContent(content: string | (TextContent | ImageContent | ToolCall | ThinkingContent)[]): string {
@@ -139,6 +133,23 @@ function isClaudeCodeUsage(value: ClaudeCodeUsage | Record<string, ClaudeCodeUsa
 }
 
 // =============================================================================
+// Session Management
+// =============================================================================
+
+/**
+ * Module-level deterministic session ID - unique per process + cwd.
+ *
+ * This ensures:
+ * - Same session ID across all calls within the same Pi session (same process, same cwd)
+ * - Different session IDs for subagents (different processes with different PIDs)
+ * - Different session IDs for different cwd contexts (different working directories)
+ *
+ * Format: pi-<pid>-<cwd_hash_base64url_16chars>
+ * Example: pi-12345-aG9tZS91c2VyL3Byb2o
+ */
+const CLAUDE_CODE_SESSION_ID = `pi-${process.pid}-${createHash("sha256").update(process.cwd()).digest("base64url").slice(0, 16)}`;
+
+// =============================================================================
 // Streaming Implementation
 // =============================================================================
 
@@ -148,9 +159,9 @@ function streamClaudeCode(
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream {
 	const stream = createAssistantMessageEventStream();
-	// Generate a unique session ID per-call to avoid "already in use" errors from Claude Code
-	// Context continuity is maintained via the full conversation prompt we send
-	const sessionId = crypto.randomUUID();
+	// Use deterministic session ID for Claude Code session continuity
+	// Claude Code maintains conversation history in its session storage
+	const sessionId = CLAUDE_CODE_SESSION_ID;
 
 	(async () => {
 		const output: AssistantMessage = {
@@ -172,8 +183,8 @@ function streamClaudeCode(
 		};
 
 		try {
-			// Build the prompt from conversation history
-			const prompt = buildPrompt(context.messages, context.systemPrompt);
+			// Extract only the last user message - Claude Code maintains conversation history in session
+			const prompt = getLastUserMessage(context.messages);
 
 			// Build the claude command with JSON output for usage stats
 			// claude -p <prompt> --system-prompt <system> --model <model> --dangerously-skip-permissions --session-id <id> --output-format json
@@ -191,7 +202,7 @@ function streamClaudeCode(
 				args.push("--model", model.id);
 			}
 
-			// Add system prompt if provided (using --system-prompt flag as requested)
+			// Add system prompt via --system-prompt flag (only place it's sent)
 			if (context.systemPrompt && context.systemPrompt.trim()) {
 				args.push("--system-prompt", context.systemPrompt);
 			}
@@ -284,7 +295,7 @@ function streamClaudeCode(
 				output.usage.cacheRead = modelUsage.cacheReadInputTokens || modelUsage.cache_read_input_tokens || 0;
 				output.usage.cacheWrite = modelUsage.cacheCreationInputTokens || modelUsage.cache_creation_input_tokens || 0;
 				output.usage.totalTokens = output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
-				
+
 				// Calculate cost from USD
 				const costUsd = modelUsage.costUSD || modelUsage.cost_usd || jsonOutput.total_cost_usd || 0;
 				output.usage.cost.total = costUsd;

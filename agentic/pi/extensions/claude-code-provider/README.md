@@ -5,15 +5,31 @@ Provides Claude Code CLI as a Pi provider backend.
 ## Features
 
 - Uses `claude -p <prompt>` command for LLM inference
-- `--system-prompt` — Pi's system prompt (from `SYSTEM.md`) is passed to Claude Code
+- **Uses Claude Code's native session mechanism** for conversation continuity
+- `--system-prompt` — Pi's system prompt (from `SYSTEM.md`) is passed to Claude Code **only via this flag** (not duplicated in the prompt)
 - `--dangerously-skip-permissions` enabled by default
 - Model selection via `--model` flag
 - `--output-format json` for accurate token/cost tracking in footer
-- Full conversation history sent in prompt for context continuity
-- Session ID managed per-call to avoid conflicts
+- **Deterministic session ID per process + cwd** — isolated across subagents/parallel calls
 - Context progress bar shows token usage vs model's context window
 - Cost tracking in footer (from Claude Code JSON usage)
 - Session/weekly subscription usage bars via the statusline extension's Claude `/usage` parser
+
+## Session Strategy
+
+The extension uses a **deterministic session ID** derived from `process.pid` + `cwd` hash:
+
+```
+pi-<pid>-<cwd_hash_base64url_16chars>
+```
+
+This ensures:
+
+- **Same session ID** across all calls within the same Pi session (same process, same cwd)
+- **Different session IDs** for subagents (different processes with different PIDs)
+- **Different session IDs** for different cwd contexts (different working directories)
+
+Claude Code maintains conversation history in its session storage on disk. Each Pi turn sends only the latest user message (not the full conversation history), relying on Claude Code's session mechanism for context continuity.
 
 ## Models
 
@@ -53,11 +69,14 @@ Claude Code has its own built-in tools. This provider:
 
 ### System Prompt
 
-The Pi system prompt is included in the conversation context, but Claude Code may not follow it exactly as it has its own identity and instructions.
+The Pi system prompt is passed **only via `--system-prompt`** to avoid duplication. Claude Code may not follow it exactly as it has its own identity and instructions.
 
 ### Session Management
 
-Each Pi conversation turn uses a fresh Claude Code session ID. Context continuity is maintained by sending the full conversation history in the prompt.
+- Session ID is deterministic per process + working directory
+- Claude Code maintains conversation history in its session storage (`~/.claude/` by default)
+- Only the latest user message is sent per turn (not full Pi history)
+- Parallel subagents get isolated sessions (different PIDs + worktrees)
 
 ## Requirements
 
