@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-ai": "*"
+    "uuid": "^14.0.1"
   }
 }
