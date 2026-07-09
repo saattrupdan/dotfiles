@@ -280,15 +280,51 @@ function parseJsonlLine(line: string): unknown | null {
  * Extract the last user message from the conversation for Claude Code.
  * Claude Code maintains its own session history; we only send the latest message.
  */
-function getLastUserMessage(messages: Context["messages"]): string {
-	// Find the last user message
-	for (let i = messages.length - 1; i >= 0; i--) {
-		const msg = messages[i];
+/**
+ * Build full conversation history including tool results.
+ * Formats messages for Claude Code to understand Pi tool calls and results.
+ */
+function buildConversationHistory(messages: Context["messages"]): string {
+	const lines: string[] = [];
+
+	for (const msg of messages) {
 		if (msg.role === "user") {
-			return typeof msg.content === "string" ? msg.content : extractTextFromContent(msg.content);
+			const text = typeof msg.content === "string" ? msg.content : extractTextFromContent(msg.content);
+			lines.push(`User: ${text}`);
+		} else if (msg.role === "assistant") {
+			// Check if this message contains tool calls
+			const textContent = Array.isArray(msg.content)
+				? msg.content
+					.filter((c) => c.type === "text")
+					.map((c) => c.text)
+					.join(" ")
+				: "";
+
+			const toolCalls = Array.isArray(msg.content)
+				? msg.content.filter((c) => c.type === "toolCall")
+				: [];
+
+			if (toolCalls.length > 0) {
+				for (const toolCall of toolCalls) {
+					if (toolCall.type === "toolCall") {
+						lines.push(`Assistant: [Calling tool: ${toolCall.name}]`);
+						lines.push(`TOOL_CALL_START${JSON.stringify({ name: toolCall.name, arguments: toolCall.arguments })}TOOL_CALL_END`);
+					}
+				}
+			}
+
+			if (textContent.trim()) {
+				lines.push(`Assistant: ${textContent}`);
+			}
+		} else if (msg.role === "toolResult") {
+			const text = Array.isArray(msg.content)
+				? msg.content.filter((c) => c.type === "text").map((c) => c.text).join(" ")
+				: "";
+			lines.push(`Tool Result [${msg.toolName}]: ${text || "(no output)"}`);
 		}
 	}
-	return "";
+
+	return lines.join("\n\n");
 }
 
 /**
@@ -731,13 +767,14 @@ function streamClaudeCode(
 			const releaseMutex = await acquireSessionMutex(sessionId);
 
 			try {
-				// Extract only the last user message - Claude Code maintains conversation history in session
-				const prompt = getLastUserMessage(context.messages);
+				// Build full conversation history including tool results
+				// This is required because Pi tool call results aren't visible to Claude Code's session
+				const conversationHistory = buildConversationHistory(context.messages);
 
 				// Build base CLI arguments (session flag added per-attempt)
 				const baseArgs: string[] = [
 					"-p",
-					prompt,
+					conversationHistory,
 					"--dangerously-skip-permissions",
 					"--output-format",
 					"stream-json",
