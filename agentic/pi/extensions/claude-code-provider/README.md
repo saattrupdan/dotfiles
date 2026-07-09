@@ -11,11 +11,10 @@ Provides Claude Code CLI as a Pi provider backend.
 - Model selection via `--model` flag
 - `--output-format stream-json --verbose --include-partial-messages` for realtime
   streaming and token/cost tracking in footer
-- **Session ID keyed to Pi session file** — isolated across Pi sessions, subagents, parallel calls
-- **Process-start random salt** prevents PID reuse collisions
+- **Session ID keyed to the first user message and cwd** for conversation continuity
 - **Per-session mutex queue** prevents concurrent session ID conflicts
 - Context progress bar shows token usage vs model's context window
-- Cost tracking in footer (from Claude Code JSON usage)
+- Cost tracking in footer (from Claude Code stream result usage)
 - Session/weekly subscription usage bars via the statusline extension's Claude `/usage` parser
 
 ## Session Strategy
@@ -143,7 +142,8 @@ The Pi system prompt is passed **only via `--system-prompt`** to avoid duplicati
 
 ### Error Handling
 
-Nonzero exit codes from Claude Code CLI are treated as errors. JSON error output is parsed and surfaced in the error message. The extension does not treat Claude Code error responses as normal assistant messages.
+Nonzero exit codes from Claude Code CLI are treated as errors. Stream `result`
+records with `is_error` are surfaced as errors rather than normal assistant messages.
 
 ### Session Management
 
@@ -168,4 +168,5 @@ Nonzero exit codes from Claude Code CLI are treated as errors. JSON error output
 ### Session/Weekly Usage Bars (like Codex)
 Implemented by `agentic/pi/extensions/statusline`: when a `claude-code/*` model is active, the footer runs Claude Code's local `/usage` command, parses the current session and all-models weekly percentages, caches them separately from Codex quota, and renders them with the same Codex-style remaining-quota bars.
 
-This extension itself only returns per-request usage from Claude Code JSON output (visible in footer stats ↑input ↓output and used for context accounting).
+This extension itself only returns per-request usage from the Claude Code stream result
+(visible in footer stats ↑input ↓output and used for context accounting).
