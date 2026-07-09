@@ -13,6 +13,7 @@ Provides Claude Code CLI as a Pi provider backend.
   streaming and token/cost tracking in footer
 - **Session ID keyed to the first user message and cwd** for conversation continuity
 - **Per-session mutex queue** prevents concurrent session ID conflicts
+- **Retry order: `--resume` first, then `--session-id` on "No conversation found"**
 - Context progress bar shows token usage vs model's context window
 - Cost tracking in footer (from Claude Code stream result usage)
 - Session/weekly subscription usage bars via the statusline extension's Claude `/usage` parser
@@ -43,6 +44,22 @@ This ensures:
 - **Process restarts can reuse the same ID** — no PID or process salt is required
 - **Concurrent calls with the same ID are serialised** — a mutex queue prevents
   active-session conflicts
+
+### Retry Order
+
+For follow-up turns, the provider tries to resume an existing session first:
+
+1. **First attempt:** `--resume <session-id>` — continues an existing session
+2. **On "No conversation found":** retries with `--session-id <session-id>` — creates a new session
+3. **On "already in use"** (rare with resume-first): also retries with `--session-id`
+4. **Other errors:** surfaced immediately
+
+The retry only happens if the first attempt emitted **no Pi events or text**. If
+anything was streamed before the error, the original error is surfaced to avoid
+duplicating output. The per-session mutex is held across both attempts.
+
+**Why resume-first?** Most turns are follow-ups to an existing Claude session. Trying
+`--resume` first avoids an unnecessary failed `--session-id` attempt in the common case.
 
 ### Continuity Limits
 
@@ -126,8 +143,8 @@ filters these events:
   surfaced as Pi thinking or tool calls. This may be added in a future version.
 - The provider sends only the latest user message per turn, using Claude Code's
   `--session-id` for history continuity (see Session Strategy).
-- On follow-up turns, if Claude rejects `--session-id` with "already in use", the
-  provider automatically retries with `--resume` **only if the failed attempt emitted
+- On follow-up turns, if Claude rejects `--resume` with "No conversation found", the
+  provider automatically retries with `--session-id` **only if the failed attempt emitted
   no Pi events or text**. If anything was streamed before the error, the original
   error is surfaced to avoid duplicating output.
 
@@ -153,11 +170,11 @@ records with `is_error` are surfaced as errors rather than normal assistant mess
 
 - Session ID is keyed to the first user message and cwd, not PID
 - Per-session mutex queue serialises concurrent calls
-- First turn creates session with `--session-id`; follow-ups use `--resume` when Claude
-  reports "Session ID already in use" **and the failed attempt emitted nothing**
+- First attempt uses `--resume`; follow-ups create new sessions with `--session-id` when
+  Claude reports "No conversation found" **and the failed attempt emitted nothing**
 - Retry logic keeps the per-session mutex held across both attempts to prevent race
   conditions
-- If the failed `--session-id` attempt emitted any Pi events or text, the retry is
+- If the failed `--resume` attempt emitted any Pi events or text, the retry is
   skipped and the original error is surfaced (avoids output duplication)
 - Claude Code maintains conversation history in its session storage (`~/.claude/` by
   default)
