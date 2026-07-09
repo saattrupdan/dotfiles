@@ -341,6 +341,8 @@ interface ClaudeInvocationResult {
 	stderr: string;
 	/** Whether any text content was streamed before failure/success. */
 	hasTextContent: boolean;
+	/** Whether ANY Pi events (start, text_start/delta/end) were emitted. */
+	emittedAny: boolean;
 }
 
 /**
@@ -353,7 +355,7 @@ interface ClaudeInvocationResult {
  * @param stream - The Pi event stream to push deltas to
  * @param output - The output message being built
  * @param options - Optional timeout/abort signal
- * @returns Result indicating success/failure
+ * @returns Result indicating success/failure, whether anything was emitted
  */
 async function runClaudeInvocation(
 	baseArgs: string[],
@@ -373,6 +375,7 @@ async function runClaudeInvocation(
 		hasTextContent: false,
 		resultEvent: null as ClaudeCodeResultEvent | null,
 		started: false,
+		emittedAny: false, // Track if ANY Pi events or visible text were emitted
 	};
 	let stderr = "";
 
@@ -417,6 +420,7 @@ async function runClaudeInvocation(
 				const event = data.event;
 				if (!state.started) {
 					state.started = true;
+					state.emittedAny = true;
 					stream.push({ type: "start", partial: output });
 				}
 
@@ -426,6 +430,7 @@ async function runClaudeInvocation(
 					const piIndex = output.content.length;
 					if (blockType === "text") {
 						state.hasTextContent = true;
+						state.emittedAny = true;
 						output.content.push({ type: "text", text: "" });
 						blockMappings.set(claudeIndex, { claudeIndex, piIndex, type: "text", text: "" });
 						stream.push({ type: "text_start", contentIndex: piIndex, partial: output });
@@ -439,6 +444,7 @@ async function runClaudeInvocation(
 						const textBlock = output.content[mapping.piIndex] as TextContent;
 						textBlock.text += event.delta.text;
 						mapping.text += event.delta.text;
+						state.emittedAny = true;
 						stream.push({ type: "text_delta", contentIndex: mapping.piIndex, delta: event.delta.text, partial: output });
 					}
 					return;
@@ -547,6 +553,7 @@ async function runClaudeInvocation(
 		resultEvent: state.resultEvent,
 		stderr,
 		hasTextContent: state.hasTextContent,
+		emittedAny: state.emittedAny,
 	};
 }
 
@@ -607,17 +614,22 @@ function streamClaudeCode(
 				}
 
 				// Attempt 1: try --session-id (creates new sessions)
-				// Attempt 2: if "already in use", retry with --resume (continues existing sessions)
+				// Attempt 2: if "already in use" AND nothing was emitted, retry with --resume
+				let lastAttemptResult: ClaudeInvocationResult | null = null;
 				try {
-					await runClaudeInvocation(baseArgs, { kind: "session-id", sessionId }, stream, output, options);
+					lastAttemptResult = await runClaudeInvocation(baseArgs, { kind: "session-id", sessionId }, stream, output, options);
 				} catch (error) {
 					const errorMsg = error instanceof Error ? error.message : String(error);
 					if (errorMsg.includes("already in use")) {
-						// Claude rejected --session-id because session exists; retry with --resume.
-						// The first attempt should not have streamed visible text (Claude fails early),
-						// so retrying is safe. If partial text was sent, it would appear duplicated,
-						// but in practice Claude exits before streaming on this error.
-						await runClaudeInvocation(baseArgs, { kind: "resume", sessionId }, stream, output, options);
+						// Claude rejected --session-id because session exists.
+						// Only retry with --resume if the first attempt emitted NO Pi events or text.
+						// If anything was emitted (start, partial text), retrying would duplicate output.
+						if (lastAttemptResult && !lastAttemptResult.emittedAny) {
+							lastAttemptResult = await runClaudeInvocation(baseArgs, { kind: "resume", sessionId }, stream, output, options);
+						} else {
+							// Something was already emitted; surface the original error instead of risking duplication
+							throw error;
+						}
 					} else {
 						// Not an "already in use" error; rethrow
 						throw error;
@@ -627,6 +639,20 @@ function streamClaudeCode(
 				// Check for abort
 				if (options?.signal?.aborted) {
 					throw new Error("Request was aborted");
+				}
+
+				// Fallback: if no content was streamed but result has text, emit it
+				// This handles cases where Claude returns a result without streaming deltas
+				if (lastAttemptResult && !lastAttemptResult.hasTextContent && lastAttemptResult.resultEvent?.result) {
+					// Ensure start is emitted exactly once
+					if (!lastAttemptResult.emittedAny) {
+						stream.push({ type: "start", partial: output });
+					}
+					const text = lastAttemptResult.resultEvent.result;
+					output.content.push({ type: "text", text: text });
+					stream.push({ type: "text_start", contentIndex: 0, partial: output });
+					stream.push({ type: "text_delta", contentIndex: 0, delta: text, partial: output });
+					stream.push({ type: "text_end", contentIndex: 0, content: text, partial: output });
 				}
 
 				// Emit completion
