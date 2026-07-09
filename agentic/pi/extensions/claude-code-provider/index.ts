@@ -333,16 +333,18 @@ function getConversationIdentity(context: Context): string {
  * Result of a single Claude Code invocation attempt.
  */
 interface ClaudeInvocationResult {
-	/** True if the invocation succeeded (process closed with code 0 or streamed content). */
+	/** True if the invocation completed without spawn/abort errors (may still have Claude error). */
 	success: boolean;
 	/** The result event data if available. */
 	resultEvent: ClaudeCodeResultEvent | null;
 	/** Standard error output. */
 	stderr: string;
-	/** Whether any text content was streamed before failure/success. */
-	hasTextContent: boolean;
+	/** Whether any actual text deltas were emitted (not just block start). */
+	emittedText: boolean;
 	/** Whether ANY Pi events (start, text_start/delta/end) were emitted. */
 	emittedAny: boolean;
+	/** Error from Claude (nonzero exit, is_error result) if present. */
+	error?: Error;
 }
 
 /**
@@ -372,12 +374,13 @@ async function runClaudeInvocation(
 
 	const blockMappings: Map<number, ContentBlockMapping> = new Map();
 	const state = {
-		hasTextContent: false,
+		emittedText: false, // Track if any actual text deltas were emitted
 		resultEvent: null as ClaudeCodeResultEvent | null,
 		started: false,
 		emittedAny: false, // Track if ANY Pi events or visible text were emitted
 	};
 	let stderr = "";
+	let invocationError: Error | undefined;
 
 	await new Promise<void>((resolve, reject) => {
 		const proc = spawn("claude", invocationArgs, {
@@ -429,7 +432,6 @@ async function runClaudeInvocation(
 					const blockType = event.content_block.type;
 					const piIndex = output.content.length;
 					if (blockType === "text") {
-						state.hasTextContent = true;
 						state.emittedAny = true;
 						output.content.push({ type: "text", text: "" });
 						blockMappings.set(claudeIndex, { claudeIndex, piIndex, type: "text", text: "" });
@@ -445,6 +447,9 @@ async function runClaudeInvocation(
 						textBlock.text += event.delta.text;
 						mapping.text += event.delta.text;
 						state.emittedAny = true;
+						if (event.delta.text.length > 0) {
+							state.emittedText = true;
+						}
 						stream.push({ type: "text_delta", contentIndex: mapping.piIndex, delta: event.delta.text, partial: output });
 					}
 					return;
@@ -483,7 +488,8 @@ async function runClaudeInvocation(
 				}
 
 				if (data.is_error || data.error) {
-					fail(new Error(`Claude Code error: ${data.error || "Unknown error"}`));
+					invocationError = new Error(`Claude Code error: ${data.error || "Unknown error"}`);
+					// Don't reject here - caller needs to inspect emittedAny/emittedText state
 				}
 			}
 		};
@@ -523,9 +529,8 @@ async function runClaudeInvocation(
 			}
 
 			if (code !== 0 && !settled) {
-				const fallback = stderr || `claude exited with code ${code}`;
-				fail(new Error(`Claude Code error (exit ${code}): ${fallback}`));
-				return;
+				// Capture error but don't reject - caller needs state to decide retry
+				invocationError = new Error(`Claude Code error (exit ${code}): ${stderr || `exit code ${code}`}`);
 			}
 
 			succeed();
@@ -549,11 +554,12 @@ async function runClaudeInvocation(
 	});
 
 	return {
-		success: true,
+		success: !invocationError,
 		resultEvent: state.resultEvent,
 		stderr,
-		hasTextContent: state.hasTextContent,
+		emittedText: state.emittedText,
 		emittedAny: state.emittedAny,
+		error: invocationError,
 	};
 }
 
@@ -616,24 +622,27 @@ function streamClaudeCode(
 				// Attempt 1: try --session-id (creates new sessions)
 				// Attempt 2: if "already in use" AND nothing was emitted, retry with --resume
 				let lastAttemptResult: ClaudeInvocationResult | null = null;
-				try {
-					lastAttemptResult = await runClaudeInvocation(baseArgs, { kind: "session-id", sessionId }, stream, output, options);
-				} catch (error) {
-					const errorMsg = error instanceof Error ? error.message : String(error);
+				const firstAttemptResult = await runClaudeInvocation(baseArgs, { kind: "session-id", sessionId }, stream, output, options);
+
+				// Check if we should retry with --resume
+				if (!firstAttemptResult.success && firstAttemptResult.error) {
+					const errorMsg = firstAttemptResult.error.message;
 					if (errorMsg.includes("already in use")) {
 						// Claude rejected --session-id because session exists.
-						// Only retry with --resume if the first attempt emitted NO Pi events or text.
+						// Only retry with --resume if the first attempt emitted NO Pi events.
 						// If anything was emitted (start, partial text), retrying would duplicate output.
-						if (lastAttemptResult && !lastAttemptResult.emittedAny) {
+						if (!firstAttemptResult.emittedAny) {
 							lastAttemptResult = await runClaudeInvocation(baseArgs, { kind: "resume", sessionId }, stream, output, options);
 						} else {
 							// Something was already emitted; surface the original error instead of risking duplication
-							throw error;
+							throw firstAttemptResult.error;
 						}
 					} else {
-						// Not an "already in use" error; rethrow
-						throw error;
+						// Not an "already in use" error; surface it
+						throw firstAttemptResult.error;
 					}
+				} else {
+					lastAttemptResult = firstAttemptResult;
 				}
 
 				// Check for abort
@@ -641,9 +650,10 @@ function streamClaudeCode(
 					throw new Error("Request was aborted");
 				}
 
-				// Fallback: if no content was streamed but result has text, emit it
-				// This handles cases where Claude returns a result without streaming deltas
-				if (lastAttemptResult && !lastAttemptResult.hasTextContent && lastAttemptResult.resultEvent?.result) {
+				// Fallback: if no actual text was streamed but result has text, emit it
+				// This handles cases where Claude returns a result without streaming deltas,
+				// or when a text block started but emitted no deltas (empty block).
+				if (lastAttemptResult && !lastAttemptResult.emittedText && lastAttemptResult.resultEvent?.result) {
 					// Ensure start is emitted exactly once
 					if (!lastAttemptResult.emittedAny) {
 						stream.push({ type: "start", partial: output });
@@ -653,6 +663,7 @@ function streamClaudeCode(
 					stream.push({ type: "text_start", contentIndex: 0, partial: output });
 					stream.push({ type: "text_delta", contentIndex: 0, delta: text, partial: output });
 					stream.push({ type: "text_end", contentIndex: 0, content: text, partial: output });
+					lastAttemptResult.emittedText = true; // Mark that text was now emitted
 				}
 
 				// Emit completion
