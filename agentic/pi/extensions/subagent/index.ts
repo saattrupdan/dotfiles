@@ -398,8 +398,10 @@ interface CurrentModel {
 function modelToCliPattern(model: CurrentModel | undefined, thinking?: string): string | undefined {
 	if (!model) return undefined;
 	const base = `${model.provider}/${model.id}`;
-	if (thinking) return `${base}:${thinking}`;
-	return base;
+	// Default to 'high' thinking for reasoning models if not explicitly set
+	// This ensures subagents work even when parent session has thinking disabled
+	const effectiveThinking = thinking && thinking !== "off" ? thinking : "high";
+	return `${base}:${effectiveThinking}`;
 }
 
 function normalizeRequestedModel(model: string | undefined): string | undefined {
