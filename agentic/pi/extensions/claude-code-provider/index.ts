@@ -311,7 +311,7 @@ function buildSystemPromptWithTools(basePrompt: string | undefined, tools: Tool[
 			return `- **${tool.name}**: ${tool.description}\n  Parameters: ${params}`;
 		}).join("\n");
 
-		sections.push(`## Available Tools\n\nYou have access to the following Pi tools. To call a tool, use this exact JSON format on its own line:\n\nTOOL_CALL_START\n{"name": "toolName", "arguments": {"arg1": "value1"}}\nTOOL_CALL_END\n\nExample:\nTOOL_CALL_START\n{"name": "read", "arguments": {"path": "file.txt"}}\nTOOL_CALL_END\n\nAfter calling a tool, wait for the result before continuing.\n\n## Tool Definitions\n${toolDefinitions}`);
+		sections.push(`## Available Tools\n\nYou have access to the following Pi tools. To call a tool, output this exact format (all on one line, no code blocks):\n\nTOOL_CALL_START{"name": "toolName", "arguments": {"arg1": "value1"}}TOOL_CALL_END\n\nExample: TOOL_CALL_START{"name": "read", "arguments": {"path": "file.txt"}}TOOL_CALL_END\n\nAfter calling a tool, wait for the result before continuing.\n\n## Tool Definitions\n${toolDefinitions}`);
 	}
 
 	return sections.join("\n\n---\n\n");
