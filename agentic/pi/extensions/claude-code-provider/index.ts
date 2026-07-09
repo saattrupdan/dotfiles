@@ -645,6 +645,11 @@ function streamClaudeCode(
 					lastAttemptResult = firstAttemptResult;
 				}
 
+				// If the retry (or first attempt) failed, surface the error before fallback/done
+				if (lastAttemptResult && !lastAttemptResult.success) {
+					throw lastAttemptResult.error ?? new Error("Claude Code invocation failed");
+				}
+
 				// Check for abort
 				if (options?.signal?.aborted) {
 					throw new Error("Request was aborted");
@@ -659,10 +664,11 @@ function streamClaudeCode(
 						stream.push({ type: "start", partial: output });
 					}
 					const text = lastAttemptResult.resultEvent.result;
+					const piIndex = output.content.length; // Index of the block we're about to push
 					output.content.push({ type: "text", text: text });
-					stream.push({ type: "text_start", contentIndex: 0, partial: output });
-					stream.push({ type: "text_delta", contentIndex: 0, delta: text, partial: output });
-					stream.push({ type: "text_end", contentIndex: 0, content: text, partial: output });
+					stream.push({ type: "text_start", contentIndex: piIndex, partial: output });
+					stream.push({ type: "text_delta", contentIndex: piIndex, delta: text, partial: output });
+					stream.push({ type: "text_end", contentIndex: piIndex, content: text, partial: output });
 					lastAttemptResult.emittedText = true; // Mark that text was now emitted
 				}
 
