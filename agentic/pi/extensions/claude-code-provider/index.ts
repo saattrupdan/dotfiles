@@ -13,6 +13,9 @@
  * - --dangerously-skip-permissions enabled
  * - No Pi tool descriptions passed (Claude Code has its own tools)
  * - Realtime streaming via --output-format stream-json
+ * - First turn creates session with `--session-id`; follow-ups use `--resume` if
+ *   Claude reports "already in use"
+ * - Retry logic keeps per-session mutex held across both attempts
  *
  * Session strategy:
  * - Provider streams receive pi-ai Context, not ExtensionContext, so no Pi session
@@ -21,6 +24,8 @@
  * - Per-session mutex queue serialises concurrent calls sharing the same session ID.
  * - Claude Code maintains conversation history in its session storage.
  * - Only the latest user message is sent per turn (not full Pi conversation history).
+ * - First attempt uses `--session-id` (creates new sessions); on "already in use"
+ *   error, retries with `--resume` (continues existing sessions).
  *
  * Continuity limits:
  * - Only turns handled by this provider for the same Pi conversation are retained.
@@ -324,6 +329,227 @@ function getConversationIdentity(context: Context): string {
  * Uses Pi session identity to derive session ID, avoiding cross-session leaks.
  * Serialises concurrent calls with the same session ID via mutex queue.
  */
+/**
+ * Result of a single Claude Code invocation attempt.
+ */
+interface ClaudeInvocationResult {
+	/** True if the invocation succeeded (process closed with code 0 or streamed content). */
+	success: boolean;
+	/** The result event data if available. */
+	resultEvent: ClaudeCodeResultEvent | null;
+	/** Standard error output. */
+	stderr: string;
+	/** Whether any text content was streamed before failure/success. */
+	hasTextContent: boolean;
+}
+
+/**
+ * Run a single Claude Code invocation with the given session mode.
+ * Streams output to the provided stream and returns result/error info.
+ *
+ * @param baseArgs - Base CLI arguments (without --session-id or --resume)
+ * @param sessionMode - Session mode: "session-id" or "resume"
+ * @param sessionId - The session UUID to use
+ * @param stream - The Pi event stream to push deltas to
+ * @param output - The output message being built
+ * @param options - Optional timeout/abort signal
+ * @returns Result indicating success/failure
+ */
+async function runClaudeInvocation(
+	baseArgs: string[],
+	sessionMode: { kind: "session-id" | "resume"; sessionId: string },
+	stream: ReturnType<typeof createAssistantMessageEventStream>,
+	output: AssistantMessage,
+	options?: SimpleStreamOptions,
+): Promise<ClaudeInvocationResult> {
+	const invocationArgs = [
+		...baseArgs,
+		sessionMode.kind === "session-id" ? "--session-id" : "--resume",
+		sessionMode.sessionId,
+	];
+
+	const blockMappings: Map<number, ContentBlockMapping> = new Map();
+	const state = {
+		hasTextContent: false,
+		resultEvent: null as ClaudeCodeResultEvent | null,
+		started: false,
+	};
+	let stderr = "";
+
+	await new Promise<void>((resolve, reject) => {
+		const proc = spawn("claude", invocationArgs, {
+			cwd: process.cwd(),
+			env: process.env,
+		});
+
+		let stdoutBuffer = "";
+		let timeout: NodeJS.Timeout | undefined;
+		let settled = false;
+		let abortPending = false;
+
+		const cleanup = () => {
+			if (timeout) clearTimeout(timeout);
+			if (options?.signal) options.signal.removeEventListener("abort", onAbort);
+		};
+		const fail = (error: Error) => {
+			if (settled) return;
+			settled = true;
+			cleanup();
+			reject(error);
+		};
+		const succeed = () => {
+			if (settled) return;
+			settled = true;
+			cleanup();
+			resolve();
+		};
+		function onAbort() {
+			if (settled) return;
+			abortPending = true;
+			proc.kill("SIGTERM");
+		}
+
+		const processLine = (line: string) => {
+			const data = parseJsonlLine(line);
+			if (data === null) return;
+
+			if (isStreamEvent(data)) {
+				const event = data.event;
+				if (!state.started) {
+					state.started = true;
+					stream.push({ type: "start", partial: output });
+				}
+
+				if (event.type === "content_block_start") {
+					const claudeIndex = event.index;
+					const blockType = event.content_block.type;
+					const piIndex = output.content.length;
+					if (blockType === "text") {
+						state.hasTextContent = true;
+						output.content.push({ type: "text", text: "" });
+						blockMappings.set(claudeIndex, { claudeIndex, piIndex, type: "text", text: "" });
+						stream.push({ type: "text_start", contentIndex: piIndex, partial: output });
+					}
+					return;
+				}
+
+				if (event.type === "content_block_delta") {
+					const mapping = blockMappings.get(event.index);
+					if (mapping && mapping.type === "text" && event.delta.type === "text_delta") {
+						const textBlock = output.content[mapping.piIndex] as TextContent;
+						textBlock.text += event.delta.text;
+						mapping.text += event.delta.text;
+						stream.push({ type: "text_delta", contentIndex: mapping.piIndex, delta: event.delta.text, partial: output });
+					}
+					return;
+				}
+
+				if (event.type === "content_block_stop") {
+					const mapping = blockMappings.get(event.index);
+					if (mapping && mapping.type === "text") {
+						stream.push({ type: "text_end", contentIndex: mapping.piIndex, content: mapping.text, partial: output });
+						blockMappings.delete(event.index);
+					}
+					return;
+				}
+			}
+
+			if (isResultEvent(data)) {
+				state.resultEvent = data;
+
+				const usage = data.usage || data.modelUsage;
+				if (usage) {
+					const modelUsage = selectModelUsage(usage, output.model);
+					output.usage.input = modelUsage.inputTokens || modelUsage.input_tokens || 0;
+					output.usage.output = modelUsage.outputTokens || modelUsage.output_tokens || 0;
+					output.usage.cacheRead = modelUsage.cacheReadInputTokens || modelUsage.cache_read_input_tokens || 0;
+					output.usage.cacheWrite = modelUsage.cacheCreationInputTokens || modelUsage.cache_creation_input_tokens || 0;
+					output.usage.totalTokens = output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
+
+					const costUsd = modelUsage.costUSD || modelUsage.cost_usd || data.total_cost_usd || 0;
+					output.usage.cost.total = costUsd;
+					output.usage.cost.input = costUsd * 0.2;
+					output.usage.cost.output = costUsd * 0.8;
+				}
+
+				if (data.stop_reason) {
+					output.stopReason = data.stop_reason === "end_turn" ? "stop" : data.stop_reason === "max_tokens" ? "length" : "stop";
+				}
+
+				if (data.is_error || data.error) {
+					fail(new Error(`Claude Code error: ${data.error || "Unknown error"}`));
+				}
+			}
+		};
+
+		proc.stdout?.on("data", (data) => {
+			stdoutBuffer += data.toString();
+
+			let newlineIndex: number;
+			while ((newlineIndex = stdoutBuffer.indexOf("\n")) !== -1) {
+				const line = stdoutBuffer.slice(0, newlineIndex);
+				stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
+				processLine(line);
+			}
+		});
+
+		proc.stderr?.on("data", (data) => {
+			stderr += data.toString();
+		});
+
+		proc.on("error", (err) => {
+			fail(new Error(`Failed to start claude: ${err.message}`));
+		});
+
+		proc.on("close", (code) => {
+			if (stdoutBuffer.trim()) {
+				processLine(stdoutBuffer);
+			}
+
+			if (abortPending && !settled) {
+				settled = true;
+				cleanup();
+				const msg = options?.signal?.aborted
+					? "Request was aborted"
+					: `claude timed out after ${options?.timeoutMs}ms`;
+				reject(new Error(msg));
+				return;
+			}
+
+			if (code !== 0 && !settled) {
+				const fallback = stderr || `claude exited with code ${code}`;
+				fail(new Error(`Claude Code error (exit ${code}): ${fallback}`));
+				return;
+			}
+
+			succeed();
+		});
+
+		if (options?.signal) {
+			if (options.signal.aborted) {
+				onAbort();
+			} else {
+				options.signal.addEventListener("abort", onAbort, { once: true });
+			}
+		}
+
+		if (options?.timeoutMs) {
+			timeout = setTimeout(() => {
+				if (settled) return;
+				abortPending = true;
+				proc.kill("SIGTERM");
+			}, options.timeoutMs);
+		}
+	});
+
+	return {
+		success: true,
+		resultEvent: state.resultEvent,
+		stderr,
+		hasTextContent: state.hasTextContent,
+	};
+}
+
 function streamClaudeCode(
 	model: Model<Api>,
 	context: Context,
@@ -361,246 +587,41 @@ function streamClaudeCode(
 				// Extract only the last user message - Claude Code maintains conversation history in session
 				const prompt = getLastUserMessage(context.messages);
 
-				// Build the claude command with stream-json output for realtime streaming
-				const args: string[] = [
+				// Build base CLI arguments (session flag added per-attempt)
+				const baseArgs: string[] = [
 					"-p",
 					prompt,
 					"--dangerously-skip-permissions",
-					"--session-id",
-					sessionId,
 					"--output-format",
 					"stream-json",
 					"--verbose",
 					"--include-partial-messages",
 				];
 
-				// Add model if specified
 				if (model.id) {
-					args.push("--model", model.id);
+					baseArgs.push("--model", model.id);
 				}
 
-				// Add system prompt via --system-prompt flag
 				if (context.systemPrompt && context.systemPrompt.trim()) {
-					args.push("--system-prompt", context.systemPrompt);
+					baseArgs.push("--system-prompt", context.systemPrompt);
 				}
 
-				// Track content block mappings (Claude index -> Pi index)
-				const blockMappings: Map<number, ContentBlockMapping> = new Map();
-
-				// Outer state object visible to TypeScript outside the Promise callback
-				const state = {
-					hasTextContent: false,
-					resultEvent: null as ClaudeCodeResultEvent | null,
-					started: false,
-				};
-
-				// Execute claude CLI using spawn with line-by-line JSONL parsing
-				await new Promise<void>((resolve, reject) => {
-					const proc = spawn("claude", args, {
-						cwd: process.cwd(),
-						env: process.env,
-					});
-
-					let stderr = "";
-					let stdoutBuffer = "";
-					let timeout: NodeJS.Timeout | undefined;
-					let settled = false;
-					let abortPending = false;
-
-					const cleanup = () => {
-						if (timeout) clearTimeout(timeout);
-						if (options?.signal) options.signal.removeEventListener("abort", onAbort);
-					};
-					const fail = (error: Error) => {
-						if (settled) return;
-						settled = true;
-						cleanup();
-						reject(error);
-					};
-					const succeed = () => {
-						if (settled) return;
-						settled = true;
-						cleanup();
-						resolve();
-					};
-					function onAbort() {
-						if (settled) return;
-						abortPending = true;
-						proc.kill("SIGTERM");
-						// Don't fail yet - wait for close event to ensure child is dead
-						// before releasing mutex
+				// Attempt 1: try --session-id (creates new sessions)
+				// Attempt 2: if "already in use", retry with --resume (continues existing sessions)
+				try {
+					await runClaudeInvocation(baseArgs, { kind: "session-id", sessionId }, stream, output, options);
+				} catch (error) {
+					const errorMsg = error instanceof Error ? error.message : String(error);
+					if (errorMsg.includes("already in use")) {
+						// Claude rejected --session-id because session exists; retry with --resume.
+						// The first attempt should not have streamed visible text (Claude fails early),
+						// so retrying is safe. If partial text was sent, it would appear duplicated,
+						// but in practice Claude exits before streaming on this error.
+						await runClaudeInvocation(baseArgs, { kind: "resume", sessionId }, stream, output, options);
+					} else {
+						// Not an "already in use" error; rethrow
+						throw error;
 					}
-
-					// Process complete JSONL lines from stdout
-					const processLine = (line: string) => {
-						const data = parseJsonlLine(line);
-						if (data === null) return;
-
-						// Handle stream_event wrapper
-						if (isStreamEvent(data)) {
-							const event = data.event;						// Emit start only once, before any content
-						if (!state.started) {
-							state.started = true;
-							stream.push({ type: "start", partial: output });
-						}
-
-							// content_block_start: create Pi text block and push text_start
-							if (event.type === "content_block_start") {
-								const claudeIndex = event.index;
-								const blockType = event.content_block.type;
-								const piIndex = output.content.length;							if (blockType === "text") {
-								state.hasTextContent = true;
-									output.content.push({ type: "text", text: "" });
-									blockMappings.set(claudeIndex, { claudeIndex, piIndex, type: "text", text: "" });
-									stream.push({ type: "text_start", contentIndex: piIndex, partial: output });
-								}
-								// Ignore thinking/tool_use blocks for now
-								return;
-							}
-
-							// content_block_delta: append text and push text_delta
-							if (event.type === "content_block_delta") {
-								const mapping = blockMappings.get(event.index);
-								if (mapping && mapping.type === "text" && event.delta.type === "text_delta") {
-									const textBlock = output.content[mapping.piIndex] as TextContent;
-									textBlock.text += event.delta.text;
-									mapping.text += event.delta.text;
-									stream.push({ type: "text_delta", contentIndex: mapping.piIndex, delta: event.delta.text, partial: output });
-								}
-								return;
-							}
-
-							// content_block_stop: push text_end for matching block
-							if (event.type === "content_block_stop") {
-								const mapping = blockMappings.get(event.index);
-								if (mapping && mapping.type === "text") {
-									stream.push({ type: "text_end", contentIndex: mapping.piIndex, content: mapping.text, partial: output });
-									blockMappings.delete(event.index);
-								}
-								return;
-							}
-						}					// Handle final result event
-					if (isResultEvent(data)) {
-						state.resultEvent = data;
-
-							// Extract usage data
-							const usage = data.usage || data.modelUsage;
-							if (usage) {
-								const modelUsage = selectModelUsage(usage, model.id);
-								output.usage.input = modelUsage.inputTokens || modelUsage.input_tokens || 0;
-								output.usage.output = modelUsage.outputTokens || modelUsage.output_tokens || 0;
-								output.usage.cacheRead = modelUsage.cacheReadInputTokens || modelUsage.cache_read_input_tokens || 0;
-								output.usage.cacheWrite = modelUsage.cacheCreationInputTokens || modelUsage.cache_creation_input_tokens || 0;
-								output.usage.totalTokens = output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
-
-								// Calculate cost from USD
-								const costUsd = modelUsage.costUSD || modelUsage.cost_usd || data.total_cost_usd || 0;
-								output.usage.cost.total = costUsd;
-								output.usage.cost.input = costUsd * 0.2;
-								output.usage.cost.output = costUsd * 0.8;
-							}
-
-							// Set stop reason from result
-							if (data.stop_reason) {
-								output.stopReason = data.stop_reason === "end_turn" ? "stop" : data.stop_reason === "max_tokens" ? "length" : "stop";
-							}
-
-							// Check for error in result
-							if (data.is_error || data.error) {
-								fail(new Error(`Claude Code error: ${data.error || "Unknown error"}`));
-							}
-						}
-					};
-
-					proc.stdout?.on("data", (data) => {
-						stdoutBuffer += data.toString();
-
-						// Process complete lines
-						let newlineIndex: number;
-						while ((newlineIndex = stdoutBuffer.indexOf("\n")) !== -1) {
-							const line = stdoutBuffer.slice(0, newlineIndex);
-							stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
-							processLine(line);
-						}
-					});
-
-					proc.stderr?.on("data", (data) => {
-						stderr += data.toString();
-					});
-
-					proc.on("error", (err) => {
-						fail(new Error(`Failed to start claude: ${err.message}`));
-					});
-
-					proc.on("close", (code) => {
-						// Process any remaining buffer (last line without newline)
-						if (stdoutBuffer.trim()) {
-							processLine(stdoutBuffer);
-						}
-
-						// Handle abort/timeout that was pending - now safe to reject
-						// since child is confirmed closed
-						if (abortPending && !settled) {
-							settled = true;
-							cleanup();
-							const msg = options?.signal?.aborted
-								? "Request was aborted"
-								: `claude timed out after ${options?.timeoutMs}ms`;
-							reject(new Error(msg));
-							return;
-						}
-
-						// Handle non-zero exit (not from abort/timeout)
-						if (code !== 0 && !settled) {
-							const fallback = stderr || `claude exited with code ${code}`;
-							fail(new Error(`Claude Code error (exit ${code}): ${fallback}`));
-							return;
-						}
-
-						// If we never got a result event but have stderr, treat as error
-						if (!state.resultEvent && stderr.trim()) {
-							// Could be verbose output; only fail if no content was streamed
-							if (!state.hasTextContent) {
-								fail(new Error(`Claude Code error: ${stderr}`));
-								return;
-							}
-						}
-
-						succeed();
-					});
-
-					// Handle abort signal
-					if (options?.signal) {
-						if (options.signal.aborted) {
-							onAbort();
-						} else {
-							options.signal.addEventListener("abort", onAbort, { once: true });
-						}
-					}
-
-					// Handle timeout - kill and wait for close, don't release mutex early
-					if (options?.timeoutMs) {
-						timeout = setTimeout(() => {
-							if (settled) return;
-							abortPending = true;
-							proc.kill("SIGTERM");
-							// Wait for close event to ensure child is dead before rejecting
-						}, options.timeoutMs);
-					}
-				});
-
-				// Emit start if no content was streamed but we have a result
-				if (!state.started) {
-					stream.push({ type: "start", partial: output });
-				}
-
-				// Fallback: if no text content arrived but result has text, emit it
-				if (!state.hasTextContent && state.resultEvent?.result) {
-					const text = state.resultEvent.result;
-					output.content.push({ type: "text", text: text });
-					stream.push({ type: "text_start", contentIndex: 0, partial: output });
-					stream.push({ type: "text_delta", contentIndex: 0, delta: text, partial: output });
-					stream.push({ type: "text_end", contentIndex: 0, content: text, partial: output });
 				}
 
 				// Check for abort
