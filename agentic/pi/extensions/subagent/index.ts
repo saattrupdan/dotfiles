@@ -634,51 +634,89 @@ async function runSingleAgent(
 	// the CLI flags are the supported surface.
 	//
 	// Allow-list semantics (see agents.ts AgentConfig.extensions):
-	//   undefined  → no restriction; let the child discover extensions normally.
+	//   undefined  → auto-discover all extensions from standard locations.
 	//   []         → strict empty allow-list; child sees no extensions.
 	//   ["a","b"]  → only those extensions (from user + project dirs based on agentScope).
+	const scope = agentScope ?? "user";
 	const hasExtAllowList = agent.extensions !== undefined;
-	if (hasExtAllowList) {
-		const effectiveExtensions = agent.extensions ?? [];
+	const isEmptyExtAllowList = hasExtAllowList && agent.extensions!.length === 0;
+
+	if (isEmptyExtAllowList) {
+		// Explicit empty allow-list: disable all extensions
 		baseArgs.push("--no-extensions");
+	} else {
+		// Auto-discover extensions from standard locations (when no allow-list)
+		// or load specific extensions (when allow-list is present)
+		const effectiveExtensions = hasExtAllowList ? agent.extensions! : null;
 
 		// User extensions dir: ~/.pi/agent/extensions/
 		const userExtensionsRoot = path.join(getAgentDir(), "extensions");
 
 		// Project extensions dir: .pi/extensions/ (only if agentScope is 'project' or 'both')
-		const scope = agentScope ?? "user";
 		const projectAgentsDir = findNearestProjectAgentsDir(defaultCwd);
 		const projectExtensionsRoot =
 			scope === "project" || scope === "both" ? projectAgentsDir?.replace(/\/agents$/, "/extensions") ?? null : null;
 
+		// Disable default discovery when using an allow-list
+		if (hasExtAllowList) {
+			baseArgs.push("--no-extensions");
+		}
+
 		// Build list of extension paths to load
-		for (const name of effectiveExtensions) {
-			let extensionPath: string | null = null;
+		if (effectiveExtensions) {
+			// Load specific extensions from allow-list
+			for (const name of effectiveExtensions) {
+				let extensionPath: string | null = null;
 
-			// Check user extensions dir first
-			if (userExtensionsRoot) {
-				const userExtDir = path.join(userExtensionsRoot, name);
-				const userExtIndex = path.join(userExtDir, "index.ts");
-				if (fs.existsSync(userExtIndex)) {
-					extensionPath = userExtDir;
+				// Check user extensions dir first
+				if (userExtensionsRoot) {
+					const userExtDir = path.join(userExtensionsRoot, name);
+					const userExtIndex = path.join(userExtDir, "index.ts");
+					if (fs.existsSync(userExtIndex)) {
+						extensionPath = userExtDir;
+					}
+				}
+
+				// Check project extensions dir if not found in user dir
+				if (!extensionPath && projectExtensionsRoot) {
+					const projExtDir = path.join(projectExtensionsRoot, name);
+					const projExtIndex = path.join(projExtDir, "index.ts");
+					if (fs.existsSync(projExtIndex)) {
+						extensionPath = projExtDir;
+					}
+				}
+
+				if (extensionPath) {
+					baseArgs.push("--extension", extensionPath);
+				} else {
+					console.error(
+						`subagent: extension "${name}" not found (no index.ts in user or project dir); skipping for agent "${agent.name}".`,
+					);
+				}
+			}
+		} else {
+			// Auto-discover all extensions from standard locations
+			// User extensions
+			if (userExtensionsRoot && fs.existsSync(userExtensionsRoot)) {
+				for (const entry of fs.readdirSync(userExtensionsRoot)) {
+					const extDir = path.join(userExtensionsRoot, entry);
+					const extIndex = path.join(extDir, "index.ts");
+					if (fs.statSync(extDir).isDirectory() && fs.existsSync(extIndex)) {
+						// Skip extension if it's in project dir and scope doesn't include project
+						baseArgs.push("--extension", extDir);
+					}
 				}
 			}
 
-			// Check project extensions dir if not found in user dir
-			if (!extensionPath && projectExtensionsRoot) {
-				const projExtDir = path.join(projectExtensionsRoot, name);
-				const projExtIndex = path.join(projExtDir, "index.ts");
-				if (fs.existsSync(projExtIndex)) {
-					extensionPath = projExtDir;
+			// Project extensions (only if scope includes project)
+			if (projectExtensionsRoot && fs.existsSync(projectExtensionsRoot)) {
+				for (const entry of fs.readdirSync(projectExtensionsRoot)) {
+					const extDir = path.join(projectExtensionsRoot, entry);
+					const extIndex = path.join(extDir, "index.ts");
+					if (fs.statSync(extDir).isDirectory() && fs.existsSync(extIndex)) {
+						baseArgs.push("--extension", extDir);
+					}
 				}
-			}
-
-			if (extensionPath) {
-				baseArgs.push("--extension", extensionPath);
-			} else {
-				console.error(
-					`subagent: extension "${name}" not found (no index.ts in user or project dir); skipping for agent "${agent.name}".`,
-				);
 			}
 		}
 	}
