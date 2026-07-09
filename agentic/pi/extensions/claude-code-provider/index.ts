@@ -13,8 +13,8 @@
  * - --dangerously-skip-permissions enabled
  * - No Pi tool descriptions passed (Claude Code has its own tools)
  * - Realtime streaming via --output-format stream-json
- * - First turn creates session with `--session-id`; follow-ups use `--resume` if
- *   Claude reports "already in use"
+ * - First attempt uses `--resume` (continues existing sessions); on "No conversation
+ *   found" error, retries with `--session-id` (creates new sessions)
  * - Retry logic keeps per-session mutex held across both attempts
  *
  * Session strategy:
@@ -24,8 +24,8 @@
  * - Per-session mutex queue serialises concurrent calls sharing the same session ID.
  * - Claude Code maintains conversation history in its session storage.
  * - Only the latest user message is sent per turn (not full Pi conversation history).
- * - First attempt uses `--session-id` (creates new sessions); on "already in use"
- *   error, retries with `--resume` (continues existing sessions).
+ * - First attempt uses `--resume` (continues existing sessions); on "No conversation
+ *   found" error, retries with `--session-id` (creates new sessions).
  *
  * Continuity limits:
  * - Only turns handled by this provider for the same Pi conversation are retained.
@@ -619,26 +619,29 @@ function streamClaudeCode(
 					baseArgs.push("--system-prompt", context.systemPrompt);
 				}
 
-				// Attempt 1: try --session-id (creates new sessions)
-				// Attempt 2: if "already in use" AND nothing was emitted, retry with --resume
+				// Attempt 1: try --resume (continues existing sessions)
+				// Attempt 2: if "No conversation found" OR "already in use" AND nothing was emitted, retry with --session-id
 				let lastAttemptResult: ClaudeInvocationResult | null = null;
-				const firstAttemptResult = await runClaudeInvocation(baseArgs, { kind: "session-id", sessionId }, stream, output, options);
+				const firstAttemptResult = await runClaudeInvocation(baseArgs, { kind: "resume", sessionId }, stream, output, options);
 
-				// Check if we should retry with --resume
+				// Check if we should retry with --session-id
 				if (!firstAttemptResult.success && firstAttemptResult.error) {
 					const errorMsg = firstAttemptResult.error.message;
-					if (errorMsg.includes("already in use")) {
-						// Claude rejected --session-id because session exists.
-						// Only retry with --resume if the first attempt emitted NO Pi events.
+					const isNoConversation = errorMsg.includes("No conversation found");
+					const isAlreadyInUse = errorMsg.includes("already in use");
+
+					if (isNoConversation || isAlreadyInUse) {
+						// --resume failed because session doesn't exist (or is locked).
+						// Only retry with --session-id if the first attempt emitted NO Pi events.
 						// If anything was emitted (start, partial text), retrying would duplicate output.
 						if (!firstAttemptResult.emittedAny) {
-							lastAttemptResult = await runClaudeInvocation(baseArgs, { kind: "resume", sessionId }, stream, output, options);
+							lastAttemptResult = await runClaudeInvocation(baseArgs, { kind: "session-id", sessionId }, stream, output, options);
 						} else {
 							// Something was already emitted; surface the original error instead of risking duplication
 							throw firstAttemptResult.error;
 						}
 					} else {
-						// Not an "already in use" error; surface it
+						// Not a retryable error; surface it
 						throw firstAttemptResult.error;
 					}
 				} else {
