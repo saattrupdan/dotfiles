@@ -61,6 +61,56 @@ import { createAssistantMessageEventStream } from "@earendil-works/pi-ai/compat"
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { spawn } from "child_process";
 import { createHash } from "crypto";
+import { v4 as uuidv4 } from "uuid";
+
+/** Regex for zero-shot tool call pattern: TOOL_CALL_START{...}TOOL_CALL_END */
+const TOOL_CALL_PATTERN = /TOOL_CALL_START\s*(\{[^}]+\})\s*TOOL_CALL_END/g;
+
+/** Parse text for tool call patterns and return segments (text/toolCall) */
+function parseTextWithToolCalls(text: string): Array<{ type: "text"; content: string } | { type: "toolCall"; toolCall: ToolCall }> {
+	const segments: Array<{ type: "text"; content: string } | { type: "toolCall"; toolCall: ToolCall }> = [];
+	let lastIndex = 0;
+	let match: RegExpExecArray | null;
+
+	while ((match = TOOL_CALL_PATTERN.exec(text)) !== null) {
+		// Add text before the tool call
+		if (match.index > lastIndex) {
+			const textBefore = text.slice(lastIndex, match.index);
+			if (textBefore.trim()) {
+				segments.push({ type: "text", content: textBefore });
+			}
+		}
+
+		// Parse the tool call JSON
+		try {
+			const toolData = JSON.parse(match[1]) as { name: string; arguments: Record<string, unknown> };
+			segments.push({
+				type: "toolCall",
+				toolCall: {
+					type: "toolCall",
+					id: uuidv4(),
+					name: toolData.name,
+					arguments: toolData.arguments || {},
+				},
+			});
+		} catch {
+			// Invalid JSON, treat as text
+			segments.push({ type: "text", content: match[0] });
+		}
+
+		lastIndex = match.index + match[0].length;
+	}
+
+	// Add remaining text after last tool call
+	if (lastIndex < text.length) {
+		const textAfter = text.slice(lastIndex);
+		if (textAfter.trim()) {
+			segments.push({ type: "text", content: textAfter });
+		}
+	}
+
+	return segments;
+}
 
 type ProviderConfig = Parameters<ExtensionAPI["registerProvider"]>[1];
 
@@ -247,7 +297,7 @@ function buildSystemPromptWithTools(basePrompt: string | undefined, tools: Tool[
 			return `- **${tool.name}**: ${tool.description}\n  Parameters: ${params}`;
 		}).join("\n");
 
-		sections.push(`## Available Tools\n\nYou have access to the following Pi tools. Call them using the tool name with the specified parameters:\n\n${toolDefinitions}`);
+		sections.push(`## Available Tools\n\nYou have access to the following Pi tools. To call a tool, use this exact JSON format on its own line:\n\nTOOL_CALL_START\n{"name": "toolName", "arguments": {"arg1": "value1"}}\nTOOL_CALL_END\n\nExample:\nTOOL_CALL_START\n{"name": "read", "arguments": {"path": "file.txt"}}\nTOOL_CALL_END\n\nAfter calling a tool, wait for the result before continuing.\n\n## Tool Definitions\n${toolDefinitions}`);
 	}
 
 	return sections.join("\n\n---\n\n");
@@ -401,6 +451,8 @@ async function runClaudeInvocation(
 	];
 
 	const blockMappings: Map<number, ContentBlockMapping> = new Map();
+	// Buffer for detecting tool calls in text - keyed by claude block index
+	const textBuffers: Map<number, string> = new Map();
 	const state = {
 		emittedText: false, // Track if any actual text deltas were emitted
 		resultEvent: null as ClaudeCodeResultEvent | null,
@@ -463,6 +515,7 @@ async function runClaudeInvocation(
 						state.emittedAny = true;
 						output.content.push({ type: "text", text: "" });
 						blockMappings.set(claudeIndex, { claudeIndex, piIndex, type: "text", text: "" });
+						textBuffers.set(claudeIndex, "");
 						stream.push({ type: "text_start", contentIndex: piIndex, partial: output });
 					}
 					return;
@@ -471,6 +524,11 @@ async function runClaudeInvocation(
 				if (event.type === "content_block_delta") {
 					const mapping = blockMappings.get(event.index);
 					if (mapping && mapping.type === "text" && event.delta.type === "text_delta") {
+						// Accumulate text in buffer
+						const currentBuffer = textBuffers.get(event.index) || "";
+						const newText = currentBuffer + event.delta.text;
+						textBuffers.set(event.index, newText);
+
 						const textBlock = output.content[mapping.piIndex] as TextContent;
 						textBlock.text += event.delta.text;
 						mapping.text += event.delta.text;
@@ -486,8 +544,42 @@ async function runClaudeInvocation(
 				if (event.type === "content_block_stop") {
 					const mapping = blockMappings.get(event.index);
 					if (mapping && mapping.type === "text") {
-						stream.push({ type: "text_end", contentIndex: mapping.piIndex, content: mapping.text, partial: output });
+						// Check for tool call patterns in the accumulated text
+						const finalText = textBuffers.get(event.index) || mapping.text;
+						const segments = parseTextWithToolCalls(finalText);
+
+						if (segments.length === 1 && segments[0].type === "text") {
+							// No tool calls detected - emit as normal text
+							stream.push({ type: "text_end", contentIndex: mapping.piIndex, content: mapping.text, partial: output });
+						} else {
+							// Tool calls detected - emit structured events
+							// Clear the text block we started and replace with proper content
+							output.content.splice(mapping.piIndex, 1); // Remove the placeholder text block
+
+							let currentPiIndex = mapping.piIndex;
+							for (const segment of segments) {
+								if (segment.type === "text") {
+									if (segment.content.trim()) {
+										output.content.splice(currentPiIndex, 0, { type: "text", text: segment.content });
+										stream.push({ type: "text_start", contentIndex: currentPiIndex, partial: output });
+										stream.push({ type: "text_delta", contentIndex: currentPiIndex, delta: segment.content, partial: output });
+										stream.push({ type: "text_end", contentIndex: currentPiIndex, content: segment.content, partial: output });
+										currentPiIndex++;
+									}
+								} else if (segment.type === "toolCall") {
+									output.content.splice(currentPiIndex, 0, segment.toolCall);
+									stream.push({ type: "toolcall_start", contentIndex: currentPiIndex, partial: output });
+									stream.push({ type: "toolcall_delta", contentIndex: currentPiIndex, delta: JSON.stringify(segment.toolCall.arguments), partial: output });
+									stream.push({ type: "toolcall_end", contentIndex: currentPiIndex, toolCall: segment.toolCall, partial: output });
+									currentPiIndex++;
+								}
+							}
+
+							state.emittedText = true; // Mark that we emitted content
+						}
+
 						blockMappings.delete(event.index);
+						textBuffers.delete(event.index);
 					}
 					return;
 				}
