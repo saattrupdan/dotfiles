@@ -6,7 +6,6 @@ model:
   - llamacpp/qwopus-35b
 tools: search, read, write, edit, skill, bash, memory_index, memory_read, memory_suggest, question
 skills: [commit, python, fastapi, vue, sqlmodel, full-stack, slides, agent-browser]
-extensions: [claude-code-provider]
 worktree: true
 refuse:
   - pattern: "```[\\s\\S]{1500,}```"

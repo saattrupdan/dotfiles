@@ -395,13 +395,9 @@ interface CurrentModel {
 	id: string;
 }
 
-function modelToCliPattern(model: CurrentModel | undefined, thinking?: string): string | undefined {
+function modelToCliPattern(model: CurrentModel | undefined): string | undefined {
 	if (!model) return undefined;
-	const base = `${model.provider}/${model.id}`;
-	// Default to 'high' thinking for reasoning models if not explicitly set
-	// This ensures subagents work even when parent session has thinking disabled
-	const effectiveThinking = thinking && thinking !== "off" ? thinking : "high";
-	return `${base}:${effectiveThinking}`;
+	return `${model.provider}/${model.id}`;
 }
 
 function normalizeRequestedModel(model: string | undefined): string | undefined {
@@ -629,98 +625,50 @@ async function runSingleAgent(
 		}
 	}
 
-	// Extension discovery and loading.
+	// Extension scoping.
 	//
-	// Child pi accepts `--extension <path>` (repeatable; takes a path to an
-	// extension directory containing an index.ts entry point) plus
-	// `--no-extensions` to disable default discovery from
-	// `~/.pi/agent/extensions`. There is no `PI_EXTENSION_PATHS` env var;
-	// the CLI flags are the supported surface.
+	// Child pi accepts `--extension <path>` (repeatable) plus `--no-extensions`
+	// to disable its own native discovery from `~/.pi/agent/extensions` (and the
+	// project `.pi/extensions`).
 	//
 	// Allow-list semantics (see agents.ts AgentConfig.extensions):
-	//   undefined  → auto-discover all extensions from standard locations.
-	//   []         → strict empty allow-list; child sees no extensions.
-	//   ["a","b"]  → only those extensions (from user + project dirs based on agentScope).
-	const scope = agentScope ?? "user";
+	//   undefined  → no flags; let the child discover extensions natively, exactly
+	//                like a normal pi session. We must NOT enumerate every dir and
+	//                pass it via --extension while leaving native discovery on —
+	//                that double-registers every tool and the child aborts at
+	//                startup ("Tool <x> conflicts").
+	//   []         → strict empty allow-list; `--no-extensions`, child sees none.
+	//   ["a","b"]  → `--no-extensions`, then load only those via --extension.
 	const hasExtAllowList = agent.extensions !== undefined;
-	const isEmptyExtAllowList = hasExtAllowList && agent.extensions!.length === 0;
-
-	if (isEmptyExtAllowList) {
-		// Explicit empty allow-list: disable all extensions
+	if (hasExtAllowList) {
 		baseArgs.push("--no-extensions");
-	} else {
-		// Auto-discover extensions from standard locations (when no allow-list)
-		// or load specific extensions (when allow-list is present)
-		const effectiveExtensions = hasExtAllowList ? agent.extensions! : null;
 
-		// User extensions dir: ~/.pi/agent/extensions/
+		const scope = agentScope ?? "user";
 		const userExtensionsRoot = path.join(getAgentDir(), "extensions");
-
-		// Project extensions dir: .pi/extensions/ (only if agentScope is 'project' or 'both')
 		const projectAgentsDir = findNearestProjectAgentsDir(defaultCwd);
 		const projectExtensionsRoot =
 			scope === "project" || scope === "both" ? projectAgentsDir?.replace(/\/agents$/, "/extensions") ?? null : null;
 
-		// Disable default discovery when using an allow-list
-		if (hasExtAllowList) {
-			baseArgs.push("--no-extensions");
-		}
+		for (const name of agent.extensions!) {
+			let extensionPath: string | null = null;
 
-		// Build list of extension paths to load
-		if (effectiveExtensions) {
-			// Load specific extensions from allow-list
-			for (const name of effectiveExtensions) {
-				let extensionPath: string | null = null;
-
-				// Check user extensions dir first
-				if (userExtensionsRoot) {
-					const userExtDir = path.join(userExtensionsRoot, name);
-					const userExtIndex = path.join(userExtDir, "index.ts");
-					if (fs.existsSync(userExtIndex)) {
-						extensionPath = userExtDir;
-					}
-				}
-
-				// Check project extensions dir if not found in user dir
-				if (!extensionPath && projectExtensionsRoot) {
-					const projExtDir = path.join(projectExtensionsRoot, name);
-					const projExtIndex = path.join(projExtDir, "index.ts");
-					if (fs.existsSync(projExtIndex)) {
-						extensionPath = projExtDir;
-					}
-				}
-
-				if (extensionPath) {
-					baseArgs.push("--extension", extensionPath);
-				} else {
-					console.error(
-						`subagent: extension "${name}" not found (no index.ts in user or project dir); skipping for agent "${agent.name}".`,
-					);
-				}
-			}
-		} else {
-			// Auto-discover all extensions from standard locations
-			// User extensions
-			if (userExtensionsRoot && fs.existsSync(userExtensionsRoot)) {
-				for (const entry of fs.readdirSync(userExtensionsRoot)) {
-					const extDir = path.join(userExtensionsRoot, entry);
-					const extIndex = path.join(extDir, "index.ts");
-					if (fs.statSync(extDir).isDirectory() && fs.existsSync(extIndex)) {
-						// Skip extension if it's in project dir and scope doesn't include project
-						baseArgs.push("--extension", extDir);
-					}
+			// Check user extensions dir first, then project dir.
+			const userExtDir = path.join(userExtensionsRoot, name);
+			if (fs.existsSync(path.join(userExtDir, "index.ts"))) {
+				extensionPath = userExtDir;
+			} else if (projectExtensionsRoot) {
+				const projExtDir = path.join(projectExtensionsRoot, name);
+				if (fs.existsSync(path.join(projExtDir, "index.ts"))) {
+					extensionPath = projExtDir;
 				}
 			}
 
-			// Project extensions (only if scope includes project)
-			if (projectExtensionsRoot && fs.existsSync(projectExtensionsRoot)) {
-				for (const entry of fs.readdirSync(projectExtensionsRoot)) {
-					const extDir = path.join(projectExtensionsRoot, entry);
-					const extIndex = path.join(extDir, "index.ts");
-					if (fs.statSync(extDir).isDirectory() && fs.existsSync(extIndex)) {
-						baseArgs.push("--extension", extDir);
-					}
-				}
+			if (extensionPath) {
+				baseArgs.push("--extension", extensionPath);
+			} else {
+				console.error(
+					`subagent: extension "${name}" not found (no index.ts in user or project dir); skipping for agent "${agent.name}".`,
+				);
 			}
 		}
 	}
@@ -1224,7 +1172,7 @@ export default function (pi: ExtensionAPI) {
 			const discovery = discoverAgents(ctx.cwd, agentScope);
 			const agents = discovery.agents;
 			const confirmProjectAgents = params.confirmProjectAgents ?? true;
-			const sessionModel = modelToCliPattern(ctx.model, pi.getThinkingLevel());
+			const sessionModel = modelToCliPattern(ctx.model);
 
 			// Builds the per-call question fulfiller used when a child subagent
 			// emits a PI_QUESTION_REQUEST: defers to ctx.ui in the orchestrator,
