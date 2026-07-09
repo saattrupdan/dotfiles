@@ -19,37 +19,49 @@ Provides Claude Code CLI as a Pi provider backend.
 
 ## Session Strategy
 
-The extension generates a **session ID per Pi session** using:
+The extension generates a **Claude Code session ID per Pi conversation** using the
+provider context available to `streamSimple`:
 
-1. **Pi session file path** (primary) or `sessionId` (fallback) — not PID
-2. **Process-start random salt** — prevents collisions when PIDs are reused
-3. **SHA256 hash** → UUID v4 format
+1. First user message timestamp and content hash
+2. Current working directory
+3. SHA256 hash → UUID v4-shaped string
 
+```text
+<uuid-v4-format-derived-from-first-user-message+cwd>
 ```
-<uuid-v4-format-derived-from-session-file+cwd+salt>
-```
+
+`streamSimple` receives `pi-ai`'s provider `Context`, not Pi's
+`ExtensionContext`, so it cannot read `ctx.sessionManager` or the Pi session file.
+Keying from the first user message isolates `/new` sessions while still allowing
+`pi --continue` to reuse the same Claude Code session when Pi preserves the saved
+message timestamps.
 
 This ensures:
 
-- **Different Pi sessions get different session IDs** — keyed to session file, not process
-- **Parent process and subagents share the same Pi session ID** — same session file
-- **Different working directories get different session IDs** — cwd mixed into hash
-- **Process restarts with same Pi session get same ID** — session file unchanged
-- **Process-start salt prevents PID reuse attacks** — fresh salt each module load
-- **Concurrent calls with same session ID are serialised** — mutex queue prevents conflicts
+- **Different `/new` sessions get different IDs** — the first user message changes
+- **Different working directories get different IDs** — cwd is mixed into the hash
+- **Process restarts can reuse the same ID** — no PID or process salt is required
+- **Concurrent calls with the same ID are serialised** — a mutex queue prevents
+  active-session conflicts
 
 ### Continuity Limits
 
-**Important:** Conversation continuity is **limited to the current Pi session**:
+**Important:** Claude Code continuity only exists after this provider has handled a
+turn for the derived session ID:
 
-- ✅ **Same Pi session, multiple turns** — Claude Code retains history
-- ✅ **Subagents in same Pi session** — share Claude Code session via same session file
-- ❌ **Provider switch** — switching to a different provider breaks continuity
-- ❌ **`pi --continue` in new process** — if it loads a different Pi session file, new Claude Code session
-- ❌ **`/new` or session switch** — new Pi session file = fresh Claude Code session
-- ❌ **Previous Pi session history** — not sent to Claude Code (only latest message per turn)
+- ✅ **Same Pi conversation, multiple Claude Code turns** — Claude Code retains
+  history
+- ✅ **`pi --continue` with preserved message timestamps** — derives the same ID
+- ❌ **Provider switch before Claude Code has seen the conversation** — old Pi
+  history is not replayed
+- ❌ **`/new` or session switch** — new first user message = fresh Claude Code
+  session
+- ❌ **Previous Pi history not already in Claude Code** — only the latest user
+  message is sent per turn
 
-The extension does **not** attempt to replay full Pi conversation history to Claude Code. It sends only the latest user message per turn, relying on Claude Code's session storage for continuity within the same active session.
+The extension does **not** replay full Pi conversation history to Claude Code on
+every turn. It sends only the latest user message, relying on Claude Code's session
+storage for continuity after the first provider-handled turn.
 
 ## Models
 
@@ -97,12 +109,13 @@ Nonzero exit codes from Claude Code CLI are treated as errors. JSON error output
 
 ### Session Management
 
-- Session ID is keyed to Pi session file path (not PID)
-- Process-start random salt prevents PID reuse collisions
+- Session ID is keyed to the first user message and cwd, not PID
 - Per-session mutex queue serialises concurrent calls
-- Claude Code maintains conversation history in its session storage (`~/.claude/` by default)
+- Claude Code maintains conversation history in its session storage (`~/.claude/` by
+  default)
 - Only the latest user message is sent per turn (not full Pi history)
-- Continuity limited to current Pi session — provider switches or session changes break continuity
+- Continuity is limited to turns Claude Code has already handled for the derived
+  session ID
 
 ## Requirements
 

@@ -7,26 +7,28 @@
  * Features:
  * - Uses Claude Code's native session mechanism for conversation continuity
  * - System prompt passed via --system-prompt only (not duplicated in prompt)
- * - Session ID keyed to Pi session file (isolated across Pi sessions, subagents, parallel calls)
- * - Process-start random salt prevents PID reuse collisions
+ * - Session ID keyed to the Pi conversation's first user message and cwd
  * - Per-session mutex queue prevents concurrent session ID conflicts
  * - Model selection via --model
  * - --dangerously-skip-permissions enabled
  * - No Pi tool descriptions passed (Claude Code has its own tools)
  *
  * Session strategy:
- * - Session ID is keyed to Pi session file path (ctx.sessionManager.getSessionFile())
- * - Falls back to sessionId if sessionFile unavailable
- * - Process-start salt mixed in to prevent PID reuse collisions
- * - Per-session mutex queue serialises concurrent calls sharing the same session ID
- * - Claude Code maintains conversation history in its session storage
- * - Only the latest user message is sent per turn (not full Pi conversation history)
+ * - Provider streams receive pi-ai Context, not ExtensionContext, so no Pi session
+ *   manager is available here.
+ * - Session ID is keyed to the first user message timestamp/content plus cwd.
+ * - Per-session mutex queue serialises concurrent calls sharing the same session ID.
+ * - Claude Code maintains conversation history in its session storage.
+ * - Only the latest user message is sent per turn (not full Pi conversation history).
  *
  * Continuity limits:
- * - Only turns handled by this provider in the same active Pi session are retained
- * - Provider switches (e.g. to a different model provider) break continuity
- * - `pi --continue` that spawns a new process gets a new session (no cross-process persistence)
- * - Pi session switch (/new or session change) gets a fresh Claude Code session
+ * - Only turns handled by this provider for the same Pi conversation are retained.
+ * - Provider switches only preserve context after Claude Code has seen an earlier turn
+ *   for the same conversation-derived session ID.
+ * - `pi --continue` can reuse Claude Code context when Pi preserves the original
+ *   first user message timestamp/content.
+ * - `/new` or session changes get fresh Claude Code sessions because the first user
+ *   message changes.
  *
  * Usage:
  *   pi -e ./extensions/claude-code-provider
@@ -48,29 +50,20 @@ import type {
 	ThinkingContent,
 } from "@earendil-works/pi-ai";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai/compat";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { spawn } from "child_process";
-import { createHash, randomBytes } from "crypto";
+import { createHash } from "crypto";
+
+type ProviderConfig = Parameters<ExtensionAPI["registerProvider"]>[1];
 
 /**
- * Process-start random salt to prevent PID reuse collisions.
- * Generated once when the module is loaded.
- */
-const PROCESS_START_SALT = randomBytes(16).toString("hex");
-
-/**
- * Generate a deterministic UUID v4 from Pi session identity + process salt.
- * Uses first 16 bytes of SHA256 hash, then sets version/variant bits per RFC 4122.
- * - Byte 6, high nibble: 0100 = version 4
- * - Byte 8, high nibble: 10xx = variant (8, 9, a, or b)
+ * Generate a deterministic UUID-shaped Claude Code session ID.
  *
- * @param sessionIdentity - Pi session file path or sessionId
- * @param cwd - Current working directory
- * @returns UUID v4 string
+ * Claude Code validates `--session-id` as a UUID. We use the first 16 bytes of a
+ * SHA256 hash, then set RFC 4122 version/variant bits.
  */
-function generateSessionUUID(sessionIdentity: string, cwd: string): string {
-	// Mix in process-start salt to prevent PID reuse collisions
-	const hash = createHash("sha256").update(`${sessionIdentity}:${cwd}:${PROCESS_START_SALT}`).digest("hex");
+function generateSessionUUID(conversationIdentity: string, cwd: string): string {
+	const hash = createHash("sha256").update(`${conversationIdentity}:${cwd}`).digest("hex");
 	// Take first 32 hex chars (16 bytes) and format as UUID
 	let uuid =
 		hash.slice(0, 8) +
@@ -185,11 +178,9 @@ function extractTextFromContent(
 					case "image":
 						return "[Image]";
 					case "thinking":
-					case "redacted_thinking":
 						return item.thinking || "";
-					case "tool_use":
-					case "tool_use_block":
-						return `[Tool: ${(item as ToolCall & { name?: string; input?: unknown }).name || "unknown"}]`;
+					case "toolCall":
+						return `[Tool: ${item.name || "unknown"}]`;
 					default:
 						return "";
 				}
@@ -242,18 +233,25 @@ function isClaudeCodeUsage(value: ClaudeCodeUsage | Record<string, ClaudeCodeUsa
 
 /**
  * Get a session identity string from the extension context.
- * Keys to Pi session file (preferred) or sessionId as fallback.
- * Never uses PID alone to avoid session boundary leaks.
+ * Uses the first user message as a stable conversation boundary without sending
+ * full history to Claude Code on every turn.
  */
-function getSessionIdentity(ctx: ExtensionContext): string {
-	// Prefer session file path - this uniquely identifies a Pi session
-	const sessionFile = ctx.sessionManager.getSessionFile();
-	if (sessionFile) {
-		return sessionFile;
+function getConversationIdentity(context: Context): string {
+	const firstUser = context.messages.find((msg) => msg.role === "user");
+	if (!firstUser) {
+		return `empty:${process.pid}:${Date.now()}`;
 	}
-	
-	// Fallback to sessionId if sessionFile unavailable
-	return ctx.sessionManager.getSessionId() || `unknown-session-${process.pid}`;
+
+	const content = typeof firstUser.content === "string"
+		? firstUser.content
+		: extractTextFromContent(firstUser.content);
+	const contentHash = createHash("sha256")
+		.update(content)
+		.update(context.systemPrompt || "")
+		.digest("hex")
+		.slice(0, 16);
+
+	return `first-user:${firstUser.timestamp}:${contentHash}`;
 }
 
 /**
@@ -288,13 +286,12 @@ function streamClaudeCode(
 		};
 
 		try {
-			// Generate session UUID from Pi session identity (not PID)
-			const sessionIdentity = getSessionIdentity(context);
-			const sessionId = generateSessionUUID(sessionIdentity, process.cwd());
+			const conversationIdentity = getConversationIdentity(context);
+			const sessionId = generateSessionUUID(conversationIdentity, process.cwd());
 
 			// Acquire mutex to prevent concurrent session ID conflicts
 			const releaseMutex = await acquireSessionMutex(sessionId);
-			
+
 			try {
 				// Extract only the last user message - Claude Code maintains conversation history in session
 				const prompt = getLastUserMessage(context.messages);
@@ -384,22 +381,19 @@ function streamClaudeCode(
 					}
 				});
 
-				// Check for errors - nonzero exit with no stdout is an error
+				// Check for errors before parsing normal output.
 				if (result.code !== 0) {
-					const errorMsg = result.stderr || `claude exited with code ${result.code}`;
-					// Check if stdout contains JSON error output
+					const fallback = result.stderr || `claude exited with code ${result.code}`;
+					let message = fallback;
 					if (result.stdout) {
 						try {
-							const errorJson = JSON.parse(result.stdout);
-							// Claude Code may output error details in JSON format
-							throw new Error(`Claude Code error (exit ${result.code}): ${errorJson.error || errorMsg}`);
-						} catch (parseErr) {
-							// Not valid JSON, treat stderr as error message
-							throw new Error(errorMsg);
+							const errorJson = JSON.parse(result.stdout) as { error?: unknown; message?: unknown };
+							message = String(errorJson.error || errorJson.message || fallback);
+						} catch {
+							// Keep stderr/exit-code fallback when stdout is not JSON.
 						}
-					} else {
-						throw new Error(errorMsg);
 					}
+					throw new Error(`Claude Code error (exit ${result.code}): ${message}`);
 				}
 
 				// Parse JSON output
@@ -488,8 +482,52 @@ function streamClaudeCode(
 
 export default function (pi: ExtensionAPI) {
 	pi.registerProvider("claude-code", {
-		name: "Claude Code",
+		name: "Claude Code CLI",
+		baseUrl: "cli://claude-code",
+		apiKey: "claude-code-cli",
 		api: CLAUDE_CODE_API,
-		streamSimple: (model, context, options) => streamClaudeCode(model, context, options),
+		models: [
+			{
+				id: "claude-sonnet-5",
+				name: "Claude Sonnet 5 (Claude Code)",
+				api: CLAUDE_CODE_API,
+				reasoning: true,
+				input: ["text", "image"],
+				cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+				contextWindow: 1000000,
+				maxTokens: 128000,
+			},
+			{
+				id: "claude-opus-4-8",
+				name: "Claude Opus 4.8 (Claude Code)",
+				api: CLAUDE_CODE_API,
+				reasoning: true,
+				input: ["text", "image"],
+				cost: { input: 15, output: 75, cacheRead: 1.5, cacheWrite: 18.75 },
+				contextWindow: 1000000,
+				maxTokens: 128000,
+			},
+			{
+				id: "claude-fable-5",
+				name: "Claude Fable 5 (Claude Code)",
+				api: CLAUDE_CODE_API,
+				reasoning: true,
+				input: ["text", "image"],
+				cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+				contextWindow: 1000000,
+				maxTokens: 128000,
+			},
+			{
+				id: "claude-haiku-4-5-20251001",
+				name: "Claude Haiku 4.5 (Claude Code)",
+				api: CLAUDE_CODE_API,
+				reasoning: true,
+				input: ["text", "image"],
+				cost: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
+				contextWindow: 200000,
+				maxTokens: 32000,
+			},
+		],
+		streamSimple: streamClaudeCode as unknown as ProviderConfig["streamSimple"],
 	});
 }
