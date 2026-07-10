@@ -191,6 +191,7 @@ interface ClaudeCodeResultEvent {
 	total_cost_usd?: number;
 	is_error?: boolean;
 	error?: string;
+	errors?: string[];
 }
 
 interface ClaudeCodeContentBlockStartEvent {
@@ -504,6 +505,7 @@ async function runClaudeInvocation(
 		const proc = spawn("claude", invocationArgs, {
 			cwd: process.cwd(),
 			env: process.env,
+			stdio: ["ignore", "pipe", "pipe"],
 		});
 
 		let stdoutBuffer = "";
@@ -832,8 +834,11 @@ async function runClaudeInvocation(
 					output.stopReason = data.stop_reason === "end_turn" ? "stop" : data.stop_reason === "max_tokens" ? "length" : "stop";
 				}
 
-				if (data.is_error || data.error) {
-					invocationError = new Error(`Claude Code error: ${data.error || "Unknown error"}`);
+				if (data.is_error || data.error || (Array.isArray(data.errors) && data.errors.length > 0)) {
+					const errorDetails = [data.error, ...(data.errors ?? []), data.is_error ? data.result : undefined]
+						.filter((error): error is string => typeof error === "string" && error.length > 0)
+						.join("\n");
+					invocationError = new Error(`Claude Code error: ${errorDetails || "Unknown error"}`);
 					// Don't reject here - caller needs to inspect emittedAny/emittedText state
 				}
 			}
@@ -874,8 +879,16 @@ async function runClaudeInvocation(
 			}
 
 			if (code !== 0 && !settled) {
-				// Capture error but don't reject - caller needs state to decide retry
-				invocationError = new Error(`Claude Code error (exit ${code}): ${stderr || `exit code ${code}`}`);
+				// Capture error but don't reject - caller needs state to decide retry.
+				// Claude Code can emit structured result errors on stdout while stderr is empty.
+				const stderrText = stderr.trim();
+				if (invocationError) {
+					if (stderrText) {
+						invocationError = new Error(`${invocationError.message}\n${stderrText}`);
+					}
+				} else {
+					invocationError = new Error(`Claude Code error (exit ${code}): ${stderrText || `exit code ${code}`}`);
+				}
 			}
 
 			succeed();
