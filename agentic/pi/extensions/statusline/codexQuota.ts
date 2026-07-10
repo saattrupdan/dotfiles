@@ -330,6 +330,12 @@ export function bucketRemainingPercent(bucket: QuotaBucket): number | undefined 
 	return undefined;
 }
 
+/** Percent of the quota that has been USED (0% = untouched, 100% = exhausted). */
+export function bucketUsedPercent(bucket: QuotaBucket): number | undefined {
+	const remaining = bucketRemainingPercent(bucket);
+	return remaining === undefined ? undefined : 100 - remaining;
+}
+
 function clampPercent(percent: number): number {
 	return Math.max(0, Math.min(100, percent));
 }

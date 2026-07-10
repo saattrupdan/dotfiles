@@ -11,7 +11,7 @@
  * rollout files, so Codex bars are refreshed by making a minimal request of our
  * own. Claude Code exposes the same subscription percentages through `/usage`.
  *
- * Quota bars show "remaining" (not used): 100% when full, counting down.
+ * Quota bars show "used" (not remaining): 0% when untouched, filling up as you consume it.
  * Colors: green > 50%, yellow 20-50%, red < 20%.
  */
 
@@ -24,7 +24,7 @@ import { truncateToWidth } from "@earendil-works/pi-tui";
 import { mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname } from "path";
 import {
-	bucketRemainingPercent,
+	bucketUsedPercent,
 	fetchClaudeQuotaFromCli,
 	fetchCodexQuotaFromApi,
 	type CodexQuota,
@@ -305,14 +305,14 @@ function formatQuotaBucket(
 	label: string,
 	bucket: QuotaBucket,
 ): string | undefined {
-	// Use "remaining" percent for the bar (100% = full, 0% = empty)
-	const remainingPercent = bucketRemainingPercent(bucket);
-	if (remainingPercent === undefined && bucket.resetAt === undefined) return undefined;
+	// Use "used" percent for the bar (0% = untouched, 100% = exhausted)
+	const usedPercent = bucketUsedPercent(bucket);
+	if (usedPercent === undefined && bucket.resetAt === undefined) return undefined;
 
-	// Build the bar showing REMAINING quota (not used)
-	let text = `${theme.fg("muted", label)} ${quotaBar(remainingPercent, theme)}`;
-	if (remainingPercent !== undefined) {
-		text += ` ${theme.fg("dim", `${Math.round(remainingPercent)}%`)}`;
+	// Build the bar showing USED quota (fills up as you consume it)
+	let text = `${theme.fg("muted", label)} ${quotaBar(usedPercent, theme)}`;
+	if (usedPercent !== undefined) {
+		text += ` ${theme.fg("dim", `${Math.round(usedPercent)}%`)}`;
 	}
 
 	// Add reset time
@@ -381,8 +381,8 @@ function progressBar(
 }
 
 /**
- * Progress bar for quota remaining (goes DOWN as you use more).
- * Colors: green >50% remaining, yellow 20-50%, red <20%.
+ * Progress bar for quota used (goes UP as you use more).
+ * Colors: green <50% used, yellow 50-80%, red >80%.
  */
 function quotaBar(
 	percent: number | undefined,
@@ -394,12 +394,12 @@ function quotaBar(
 	const clamped = Math.max(0, Math.min(100, percent));
 	const filled = Math.round((clamped / 100) * BAR_WIDTH);
 
-	// Color based on REMAINING percentage:
-	// Green >50%, yellow 20-50%, red <20%
+	// Color based on USED percentage:
+	// Green <50%, yellow 50-80%, red >80%
 	let colorCode: string;
-	if (clamped >= 50) {
+	if (clamped <= 50) {
 		colorCode = COLOR_GREEN;
-	} else if (clamped >= 20) {
+	} else if (clamped <= 80) {
 		colorCode = COLOR_YELLOW;
 	} else {
 		colorCode = COLOR_RED;

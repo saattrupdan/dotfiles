@@ -13,17 +13,17 @@ Compact single-line footer for Pi showing model, context usage, and subscription
 
 ## Quota Bar Behavior
 
-Quota bars show **remaining** quota (not used):
-- `100%` = full quota available
-- `0%` = quota exhausted
+Quota bars show **used** quota (not remaining):
+- `0%` = quota untouched
+- `100%` = quota exhausted
 
 ### Colors
 
-| Remaining | Color |
-|-----------|-------|
-| > 50%     | Green |
-| 20–50%    | Yellow |
-| < 20%     | Red |
+| Used   | Color |
+|--------|-------|
+| < 50%  | Green |
+| 50–80% | Yellow |
+| > 80%  | Red |
 
 ### Reset Times
 
