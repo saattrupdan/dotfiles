@@ -66,60 +66,35 @@ const TOOL_CALL_END_MARKER = "TOOL_CALL_END";
 /** Parse text for tool call patterns and return segments (text/toolCall)
  * Does simple string matching instead of regex to avoid statefulness issues.
  */
-function parseTextWithToolCalls(text: string): Array<{ type: "text"; content: string } | { type: "toolCall"; toolCall: ToolCall }> {
-	const segments: Array<{ type: "text"; content: string } | { type: "toolCall"; toolCall: ToolCall }> = [];
-	let remainingText = text;
-
-	while (true) {
-		const startIndex = remainingText.indexOf(TOOL_CALL_START_MARKER);
-		if (startIndex === -1) {
-			// No more tool calls, add remaining text
-			if (remainingText.trim()) {
-				segments.push({ type: "text", content: remainingText });
-			}
-			break;
+/**
+ * Compute the longest suffix of `pending` that is a proper prefix of `marker`.
+ * This is the boundary-safe hold-back to avoid splitting a marker across chunks.
+ * Returns the suffix to keep in pending (may be empty if no partial match).
+ */
+function computeBoundarySafeSuffix(pending: string, marker: string): string {
+	// Find the longest proper prefix of marker that is a suffix of pending
+	for (let len = Math.min(marker.length - 1, pending.length); len > 0; len--) {
+		if (marker.startsWith(pending.slice(-len))) {
+			return pending.slice(-len);
 		}
-
-		// Add text before the tool call
-		const textBefore = remainingText.slice(0, startIndex);
-		if (textBefore.trim()) {
-			segments.push({ type: "text", content: textBefore });
-		}
-
-		// Find the end marker
-		const afterStartMarker = remainingText.slice(startIndex + TOOL_CALL_START_MARKER.length);
-		const endIndex = afterStartMarker.indexOf(TOOL_CALL_END_MARKER);
-
-		if (endIndex === -1) {
-			// No end marker found, treat rest as text
-			segments.push({ type: "text", content: remainingText });
-			break;
-		}
-
-		// Extract JSON between markers
-		const jsonText = afterStartMarker.slice(0, endIndex).trim();
-		
-		try {
-			const toolData = JSON.parse(jsonText) as { name: string; arguments: Record<string, unknown> };
-			segments.push({
-				type: "toolCall",
-				toolCall: {
-					type: "toolCall",
-					id: uuidv4(),
-					name: toolData.name,
-					arguments: toolData.arguments || {},
-				},
-			});
-		} catch {
-			// Invalid JSON, treat the whole thing as text
-			segments.push({ type: "text", content: remainingText.slice(startIndex, startIndex + TOOL_CALL_START_MARKER.length + endIndex + TOOL_CALL_END_MARKER.length) });
-		}
-
-		// Move past this tool call
-		remainingText = afterStartMarker.slice(endIndex + TOOL_CALL_END_MARKER.length);
 	}
+	return '';
+}
 
-	return segments;
+/**
+ * Try to parse tool call JSON from the text between markers.
+ * Returns { name, arguments } on success, null on failure.
+ */
+function tryParseToolCall(jsonText: string): { name: string; arguments: Record<string, unknown> } | null {
+	try {
+		const toolData = JSON.parse(jsonText.trim()) as { name: string; arguments?: Record<string, unknown> };
+		if (typeof toolData.name === 'string') {
+			return { name: toolData.name, arguments: toolData.arguments || {} };
+		}
+	} catch {
+		// Invalid JSON
+	}
+	return null;
 }
 
 type ProviderConfig = Parameters<ExtensionAPI["registerProvider"]>[1];
@@ -261,6 +236,21 @@ interface ContentBlockMapping {
 	text?: string;
 	toolCall?: ToolCall;
 	partialJson?: string;
+}
+
+/** Streaming state for a text block that may contain zero-shot tool calls */
+interface TextBlockStreamingState {
+	mode: 'text' | 'collectingJson';
+	pending: string; // Received-but-not-yet-classified text
+	textBlockOpen: boolean; // Whether a Pi text block is currently open
+	textBlockPiIndex?: number; // Pi index of the open text block
+	// When in collectingJson mode:
+	jsonAccumulator?: string; // Accumulated JSON string
+	toolcallStartEmitted?: boolean; // Whether toolcall_start has been emitted
+	toolCallPiIndex?: number; // Pi contentIndex of the tool call
+	toolCall?: ToolCall; // The tool call object
+	emittedText?: boolean; // Track if visible text was emitted
+	emittedAny?: boolean; // Track if anything was emitted
 }
 
 /** Parse a single JSONL line, returning null for incomplete/invalid lines */
@@ -499,8 +489,8 @@ async function runClaudeInvocation(
 	];
 
 	const blockMappings: Map<number, ContentBlockMapping> = new Map();
-	// Buffer for detecting tool calls in text - keyed by claude block index
-	const textBuffers: Map<number, string> = new Map();
+	// Streaming state for text blocks - keyed by claude block index
+	const textBlockStates: Map<number, TextBlockStreamingState> = new Map();
 	const state = {
 		emittedText: false, // Track if any actual text deltas were emitted
 		resultEvent: null as ClaudeCodeResultEvent | null,
@@ -560,11 +550,18 @@ async function runClaudeInvocation(
 					const blockType = event.content_block.type;
 					const piIndex = output.content.length;
 					if (blockType === "text") {
-						state.emittedAny = true;
-						output.content.push({ type: "text", text: "" });
+						// Don't emit text_start yet - wait until first visible character
+						// Initialize streaming state for incremental tool-call detection
+						textBlockStates.set(claudeIndex, {
+							mode: 'text',
+							pending: '',
+							textBlockOpen: false,
+							emittedText: false,
+							emittedAny: false,
+						});
+						// Don't create a placeholder text block yet - lazily create on first visible char
+						// But add a blockMapping so the delta handler can find this block
 						blockMappings.set(claudeIndex, { claudeIndex, piIndex, type: "text", text: "" });
-						textBuffers.set(claudeIndex, "");
-						stream.push({ type: "text_start", contentIndex: piIndex, partial: output });
 					} else if (blockType === "tool_use") {
 						// Handle tool_use blocks directly from Claude Code streaming
 						state.emittedAny = true;
@@ -585,20 +582,181 @@ async function runClaudeInvocation(
 				if (event.type === "content_block_delta") {
 					const mapping = blockMappings.get(event.index);
 					if (mapping && mapping.type === "text" && event.delta.type === "text_delta") {
-						// Accumulate text in buffer
-						const currentBuffer = textBuffers.get(event.index) || "";
-						const newText = currentBuffer + event.delta.text;
-						textBuffers.set(event.index, newText);
+						// Incremental streaming parser for zero-shot tool calls
+						const streamingState = textBlockStates.get(event.index);
+						if (!streamingState) return;
 
-						const textBlock = output.content[mapping.piIndex] as TextContent;
-						textBlock.text += event.delta.text;
-						mapping.text += event.delta.text;
-						state.emittedAny = true;
-						if (event.delta.text.length > 0) {
-							state.emittedText = true;
+						// Append new text to pending
+						streamingState.pending += event.delta.text;
+
+						// Consume pending in a loop
+						while (streamingState.pending.length > 0) {
+							if (streamingState.mode === 'text') {
+								const markerIndex = streamingState.pending.indexOf(TOOL_CALL_START_MARKER);
+								if (markerIndex !== -1) {
+									// Found start marker - emit text before it, then switch to collectingJson
+									const textBefore = streamingState.pending.slice(0, markerIndex);
+									if (textBefore.length > 0) {
+										// Lazily open text block on first visible character
+										if (!streamingState.textBlockOpen) {
+											const textPiIndex = output.content.length;
+											streamingState.textBlockPiIndex = textPiIndex;
+											output.content.push({ type: "text", text: "" });
+											streamingState.textBlockOpen = true;
+											stream.push({ type: "text_start", contentIndex: textPiIndex, partial: output });
+										}
+										const textBlock = output.content[streamingState.textBlockPiIndex!] as TextContent;
+										textBlock.text += textBefore;
+										streamingState.emittedText = true;
+										streamingState.emittedAny = true;
+										state.emittedText = true;
+										state.emittedAny = true;
+										stream.push({ type: "text_delta", contentIndex: streamingState.textBlockPiIndex!, delta: textBefore, partial: output });
+									}
+									// Close text block if open
+									if (streamingState.textBlockOpen) {
+										stream.push({ type: "text_end", contentIndex: streamingState.textBlockPiIndex!, content: output.content[streamingState.textBlockPiIndex!] as TextContent, partial: output });
+										streamingState.textBlockOpen = false;
+										streamingState.textBlockPiIndex = undefined;
+									}
+									// Remove up to and including start marker, switch mode
+									streamingState.pending = streamingState.pending.slice(markerIndex + TOOL_CALL_START_MARKER.length);
+									streamingState.mode = 'collectingJson';
+									streamingState.jsonAccumulator = '';
+									streamingState.toolcallStartEmitted = false;
+									streamingState.toolCallPiIndex = undefined;
+									streamingState.toolCall = undefined;
+									continue;
+								} else {
+									// No marker found - emit safe prefix, keep boundary-safe suffix
+									const suffix = computeBoundarySafeSuffix(streamingState.pending, TOOL_CALL_START_MARKER);
+									const safePrefix = streamingState.pending.slice(0, streamingState.pending.length - suffix.length);
+									if (safePrefix.length > 0) {
+										if (!streamingState.textBlockOpen) {
+											const textPiIndex = output.content.length;
+											streamingState.textBlockPiIndex = textPiIndex;
+											output.content.push({ type: "text", text: "" });
+											streamingState.textBlockOpen = true;
+											stream.push({ type: "text_start", contentIndex: textPiIndex, partial: output });
+										}
+										const textBlock = output.content[streamingState.textBlockPiIndex!] as TextContent;
+										textBlock.text += safePrefix;
+										streamingState.emittedText = true;
+										streamingState.emittedAny = true;
+										state.emittedText = true;
+										state.emittedAny = true;
+										stream.push({ type: "text_delta", contentIndex: streamingState.textBlockPiIndex!, delta: safePrefix, partial: output });
+									}
+									streamingState.pending = suffix;
+									break;
+								}
+							} else {
+								// collectingJson mode
+								const endIndex = streamingState.pending.indexOf(TOOL_CALL_END_MARKER);
+								if (endIndex !== -1) {
+									// Found end marker - parse and emit tool call
+									const jsonText = streamingState.pending.slice(0, endIndex);
+									const parsedToolCall = tryParseToolCall(jsonText);
+
+									if (parsedToolCall) {
+										// Ensure toolcall_start is emitted
+										if (!streamingState.toolcallStartEmitted) {
+											const toolPiIndex = output.content.length;
+											streamingState.toolCallPiIndex = toolPiIndex;
+											streamingState.toolCall = {
+												type: "toolCall",
+												id: uuidv4(),
+												name: parsedToolCall.name,
+												arguments: parsedToolCall.arguments,
+											};
+											output.content.push(streamingState.toolCall);
+											stream.push({ type: "toolcall_start", contentIndex: toolPiIndex, partial: output });
+											streamingState.toolcallStartEmitted = true;
+										}
+										// Update final arguments
+										streamingState.toolCall!.arguments = parsedToolCall.arguments;
+										// Emit toolcall_end
+										stream.push({ type: "toolcall_end", contentIndex: streamingState.toolCallPiIndex!, toolCall: streamingState.toolCall!, partial: output });
+										streamingState.emittedAny = true;
+										state.emittedText = true; // Tool call content counts as emitted content
+									} else {
+										// Parse failed - emit as visible text (fallback)
+										const fullSpan = TOOL_CALL_START_MARKER + jsonText + TOOL_CALL_END_MARKER;
+										if (!streamingState.textBlockOpen) {
+											const textPiIndex = output.content.length;
+											streamingState.textBlockPiIndex = textPiIndex;
+											output.content.push({ type: "text", text: "" });
+											streamingState.textBlockOpen = true;
+											stream.push({ type: "text_start", contentIndex: textPiIndex, partial: output });
+										}
+										const textBlock = output.content[streamingState.textBlockPiIndex!] as TextContent;
+										textBlock.text += fullSpan;
+										streamingState.emittedText = true;
+										streamingState.emittedAny = true;
+										state.emittedText = true;
+										state.emittedAny = true;
+										stream.push({ type: "text_delta", contentIndex: streamingState.textBlockPiIndex!, delta: fullSpan, partial: output });
+									}
+
+									// Remove up to and including end marker, switch back to text
+									streamingState.pending = streamingState.pending.slice(endIndex + TOOL_CALL_END_MARKER.length);
+									streamingState.mode = 'text';
+									continue;
+								} else {
+									// No end marker yet - accumulate JSON safely
+									const suffix = computeBoundarySafeSuffix(streamingState.pending, TOOL_CALL_END_MARKER);
+									const safePrefix = streamingState.pending.slice(0, streamingState.pending.length - suffix.length);
+
+									if (safePrefix.length > 0) {
+										// Ensure jsonAccumulator exists
+										if (streamingState.jsonAccumulator === undefined) {
+											streamingState.jsonAccumulator = '';
+										}
+
+										// Emit toolcall_start if not yet emitted and we can extract name
+										if (!streamingState.toolcallStartEmitted) {
+											const combinedJson = (streamingState.jsonAccumulator || '') + safePrefix;
+											const nameMatch = combinedJson.match(/^\s*\{\s*"name"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+											if (nameMatch) {
+												const toolPiIndex = output.content.length;
+												streamingState.toolCallPiIndex = toolPiIndex;
+												streamingState.toolCall = {
+													type: "toolCall",
+													id: uuidv4(),
+													name: nameMatch[1],
+													arguments: {},
+												};
+												output.content.push(streamingState.toolCall);
+												stream.push({ type: "toolcall_start", contentIndex: toolPiIndex, partial: output });
+												streamingState.toolcallStartEmitted = true;
+												streamingState.emittedAny = true;
+												state.emittedAny = true;
+										}
+
+										}
+
+										// Emit toolcall_delta with new JSON portion
+										if (streamingState.toolcallStartEmitted) {
+											stream.push({ type: "toolcall_delta", contentIndex: streamingState.toolCallPiIndex!, delta: safePrefix, partial: output });
+										}
+
+										// Accumulate and try to parse
+										streamingState.jsonAccumulator = (streamingState.jsonAccumulator || '') + safePrefix;
+										if (streamingState.toolCall) {
+											try {
+												streamingState.toolCall.arguments = JSON.parse(streamingState.jsonAccumulator);
+											} catch {
+												// Keep last valid arguments
+											}
+										}
+									}
+
+									streamingState.pending = suffix;
+									break;
+								}
+							}
 						}
-						stream.push({ type: "text_delta", contentIndex: mapping.piIndex, delta: event.delta.text, partial: output });
-					} else if (mapping && mapping.type === "tool_use" && event.delta.type === "tool_use_delta") {
+					} else if (mapping && mapping.type === "tool_use") {
 						// Handle streaming tool use arguments (partial JSON)
 						const delta = event.delta as { partial_json?: string };
 						if (delta.partial_json) {
@@ -622,43 +780,68 @@ async function runClaudeInvocation(
 				if (event.type === "content_block_stop") {
 					const mapping = blockMappings.get(event.index);
 					if (mapping && mapping.type === "text") {
-						// Check for tool call patterns in the accumulated text
-						// (fallback for models that don't emit tool_use blocks directly)
-						const finalText = textBuffers.get(event.index) || mapping.text;
-						const segments = parseTextWithToolCalls(finalText);
-
-						if (segments.length === 1 && segments[0].type === "text") {
-							// No tool calls detected - emit as normal text
-							stream.push({ type: "text_end", contentIndex: mapping.piIndex, content: mapping.text, partial: output });
-						} else {
-							// Tool calls detected - emit structured events
-							// Clear the text block we started and replace with proper content
-							output.content.splice(mapping.piIndex, 1); // Remove the placeholder text block
-
-							let currentPiIndex = mapping.piIndex;
-							for (const segment of segments) {
-								if (segment.type === "text") {
-									if (segment.content.trim()) {
-										output.content.splice(currentPiIndex, 0, { type: "text", text: segment.content });
-										stream.push({ type: "text_start", contentIndex: currentPiIndex, partial: output });
-										stream.push({ type: "text_delta", contentIndex: currentPiIndex, delta: segment.content, partial: output });
-										stream.push({ type: "text_end", contentIndex: currentPiIndex, content: segment.content, partial: output });
-										currentPiIndex++;
+						// Flush remaining streaming state for this text block
+						const streamingState = textBlockStates.get(event.index);
+						if (streamingState) {
+							if (streamingState.mode === 'text') {
+								// Flush any remaining pending as visible text
+								if (streamingState.pending.length > 0) {
+									if (!streamingState.textBlockOpen) {
+										const textPiIndex = output.content.length;
+										streamingState.textBlockPiIndex = textPiIndex;
+										output.content.push({ type: "text", text: "" });
+										streamingState.textBlockOpen = true;
+										stream.push({ type: "text_start", contentIndex: textPiIndex, partial: output });
 									}
-								} else if (segment.type === "toolCall") {
-									output.content.splice(currentPiIndex, 0, segment.toolCall);
-									stream.push({ type: "toolcall_start", contentIndex: currentPiIndex, partial: output });
-									stream.push({ type: "toolcall_delta", contentIndex: currentPiIndex, delta: JSON.stringify(segment.toolCall.arguments), partial: output });
-									stream.push({ type: "toolcall_end", contentIndex: currentPiIndex, toolCall: segment.toolCall, partial: output });
-									currentPiIndex++;
+									const textBlock = output.content[streamingState.textBlockPiIndex!] as TextContent;
+									textBlock.text += streamingState.pending;
+									streamingState.emittedText = true;
+									streamingState.emittedAny = true;
+									state.emittedText = true;
+									state.emittedAny = true;
+									stream.push({ type: "text_delta", contentIndex: streamingState.textBlockPiIndex!, delta: streamingState.pending, partial: output });
+								}
+								// Close text block if open
+								if (streamingState.textBlockOpen) {
+									stream.push({ type: "text_end", contentIndex: streamingState.textBlockPiIndex!, content: output.content[streamingState.textBlockPiIndex!] as TextContent, partial: output });
+								}
+							} else {
+								// collectingJson mode with no end marker (truncated/aborted)
+								if (streamingState.toolcallStartEmitted && streamingState.toolCall) {
+									// Finalize the tool call with whatever arguments we have
+									stream.push({ type: "toolcall_end", contentIndex: streamingState.toolCallPiIndex!, toolCall: streamingState.toolCall, partial: output });
+									streamingState.emittedAny = true;
+									state.emittedText = true;
+								} else if (streamingState.pending.length > 0 || streamingState.jsonAccumulator) {
+									// toolcall_start was never emitted - emit buffered text as fallback
+									const fullSpan = TOOL_CALL_START_MARKER + (streamingState.jsonAccumulator || streamingState.pending);
+									if (!streamingState.textBlockOpen) {
+										const textPiIndex = output.content.length;
+										streamingState.textBlockPiIndex = textPiIndex;
+										output.content.push({ type: "text", text: "" });
+										streamingState.textBlockOpen = true;
+										stream.push({ type: "text_start", contentIndex: textPiIndex, partial: output });
+									}
+									const textBlock = output.content[streamingState.textBlockPiIndex!] as TextContent;
+									textBlock.text += fullSpan;
+									streamingState.emittedText = true;
+									streamingState.emittedAny = true;
+									state.emittedText = true;
+									state.emittedAny = true;
+									stream.push({ type: "text_delta", contentIndex: streamingState.textBlockPiIndex!, delta: fullSpan, partial: output });
+									if (streamingState.textBlockOpen) {
+										stream.push({ type: "text_end", contentIndex: streamingState.textBlockPiIndex!, content: textBlock, partial: output });
+									}
 								}
 							}
-
-							state.emittedText = true; // Mark that we emitted content
+							textBlockStates.delete(event.index);
+						} else {
+							// Fallback for legacy state (shouldn't happen, but handle gracefully)
+							if (mapping.text && mapping.text.trim()) {
+								stream.push({ type: "text_end", contentIndex: mapping.piIndex, content: mapping.text, partial: output });
+							}
 						}
-
 						blockMappings.delete(event.index);
-						textBuffers.delete(event.index);
 					} else if (mapping && mapping.type === "tool_use") {
 						// Finalize tool_use block from direct streaming
 						const toolCall = output.content[mapping.piIndex] as ToolCall;
