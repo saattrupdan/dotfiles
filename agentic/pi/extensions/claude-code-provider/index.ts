@@ -1075,8 +1075,9 @@ function streamClaudeCode(
 				compactionStates.set(getConversationIdentity(context), compactionState);
 			}
 
-			// Handle /compact specially - summarize the conversation instead of forwarding to Claude
-			if (inputText === "/compact") {
+			// Handle /cc-compact specially - summarize the conversation instead of forwarding to Claude
+			// Using /cc-compact prefix because Pi's built-in /compact is intercepted before reaching the provider
+			if (inputText === "/cc-compact") {
 				const summary = await compactConversation(context, model);
 				if (summary) {
 					// Compaction already stored state in compactionStates
@@ -1403,9 +1404,15 @@ Summary:`;
 }
 
 export default function (pi: ExtensionAPI) {
-	// Note: /compact is handled in streamClaudeCode where we have proper Context with messages.
-	// The input handler does not have access to conversation history, so compaction must
-	// happen in the streaming layer.
+	// Intercept /cc-compact before Pi tries to process it as a built-in command.
+	// Returns { action: "handled" } to prevent Pi from intercepting it, then streamClaudeCode
+	// handles the actual compaction where we have access to conversation history.
+	pi.on("input", (event) => {
+		if (event.text === "/cc-compact") {
+			return { action: "handled" };
+		}
+		return undefined;
+	});
 
 	pi.registerProvider("claude-code", {
 		name: "Claude Code CLI",

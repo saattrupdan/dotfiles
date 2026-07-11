@@ -196,21 +196,20 @@ The provider automatically forwards slash commands to Claude Code CLI when using
 
 **Commands that work:**
 - `/help`, `/editor`, `/plan`, `/context`, and other Claude Code commands that Pi doesn't intercept
+- `/cc-compact` — compacts the Claude Code conversation context (uses `/cc-` prefix to avoid Pi's built-in `/compact`)
 
-**Commands that DON'T work (`/compact`, `/new`):**
+**Commands that DON'T work (`/new`):**
 
 Pi's built-in slash commands are intercepted by Pi's TUI **before** reaching the provider:
-- `/compact` in Pi compacts Pi's session history (not Claude Code's)
 - `/new` in Pi starts a new Pi session (not a Claude Code session)
 
 These cannot be overridden by the extension because Pi processes them at the orchestrator level.
 
-**Workaround for `/compact` and `/new`:**
+**Workaround for `/new`:**
 
 Use Claude Code CLI directly in a terminal:
 ```bash
 claude                     # Start interactive session
-# Then type: /compact      # Compact the context
 # Then type: /new          # Start new session
 ```
 
