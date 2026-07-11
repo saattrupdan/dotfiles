@@ -539,6 +539,30 @@ async function runClaudeInvocation(
 			const data = parseJsonlLine(line);
 			if (data === null) return;
 
+			// Handle assistant records (emitted by Claude Code for slash commands)
+			// These have type: "assistant" and contain the response text directly
+			// Reference: https://code.claude.com/docs/en/cli-reference#streaming-output-format
+			const hasType = (d: unknown): d is { type: string } => d && typeof d === "object" && "type" in d;
+			const hasMessage = (d: unknown): d is { message: string } => d && typeof d === "object" && "message" in d && typeof (d as { message: unknown }).message === "string";
+			if (hasType(data) && data.type === "assistant" && hasMessage(data)) {
+				const text = data.message;
+				if (!state.started) {
+					state.started = true;
+					state.emittedAny = true;
+					stream.push({ type: "start", partial: output });
+				}
+				if (text.trim()) {
+					const piIndex = output.content.length;
+					output.content.push({ type: "text", text: text });
+					stream.push({ type: "text_start", contentIndex: piIndex, partial: output });
+					stream.push({ type: "text_delta", contentIndex: piIndex, delta: text, partial: output });
+					stream.push({ type: "text_end", contentIndex: piIndex, content: text, partial: output });
+					state.emittedText = true;
+					state.emittedAny = true;
+				}
+				return;
+			}
+
 			if (isStreamEvent(data)) {
 				const event = data.event;
 				if (!state.started) {
@@ -957,8 +981,9 @@ function streamClaudeCode(
 						? latestUserMessage.content.filter((c) => c.type === "text").map((c) => c.text).join(" ")
 						: "";
 
-			// If the message is a slash command, forward it directly to Claude Code CLI
-			if (latestUserText.startsWith("/")) {
+			// If the message is a slash command (starts with / followed by a word character), forward it to Claude Code CLI
+			// Avoid matching absolute paths like /tmp/foo or /Users/...
+			if (/^\/\w/.test(latestUserText)) {
 				const conversationIdentity = getConversationIdentity(context);
 				const sessionId = generateSessionUUID(conversationIdentity, process.cwd());
 				const releaseMutex = await acquireSessionMutex(sessionId);
@@ -982,6 +1007,7 @@ function streamClaudeCode(
 					}
 
 					// Use the same retry logic as normal messages (--resume first, then --session-id)
+					let lastAttemptResult: ClaudeInvocationResult | null = null;
 					const firstAttemptResult = await runClaudeInvocation(
 						slashCommandArgs,
 						{ kind: "resume", sessionId },
@@ -996,25 +1022,39 @@ function streamClaudeCode(
 						const isAlreadyInUse = errorMsg.includes("already in use");
 
 						if ((isNoConversation || isAlreadyInUse) && !firstAttemptResult.emittedAny) {
-							const retryResult = await runClaudeInvocation(
+							lastAttemptResult = await runClaudeInvocation(
 								slashCommandArgs,
 								{ kind: "session-id", sessionId },
 								stream,
 								output,
 								options,
 							);
-							if (!retryResult.success && retryResult.error) {
-								throw retryResult.error;
+							if (!lastAttemptResult.success && lastAttemptResult.error) {
+								throw lastAttemptResult.error;
 							}
 						} else {
 							throw firstAttemptResult.error;
 						}
+					} else {
+						lastAttemptResult = firstAttemptResult;
 					}
 
-					// Emit completion
-					if (!output.stopReason || output.stopReason === "stop") {
-						stream.push({ type: "done", reason: output.stopReason as "stop" | "length" | "toolUse", message: output });
+					// Fallback: if no text was streamed but result has text, emit it (same as normal path)
+					if (lastAttemptResult && !lastAttemptResult.emittedText && lastAttemptResult.resultEvent?.result) {
+						if (!lastAttemptResult.emittedAny) {
+							stream.push({ type: "start", partial: output });
+						}
+						const text = lastAttemptResult.resultEvent.result;
+						const piIndex = output.content.length;
+						output.content.push({ type: "text", text: text });
+						stream.push({ type: "text_start", contentIndex: piIndex, partial: output });
+						stream.push({ type: "text_delta", contentIndex: piIndex, delta: text, partial: output });
+						stream.push({ type: "text_end", contentIndex: piIndex, content: text, partial: output });
+						lastAttemptResult.emittedText = true;
 					}
+
+					// Emit completion unconditionally (matches normal path)
+					stream.push({ type: "done", reason: output.stopReason as "stop" | "length" | "toolUse", message: output });
 					stream.end();
 				} finally {
 					releaseMutex();
