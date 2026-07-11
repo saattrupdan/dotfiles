@@ -434,7 +434,7 @@ local function new_session_id(id)
   return raw:gsub("[^A-Za-z0-9._-]", "-")
 end
 
-local function find_session_file(cwd, since, session_id, known_path, exclude_session_id)
+local function find_session_file(cwd, since, session_id, known_path, exclude_session_id, marker_path)
   if not cwd then
     return nil, nil, nil
   end
@@ -447,20 +447,40 @@ local function find_session_file(cwd, since, session_id, known_path, exclude_ses
   end
 
   -- Use marker-based matching to find the JSONL file for this session
-  local markers = read_markers_for_cwd(cwd)
+  -- Only match against THIS session's marker, not any marker
   local jsonl_path, jsonl_time = nil, -1
 
-  for _, marker in ipairs(markers) do
-    -- Find JSONL matching this marker
-    local match = find_jsonl_for_marker(marker, cwd, since)
-    if match then
-      local ftime = vim.fn.getftime(match)
-      if ftime > jsonl_time then
-        jsonl_path, jsonl_time = match, ftime
+  if marker_path then
+    -- Read markers and find the one matching this session's marker_path
+    local markers = read_markers_for_cwd(cwd)
+    for _, marker in ipairs(markers) do
+      if marker.path == marker_path then
+        -- Find JSONL matching this specific marker
+        local match = find_jsonl_for_marker(marker, cwd, since)
+        if match then
+          local ftime = vim.fn.getftime(match)
+          if ftime > jsonl_time then
+            jsonl_path, jsonl_time = match, ftime
+          end
+          -- Claim the marker by deleting it
+          delete_marker(marker.path)
+        end
+        break
       end
-      -- Claim the marker by deleting it
-      delete_marker(marker.path)
-      break
+    end
+  else
+    -- Fallback: legacy behavior without marker path
+    local markers = read_markers_for_cwd(cwd)
+    for _, marker in ipairs(markers) do
+      local match = find_jsonl_for_marker(marker, cwd, since)
+      if match then
+        local ftime = vim.fn.getftime(match)
+        if ftime > jsonl_time then
+          jsonl_path, jsonl_time = match, ftime
+        end
+        delete_marker(marker.path)
+        break
+      end
     end
   end
 
@@ -515,7 +535,8 @@ local function update_conversation_name(session, cwd)
     session.started_at,
     session.session_id,
     session.session_file,
-    session.id  -- exclude own file from claimed check
+    session.id,  -- exclude own file from claimed check
+    session.marker_path  -- only match this session's marker
   )
   if not path then
     return false
