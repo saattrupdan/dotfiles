@@ -1330,7 +1330,7 @@ Summary:`;
 
 	if (model.id) args.push("--model", model.id);
 
-	return new Promise((resolve) => {
+	return new Promise((resolve, reject) => {
 		const proc = spawn("claude", args, {
 			cwd: process.cwd(),
 			env: process.env,
@@ -1383,15 +1383,14 @@ Summary:`;
 		const timeout = setTimeout(() => {
 			timedOut = true;
 			proc.kill();
-			resolve(null);
+			reject(new Error(`Claude Code compaction timed out after 30s: ${stderr.trim() || "no stderr output"}`));
 		}, 30000);
 
 		proc.on("close", (code) => {
 			clearTimeout(timeout);
 			console.error("[cc-compact] summary:", summary.substring(0, 100), "code:", code, "timedOut:", timedOut);
 			if (timedOut) {
-				if (stderr.trim()) console.error("Claude compaction timed out, stderr:", stderr);
-				resolve(null);
+				// Already rejected in timeout handler
 			} else if (code === 0 && summary.trim()) {
 				// Store compaction state with incremented generation
 				const existingState = compactionStates.get(conversationIdentity);
@@ -1406,8 +1405,8 @@ Summary:`;
 				});
 				resolve(summary.trim());
 			} else {
-				if (stderr.trim()) console.error("Claude compaction stderr:", stderr);
-				resolve(null);
+				const errorMsg = stderr.trim() || "no stderr output";
+				reject(new Error(`Claude exited with code ${code}: ${errorMsg}`));
 			}
 		});
 	});
@@ -1418,14 +1417,26 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("cc-compact", {
 		description: "Compact Claude Code conversation context",
 		async handler(_args, ctx) {
-			try {			// Get conversation history from session entries
-			// Get conversation messages from session branch
-			const entries = ctx.sessionManager.getBranch();
-			console.error("[cc-compact] entries count:", entries.length);
+			try {
+				// Get conversation messages from session branch
+				const entries = ctx.sessionManager.getBranch();
+				console.error("[cc-compact] entries count:", entries.length);
+				
+				// Check for empty session first
+				if (entries.length === 0) {
+					ctx.ui.notify("No session entries found - this may be a fresh conversation", "error");
+					return;
+				}
 			const messages = entries
 				.filter((e): e is SessionMessageEntry => e.type === "message")
 				.map((e) => e.message) as Context["messages"];
 			console.error("[cc-compact] messages count:", messages.length);
+
+				// Check if we have messages but no actual message content
+				if (messages.length === 0) {
+					ctx.ui.notify(`Found ${entries.length} entries but 0 messages. Entries: ${entries.map(e => e.type).join(",")}`, "error");
+					return;
+				}
 
 				// Get system prompt from context
 				const systemPrompt = ctx.getSystemPrompt();
@@ -1441,22 +1452,18 @@ export default function (pi: ExtensionAPI) {
 			const model = ctx.model;
 			console.error("[cc-compact] model:", ctx.model);
 			if (!model) {
-				ctx.ui.notify("No model selected", "error");
+				ctx.ui.notify("No model selected - are you using a Claude Code model?", "error");
 				return;
 			}
 
 				// Compact the conversation
-				const summary = await compactConversationWithHistory(conversationHistory, convIdentity, model);
+				await compactConversationWithHistory(conversationHistory, convIdentity, model);
 
-				if (summary) {
-					// Compaction succeeded - state is stored in compactConversationWithHistory
-					ctx.ui.notify(`Conversation compacted successfully`, "info");
-				} else {
-					ctx.ui.notify("Compaction failed or timed out. Try again with a shorter conversation.", "error");
-				}
+				// Compaction succeeded - state is stored in compactConversationWithHistory
+				ctx.ui.notify(`Conversation compacted successfully`, "info");
 			} catch (error) {
-				const errorMsg = error instanceof Error ? error.message : "Unknown error";
-				ctx.ui.notify(`Compaction error: ${errorMsg}`, "error");
+				const msg = error instanceof Error ? error.message : "Unknown error";
+				ctx.ui.notify(`Compaction error: ${msg}`, "error");
 			}
 		},
 	});
