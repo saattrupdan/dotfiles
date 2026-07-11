@@ -1,7 +1,7 @@
 return {
   -- Local fork of pi-agent.nvim with fix for split pane session discovery race condition
   {
-    dir = vim.fn.expand("~/gitsky/dotfiles/nvim/lua/pi-agent"),
+    dir = vim.fn.expand("~/gitsky/dotfiles/nvim"),
     name = "pi-agent.nvim",
     config = function()
       -- Pi session warning behavior: pi-agent.nvim generates a fresh unique session ID
