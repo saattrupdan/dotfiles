@@ -128,7 +128,7 @@ local function cleanup_old_markers(max_age_seconds)
   end
 end
 
-local function find_jsonl_for_marker(marker, cwd, since)
+local function find_jsonl_for_marker(marker, cwd, since, claimed)
   local dir = pi_session_dir(cwd)
   local pattern = "/*.jsonl"
   local entries = vim.fn.glob(dir .. pattern, true, true)
@@ -138,11 +138,16 @@ local function find_jsonl_for_marker(marker, cwd, since)
   local buffer_seconds = 3
   local best, best_time = nil, -1
   for _, path in ipairs(entries) do
+    -- Skip already-claimed files
+    if claimed and claimed[path] then
+      goto continue
+    end
     local ftime = vim.fn.getftime(path)
     -- Match JSONL within buffer window of marker timestamp
     if ftime >= (since or 0) and math.abs(ftime - marker.time) <= buffer_seconds and ftime > best_time then
       best, best_time = path, ftime
     end
+    ::continue::
   end
   return best
 end
@@ -447,16 +452,24 @@ local function find_session_file(cwd, since, session_id, known_path, exclude_ses
   end
 
   -- Use marker-based matching to find the JSONL file for this session
-  -- Only match against THIS session's marker, not any marker
   local jsonl_path, jsonl_time = nil, -1
 
   if marker_path then
-    -- Read markers and find the one matching this session's marker_path
+    -- STRICT MODE: Only match this session's specific marker, no fallback
     local markers = read_markers_for_cwd(cwd)
+
+    -- Build a set of session files already claimed by other live sessions
+    local claimed = {}
+    for sid, s in pairs(state.sessions) do
+      if s.session_file and (not exclude_session_id or sid ~= exclude_session_id) then
+        claimed[s.session_file] = true
+      end
+    end
+
     for _, marker in ipairs(markers) do
       if marker.path == marker_path then
-        -- Find JSONL matching this specific marker
-        local match = find_jsonl_for_marker(marker, cwd, since)
+        -- Find JSONL matching this specific marker, excluding claimed files
+        local match = find_jsonl_for_marker(marker, cwd, since, claimed)
         if match then
           local ftime = vim.fn.getftime(match)
           if ftime > jsonl_time then
@@ -468,8 +481,9 @@ local function find_session_file(cwd, since, session_id, known_path, exclude_ses
         break
       end
     end
+    -- No fallback when marker_path is provided - return nil if no match
   else
-    -- Fallback: legacy behavior without marker path
+    -- FALLBACK MODE: legacy behavior for old sessions without marker path
     local markers = read_markers_for_cwd(cwd)
     for _, marker in ipairs(markers) do
       local match = find_jsonl_for_marker(marker, cwd, since)
@@ -482,27 +496,27 @@ local function find_session_file(cwd, since, session_id, known_path, exclude_ses
         break
       end
     end
-  end
 
-  -- Fallback: if no marker match, use the newest unconsumed JSONL
-  if not jsonl_path then
-    local dir = pi_session_dir(cwd)
-    local pattern = session_id and ("/*_" .. session_id .. ".jsonl") or "/*.jsonl"
-    local entries = vim.fn.glob(dir .. pattern, true, true)
-    if not vim.tbl_isempty(entries) then
-      -- Build a set of session files already claimed by other live sessions
-      local claimed = {}
-      for sid, s in pairs(state.sessions) do
-        if s.session_file and (not exclude_session_id or sid ~= exclude_session_id) then
-          claimed[s.session_file] = true
+    -- Fallback: if no marker match, use the newest unconsumed JSONL
+    if not jsonl_path then
+      local dir = pi_session_dir(cwd)
+      local pattern = session_id and ("/*_" .. session_id .. ".jsonl") or "/*.jsonl"
+      local entries = vim.fn.glob(dir .. pattern, true, true)
+      if not vim.tbl_isempty(entries) then
+        -- Build a set of session files already claimed by other live sessions
+        local claimed = {}
+        for sid, s in pairs(state.sessions) do
+          if s.session_file and (not exclude_session_id or sid ~= exclude_session_id) then
+            claimed[s.session_file] = true
+          end
         end
-      end
 
-      for _, path in ipairs(entries) do
-        if not claimed[path] then
-          local ftime = vim.fn.getftime(path)
-          if ftime >= (since or 0) and ftime > jsonl_time then
-            jsonl_path, jsonl_time = path, ftime
+        for _, path in ipairs(entries) do
+          if not claimed[path] then
+            local ftime = vim.fn.getftime(path)
+            if ftime >= (since or 0) and ftime > jsonl_time then
+              jsonl_path, jsonl_time = path, ftime
+            end
           end
         end
       end
