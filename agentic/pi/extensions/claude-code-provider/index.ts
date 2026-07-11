@@ -335,25 +335,10 @@ function getCompactedSummary(context: Context): string | null {
 	return compactedSummaries.get(identity) || null;
 }
 
-function buildSystemPromptWithTools(basePrompt: string | undefined, tools: Tool[] | undefined, context?: Context): string {
-	const sections: string[] = [];
-
-	// Base system prompt (Pi's SYSTEM.md content)
-	if (basePrompt && basePrompt.trim()) {
-		sections.push(basePrompt);
-	}
-
-	// Pi's tool definitions
-	if (tools && tools.length > 0) {
-		const toolDefinitions = tools.map((tool) => {
-			const params = tool.parameters ? JSON.stringify(tool.parameters, null, 2) : "{}";
-			return `- **${tool.name}**: ${tool.description}\n  Parameters: ${params}`;
-		}).join("\n");
-
-		sections.push(`## Available Tools\n\nYou have access to the following Pi tools. To call a tool, output this exact format (all on one line, no code blocks):\n\nTOOL_CALL_START{"name": "toolName", "arguments": {"arg1": "value1"}}TOOL_CALL_END\n\nExample: TOOL_CALL_START{"name": "read", "arguments": {"path": "file.txt"}}TOOL_CALL_END\n\nAfter calling a tool, wait for the result before continuing.\n\n## Tool Definitions\n${toolDefinitions}`);
-	}
-
-	return sections.join("\n\n---\n\n");
+function buildSystemPromptWithTools(basePrompt: string | undefined, _tools: Tool[] | undefined, _context?: Context): string {
+	// Pass through Pi's base system prompt as-is.
+	// Tool calling is handled by Pi's message format - no need to repeat tool definitions.
+	return basePrompt || "";
 }
 
 /**
