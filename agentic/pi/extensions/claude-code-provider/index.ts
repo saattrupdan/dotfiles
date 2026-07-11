@@ -274,13 +274,7 @@ function parseJsonlLine(line: string): unknown | null {
  * Formats messages for Claude Code to understand Pi tool calls and results.
  */
 function buildConversationHistory(messages: Context["messages"]): string {
-	const summary = context ? getCompactedSummary(context) : null;
 	const lines: string[] = [];
-
-	// Prepend compacted summary if it exists - this provides condensed conversation history
-	if (summary) {
-		lines.push(`[Conversation Summary - Previous Context]\n${summary}\n`);
-	}
 
 	for (const msg of messages) {
 		if (msg.role === "user") {
@@ -335,10 +329,28 @@ function getCompactedSummary(context: Context): string | null {
 	return compactedSummaries.get(identity) || null;
 }
 
-function buildSystemPromptWithTools(basePrompt: string | undefined, _tools: Tool[] | undefined, _context?: Context): string {
-	// Pass through Pi's base system prompt as-is.
-	// Tool calling is handled by Pi's message format - no need to repeat tool definitions.
-	return basePrompt || "";
+function buildSystemPromptWithTools(basePrompt: string | undefined, tools: Tool[] | undefined, _context?: Context): string {
+	const parts: string[] = [];
+
+	if (basePrompt && basePrompt.trim()) {
+		parts.push(basePrompt);
+		parts.push("");
+	}
+
+	// Tool calling format instruction
+	parts.push("## Tool Calling Format");
+	parts.push("To call a tool, output: TOOL_CALL_START{\"name\": \"toolName\", \"arguments\": {...}}TOOL_CALL_END");
+	parts.push("");
+
+	// List available tool names
+	if (tools && tools.length > 0) {
+		parts.push("## Available Tools");
+		for (const tool of tools) {
+			parts.push(`- ${tool.name}: ${tool.description || "No description"}`);
+		}
+	}
+
+	return parts.join("\n");
 }
 
 /**
@@ -985,17 +997,37 @@ function streamClaudeCode(
 		};
 
 		try {
-			// Check if the latest user message is a slash command
-			const latestUserMessage = context.messages.filter((m) => m.role === "user").pop();
-			const latestUserText =
-				latestUserMessage && typeof latestUserMessage.content === "string"
-					? latestUserMessage.content
-					: latestUserMessage && Array.isArray(latestUserMessage.content)
-						? latestUserMessage.content.filter((c) => c.type === "text").map((c) => c.text).join(" ")
+			// Determine what to send to Claude Code:
+			// - If the tail of messages contains toolResult messages, send those (response to a tool call)
+			// - Otherwise, send the latest user message
+			let inputText: string;
+			const lastMessage = context.messages[context.messages.length - 1];
+
+			if (lastMessage && lastMessage.role === "toolResult") {
+				// Collect consecutive toolResult messages from the end
+				const toolResults: string[] = [];
+				for (let i = context.messages.length - 1; i >= 0; i--) {
+					const msg = context.messages[i];
+					if (msg.role !== "toolResult") break;
+					const text = Array.isArray(msg.content)
+						? msg.content.filter((c) => c.type === "text").map((c) => c.text).join(" ")
 						: "";
+					toolResults.unshift(`Tool Result [${msg.toolName}]: ${text || "(no output)"}`);
+				}
+				inputText = toolResults.join("\n\n");
+			} else {
+				// Send the latest user message
+				const latestUserMessage = context.messages.filter((m) => m.role === "user").pop();
+				inputText =
+					latestUserMessage && typeof latestUserMessage.content === "string"
+						? latestUserMessage.content
+						: latestUserMessage && Array.isArray(latestUserMessage.content)
+							? latestUserMessage.content.filter((c) => c.type === "text").map((c) => c.text).join(" ")
+							: "";
+			}
 
 			// Handle /compact specially - summarize the conversation instead of forwarding to Claude
-			if (latestUserText === "/compact") {
+			if (inputText === "/compact") {
 				const summary = await compactConversation(context, model);
 				if (summary) {
 					const conversationIdentity = getConversationIdentity(context);
@@ -1017,7 +1049,7 @@ function streamClaudeCode(
 
 			// If the message is a slash command (starts with / followed by a word character), forward it to Claude Code CLI
 			// Avoid matching absolute paths like /tmp/foo or /Users/... by requiring the command to be followed by whitespace, colon, or end
-			if (/^\/[A-Za-z][\w:-]*(?:\s|$)/.test(latestUserText)) {
+			if (/^\/[A-Za-z][\w:-]*(?:\s|$)/.test(inputText)) {
 				const conversationIdentity = getConversationIdentity(context);
 				const sessionId = generateSessionUUID(conversationIdentity, process.cwd());
 				const releaseMutex = await acquireSessionMutex(sessionId);
@@ -1026,7 +1058,7 @@ function streamClaudeCode(
 					// Build CLI arguments for slash command - just pass the command as-is
 					const slashCommandArgs: string[] = [
 						"-p",
-						latestUserText,
+						inputText,
 						"--dangerously-skip-permissions",
 						"--output-format",
 						"stream-json",
@@ -1107,7 +1139,7 @@ function streamClaudeCode(
 				// Send only the latest message via -p; Claude Code maintains session history natively via --resume
 				const baseArgs: string[] = [
 					"-p",
-					latestUserText,
+					inputText,
 					"--dangerously-skip-permissions",
 					"--output-format",
 					"stream-json",
