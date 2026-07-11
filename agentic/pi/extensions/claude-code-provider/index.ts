@@ -53,6 +53,7 @@ import type {
 	ThinkingContent,
 	Tool,
 } from "@earendil-works/pi-ai";
+import type { SessionMessageEntry } from "@earendil-works/pi-coding-agent";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { spawn } from "child_process";
@@ -1075,35 +1076,6 @@ function streamClaudeCode(
 				compactionStates.set(getConversationIdentity(context), compactionState);
 			}
 
-			// Handle /cc-compact specially - summarize the conversation instead of forwarding to Claude
-			// Using /cc-compact prefix because Pi's built-in /compact is intercepted before reaching the provider
-			if (inputText === "/cc-compact") {
-				const summary = await compactConversation(context, model);
-				if (summary) {
-					// Compaction already stored state in compactionStates
-					stream.push({ type: "start", partial: output });
-					const piIndex = output.content.length;
-					output.content.push({ type: "text", text: summary });
-					stream.push({ type: "text_start", contentIndex: piIndex, partial: output });
-					stream.push({ type: "text_delta", contentIndex: piIndex, delta: summary, partial: output });
-					stream.push({ type: "text_end", contentIndex: piIndex, content: summary, partial: output });
-					stream.push({ type: "done", reason: "stop", message: output });
-					stream.end();
-					return;
-				}
-				// If compaction failed, fall through to notify user
-				stream.push({ type: "start", partial: output });
-				const piIndex = output.content.length;
-				const errorMsg = "Compaction failed or timed out. Try again with a shorter conversation.";
-				output.content.push({ type: "text", text: errorMsg });
-				stream.push({ type: "text_start", contentIndex: piIndex, partial: output });
-				stream.push({ type: "text_delta", contentIndex: piIndex, delta: errorMsg, partial: output });
-				stream.push({ type: "text_end", contentIndex: piIndex, content: errorMsg, partial: output });
-				stream.push({ type: "done", reason: "stop", message: output });
-				stream.end();
-				return;
-			}
-
 			// If the message is a slash command (starts with / followed by a word character), forward it to Claude Code CLI
 			// Avoid matching absolute paths like /tmp/foo or /Users/... by requiring the command to be followed by whitespace, colon, or end
 			if (/^\/[A-Za-z][\w:-]*(?:\s|$)/.test(inputText)) {
@@ -1403,12 +1375,165 @@ Summary:`;
 	});
 }
 
+/**
+ * Get conversation identity from messages array (for use in input handler where we don't have Context).
+ */
+function getConversationIdentityFromMessages(messages: Context["messages"]): string {
+	const firstUser = messages.find((msg) => msg.role === "user");
+	if (!firstUser) {
+		return `empty:${process.pid}:${Date.now()}`;
+	}
+
+	const content = typeof firstUser.content === "string"
+		? firstUser.content
+		: extractTextFromContent(firstUser.content);
+	const contentHash = createHash("sha256")
+		.update(content)
+		.update("") // No system prompt available in input handler
+		.digest("hex")
+		.slice(0, 16);
+
+	return `first-user:${firstUser.timestamp}:${contentHash}`;
+}
+
+/**
+ * Compact conversation using pre-built history. Called from input handler.
+ * Stores compaction state and returns the summary.
+ */
+async function compactConversationWithHistory(
+	conversationHistory: string,
+	conversationIdentity: string,
+	model: Model<Api>,
+): Promise<string | null> {
+	if (!conversationHistory.trim()) {
+		return null;
+	}
+
+	const prompt = `Please summarize the following conversation into a concise "activation prompt" that captures the key context, decisions, code changes, and any important details. The summary should be brief but preserve essential information so the conversation can continue effectively. Format as a single paragraph or bullet points.
+
+Conversation:
+${conversationHistory}
+
+Summary:`;
+
+	const args = [
+		"-p",
+		prompt,
+		"--dangerously-skip-permissions",
+		"--output-format", "stream-json",
+		"--verbose",
+		"--include-partial-messages",
+		"--tools", "",
+	];
+
+	if (model.id) args.push("--model", model.id);
+
+	return new Promise((resolve) => {
+		const proc = spawn("claude", args, {
+			cwd: process.cwd(),
+			env: process.env,
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+
+		let summary = "";
+		let timedOut = false;
+
+		proc.stdout.on("data", (data: Buffer) => {
+			const lines = data.toString().split("\n");
+			for (const line of lines) {
+				if (!line.trim()) continue;
+				try {
+					const parsed = JSON.parse(line);
+					if (parsed.type === "content_block_delta" && parsed.delta?.text) {
+						summary += parsed.delta.text;
+					}
+					// Also handle assistant records
+					if (parsed.type === "assistant" && parsed.message?.content) {
+						const content = parsed.message.content as Array<{ type: string; text?: string }> | undefined;
+						if (Array.isArray(content)) {
+							summary += content
+								.filter((b): b is { type: "text"; text: string } => b.type === "text" && typeof b.text === "string")
+								.map((b) => b.text)
+								.join("");
+						}
+					}
+				} catch {
+					// Ignore parse errors
+				}
+			}
+		});
+
+		const timeout = setTimeout(() => {
+			timedOut = true;
+			proc.kill();
+			resolve(null);
+		}, 30000);
+
+		proc.on("close", (code) => {
+			clearTimeout(timeout);
+			if (timedOut) {
+				resolve(null);
+			} else if (code === 0 && summary.trim()) {
+				// Store compaction state with incremented generation
+				const existingState = compactionStates.get(conversationIdentity);
+				const newGeneration = (existingState?.generation || 0) + 1;
+				const cwd = process.cwd();
+				// Generate new session ID for post-compaction turns
+				const postCompactionSessionId = generateSessionUUID(conversationIdentity, cwd, newGeneration);
+				compactionStates.set(conversationIdentity, {
+					summary: summary.trim(),
+					generation: newGeneration,
+					postCompactionSessionId,
+				});
+				resolve(summary.trim());
+			} else {
+				resolve(null);
+			}
+		});
+	});
+}
+
 export default function (pi: ExtensionAPI) {
-	// Intercept /cc-compact before Pi tries to process it as a built-in command.
-	// Returns { action: "handled" } to prevent Pi from intercepting it, then streamClaudeCode
-	// handles the actual compaction where we have access to conversation history.
-	pi.on("input", (event) => {
+	// Handle /cc-compact in the input handler using ctx.sessionManager.getEntries()
+	// to get conversation history. This allows us to compact before the message
+	// reaches the provider stream.
+	pi.on("input", async (event, ctx) => {
 		if (event.text === "/cc-compact") {
+			try {
+				// Get conversation history from session entries
+				const entries = ctx.sessionManager.getEntries();
+				const messages = entries
+					.filter((e): e is SessionMessageEntry => e.type === "message")
+					.map((e) => e.message);
+
+				// Get previous compaction summary if available
+				const convIdentity = getConversationIdentityFromMessages(messages);
+				const previousSummary = compactionStates.get(convIdentity)?.summary || undefined;
+
+				// Build conversation history
+				const conversationHistory = buildConversationHistory(messages, previousSummary);
+
+				if (!conversationHistory.trim()) {
+					ctx.ui.notify("No conversation to compact", "info");
+					return { action: "handled" };
+				}
+
+				// Get current model from context
+				const model = ctx.model;
+
+				// Compact the conversation
+				const summary = await compactConversationWithHistory(conversationHistory, convIdentity, model);
+
+				if (summary) {
+					// Compaction succeeded - state is stored in compactConversationWithHistory
+					ctx.ui.notify(`Conversation compacted successfully`, "success");
+				} else {
+					ctx.ui.notify("Compaction failed or timed out. Try again with a shorter conversation.", "error");
+				}
+			} catch (error) {
+				const errorMsg = error instanceof Error ? error.message : "Unknown error";
+				ctx.ui.notify(`Compaction error: ${errorMsg}`, "error");
+			}
 			return { action: "handled" };
 		}
 		return undefined;
