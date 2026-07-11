@@ -190,29 +190,31 @@ records with `is_error` are surfaced as errors rather than normal assistant mess
 The provider automatically forwards slash commands to Claude Code CLI when using a `claude-code` model.
 
 **How it works:**
-- Messages starting with `/command` (like `/help`, `/editor`, `/plan`) are detected and sent to Claude Code
-- The detection regex avoids matching absolute paths like `/tmp/foo` or `/Users/...`
-- Claude Code's response (including `type: "assistant"` records) is extracted and displayed in Pi
+- Messages starting with `/command` (like `/help`, `/editor`, `/plan`) are detected in `streamClaudeCode()` and sent to Claude Code
+- The detection regex `/^\/[A-Za-z][\w:-]*(?:\s|$)/` matches slash commands while avoiding absolute paths like `/tmp/foo`
+- Claude Code's response (including `type: "assistant"` stream records) is extracted from `message.content[]` blocks and displayed in Pi
 
-**Limitation with `/compact` and `/new`:**
+**Commands that work:**
+- `/help`, `/editor`, `/plan`, `/context`, and other Claude Code commands that Pi doesn't intercept
 
-Pi's built-in slash commands (`/compact`, `/new`, `/model`, etc.) are intercepted by Pi's TUI **before** reaching the provider. This means:
-- `/compact` in Pi will compact Pi's session, not Claude Code's
-- `/new` in Pi will start a new Pi session, not a Claude Code session
+**Commands that DON'T work (`/compact`, `/new`):**
 
-**Workarounds:**
+Pi's built-in slash commands are intercepted by Pi's TUI **before** reaching the provider:
+- `/compact` in Pi compacts Pi's session history (not Claude Code's)
+- `/new` in Pi starts a new Pi session (not a Claude Code session)
 
-To use Claude Code's native `/compact` and `/new`:
-1. Use the **claude-code-cli directly** in a separate terminal: `claude --session-id <id>` then type `/compact`
-2. Use other Claude Code commands that Pi doesn't intercept (like `/help`, `/editor`, `/plan`, `/context`)
-3. Manage Claude Code sessions through the `~/.claude/` directory
+These cannot be overridden by the extension because Pi processes them at the orchestrator level.
 
-**Commands that DO work with forwarding:**
-- `/help` - Claude Code help
-- `/editor` - Open editor
-- `/plan` - Planning mode
-- `/context` - Show context usage
-- Any other Claude Code command Pi doesn't recognize
+**Workaround for `/compact` and `/new`:**
+
+Use Claude Code CLI directly in a terminal:
+```bash
+claude                     # Start interactive session
+# Then type: /compact      # Compact the context
+# Then type: /new          # Start new session
+```
+
+Claude Code slash commands require an interactive terminal - they don't work with piped input or `--print` mode.
 
 ## Requirements
 
