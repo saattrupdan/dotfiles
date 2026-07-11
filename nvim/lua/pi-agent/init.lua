@@ -28,6 +28,104 @@ local HAS_WINBLEN = pcall(function()
   vim.api.nvim_get_option_value("winblend", {})
 end)
 
+-- Marker-based session claiming to avoid race conditions when multiple panes
+-- launch simultaneously. Each session creates a marker file and claims the
+-- corresponding JSONL file deterministically.
+local MARKER_DIR = nil
+local function get_marker_dir()
+  local agent_dir = vim.env.PI_CODING_AGENT_DIR
+  if agent_dir and agent_dir ~= "" then
+    agent_dir = vim.fn.expand(agent_dir)
+  else
+    agent_dir = vim.fn.expand("~/.pi/agent")
+  end
+  local marker_dir = agent_dir .. "/state"
+  vim.fn.mkdir(marker_dir, "p")
+  return marker_dir
+end
+
+local function create_marker(cwd)
+  local marker_dir = get_marker_dir()
+  local pid = vim.fn.getpid()
+  local timestamp = os.time()
+  local marker_path = string.format("%s/pi-agent-pending-%d-%d.json", marker_dir, pid, timestamp)
+  local marker_data = vim.fn.json_encode({ pid = pid, time = timestamp, cwd = cwd })
+  local fd = vim.loop.fs_open(marker_path, "w", 438)
+  if fd then
+    vim.loop.fs_write(fd, marker_data, 0)
+    vim.loop.fs_close(fd)
+    return marker_path, timestamp
+  end
+  return nil, timestamp
+end
+
+local function read_markers_for_cwd(cwd)
+  local marker_dir = get_marker_dir()
+  local pattern = marker_dir .. "/pi-agent-pending-*.json"
+  local entries = vim.fn.glob(pattern, true, true)
+  local markers = {}
+  for _, path in ipairs(entries) do
+    local fd = vim.loop.fs_open(path, "r", 438)
+    if fd then
+      local stat = vim.loop.fs_fstat(fd)
+      if stat then
+        local data = vim.loop.fs_read(fd, stat.size, 0)
+        vim.loop.fs_close(fd)
+        local ok, marker = pcall(vim.fn.json_decode, data)
+        if ok and marker and marker.cwd == cwd then
+          table.insert(markers, { path = path, time = marker.time, pid = marker.pid })
+        end
+      else
+        vim.loop.fs_close(fd)
+      end
+    end
+  end
+  -- Sort by timestamp, newest first
+  table.sort(markers, function(a, b) return a.time > b.time end)
+  return markers
+end
+
+local function delete_marker(path)
+  if path and vim.fn.filereadable(path) == 1 then
+    vim.loop.fs_unlink(path)
+  end
+end
+
+local function cleanup_old_markers(max_age_seconds)
+  local marker_dir = get_marker_dir()
+  if not marker_dir or not vim.fn.isdirectory(marker_dir) == 1 then
+    return
+  end
+  local pattern = marker_dir .. "/pi-agent-pending-*.json"
+  local entries = vim.fn.glob(pattern, true, true)
+  local now = os.time()
+  for _, path in ipairs(entries) do
+    local ftime = vim.fn.getftime(path)
+    if now - ftime > (max_age_seconds or 300) then
+      vim.loop.fs_unlink(path)
+    end
+  end
+end
+
+local function find_jsonl_for_marker(marker, cwd, since)
+  local dir = pi_session_dir(cwd)
+  local pattern = "/*.jsonl"
+  local entries = vim.fn.glob(dir .. pattern, true, true)
+  if vim.tbl_isempty(entries) then
+    return nil
+  end
+  local buffer_seconds = 3
+  local best, best_time = nil, -1
+  for _, path in ipairs(entries) do
+    local ftime = vim.fn.getftime(path)
+    -- Match JSONL within buffer window of marker timestamp
+    if ftime >= (since or 0) and math.abs(ftime - marker.time) <= buffer_seconds and ftime > best_time then
+      best, best_time = path, ftime
+    end
+  end
+  return best
+end
+
 local function git_root(start_dir)
   local result = vim.fn.systemlist({ "git", "-C", start_dir, "rev-parse", "--show-toplevel" })
   if vim.v.shell_error ~= 0 or not result[1] or result[1] == "" then
@@ -347,34 +445,61 @@ local function find_session_file(cwd, since, session_id, known_path, exclude_ses
     end
   end
 
-  local dir = pi_session_dir(cwd)
-  local pattern = session_id and ("/*_" .. session_id .. ".jsonl") or "/*.jsonl"
-  local entries = vim.fn.glob(dir .. pattern, true, true)
-  if vim.tbl_isempty(entries) then
-    return nil, nil, nil
-  end
+  -- Use marker-based matching to find the JSONL file for this session
+  local markers = read_markers_for_cwd(cwd)
+  local jsonl_path, jsonl_time = nil, -1
 
-  -- Build a set of session files already claimed by other live sessions
-  local claimed = {}
-  for sid, s in pairs(state.sessions) do
-    -- Exclude the calling session's own file (if it has one)
-    if s.session_file and (not exclude_session_id or sid ~= exclude_session_id) then
-      claimed[s.session_file] = true
+  for _, marker in ipairs(markers) do
+    -- Skip markers from other live sessions (excluding self)
+    local is_own_marker = false
+    for sid, s in pairs(state.sessions) do
+      if s.marker_path == marker.path and (not exclude_session_id or sid ~= exclude_session_id) then
+        is_own_marker = true
+        break
+      end
     end
-  end
-
-  local newest, newest_time = nil, -1
-  for _, path in ipairs(entries) do
-    -- Skip files already claimed by another live session
-    if not claimed[path] then
-      local ftime = vim.fn.getftime(path)
-      if ftime >= (since or 0) and ftime > newest_time then
-        newest, newest_time = path, ftime
+    -- Only process markers belonging to this session
+    if is_own_marker then
+      -- Find JSONL matching this marker
+      local match = find_jsonl_for_marker(marker, cwd, since)
+      if match then
+        local ftime = vim.fn.getftime(match)
+        if ftime > jsonl_time then
+          jsonl_path, jsonl_time = match, ftime
+        end
+        -- Claim the marker by deleting it
+        delete_marker(marker.path)
+        break
       end
     end
   end
 
-  return newest, newest_time, newest and vim.fn.getfsize(newest) or nil
+  -- Fallback: if no marker match, use the newest unconsumed JSONL
+  if not jsonl_path then
+    local dir = pi_session_dir(cwd)
+    local pattern = session_id and ("/*_" .. session_id .. ".jsonl") or "/*.jsonl"
+    local entries = vim.fn.glob(dir .. pattern, true, true)
+    if not vim.tbl_isempty(entries) then
+      -- Build a set of session files already claimed by other live sessions
+      local claimed = {}
+      for sid, s in pairs(state.sessions) do
+        if s.session_file and (not exclude_session_id or sid ~= exclude_session_id) then
+          claimed[s.session_file] = true
+        end
+      end
+
+      for _, path in ipairs(entries) do
+        if not claimed[path] then
+          local ftime = vim.fn.getftime(path)
+          if ftime >= (since or 0) and ftime > jsonl_time then
+            jsonl_path, jsonl_time = path, ftime
+          end
+        end
+      end
+    end
+  end
+
+  return jsonl_path, jsonl_time, jsonl_path and vim.fn.getfsize(jsonl_path) or nil
 end
 
 local function session_title(session)
@@ -945,6 +1070,7 @@ local function create_session()
     session_mtime = nil,
     session_size = nil,
     name_timer = nil,
+    marker_path = nil,  -- Marker file for session claiming
     -- Only consider Pi session files touched at or after this; avoids picking up
     -- a stale name from an earlier session in the same cwd.
     started_at = os.time(),
@@ -958,6 +1084,10 @@ local function create_session()
   setup_session_autocmds(session)
 
   local cwd = resolve_cwd()
+  -- Create a marker file before launching pi so this session can deterministically
+  -- claim the corresponding JSONL file (avoids race when multiple panes launch).
+  session.marker_path, session.started_at = create_marker(cwd)
+
   -- Launch without --session-id; Pi generates its own ID. The session ID will
   -- be read from the JSONL header once the file appears.
   local cmd = M.config.command
@@ -969,6 +1099,8 @@ local function create_session()
           if session.closing then
             return
           end
+          -- Clean up marker on exit if still present
+          delete_marker(session.marker_path)
           remove_session(id, false)
         end)
       end,
@@ -1026,6 +1158,8 @@ remove_session = function(id, stop_job)
     pcall(vim.fn.timer_stop, session.name_timer)
     session.name_timer = nil
   end
+  -- Clean up marker file
+  delete_marker(session.marker_path)
   if is_valid_win(session.win) then
     pcall(vim.api.nvim_win_close, session.win, true)
   end
@@ -1152,6 +1286,9 @@ end
 function M.setup(opts)
   M.config = vim.tbl_deep_extend("force", defaults, opts or {})
 
+  -- Clean up old marker files from crashed sessions
+  cleanup_old_markers(300)
+
   vim.api.nvim_set_hl(0, ACTIVE_BORDER, { default = true, link = "DiagnosticInfo" })
   vim.api.nvim_set_hl(0, ACTIVE_TITLE, { default = true, link = "DiagnosticInfo" })
 
@@ -1196,6 +1333,7 @@ function M.setup(opts)
           pcall(vim.fn.timer_stop, session.name_timer)
           session.name_timer = nil
         end
+        delete_marker(session.marker_path)
         if session.job then
           pcall(vim.fn.jobstop, session.job)
           session.job = nil
