@@ -60,6 +60,19 @@ import { createHash } from "crypto";
 import { v4 as uuidv4 } from "uuid";
 
 /** Regex for zero-shot tool call pattern: TOOL_CALL_START{...}TOOL_CALL_END */
+
+/**
+ * Compaction state for a conversation session.
+ * Tracks the summary and generation counter for conversation compaction.
+ */
+interface CompactionState {
+	/** The compacted summary text */
+	summary: string;
+	/** Generation counter - increments on each compaction */
+	generation: number;
+	/** Session ID to use after this compaction (generation-based) */
+	postCompactionSessionId?: string;
+}
 const TOOL_CALL_START_MARKER = "TOOL_CALL_START";
 const TOOL_CALL_END_MARKER = "TOOL_CALL_END";
 
@@ -105,8 +118,9 @@ type ProviderConfig = Parameters<ExtensionAPI["registerProvider"]>[1];
  * Claude Code validates `--session-id` as a UUID. We use the first 16 bytes of a
  * SHA256 hash, then set RFC 4122 version/variant bits.
  */
-function generateSessionUUID(conversationIdentity: string, cwd: string): string {
-	const hash = createHash("sha256").update(`${conversationIdentity}:${cwd}`).digest("hex");
+function generateSessionUUID(conversationIdentity: string, cwd: string, generation: number = 0): string {
+	// Include generation in the hash so compaction produces a new session ID
+	const hash = createHash("sha256").update(`${conversationIdentity}:${cwd}:${generation}`).digest("hex");
 	// Take first 32 hex chars (16 bytes) and format as UUID
 	let uuid =
 		hash.slice(0, 8) +
@@ -273,8 +287,13 @@ function parseJsonlLine(line: string): unknown | null {
  * Build full conversation history including tool results.
  * Formats messages for Claude Code to understand Pi tool calls and results.
  */
-function buildConversationHistory(messages: Context["messages"]): string {
+function buildConversationHistory(messages: Context["messages"], compactedSummary?: string): string {
 	const lines: string[] = [];
+
+	// Prepend compacted summary if available
+	if (compactedSummary) {
+		lines.push(`[Conversation Summary from Previous Turns]\n${compactedSummary}\n[End Summary]\n`);
+	}
 
 	for (const msg of messages) {
 		if (msg.role === "user") {
@@ -326,8 +345,25 @@ function buildConversationHistory(messages: Context["messages"]): string {
  */
 function getCompactedSummary(context: Context): string | null {
 	const identity = getConversationIdentity(context);
-	return compactedSummaries.get(identity) || null;
+	const state = compactionStates.get(identity);
+	return state?.summary || null;
 }
+
+/**
+ * Get the generation counter for a conversation session.
+ * Returns 0 if no compaction has occurred.
+ */
+function getCompactionGeneration(context: Context): number {
+	const identity = getConversationIdentity(context);
+	const state = compactionStates.get(identity);
+	return state?.generation || 0;
+}
+
+/**
+ * Get the post-compaction session ID for a conversation session.
+ * Returns undefined if no compaction has occurred.
+ */
+// getPostCompactionSessionId removed - compaction state managed internally
 
 function buildSystemPromptWithTools(basePrompt: string | undefined, tools: Tool[] | undefined, _context?: Context): string {
 	const parts: string[] = [];
@@ -1030,11 +1066,8 @@ function streamClaudeCode(
 			if (inputText === "/compact") {
 				const summary = await compactConversation(context, model);
 				if (summary) {
-					const conversationIdentity = getConversationIdentity(context);
-					compactedSummaries.set(conversationIdentity, summary);
-					if (!state.started) {
-						stream.push({ type: "start", partial: output });
-					}
+					// Compaction already stored state in compactionStates
+					stream.push({ type: "start", partial: output });
 					const piIndex = output.content.length;
 					output.content.push({ type: "text", text: summary });
 					stream.push({ type: "text_start", contentIndex: piIndex, partial: output });
@@ -1045,13 +1078,25 @@ function streamClaudeCode(
 					return;
 				}
 				// If compaction failed, fall through to notify user
+				stream.push({ type: "start", partial: output });
+				const piIndex = output.content.length;
+				const errorMsg = "Compaction failed or timed out. Try again with a shorter conversation.";
+				output.content.push({ type: "text", text: errorMsg });
+				stream.push({ type: "text_start", contentIndex: piIndex, partial: output });
+				stream.push({ type: "text_delta", contentIndex: piIndex, delta: errorMsg, partial: output });
+				stream.push({ type: "text_end", contentIndex: piIndex, content: errorMsg, partial: output });
+				stream.push({ type: "done", reason: "stop", message: output });
+				stream.end();
+				return;
 			}
 
 			// If the message is a slash command (starts with / followed by a word character), forward it to Claude Code CLI
 			// Avoid matching absolute paths like /tmp/foo or /Users/... by requiring the command to be followed by whitespace, colon, or end
 			if (/^\/[A-Za-z][\w:-]*(?:\s|$)/.test(inputText)) {
 				const conversationIdentity = getConversationIdentity(context);
-				const sessionId = generateSessionUUID(conversationIdentity, process.cwd());
+				// Use generation-based session ID if compaction has occurred
+				const generation = getCompactionGeneration(context);
+				const sessionId = generateSessionUUID(conversationIdentity, process.cwd(), generation);
 				const releaseMutex = await acquireSessionMutex(sessionId);
 
 				try {
@@ -1129,7 +1174,9 @@ function streamClaudeCode(
 			}
 
 			const conversationIdentity = getConversationIdentity(context);
-			const sessionId = generateSessionUUID(conversationIdentity, process.cwd());
+			// Use generation-based session ID if compaction has occurred
+			const generation = getCompactionGeneration(context);
+			const sessionId = generateSessionUUID(conversationIdentity, process.cwd(), generation);
 
 			// Acquire mutex to prevent concurrent session ID conflicts
 			const releaseMutex = await acquireSessionMutex(sessionId);
@@ -1239,17 +1286,20 @@ function streamClaudeCode(
 }
 
 /**
- * In-memory storage for compacted conversation summaries per session.
- * Key: session ID, Value: compacted summary text
+ * In-memory storage for compaction state per session.
+ * Key: session identity, Value: compaction state with summary and generation.
  */
-const compactedSummaries = new Map<string, string>();
+const compactionStates = new Map<string, CompactionState>();
 
 /**
  * Compact the conversation by asking Claude to summarize it.
  * Called when user types /compact with Claude Code model active.
  */
 async function compactConversation(context: Context, model: Model<Api>): Promise<string | null> {
-	const conversationHistory = buildConversationHistory(context.messages);
+	const conversationIdentity = getConversationIdentity(context);
+	// Include previous compaction summary in the history if available
+	const previousSummary = getCompactedSummary(context) || undefined;
+	const conversationHistory = buildConversationHistory(context.messages, previousSummary);
 
 	if (!conversationHistory.trim()) {
 		return null;
@@ -1317,6 +1367,17 @@ Summary:`;
 			if (timedOut) {
 				resolve(null);
 			} else if (code === 0 && summary.trim()) {
+				// Store compaction state with incremented generation
+				const existingState = compactionStates.get(conversationIdentity);
+				const newGeneration = (existingState?.generation || 0) + 1;
+				const cwd = process.cwd();
+				// Generate new session ID for post-compaction turns
+				const postCompactionSessionId = generateSessionUUID(conversationIdentity, cwd, newGeneration);
+				compactionStates.set(conversationIdentity, {
+					summary: summary.trim(),
+					generation: newGeneration,
+					postCompactionSessionId,
+				});
 				resolve(summary.trim());
 			} else {
 				resolve(null);
@@ -1336,14 +1397,10 @@ export default function (pi: ExtensionAPI) {
 		if (text === "/compact") {
 			if (!ctx.hasUI) return { action: "continue" };
 
-			ctx.ui.setWorkingMessage?.("Compacting conversation...");
-
-			// Get conversation context from Pi's session
-			// We need to access the actual conversation messages here
-			// This is a limitation - we don't have full context in input handler
-			ctx.ui.notify?.("/compact: Conversation compaction requires model turn. Send a message first, then /compact will summarize the conversation for future context.", "info");
-			ctx.ui.setWorkingMessage?.(undefined);
-			return { action: "ignore" };
+			// Compaction is handled in streamClaudeCode - just continue to let the model process it
+			// The stream handler will detect /compact and trigger compaction
+			ctx.ui.notify?.("/compact will summarize the conversation context for efficient future turns.", "info");
+			return { action: "continue" };
 		}
 
 		return { action: "continue" };
