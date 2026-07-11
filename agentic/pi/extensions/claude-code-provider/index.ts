@@ -1346,7 +1346,12 @@ Summary:`;
 		});
 
 		let summary = "";
+		let stderr = "";
 		let timedOut = false;
+
+		proc.stderr.on("data", (data: Buffer) => {
+			stderr += data.toString();
+		});
 
 		proc.stdout.on("data", (data: Buffer) => {
 			const lines = data.toString().split("\n");
@@ -1383,6 +1388,7 @@ Summary:`;
 		proc.on("close", (code) => {
 			clearTimeout(timeout);
 			if (timedOut) {
+				if (stderr.trim()) console.error("Claude compaction timed out, stderr:", stderr);
 				resolve(null);
 			} else if (code === 0 && summary.trim()) {
 				// Store compaction state with incremented generation
@@ -1398,6 +1404,7 @@ Summary:`;
 				});
 				resolve(summary.trim());
 			} else {
+				if (stderr.trim()) console.error("Claude compaction stderr:", stderr);
 				resolve(null);
 			}
 		});
