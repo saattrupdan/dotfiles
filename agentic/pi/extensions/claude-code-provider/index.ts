@@ -289,7 +289,9 @@ function parseJsonlLine(line: string): unknown | null {
 /**
  * Build full conversation history including tool results.
  * Formats messages for Claude Code to understand Pi tool calls and results.
+ * @deprecated Use buildFilteredConversationHistory for compaction - kept for normal message flow.
  */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function buildConversationHistory(messages: Context["messages"], compactedSummary?: string): string {
 	const lines: string[] = [];
 
@@ -332,6 +334,145 @@ function buildConversationHistory(messages: Context["messages"], compactedSummar
 				? msg.content.filter((c) => c.type === "text").map((c) => c.text).join(" ")
 				: "";
 			lines.push(`Tool Result [${msg.toolName}]: ${text || "(no output)"}`);
+		}
+	}
+
+	return lines.join("\n\n");
+}
+
+/**
+ * Build filtered conversation history for compaction.
+ *
+ * Strategy:
+ * 1. First user message: Always include the initial goal
+ * 2. Key assistant messages: Include reasoning/planning, skip verbose tool calls
+ * 3. Tool results: Keep first line only (success/failure), skip full outputs
+ * 4. Recent messages: Always include last 50 messages regardless of type
+ * 5. Truncate to ~50k chars: If still too long, prioritize recent + first, drop middle
+ */
+function buildFilteredConversationHistory(messages: Context["messages"], compactedSummary?: string): string {
+	const MAX_CHARS = 50000;
+	const RECENT_COUNT = 50;
+
+	const lines: string[] = [];
+
+	// Prepend compacted summary if available
+	if (compactedSummary) {
+		lines.push(`[Conversation Summary from Previous Turns]\n${compactedSummary}\n[End Summary]\n`);
+	}
+
+	// First pass: mark which messages to include
+	const includeFlags: boolean[] = new Array(messages.length).fill(false);
+
+	for (let i = 0; i < messages.length; i++) {
+		const msg = messages[i];
+
+		// First message always included
+		if (i === 0) {
+			includeFlags[i] = true;
+			continue;
+		}
+
+		// Last 50 messages always included
+		if (i >= messages.length - RECENT_COUNT) {
+			includeFlags[i] = true;
+			continue;
+		}
+
+		// Key assistant messages (reasoning/planning) - skip pure tool calls
+		if (msg.role === "assistant") {
+			const textContent = Array.isArray(msg.content)
+				? msg.content
+					.filter((c) => c.type === "text")
+					.map((c) => c.text)
+					.join(" ")
+				: "";
+
+			// Include if has meaningful text content (reasoning/planning)
+			if (textContent.trim().length > 0) {
+				includeFlags[i] = true;
+			}
+		}
+
+		// User messages in the middle - include for context
+		if (msg.role === "user") {
+			includeFlags[i] = true;
+		}
+	}
+
+	// Second pass: build history with truncation
+	const includedMessages: Context["messages"][0][] = [];
+
+	for (let i = 0; i < messages.length; i++) {
+		if (!includeFlags[i]) continue;
+		includedMessages.push(messages[i]);
+	}
+
+	// Third pass: if >50k chars, drop older marked messages until under limit
+	let historyText = buildHistoryFromMessages(includedMessages);
+
+	if (historyText.length > MAX_CHARS) {
+		// Drop middle messages progressively, keeping first and last 50
+		while (historyText.length > MAX_CHARS && includedMessages.length > RECENT_COUNT + 1) {
+			// Find a middle message to drop (not first, not in last 50)
+			const dropIndex = Math.floor(includedMessages.length / 2);
+			if (dropIndex <= 0 || dropIndex >= includedMessages.length - RECENT_COUNT) {
+				// Can't drop more without losing first or recent
+				break;
+			}
+			includedMessages.splice(dropIndex, 1);
+			historyText = buildHistoryFromMessages(includedMessages);
+		}
+	}
+
+	return historyText;
+}
+
+/**
+ * Helper to build history text from a list of messages.
+ * Tool results are truncated to first line / 200 chars.
+ */
+function buildHistoryFromMessages(messages: Context["messages"][0][]): string {
+	const TOOL_RESULT_TRUNCATE = 200;
+	const lines: string[] = [];
+
+	for (const msg of messages) {
+		if (msg.role === "user") {
+			const text = typeof msg.content === "string" ? msg.content : extractTextFromContent(msg.content);
+			lines.push(`User: ${text}`);
+		} else if (msg.role === "assistant") {
+			// Check if this message contains tool calls
+			const textContent = Array.isArray(msg.content)
+				? msg.content
+					.filter((c) => c.type === "text")
+					.map((c) => c.text)
+					.join(" ")
+				: "";
+
+			const toolCalls = Array.isArray(msg.content)
+				? msg.content.filter((c) => c.type === "toolCall")
+				: [];
+
+			if (toolCalls.length > 0) {
+				for (const toolCall of toolCalls) {
+					if (toolCall.type === "toolCall") {
+						lines.push(`Assistant: [Calling tool: ${toolCall.name}]`);
+						lines.push(`TOOL_CALL_START${JSON.stringify({ name: toolCall.name, arguments: toolCall.arguments })}TOOL_CALL_END`);
+					}
+				}
+			}
+
+			if (textContent.trim()) {
+				lines.push(`Assistant: ${textContent}`);
+			}
+		} else if (msg.role === "toolResult") {
+			const text = Array.isArray(msg.content)
+				? msg.content.filter((c) => c.type === "text").map((c) => c.text).join(" ")
+				: "";
+			// Truncate tool results to first line / 200 chars
+			const truncated = text.length > TOOL_RESULT_TRUNCATE ? text.substring(0, TOOL_RESULT_TRUNCATE) + "..." : text;
+			const firstLine = truncated.split("\n")[0] || "(no output)";
+			lines.push(`Tool Result [${msg.toolName}]: ${firstLine || "(no output)"}`);
 		}
 	}
 
@@ -1360,6 +1501,19 @@ Summary:`;
 				if (!line.trim()) continue;
 				try {
 					const parsed = JSON.parse(line);
+					// Check for API key auth issues
+					if (parsed.type === "system" && parsed.apiKeySource === "none") {
+						reject(new Error("Claude API authentication failed (no API key found). Check your Anthropic credentials."));
+						return;
+					}
+					// Check for rate limit events
+					if (parsed.type === "rate_limit_event" && parsed.rate_limit_info?.status === "rejected") {
+						const info = parsed.rate_limit_info;
+						const resetsAt = info.resetsAt ? new Date(info.resetsAt * 1000).toLocaleTimeString() : 'unknown';
+						const reason = info.overageDisabledReason || info.rateLimitType || 'rate limit exceeded';
+						reject(new Error(`Claude API rate limited (${reason}). Resets at ${resetsAt}`));
+						return;
+					}
 					// Handle result event (fallback when no assistant content streamed)
 					if (parsed.type === "result" && parsed.result) {
 						summary = parsed.result;
@@ -1440,9 +1594,10 @@ export default function (pi: ExtensionAPI) {
 
 				// Get system prompt from context
 				const systemPrompt = ctx.getSystemPrompt();
-				const convIdentity = getConversationIdentityFromMessages(messages, systemPrompt);
-				const previousSummary = compactionStates.get(convIdentity)?.summary || undefined;			// Build conversation history
-			const conversationHistory = buildConversationHistory(messages, previousSummary);
+				const convIdentity = getConversationIdentityFromMessages(messages, systemPrompt);			const previousSummary = compactionStates.get(convIdentity)?.summary || undefined;
+
+			// Build filtered conversation history for compaction
+			const conversationHistory = buildFilteredConversationHistory(messages, previousSummary);
 			console.error("[cc-compact] conversationHistory length:", conversationHistory.length);
 
 				if (!conversationHistory.trim()) {
@@ -1456,6 +1611,14 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
+			// Warn if conversation is very large
+			if (conversationHistory.length > 100000) {
+				ctx.ui.notify(
+					`Large conversation (${(conversationHistory.length / 1000).toFixed(0)}k chars) - compacting last 100k chars`,
+					"warning",
+				);
+			}
+
 				// Compact the conversation
 				await compactConversationWithHistory(conversationHistory, convIdentity, model);
 
@@ -1463,7 +1626,13 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.notify(`Conversation compacted successfully`, "info");
 			} catch (error) {
 				const msg = error instanceof Error ? error.message : "Unknown error";
-				ctx.ui.notify(`Compaction error: ${msg}`, "error");
+				if (msg.includes('rate limited')) {
+					ctx.ui.notify(`Rate limit: ${msg}. Try a different model or wait.`, "warning");
+				} else if (msg.includes('authentication failed') || msg.includes('API key')) {
+					ctx.ui.notify(`Auth error: ${msg}`, "error");
+				} else {
+					ctx.ui.notify(`Compaction error: ${msg}`, "error");
+				}
 			}
 		},
 	});
