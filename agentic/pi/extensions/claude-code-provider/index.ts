@@ -346,12 +346,6 @@ function buildConversationHistory(messages: Context["messages"], compactedSummar
 /**
  * Get the compacted summary for a conversation, if one exists.
  */
-function getCompactedSummary(context: Context): string | null {
-	const identity = getConversationIdentity(context);
-	const state = compactionStates.get(identity);
-	return state?.summary || null;
-}
-
 /**
  * Get the generation counter for a conversation session.
  * Returns 0 if no compaction has occurred.
@@ -1281,104 +1275,12 @@ const compactionStates = new Map<string, CompactionState>();
  * Compact the conversation by asking Claude to summarize it.
  * Called when user types /compact with Claude Code model active.
  */
-async function compactConversation(context: Context, model: Model<Api>): Promise<string | null> {
-	const conversationIdentity = getConversationIdentity(context);
-	// Include previous compaction summary in the history if available
-	const previousSummary = getCompactedSummary(context) || undefined;
-	const conversationHistory = buildConversationHistory(context.messages, previousSummary);
 
-	if (!conversationHistory.trim()) {
-		return null;
-	}
-
-	const prompt = `Please summarize the following conversation into a concise "activation prompt" that captures the key context, decisions, code changes, and any important details. The summary should be brief but preserve essential information so the conversation can continue effectively. Format as a single paragraph or bullet points.
-
-Conversation:
-${conversationHistory}
-
-Summary:`;
-
-	const args = [
-		"-p",
-		prompt,
-		"--dangerously-skip-permissions",
-		"--output-format", "stream-json",
-		"--verbose",
-		"--include-partial-messages",
-		"--tools", "",
-	];
-
-	if (model.id) args.push("--model", model.id);
-
-	return new Promise((resolve) => {
-		const proc = spawn("claude", args, {
-			cwd: process.cwd(),
-			env: process.env,
-			stdio: ["ignore", "pipe", "pipe"],
-		});
-
-		let summary = "";
-		let timedOut = false;
-
-		proc.stdout.on("data", (data: Buffer) => {
-			const lines = data.toString().split("\n");
-			for (const line of lines) {
-				if (!line.trim()) continue;
-				try {
-					const parsed = JSON.parse(line);
-					if (parsed.type === "content_block_delta" && parsed.delta?.text) {
-						summary += parsed.delta.text;
-					}
-					// Also handle assistant records
-					if (parsed.type === "assistant" && parsed.message?.content) {
-						const content = parsed.message.content as Array<{ type: string; text?: string }> | undefined;
-						if (Array.isArray(content)) {
-							summary += content
-								.filter((b): b is { type: "text"; text: string } => b.type === "text" && typeof b.text === "string")
-								.map((b) => b.text)
-								.join("");
-						}
-					}
-				} catch {
-					// Ignore parse errors
-				}
-			}
-		});
-
-		const timeout = setTimeout(() => {
-			timedOut = true;
-			proc.kill();
-			resolve(null);
-		}, 30000);
-
-		proc.on("close", (code) => {
-			clearTimeout(timeout);
-			if (timedOut) {
-				resolve(null);
-			} else if (code === 0 && summary.trim()) {
-				// Store compaction state with incremented generation
-				const existingState = compactionStates.get(conversationIdentity);
-				const newGeneration = (existingState?.generation || 0) + 1;
-				const cwd = process.cwd();
-				// Generate new session ID for post-compaction turns
-				const postCompactionSessionId = generateSessionUUID(conversationIdentity, cwd, newGeneration);
-				compactionStates.set(conversationIdentity, {
-					summary: summary.trim(),
-					generation: newGeneration,
-					postCompactionSessionId,
-				});
-				resolve(summary.trim());
-			} else {
-				resolve(null);
-			}
-		});
-	});
-}
 
 /**
  * Get conversation identity from messages array (for use in input handler where we don't have Context).
  */
-function getConversationIdentityFromMessages(messages: Context["messages"]): string {
+function getConversationIdentityFromMessages(messages: Context["messages"], systemPrompt?: string): string {
 	const firstUser = messages.find((msg) => msg.role === "user");
 	if (!firstUser) {
 		return `empty:${process.pid}:${Date.now()}`;
@@ -1389,7 +1291,7 @@ function getConversationIdentityFromMessages(messages: Context["messages"]): str
 		: extractTextFromContent(firstUser.content);
 	const contentHash = createHash("sha256")
 		.update(content)
-		.update("") // No system prompt available in input handler
+		.update(systemPrompt || "")
 		.digest("hex")
 		.slice(0, 16);
 
@@ -1417,8 +1319,6 @@ ${conversationHistory}
 Summary:`;
 
 	const args = [
-		"-p",
-		prompt,
 		"--dangerously-skip-permissions",
 		"--output-format", "stream-json",
 		"--verbose",
@@ -1432,7 +1332,16 @@ Summary:`;
 		const proc = spawn("claude", args, {
 			cwd: process.cwd(),
 			env: process.env,
-			stdio: ["ignore", "pipe", "pipe"],
+			stdio: ["pipe", "pipe", "pipe"],
+		});
+
+		// Write prompt to stdin to avoid E2BIG (Argument list too long) errors
+		proc.stdin.write(prompt);
+		proc.stdin.end();
+
+		// Handle stdin errors gracefully
+		proc.stdin.on("error", () => {
+			// Silently ignore stdin errors - process will fail and be handled below
 		});
 
 		let summary = "";
@@ -1494,20 +1403,21 @@ Summary:`;
 }
 
 export default function (pi: ExtensionAPI) {
-	// Handle /cc-compact in the input handler using ctx.sessionManager.getEntries()
-	// to get conversation history. This allows us to compact before the message
-	// reaches the provider stream.
-	pi.on("input", async (event, ctx) => {
-		if (event.text === "/cc-compact") {
+	// Register /cc-compact as a proper command so it shows in autocomplete dropdown
+	pi.registerCommand("cc-compact", {
+		description: "Compact Claude Code conversation context",
+		async handler(_args, ctx) {
 			try {
 				// Get conversation history from session entries
-				const entries = ctx.sessionManager.getEntries();
+				// Get conversation messages from session branch
+				const entries = ctx.sessionManager.getBranch();
 				const messages = entries
 					.filter((e): e is SessionMessageEntry => e.type === "message")
-					.map((e) => e.message);
+					.map((e) => e.message) as Context["messages"];
 
-				// Get previous compaction summary if available
-				const convIdentity = getConversationIdentityFromMessages(messages);
+				// Get system prompt from context
+				const systemPrompt = ctx.getSystemPrompt();
+				const convIdentity = getConversationIdentityFromMessages(messages, systemPrompt);
 				const previousSummary = compactionStates.get(convIdentity)?.summary || undefined;
 
 				// Build conversation history
@@ -1515,18 +1425,22 @@ export default function (pi: ExtensionAPI) {
 
 				if (!conversationHistory.trim()) {
 					ctx.ui.notify("No conversation to compact", "info");
-					return { action: "handled" };
+					return;
 				}
 
 				// Get current model from context
 				const model = ctx.model;
+				if (!model) {
+					ctx.ui.notify("No model selected", "error");
+					return;
+				}
 
 				// Compact the conversation
 				const summary = await compactConversationWithHistory(conversationHistory, convIdentity, model);
 
 				if (summary) {
 					// Compaction succeeded - state is stored in compactConversationWithHistory
-					ctx.ui.notify(`Conversation compacted successfully`, "success");
+					ctx.ui.notify(`Conversation compacted successfully`, "info");
 				} else {
 					ctx.ui.notify("Compaction failed or timed out. Try again with a shorter conversation.", "error");
 				}
@@ -1534,9 +1448,7 @@ export default function (pi: ExtensionAPI) {
 				const errorMsg = error instanceof Error ? error.message : "Unknown error";
 				ctx.ui.notify(`Compaction error: ${errorMsg}`, "error");
 			}
-			return { action: "handled" };
-		}
-		return undefined;
+		},
 	});
 
 	pi.registerProvider("claude-code", {
