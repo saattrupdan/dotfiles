@@ -948,6 +948,80 @@ function streamClaudeCode(
 		};
 
 		try {
+			// Check if the latest user message is a slash command
+			const latestUserMessage = context.messages.filter((m) => m.role === "user").pop();
+			const latestUserText =
+				latestUserMessage && typeof latestUserMessage.content === "string"
+					? latestUserMessage.content
+					: latestUserMessage && Array.isArray(latestUserMessage.content)
+						? latestUserMessage.content.filter((c) => c.type === "text").map((c) => c.text).join(" ")
+						: "";
+
+			// If the message is a slash command, forward it directly to Claude Code CLI
+			if (latestUserText.startsWith("/")) {
+				const conversationIdentity = getConversationIdentity(context);
+				const sessionId = generateSessionUUID(conversationIdentity, process.cwd());
+				const releaseMutex = await acquireSessionMutex(sessionId);
+
+				try {
+					// Build CLI arguments for slash command - just pass the command as-is
+					const slashCommandArgs: string[] = [
+						"-p",
+						latestUserText,
+						"--dangerously-skip-permissions",
+						"--output-format",
+						"stream-json",
+						"--verbose",
+						"--include-partial-messages",
+						"--tools",
+						"",
+					];
+
+					if (model.id) {
+						slashCommandArgs.push("--model", model.id);
+					}
+
+					// Use the same retry logic as normal messages (--resume first, then --session-id)
+					const firstAttemptResult = await runClaudeInvocation(
+						slashCommandArgs,
+						{ kind: "resume", sessionId },
+						stream,
+						output,
+						options,
+					);
+
+					if (!firstAttemptResult.success && firstAttemptResult.error) {
+						const errorMsg = firstAttemptResult.error.message;
+						const isNoConversation = errorMsg.includes("No conversation found");
+						const isAlreadyInUse = errorMsg.includes("already in use");
+
+						if ((isNoConversation || isAlreadyInUse) && !firstAttemptResult.emittedAny) {
+							const retryResult = await runClaudeInvocation(
+								slashCommandArgs,
+								{ kind: "session-id", sessionId },
+								stream,
+								output,
+								options,
+							);
+							if (!retryResult.success && retryResult.error) {
+								throw retryResult.error;
+							}
+						} else {
+							throw firstAttemptResult.error;
+						}
+					}
+
+					// Emit completion
+					if (!output.stopReason || output.stopReason === "stop") {
+						stream.push({ type: "done", reason: output.stopReason as "stop" | "length" | "toolUse", message: output });
+					}
+					stream.end();
+				} finally {
+					releaseMutex();
+				}
+				return;
+			}
+
 			const conversationIdentity = getConversationIdentity(context);
 			const sessionId = generateSessionUUID(conversationIdentity, process.cwd());
 

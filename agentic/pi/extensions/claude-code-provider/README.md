@@ -185,6 +185,11 @@ records with `is_error` are surfaced as errors rather than normal assistant mess
 - Continuity is limited to turns Claude Code has already handled for the derived
   session ID
 
+### Slash Commands
+
+Slash commands (e.g. `/compact`, `/new`) starting with `/` are forwarded directly to Claude Code CLI.
+This allows you to use Claude Code's native commands when using a `claude-code` model in Pi.
+
 ## Requirements
 
 - Claude Code CLI installed (`npm install -g @anthropic-ai/claude-code` or via Homebrew)
