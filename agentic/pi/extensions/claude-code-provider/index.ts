@@ -1190,42 +1190,130 @@ function streamClaudeCode(
 }
 
 /**
+ * Spawn Claude Code CLI to execute a slash command and display output.
+ * Used for /compact, /new, etc. when Claude Code model is active.
+ */
+async function runClaudeCommand(ctx: { hasUI: boolean; model?: { provider?: string; api?: string; id?: string }; ui?: { setWorkingMessage?: (msg?: string) => void; notify?: (msg: string, type?: string) => void } }, command: string): Promise<boolean> {
+	if (!ctx.hasUI) return false;
+
+	const model = ctx.model;
+	if (!model || (model.provider !== "claude-code" && model.api !== CLAUDE_CODE_API)) {
+		return false;
+	}
+
+	return new Promise((resolve) => {
+		ctx.ui.setWorkingMessage?.(`Running /${command}...`);
+
+		const args = [
+			"--dangerously-skip-permissions",
+			"--tools", "",
+		];
+		if (model.id) args.push("--model", model.id);
+
+		const proc = spawn("claude", args, {
+			cwd: process.cwd(),
+			env: process.env,
+			stdio: ["pipe", "pipe", "pipe"],
+		});
+
+		let responded = false;
+
+		proc.stdout.on("data", (data: Buffer) => {
+			const text = data.toString();
+			// Look for the command prompt or response
+			if (text.includes(">") || text.trim()) {
+				ctx.ui.notify?.(text.trim(), "info");
+			}
+		});
+
+		proc.stderr.on("data", (data: Buffer) => {
+			const text = data.toString();
+			if (!text.includes("Warning:")) {
+				ctx.ui.notify?.(text.trim(), "error");
+			}
+		});
+
+		// Send the command
+		proc.stdin.write(`/${command}\n`);
+		proc.stdin.end();
+
+		proc.on("close", (code: number) => {
+			ctx.ui.setWorkingMessage?.(undefined);
+			if (code !== 0 && code !== null) {
+				ctx.ui.notify?.(`/${command} exited with code ${code}`, "warning");
+			}
+			responded = true;
+			resolve(true);
+		});
+
+		// Timeout after 10 seconds
+		setTimeout(() => {
+			if (!responded) {
+				proc.kill();
+				ctx.ui.setWorkingMessage?.(undefined);
+				ctx.ui.notify?.(`/${command} timed out - use Claude Code CLI directly`, "warning");
+				resolve(false);
+			}
+		}, 10000);
+	});
+}
+
+/**
+ * Intercept /compact and /new before Pi processes them.
+ * This runs on the input event which fires before command handling.
+ */
+function registerInputInterceptor(pi: ExtensionAPI) {
+	pi.on("input", async (event, ctx) => {
+		// Only intercept when Claude Code model is active
+		if (ctx.model?.provider !== "claude-code" && ctx.model?.api !== CLAUDE_CODE_API) {
+			return { action: "continue" };
+		}
+
+		const text = event.text?.trim();
+		if (!text) return { action: "continue" };
+
+		// Check for /compact or /new exactly (not just starting with)
+		if (text === "/compact") {
+			await runClaudeCommand(ctx, "compact");
+			return { action: "ignore" }; // Don't process this input further
+		}
+
+		if (text === "/new") {
+			await runClaudeCommand(ctx, "new");
+			return { action: "ignore" };
+		}
+
+		return { action: "continue" };
+	});
+}
+
+/**
  * Register alternate commands for Claude Code operations.
- * These use cc- prefix to avoid conflict with Pi's built-in /compact and /new.
+ * These use cc- prefix as fallback.
  */
 function registerClaudeCodeCommands(pi: ExtensionAPI) {
 	pi.registerCommand("cc-compact", {
-		description: "Compact the Claude Code conversation (requires claude-code model)",
+		description: "Compact Claude Code conversation",
 		async handler(_args, ctx) {
 			if (!ctx.hasUI) return;
-			const model = (ctx as any).model;
-			if (!model || (model.provider !== "claude-code" && model.api !== CLAUDE_CODE_API)) {
-				ctx.ui.notify?.("/cc-compact requires a claude-code model", "error");
-				return;
-			}
-			ctx.ui.notify?.("Claude Code /compact - use chat interface or check Claude Code session separately", "info");
-			// Note: We cannot directly execute Claude Code commands from extension command handlers
-			// because: (1) no suitable UI API for streaming, (2) session context differs from model streams
-			// Users should use the main chat with a claude-code model for slash commands.
+			await runClaudeCommand(ctx, "compact");
 		},
 	});
 
 	pi.registerCommand("cc-new", {
-		description: "Start new Claude Code session (requires claude-code model)",
+		description: "Start new Claude Code session",
 		async handler(_args, ctx) {
 			if (!ctx.hasUI) return;
-			const model = (ctx as any).model;
-			if (!model || (model.provider !== "claude-code" && model.api !== CLAUDE_CODE_API)) {
-				ctx.ui.notify?.("/cc-new requires a claude-code model", "error");
-				return;
-			}
-			ctx.ui.notify?.("Claude Code /new - use chat interface or check Claude Code session separately", "info");
+			await runClaudeCommand(ctx, "new");
 		},
 	});
 }
 
 export default function (pi: ExtensionAPI) {
-	// Register alternate command names for Claude Code operations
+	// Intercept /compact and /new before Pi processes them (only for Claude Code models)
+	registerInputInterceptor(pi);
+
+	// Register cc-compact and cc-new as fallback commands
 	registerClaudeCodeCommands(pi);
 
 	pi.registerProvider("claude-code", {
