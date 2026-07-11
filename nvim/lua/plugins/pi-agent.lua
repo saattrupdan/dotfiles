@@ -1,5 +1,6 @@
 return {
-  "saattrupdan/pi-agent.nvim",
+  -- Local fork of pi-agent.nvim with fix for split pane session discovery race condition
+  "nvim/lua/pi-agent",
   config = function()
     -- Pi session warning behavior: pi-agent.nvim generates a fresh unique session ID
     -- for every new pi-agent session/pane in Neovim (format: nvim-{timestamp}-{hrtime}-{counter}-{random}),
