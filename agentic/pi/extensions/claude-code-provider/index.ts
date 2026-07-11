@@ -1319,6 +1319,7 @@ ${conversationHistory}
 Summary:`;
 
 	const args = [
+		"-p",
 		"--dangerously-skip-permissions",
 		"--output-format", "stream-json",
 		"--verbose",
@@ -1353,10 +1354,11 @@ Summary:`;
 				if (!line.trim()) continue;
 				try {
 					const parsed = JSON.parse(line);
-					if (parsed.type === "content_block_delta" && parsed.delta?.text) {
-						summary += parsed.delta.text;
+					// Handle result event (fallback when no assistant content streamed)
+					if (parsed.type === "result" && parsed.result) {
+						summary = parsed.result;
 					}
-					// Also handle assistant records
+					// Handle assistant records
 					if (parsed.type === "assistant" && parsed.message?.content) {
 						const content = parsed.message.content as Array<{ type: string; text?: string }> | undefined;
 						if (Array.isArray(content)) {
