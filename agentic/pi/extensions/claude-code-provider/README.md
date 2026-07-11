@@ -187,13 +187,32 @@ records with `is_error` are surfaced as errors rather than normal assistant mess
 
 ### Slash Commands
 
-The provider detects user messages that are slash commands (e.g. `/help`, `/editor`, `/compact`) and forwards them to Claude Code CLI.
-The detection uses a regex that matches `/command` patterns (starting with `/` followed by letters) and avoids matching absolute paths.
+The provider automatically forwards slash commands to Claude Code CLI when using a `claude-code` model.
 
-When Claude Code executes a slash command, it may emit `type: "assistant"` stream records. The provider extracts text from these records and displays them in Pi.
+**How it works:**
+- Messages starting with `/command` (like `/help`, `/editor`, `/plan`) are detected and sent to Claude Code
+- The detection regex avoids matching absolute paths like `/tmp/foo` or `/Users/...`
+- Claude Code's response (including `type: "assistant"` records) is extracted and displayed in Pi
 
-**Note:** Pi's built-in slash commands (`/compact`, `/new`, `/model`, etc.) are intercepted by Pi's TUI before reaching the provider.
-Only Claude Code commands that Pi doesn't recognize as built-in commands will be forwarded to Claude Code.
+**Limitation with `/compact` and `/new`:**
+
+Pi's built-in slash commands (`/compact`, `/new`, `/model`, etc.) are intercepted by Pi's TUI **before** reaching the provider. This means:
+- `/compact` in Pi will compact Pi's session, not Claude Code's
+- `/new` in Pi will start a new Pi session, not a Claude Code session
+
+**Workarounds:**
+
+To use Claude Code's native `/compact` and `/new`:
+1. Use the **claude-code-cli directly** in a separate terminal: `claude --session-id <id>` then type `/compact`
+2. Use other Claude Code commands that Pi doesn't intercept (like `/help`, `/editor`, `/plan`, `/context`)
+3. Manage Claude Code sessions through the `~/.claude/` directory
+
+**Commands that DO work with forwarding:**
+- `/help` - Claude Code help
+- `/editor` - Open editor
+- `/plan` - Planning mode
+- `/context` - Show context usage
+- Any other Claude Code command Pi doesn't recognize
 
 ## Requirements
 
