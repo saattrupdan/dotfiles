@@ -86,7 +86,7 @@ explicitly consented.
 | Non-trivial implementation / bug fix     | `planner` → parallel `builder` → `reviewer` |
 | Feature / tests needing a plan           | `planner` → parallel `builder` → `reviewer` |
 | Investigate bug (diagnose only)          | `planner` → `explorer`(s)                   |
-| "Where is X?" / "What does Y do?"         | `explorer`                                  |
+| "Where is X?" / "What does Y do?"        | `explorer`                                  |
 | Look something up online                 | `explorer`                                  |
 | Review a recently-pushed change          | `reviewer`                                  |
 
