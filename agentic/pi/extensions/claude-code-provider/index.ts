@@ -1317,6 +1317,7 @@ Conversation:
 ${conversationHistory}
 
 Summary:`;
+	console.error("[cc-compact] spawning claude with stdin length:", prompt.length);
 
 	const args = [
 		"-p",
@@ -1387,6 +1388,7 @@ Summary:`;
 
 		proc.on("close", (code) => {
 			clearTimeout(timeout);
+			console.error("[cc-compact] summary:", summary.substring(0, 100), "code:", code, "timedOut:", timedOut);
 			if (timedOut) {
 				if (stderr.trim()) console.error("Claude compaction timed out, stderr:", stderr);
 				resolve(null);
@@ -1416,33 +1418,32 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("cc-compact", {
 		description: "Compact Claude Code conversation context",
 		async handler(_args, ctx) {
-			try {
-				// Get conversation history from session entries
-				// Get conversation messages from session branch
-				const entries = ctx.sessionManager.getBranch();
-				const messages = entries
-					.filter((e): e is SessionMessageEntry => e.type === "message")
-					.map((e) => e.message) as Context["messages"];
+			try {			// Get conversation history from session entries
+			// Get conversation messages from session branch
+			const entries = ctx.sessionManager.getBranch();
+			console.error("[cc-compact] entries count:", entries.length);
+			const messages = entries
+				.filter((e): e is SessionMessageEntry => e.type === "message")
+				.map((e) => e.message) as Context["messages"];
+			console.error("[cc-compact] messages count:", messages.length);
 
 				// Get system prompt from context
 				const systemPrompt = ctx.getSystemPrompt();
 				const convIdentity = getConversationIdentityFromMessages(messages, systemPrompt);
-				const previousSummary = compactionStates.get(convIdentity)?.summary || undefined;
-
-				// Build conversation history
-				const conversationHistory = buildConversationHistory(messages, previousSummary);
+				const previousSummary = compactionStates.get(convIdentity)?.summary || undefined;			// Build conversation history
+			const conversationHistory = buildConversationHistory(messages, previousSummary);
+			console.error("[cc-compact] conversationHistory length:", conversationHistory.length);
 
 				if (!conversationHistory.trim()) {
 					ctx.ui.notify("No conversation to compact", "info");
 					return;
-				}
-
-				// Get current model from context
-				const model = ctx.model;
-				if (!model) {
-					ctx.ui.notify("No model selected", "error");
-					return;
-				}
+				}			// Get current model from context
+			const model = ctx.model;
+			console.error("[cc-compact] model:", ctx.model);
+			if (!model) {
+				ctx.ui.notify("No model selected", "error");
+				return;
+			}
 
 				// Compact the conversation
 				const summary = await compactConversationWithHistory(conversationHistory, convIdentity, model);
