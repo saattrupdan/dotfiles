@@ -23,8 +23,8 @@
  *   manager is available here.
  * - Session ID is keyed to the first user message timestamp/content plus cwd (used for mutex only).
  * - Per-session mutex queue serialises concurrent calls sharing the same session ID.
- * - **Full Pi conversation history is sent each turn** — this includes tool calls and results,
- *   so Claude Code sees the complete conversation state even though its own tools are disabled.
+ * - **Only the latest user message is sent via `-p`** — Claude Code's native session
+ *   management via `--resume` maintains conversation history.
  * - Session ID is used for mutex coordination; actual context comes from `context.messages`.
  *
  * Tool calling:
@@ -274,7 +274,13 @@ function parseJsonlLine(line: string): unknown | null {
  * Formats messages for Claude Code to understand Pi tool calls and results.
  */
 function buildConversationHistory(messages: Context["messages"]): string {
+	const summary = context ? getCompactedSummary(context) : null;
 	const lines: string[] = [];
+
+	// Prepend compacted summary if it exists - this provides condensed conversation history
+	if (summary) {
+		lines.push(`[Conversation Summary - Previous Context]\n${summary}\n`);
+	}
 
 	for (const msg of messages) {
 		if (msg.role === "user") {
@@ -321,7 +327,15 @@ function buildConversationHistory(messages: Context["messages"]): string {
  * Claude Code's --tools "" disables its built-in tools, so we need to describe Pi's tools
  * in the system prompt for the model to know what tools it can call.
  */
-function buildSystemPromptWithTools(basePrompt: string | undefined, tools: Tool[] | undefined): string {
+/**
+ * Get the compacted summary for a conversation, if one exists.
+ */
+function getCompactedSummary(context: Context): string | null {
+	const identity = getConversationIdentity(context);
+	return compactedSummaries.get(identity) || null;
+}
+
+function buildSystemPromptWithTools(basePrompt: string | undefined, tools: Tool[] | undefined, context?: Context): string {
 	const sections: string[] = [];
 
 	// Base system prompt (Pi's SYSTEM.md content)
@@ -995,6 +1009,27 @@ function streamClaudeCode(
 						? latestUserMessage.content.filter((c) => c.type === "text").map((c) => c.text).join(" ")
 						: "";
 
+			// Handle /compact specially - summarize the conversation instead of forwarding to Claude
+			if (latestUserText === "/compact") {
+				const summary = await compactConversation(context, model);
+				if (summary) {
+					const conversationIdentity = getConversationIdentity(context);
+					compactedSummaries.set(conversationIdentity, summary);
+					if (!state.started) {
+						stream.push({ type: "start", partial: output });
+					}
+					const piIndex = output.content.length;
+					output.content.push({ type: "text", text: summary });
+					stream.push({ type: "text_start", contentIndex: piIndex, partial: output });
+					stream.push({ type: "text_delta", contentIndex: piIndex, delta: summary, partial: output });
+					stream.push({ type: "text_end", contentIndex: piIndex, content: summary, partial: output });
+					stream.push({ type: "done", reason: "stop", message: output });
+					stream.end();
+					return;
+				}
+				// If compaction failed, fall through to notify user
+			}
+
 			// If the message is a slash command (starts with / followed by a word character), forward it to Claude Code CLI
 			// Avoid matching absolute paths like /tmp/foo or /Users/... by requiring the command to be followed by whitespace, colon, or end
 			if (/^\/[A-Za-z][\w:-]*(?:\s|$)/.test(latestUserText)) {
@@ -1083,14 +1118,11 @@ function streamClaudeCode(
 			const releaseMutex = await acquireSessionMutex(sessionId);
 
 			try {
-				// Build full conversation history including tool results
-				// This is required because Pi tool call results aren't visible to Claude Code's session
-				const conversationHistory = buildConversationHistory(context.messages);
-
 				// Build base CLI arguments (session flag added per-attempt)
+				// Send only the latest message via -p; Claude Code maintains session history natively via --resume
 				const baseArgs: string[] = [
 					"-p",
-					conversationHistory,
+					latestUserText,
 					"--dangerously-skip-permissions",
 					"--output-format",
 					"stream-json",
@@ -1105,7 +1137,7 @@ function streamClaudeCode(
 				}
 
 				// Build system prompt: base prompt + Pi's tool definitions
-				const systemPrompt = buildSystemPromptWithTools(context.systemPrompt, context.tools);
+				const systemPrompt = buildSystemPromptWithTools(context.systemPrompt, context.tools, context);
 				if (systemPrompt && systemPrompt.trim()) {
 					baseArgs.push("--system-prompt", systemPrompt);
 				}
@@ -1189,7 +1221,117 @@ function streamClaudeCode(
 	return stream;
 }
 
+/**
+ * In-memory storage for compacted conversation summaries per session.
+ * Key: session ID, Value: compacted summary text
+ */
+const compactedSummaries = new Map<string, string>();
+
+/**
+ * Compact the conversation by asking Claude to summarize it.
+ * Called when user types /compact with Claude Code model active.
+ */
+async function compactConversation(context: Context, model: Model<Api>): Promise<string | null> {
+	const conversationHistory = buildConversationHistory(context.messages);
+
+	if (!conversationHistory.trim()) {
+		return null;
+	}
+
+	const prompt = `Please summarize the following conversation into a concise "activation prompt" that captures the key context, decisions, code changes, and any important details. The summary should be brief but preserve essential information so the conversation can continue effectively. Format as a single paragraph or bullet points.
+
+Conversation:
+${conversationHistory}
+
+Summary:`;
+
+	const args = [
+		"-p",
+		prompt,
+		"--dangerously-skip-permissions",
+		"--output-format", "stream-json",
+		"--verbose",
+		"--include-partial-messages",
+		"--tools", "",
+	];
+
+	if (model.id) args.push("--model", model.id);
+
+	return new Promise((resolve) => {
+		const proc = spawn("claude", args, {
+			cwd: process.cwd(),
+			env: process.env,
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+
+		let summary = "";
+		let timedOut = false;
+
+		proc.stdout.on("data", (data: Buffer) => {
+			const lines = data.toString().split("\n");
+			for (const line of lines) {
+				if (!line.trim()) continue;
+				try {
+					const parsed = JSON.parse(line);
+					if (parsed.type === "content_block_delta" && parsed.delta?.text) {
+						summary += parsed.delta.text;
+					}
+					// Also handle assistant records
+					if (parsed.type === "assistant" && parsed.message?.content) {
+						summary += parsed.message.content
+							.filter((b: any) => b.type === "text")
+							.map((b: any) => b.text)
+							.join("");
+					}
+				} catch {
+					// Ignore parse errors
+				}
+			}
+		});
+
+		const timeout = setTimeout(() => {
+			timedOut = true;
+			proc.kill();
+			resolve(null);
+		}, 30000);
+
+		proc.on("close", (code) => {
+			clearTimeout(timeout);
+			if (timedOut) {
+				resolve(null);
+			} else if (code === 0 && summary.trim()) {
+				resolve(summary.trim());
+			} else {
+				resolve(null);
+			}
+		});
+	});
+}
+
 export default function (pi: ExtensionAPI) {
+	// Handle /compact command for Claude Code models
+	pi.on("input", async (event, ctx) => {
+		if (ctx.model?.provider !== "claude-code" && ctx.model?.api !== CLAUDE_CODE_API) {
+			return { action: "continue" };
+		}
+
+		const text = event.text?.trim();
+		if (text === "/compact") {
+			if (!ctx.hasUI) return { action: "continue" };
+
+			ctx.ui.setWorkingMessage?.("Compacting conversation...");
+
+			// Get conversation context from Pi's session
+			// We need to access the actual conversation messages here
+			// This is a limitation - we don't have full context in input handler
+			ctx.ui.notify?.("/compact: Conversation compaction requires model turn. Send a message first, then /compact will summarize the conversation for future context.", "info");
+			ctx.ui.setWorkingMessage?.(undefined);
+			return { action: "ignore" };
+		}
+
+		return { action: "continue" };
+	});
+
 	pi.registerProvider("claude-code", {
 		name: "Claude Code CLI",
 		baseUrl: "cli://claude-code",
