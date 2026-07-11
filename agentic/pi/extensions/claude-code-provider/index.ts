@@ -540,12 +540,25 @@ async function runClaudeInvocation(
 			if (data === null) return;
 
 			// Handle assistant records (emitted by Claude Code for slash commands)
-			// These have type: "assistant" and contain the response text directly
+			// These have type: "assistant" and contain message with content blocks
 			// Reference: https://code.claude.com/docs/en/cli-reference#streaming-output-format
-			const hasType = (d: unknown): d is { type: string } => d && typeof d === "object" && "type" in d;
-			const hasMessage = (d: unknown): d is { message: string } => d && typeof d === "object" && "message" in d && typeof (d as { message: unknown }).message === "string";
-			if (hasType(data) && data.type === "assistant" && hasMessage(data)) {
-				const text = data.message;
+			const isAssistantRecord = (d: unknown): d is { message: { content: Array<{ text: string; type: string }> } } =>
+				d !== null &&
+				typeof d === "object" &&
+				"type" in d &&
+				d.type === "assistant" &&
+				"message" in d &&
+				typeof (d as { message: unknown }).message === "object" &&
+				(d as { message: unknown }).message !== null &&
+				"content" in (d as { message: unknown }).message &&
+				Array.isArray((d as { message: unknown }).message.content);
+
+			if (isAssistantRecord(data)) {
+				// Extract text from content blocks (skip tool_use blocks which are handled separately)
+				const text = data.message.content
+					.filter((block) => block.type === "text")
+					.map((block) => (block as { text: string }).text)
+					.join("");
 				if (!state.started) {
 					state.started = true;
 					state.emittedAny = true;
@@ -982,8 +995,8 @@ function streamClaudeCode(
 						: "";
 
 			// If the message is a slash command (starts with / followed by a word character), forward it to Claude Code CLI
-			// Avoid matching absolute paths like /tmp/foo or /Users/...
-			if (/^\/\w/.test(latestUserText)) {
+			// Avoid matching absolute paths like /tmp/foo or /Users/... by requiring the command to be followed by whitespace, colon, or end
+			if (/^\/[A-Za-z][\w:-]*(?:\s|$)/.test(latestUserText)) {
 				const conversationIdentity = getConversationIdentity(context);
 				const sessionId = generateSessionUUID(conversationIdentity, process.cwd());
 				const releaseMutex = await acquireSessionMutex(sessionId);

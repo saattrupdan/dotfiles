@@ -187,15 +187,13 @@ records with `is_error` are surfaced as errors rather than normal assistant mess
 
 ### Slash Commands
 
-The provider detects user messages starting with `/` followed by a word character (e.g. `/compact`, `/help`) and forwards them to Claude Code CLI.
-This avoids matching absolute paths like `/tmp/foo` or `/Users/...`.
+The provider detects user messages that are slash commands (e.g. `/help`, `/editor`, `/compact`) and forwards them to Claude Code CLI.
+The detection uses a regex that matches `/command` patterns (starting with `/` followed by letters) and avoids matching absolute paths.
+
+When Claude Code executes a slash command, it may emit `type: "assistant"` stream records. The provider extracts text from these records and displays them in Pi.
 
 **Note:** Pi's built-in slash commands (`/compact`, `/new`, `/model`, etc.) are intercepted by Pi's TUI before reaching the provider.
-Only Claude Code commands that Pi doesn't recognize will be forwarded.
-
-To use Claude Code's slash commands with a Claude Code model:
-- Use Claude Code-specific commands that Pi doesn't recognize (e.g. `/help`, `/editor`, `/plan`)
-- Commands like `/compact` and `/new` will still trigger Pi's handlers, not Claude Code's
+Only Claude Code commands that Pi doesn't recognize as built-in commands will be forwarded to Claude Code.
 
 ## Requirements
 
