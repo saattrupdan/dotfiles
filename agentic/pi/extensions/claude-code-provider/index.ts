@@ -378,11 +378,14 @@ function buildSystemPromptWithTools(basePrompt: string | undefined, tools: Tool[
 	parts.push("To call a tool, output: TOOL_CALL_START{\"name\": \"toolName\", \"arguments\": {...}}TOOL_CALL_END");
 	parts.push("");
 
-	// List available tool names
+	// List available tools with parameter schemas
 	if (tools && tools.length > 0) {
 		parts.push("## Available Tools");
 		for (const tool of tools) {
-			parts.push(`- ${tool.name}: ${tool.description || "No description"}`);
+			parts.push(`- **${tool.name}**: ${tool.description || "No description"}`);
+			if (tool.parameters && Object.keys(tool.parameters).length > 0) {
+				parts.push(`  Parameters: ${JSON.stringify(tool.parameters, null, 2)}`);
+			}
 		}
 	}
 
@@ -1060,7 +1063,9 @@ function streamClaudeCode(
 						: latestUserMessage && Array.isArray(latestUserMessage.content)
 							? latestUserMessage.content.filter((c) => c.type === "text").map((c) => c.text).join(" ")
 							: "";
-			}		// Handle /compact specially - summarize the conversation instead of forwarding to Claude
+			}
+
+			// Handle /compact specially - summarize the conversation instead of forwarding to Claude
 			if (inputText === "/compact") {
 				const summary = await compactConversation(context, model);
 				if (summary) {
