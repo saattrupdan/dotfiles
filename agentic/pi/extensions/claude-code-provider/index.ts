@@ -1458,7 +1458,7 @@ Conversation:
 ${conversationHistory}
 
 Summary:`;
-	console.error("[cc-compact] spawning claude with stdin length:", prompt.length);
+
 
 	const args = [
 		"-p",
@@ -1498,15 +1498,9 @@ Summary:`;
 		proc.stdout.on("data", (data: Buffer) => {
 			const lines = data.toString().split("\n");
 			for (const line of lines) {
-				if (!line.trim()) continue;
-				try {
-					const parsed = JSON.parse(line);
-					// Check for API key auth issues
-					if (parsed.type === "system" && parsed.apiKeySource === "none") {
-						reject(new Error("Claude API authentication failed (no API key found). Check your Anthropic credentials."));
-						return;
-					}
-					// Check for rate limit events
+				if (!line.trim()) continue;			try {
+				const parsed = JSON.parse(line);
+				// Check for rate limit events
 					if (parsed.type === "rate_limit_event" && parsed.rate_limit_info?.status === "rejected") {
 						const info = parsed.rate_limit_info;
 						const resetsAt = info.resetsAt ? new Date(info.resetsAt * 1000).toLocaleTimeString() : 'unknown';
@@ -1542,7 +1536,7 @@ Summary:`;
 
 		proc.on("close", (code) => {
 			clearTimeout(timeout);
-			console.error("[cc-compact] summary:", summary.substring(0, 100), "code:", code, "timedOut:", timedOut);
+
 			if (timedOut) {
 				// Already rejected in timeout handler
 			} else if (code === 0 && summary.trim()) {
@@ -1574,7 +1568,6 @@ export default function (pi: ExtensionAPI) {
 			try {
 				// Get conversation messages from session branch
 				const entries = ctx.sessionManager.getBranch();
-				console.error("[cc-compact] entries count:", entries.length);
 				
 				// Check for empty session first
 				if (entries.length === 0) {
@@ -1584,7 +1577,6 @@ export default function (pi: ExtensionAPI) {
 			const messages = entries
 				.filter((e): e is SessionMessageEntry => e.type === "message")
 				.map((e) => e.message) as Context["messages"];
-			console.error("[cc-compact] messages count:", messages.length);
 
 				// Check if we have messages but no actual message content
 				if (messages.length === 0) {
@@ -1598,14 +1590,12 @@ export default function (pi: ExtensionAPI) {
 
 			// Build filtered conversation history for compaction
 			const conversationHistory = buildFilteredConversationHistory(messages, previousSummary);
-			console.error("[cc-compact] conversationHistory length:", conversationHistory.length);
 
 				if (!conversationHistory.trim()) {
 					ctx.ui.notify("No conversation to compact", "info");
 					return;
 				}			// Get current model from context
-			const model = ctx.model;
-			console.error("[cc-compact] model:", ctx.model);
+		const model = ctx.model;
 			if (!model) {
 				ctx.ui.notify("No model selected - are you using a Claude Code model?", "error");
 				return;
