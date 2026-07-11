@@ -1403,33 +1403,9 @@ Summary:`;
 }
 
 export default function (pi: ExtensionAPI) {
-	// Handle /compact command for Claude Code models
-	pi.on("input", async (event, ctx) => {
-		if (ctx.model?.provider !== "claude-code" && ctx.model?.api !== CLAUDE_CODE_API) {
-			return { action: "continue" };
-		}
-
-		const text = event.text?.trim();
-		if (text === "/compact") {
-			if (!ctx.hasUI) return { action: "continue" };
-
-			// Handle compaction directly in the input handler
-			const model = ctx.model;
-			if (!model) return { action: "continue" };
-
-			ctx.ui.notify?.("Compacting conversation...", "info");
-			const summary = await compactConversation(ctx, model);
-			if (summary) {
-				ctx.ui.notify?.(`Conversation compacted. Context preserved in ${summary.length} characters.`, "info");
-			} else {
-				ctx.ui.notify?.("Compaction failed or timed out. Try again with a shorter conversation.", "error");
-			}
-			// Return handled to prevent Pi from processing /compact further
-			return { action: "handled" };
-		}
-
-		return { action: "continue" };
-	});
+	// Note: /compact is handled in streamClaudeCode where we have proper Context with messages.
+	// The input handler does not have access to conversation history, so compaction must
+	// happen in the streaming layer.
 
 	pi.registerProvider("claude-code", {
 		name: "Claude Code CLI",
