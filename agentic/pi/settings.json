@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.80.3",
+  "lastChangelogVersion": "0.80.6",
   "defaultProvider": "claude-code",
   "defaultModel": "claude-sonnet-5",
   "defaultThinkingLevel": "high",
