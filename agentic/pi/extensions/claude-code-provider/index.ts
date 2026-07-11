@@ -542,7 +542,7 @@ async function runClaudeInvocation(
 			// Handle assistant records (emitted by Claude Code for slash commands)
 			// These have type: "assistant" and contain message with content blocks
 			// Reference: https://code.claude.com/docs/en/cli-reference#streaming-output-format
-			const isAssistantRecord = (d: unknown): d is { message: { content: Array<{ text: string; type: string }> } } => {
+			const isAssistantRecord = (d: unknown): d is { message: { content: Array<{ type: string; text?: string }> } } => {
 				if (d === null || typeof d !== "object") return false;
 				const obj = d as Record<string, unknown>;
 				if (obj.type !== "assistant") return false;
@@ -557,8 +557,8 @@ async function runClaudeInvocation(
 			if (isAssistantRecord(data)) {
 				// Extract text from content blocks (skip tool_use blocks which are handled separately)
 				const text = data.message.content
-					.filter((block) => block.type === "text")
-					.map((block) => (block as { text: string }).text)
+					.filter((block): block is { type: "text"; text: string } => block.type === "text" && typeof (block as { text?: unknown }).text === "string")
+					.map((block) => block.text)
 					.join("");
 				if (!state.started) {
 					state.started = true;
