@@ -1189,113 +1189,44 @@ function streamClaudeCode(
 	return stream;
 }
 
-/** Execute a Claude Code slash command and display output */
-async function executeClaudeCommand(pi: ExtensionAPI, ctx: { model?: { provider?: string; api?: string; id?: string }; hasUI: boolean; ui: { notify?: (msg: string, type?: string) => void; setWorkingMessage?: (msg?: string) => void; appendMessage?: (text: string) => void } }, command: string): Promise<void> {
-	if (!ctx.hasUI) return;
-
-	const model = ctx.model;
-	if (!model || (model.provider !== "claude-code" && model.api !== CLAUDE_CODE_API)) {
-		ctx.ui.notify?.(`/${command} only works with Claude Code models`, "error");
-		return;
-	}
-
-	const sessionId = generateSessionUUID(getConversationIdentity(ctx), process.cwd());
-	const releaseMutex = await acquireSessionMutex(sessionId);
-
-	try {
-		const args = [
-			"-p",
-			`/${command}`,
-			"--dangerously-skip-permissions",
-			"--output-format",
-			"stream-json",
-			"--verbose",
-			"--include-partial-messages",
-			"--tools",
-			"",
-			"--model",
-			model.id,
-		];
-
-		ctx.ui.setWorkingMessage(`Running /${command}...`);
-
-		const claude = spawn("claude", args, {
-			cwd: process.cwd(),
-			env: process.env,
-			stdio: ["ignore", "pipe", "pipe"],
-		});
-
-		claude.stdout.on("data", (data: Buffer) => {
-			const lines = data.toString().split("\n");
-			for (const line of lines) {
-				if (!line.trim()) continue;
-				try {
-					const parsed: { type?: string; message?: { content?: Array<{ type?: string; text?: string }> }; event?: { delta?: { text?: string } } } = JSON.parse(line);
-					// Handle type: "assistant" records
-					if (parsed.type === "assistant" && parsed.message?.content) {
-						const text = parsed.message.content
-							.filter((b) => b.type === "text" && typeof b.text === "string")
-							.map((b) => b.text!)
-							.join("");
-						if (text) {
-							ctx.ui.appendMessage?.(text);
-						}
-					}
-					// Handle stream_event with text_delta
-					if (parsed.type === "stream_event" && parsed.event?.delta?.text) {
-						ctx.ui.appendMessage?.(parsed.event.delta.text);
-					}
-				} catch {
-					// Ignore JSON parse errors for incomplete lines
-				}
+/**
+ * Register alternate commands for Claude Code operations.
+ * These use cc- prefix to avoid conflict with Pi's built-in /compact and /new.
+ */
+function registerClaudeCodeCommands(pi: ExtensionAPI) {
+	pi.registerCommand("cc-compact", {
+		description: "Compact the Claude Code conversation (requires claude-code model)",
+		async handler(_args, ctx) {
+			if (!ctx.hasUI) return;
+			const model = (ctx as any).model;
+			if (!model || (model.provider !== "claude-code" && model.api !== CLAUDE_CODE_API)) {
+				ctx.ui.notify?.("/cc-compact requires a claude-code model", "error");
+				return;
 			}
-		});
+			ctx.ui.notify?.("Claude Code /compact - use chat interface or check Claude Code session separately", "info");
+			// Note: We cannot directly execute Claude Code commands from extension command handlers
+			// because: (1) no suitable UI API for streaming, (2) session context differs from model streams
+			// Users should use the main chat with a claude-code model for slash commands.
+		},
+	});
 
-		claude.stderr.on("data", (data: Buffer) => {
-			const text = data.toString();
-			if (!text.includes("Warning:")) {
-				ctx.ui.notify?.(text, "error");
+	pi.registerCommand("cc-new", {
+		description: "Start new Claude Code session (requires claude-code model)",
+		async handler(_args, ctx) {
+			if (!ctx.hasUI) return;
+			const model = (ctx as any).model;
+			if (!model || (model.provider !== "claude-code" && model.api !== CLAUDE_CODE_API)) {
+				ctx.ui.notify?.("/cc-new requires a claude-code model", "error");
+				return;
 			}
-		});
-
-		await new Promise<void>((resolve) => {
-			claude.on("close", (code) => {
-				ctx.ui.setWorkingMessage(undefined);
-				if (code !== 0 && code !== null) {
-					ctx.ui.notify?.(`/${command} failed with code ${code}`, "warning");
-				}
-				resolve();
-			});
-		});
-	} finally {
-		releaseMutex();
-	}
+			ctx.ui.notify?.("Claude Code /new - use chat interface or check Claude Code session separately", "info");
+		},
+	});
 }
 
 export default function (pi: ExtensionAPI) {
-	// Override /compact and /new when Claude Code model is active
-	pi.registerCommand("compact", {
-		description: "Compact the Claude Code conversation context (when using claude-code models)",
-		async handler(_args, ctx) {
-			if (ctx.model?.provider === "claude-code" || ctx.model?.api === CLAUDE_CODE_API) {
-				await executeClaudeCommand(pi, ctx, "compact");
-			} else {
-				// Let Pi handle it for non-Claude-Code models
-				ctx.ui.notify?.("/compact - compacting Pi session (use a claude-code model for Claude Code compact)", "info");
-			}
-		},
-	});
-
-	pi.registerCommand("new", {
-		description: "Start a new Claude Code session (when using claude-code models)",
-		async handler(_args, ctx) {
-			if (ctx.model?.provider === "claude-code" || ctx.model?.api === CLAUDE_CODE_API) {
-				await executeClaudeCommand(pi, ctx, "new");
-			} else {
-				ctx.ui.notify?.("/new - use a claude-code model to start a new Claude Code session", "info");
-			}
-		},
-	});
+	// Register alternate command names for Claude Code operations
+	registerClaudeCodeCommands(pi);
 
 	pi.registerProvider("claude-code", {
 		name: "Claude Code CLI",
