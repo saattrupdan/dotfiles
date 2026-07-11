@@ -187,8 +187,14 @@ records with `is_error` are surfaced as errors rather than normal assistant mess
 
 ### Slash Commands
 
-Slash commands (e.g. `/compact`, `/new`) starting with `/` are forwarded directly to Claude Code CLI.
-This allows you to use Claude Code's native commands when using a `claude-code` model in Pi.
+The provider detects user messages starting with `/` and forwards them to Claude Code CLI.
+**However**, Pi's built-in slash commands (`/compact`, `/new`, `/model`, etc.) are intercepted by Pi's TUI before reaching the provider.
+
+To use Claude Code's slash commands:
+- Use Cloud Code-specific commands that Pi doesn't recognize (e.g. `/help`, `/editor`, `/plan`)
+- Or type commands with a prefix like `Run this in Claude Code: /compact`
+
+Commands unknown to Pi will reach the Claude Code provider and be forwarded correctly.
 
 ## Requirements
 
