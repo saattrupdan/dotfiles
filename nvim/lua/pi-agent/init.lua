@@ -44,11 +44,32 @@ local function get_marker_dir()
   return marker_dir
 end
 
+--- Compute Pi's session directory for a given cwd.
+-- Mirrors getDefaultSessionDirPath() in pi: <agent_dir>/sessions/--<cwd>--
+-- where <agent_dir> is $PI_CODING_AGENT_DIR or ~/.pi/agent, and <cwd> has its
+-- leading separator stripped and every / \ : replaced with a dash. Pi resolves
+-- the path with path.resolve (no symlink resolution), so we leave cwd as-is.
+-- @param cwd The session working directory (absolute)
+-- @return string The absolute path to Pi's session directory for this cwd
+local function pi_session_dir(cwd)
+  local agent_dir = vim.env.PI_CODING_AGENT_DIR
+  if agent_dir and agent_dir ~= "" then
+    agent_dir = vim.fn.expand(agent_dir)
+  else
+    agent_dir = vim.fn.expand("~/.pi/agent")
+  end
+
+  local encoded = cwd:gsub("^[/\\]", "")
+  encoded = encoded:gsub("[/\\:]", "-")
+  return agent_dir .. "/sessions/--" .. encoded .. "--"
+end
+
 local function create_marker(cwd)
   local marker_dir = get_marker_dir()
   local pid = vim.fn.getpid()
   local timestamp = os.time()
-  local marker_path = string.format("%s/pi-agent-pending-%d-%d.json", marker_dir, pid, timestamp)
+  local hrtime = vim.loop and vim.loop.hrtime and tostring(vim.loop.hrtime()) or ""
+  local marker_path = string.format("%s/pi-agent-pending-%d-%d-%s.json", marker_dir, pid, timestamp, hrtime)
   local marker_data = vim.fn.json_encode({ pid = pid, time = timestamp, cwd = cwd })
   local fd = vim.loop.fs_open(marker_path, "w", 438)
   if fd then
@@ -93,7 +114,7 @@ end
 
 local function cleanup_old_markers(max_age_seconds)
   local marker_dir = get_marker_dir()
-  if not marker_dir or not vim.fn.isdirectory(marker_dir) == 1 then
+  if not marker_dir or vim.fn.isdirectory(marker_dir) ~= 1 then
     return
   end
   local pattern = marker_dir .. "/pi-agent-pending-*.json"
@@ -353,26 +374,6 @@ local INACTIVE_BORDER = {
   { " ", "NormalNC" },
 }
 
---- Compute Pi's session directory for a given cwd.
--- Mirrors getDefaultSessionDirPath() in pi: <agent_dir>/sessions/--<cwd>--
--- where <agent_dir> is $PI_CODING_AGENT_DIR or ~/.pi/agent, and <cwd> has its
--- leading separator stripped and every / \ : replaced with a dash. Pi resolves
--- the path with path.resolve (no symlink resolution), so we leave cwd as-is.
--- @param cwd The session working directory (absolute)
--- @return string The absolute path to Pi's session directory for this cwd
-local function pi_session_dir(cwd)
-  local agent_dir = vim.env.PI_CODING_AGENT_DIR
-  if agent_dir and agent_dir ~= "" then
-    agent_dir = vim.fn.expand(agent_dir)
-  else
-    agent_dir = vim.fn.expand("~/.pi/agent")
-  end
-
-  local encoded = cwd:gsub("^[/\\]", "")
-  encoded = encoded:gsub("[/\\:]", "-")
-  return agent_dir .. "/sessions/--" .. encoded .. "--"
-end
-
 --- Read the latest session_info name from a Pi session .jsonl file.
 -- @param path Absolute path to the session file
 -- @return string|nil The most recent session name in the file, or nil
@@ -450,27 +451,16 @@ local function find_session_file(cwd, since, session_id, known_path, exclude_ses
   local jsonl_path, jsonl_time = nil, -1
 
   for _, marker in ipairs(markers) do
-    -- Skip markers from other live sessions (excluding self)
-    local is_own_marker = false
-    for sid, s in pairs(state.sessions) do
-      if s.marker_path == marker.path and (not exclude_session_id or sid ~= exclude_session_id) then
-        is_own_marker = true
-        break
+    -- Find JSONL matching this marker
+    local match = find_jsonl_for_marker(marker, cwd, since)
+    if match then
+      local ftime = vim.fn.getftime(match)
+      if ftime > jsonl_time then
+        jsonl_path, jsonl_time = match, ftime
       end
-    end
-    -- Only process markers belonging to this session
-    if is_own_marker then
-      -- Find JSONL matching this marker
-      local match = find_jsonl_for_marker(marker, cwd, since)
-      if match then
-        local ftime = vim.fn.getftime(match)
-        if ftime > jsonl_time then
-          jsonl_path, jsonl_time = match, ftime
-        end
-        -- Claim the marker by deleting it
-        delete_marker(marker.path)
-        break
-      end
+      -- Claim the marker by deleting it
+      delete_marker(marker.path)
+      break
     end
   end
 
