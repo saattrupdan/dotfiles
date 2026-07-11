@@ -72,6 +72,8 @@ interface CompactionState {
 	generation: number;
 	/** Session ID to use after this compaction (generation-based) */
 	postCompactionSessionId?: string;
+	/** Whether the summary has been injected into the first post-compaction turn */
+	injected?: boolean;
 }
 const TOOL_CALL_START_MARKER = "TOOL_CALL_START";
 const TOOL_CALL_END_MARKER = "TOOL_CALL_END";
@@ -1041,8 +1043,9 @@ function streamClaudeCode(
 			// - Otherwise, send the latest user message
 			let inputText: string;
 			const lastMessage = context.messages[context.messages.length - 1];
+			const isToolResult = lastMessage && lastMessage.role === "toolResult";
 
-			if (lastMessage && lastMessage.role === "toolResult") {
+			if (isToolResult) {
 				// Collect consecutive toolResult messages from the end
 				const toolResults: string[] = [];
 				for (let i = context.messages.length - 1; i >= 0; i--) {
@@ -1056,13 +1059,20 @@ function streamClaudeCode(
 				inputText = toolResults.join("\n\n");
 			} else {
 				// Send the latest user message
-				const latestUserMessage = context.messages.filter((m) => m.role === "user").pop();
-				inputText =
-					latestUserMessage && typeof latestUserMessage.content === "string"
-						? latestUserMessage.content
-						: latestUserMessage && Array.isArray(latestUserMessage.content)
-							? latestUserMessage.content.filter((c) => c.type === "text").map((c) => c.text).join(" ")
-							: "";
+				const latestUserMessage = context.messages.filter((m) => m.role === "user").pop();			inputText =
+				latestUserMessage && typeof latestUserMessage.content === "string"
+					? latestUserMessage.content
+					: latestUserMessage && Array.isArray(latestUserMessage.content)
+						? latestUserMessage.content.filter((c) => c.type === "text").map((c) => c.text).join(" ")
+						: "";
+			}
+
+			// Inject compaction summary into the first user turn after compaction
+			const compactionState = compactionStates.get(getConversationIdentity(context));
+			if (compactionState?.summary && !compactionState.injected && !isToolResult) {
+				inputText = `${compactionState.summary}\n\n${inputText}`;
+				compactionState.injected = true;
+				compactionStates.set(getConversationIdentity(context), compactionState);
 			}
 
 			// Handle /compact specially - summarize the conversation instead of forwarding to Claude
@@ -1176,8 +1186,8 @@ function streamClaudeCode(
 				return;
 			}
 
-			const conversationIdentity = getConversationIdentity(context);
 			// Use generation-based session ID if compaction has occurred
+			const conversationIdentity = getConversationIdentity(context);
 			const generation = getCompactionGeneration(context);
 			const sessionId = generateSessionUUID(conversationIdentity, process.cwd(), generation);
 
@@ -1348,10 +1358,13 @@ Summary:`;
 					}
 					// Also handle assistant records
 					if (parsed.type === "assistant" && parsed.message?.content) {
-						summary += parsed.message.content
-							.filter((b: any) => b.type === "text")
-							.map((b: any) => b.text)
-							.join("");
+						const content = parsed.message.content as Array<{ type: string; text?: string }> | undefined;
+						if (Array.isArray(content)) {
+							summary += content
+								.filter((b): b is { type: "text"; text: string } => b.type === "text" && typeof b.text === "string")
+								.map((b) => b.text)
+								.join("");
+						}
 					}
 				} catch {
 					// Ignore parse errors
@@ -1400,10 +1413,19 @@ export default function (pi: ExtensionAPI) {
 		if (text === "/compact") {
 			if (!ctx.hasUI) return { action: "continue" };
 
-			// Compaction is handled in streamClaudeCode - just continue to let the model process it
-			// The stream handler will detect /compact and trigger compaction
-			ctx.ui.notify?.("/compact will summarize the conversation context for efficient future turns.", "info");
-			return { action: "continue" };
+			// Handle compaction directly in the input handler
+			const model = ctx.model;
+			if (!model) return { action: "continue" };
+
+			ctx.ui.notify?.("Compacting conversation...", "info");
+			const summary = await compactConversation(ctx, model);
+			if (summary) {
+				ctx.ui.notify?.(`Conversation compacted. Context preserved in ${summary.length} characters.`, "info");
+			} else {
+				ctx.ui.notify?.("Compaction failed or timed out. Try again with a shorter conversation.", "error");
+			}
+			// Return handled to prevent Pi from processing /compact further
+			return { action: "handled" };
 		}
 
 		return { action: "continue" };
