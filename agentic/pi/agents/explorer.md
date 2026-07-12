@@ -2,6 +2,7 @@
 name: explorer
 description: Read-only locator for code and the web. Returns paths, line ranges, and tight summaries. Cannot edit or implement.
 model:
+  - inference/qwen3.5-397b
   - llamacpp/fastcontext
 tools: code_tree, search, read, skill, web_browse, web_search, memory_index, memory_read, memory_suggest, question
 skills: []
