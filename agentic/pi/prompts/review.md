@@ -4,13 +4,9 @@ description: Reviewer audits recent commits, then builder implements fixes if ne
 
 1. **Review.** Call the `subagent` tool in `single` mode with `agent: "reviewer"` and
    `task: "$@"`. If `$@` is empty (no argument provided), use this default task: `"Audit
-   recent changes and return a verdict (Pass / Needs changes / Block) with findings. If
-   you're on a separate branch then 'recent changes' are all changes done on the branch.
-   If you're on the main branch, then it's recent commits. Always check uncommitted
-   changes as well."` When an argument is provided, the caller is specifying the scope:
-   a branch name (`review main`), commit range (`review HEAD~3`), specific files
-   (`review src/`), or focus area (`review for type errors`). Pass the argument to the
-   reviewer to scope the audit.
+   the implementation of ABC in commits XYZ and return a verdict (Pass / Needs changes /
+   Block) with findings."`. Here `ABC` is the name of the implemented task and `XYZ` is
+   a list of commit hashes. Pass the argument to the reviewer to scope the audit.
 2. **Build (if needed).** If the reviewer's verdict is "Needs changes" or "Block", treat
    the reviewer's findings like a plan. Group the issues by independence (like the
    planner does). For each group that can run in parallel, make ONE call to `subagent`
