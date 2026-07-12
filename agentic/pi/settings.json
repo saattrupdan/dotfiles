@@ -1,7 +1,7 @@
 {
   "lastChangelogVersion": "0.80.6",
-  "defaultProvider": "claude-code",
-  "defaultModel": "claude-sonnet-5",
+  "defaultProvider": "inference",
+  "defaultModel": "qwen3.5-397b",
   "defaultThinkingLevel": "high",
   "httpIdleTimeoutMs": 0,
   "hideThinkingBlock": true,
