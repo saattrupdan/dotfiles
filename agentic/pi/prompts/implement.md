@@ -11,8 +11,9 @@ description: Full implementation flow with iterative review cycles.
    instruction to commit before finishing. For sequential dependencies, run groups one
    after another.
 3. **Review.** Call `subagent` in `single` mode with `agent: "reviewer"` and
-   `task: "Audit the implementation and return a verdict (Pass / Needs changes / Block)
-   with findings."`
+   `task: "Audit the implementation of ABC in commits XYZ and return a verdict (Pass /
+   Needs changes / Block) with findings."`. Here `ABC` is the name of the implemented
+   task and `XYZ` is a list of commit hashes.
 4. **Fix (if needed).** If the verdict is "Needs changes" or "Block", treat the findings
    like a plan. Group issues by independence and call `subagent` in `parallel` mode with
    `tasks: [...]`, one per issue with `agent: "builder"` and `task` quoting the issue
