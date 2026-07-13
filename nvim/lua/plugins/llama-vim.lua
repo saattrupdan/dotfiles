@@ -4,10 +4,10 @@ return {
     vim.g.llama_config = {
       show_info = false,
 
-      endpoint_fim = "http://localhost:8080/infill",
+      endpoint_fim = "http://127.0.0.1:8080/infill",
       model_fim = "qwen2.5-coder-3b",
 
-      endpoint_inst = "http://localhost:8080/v1/chat/completions",
+      endpoint_inst = "http://127.0.0.1:8080/v1/chat/completions",
       model_inst = "qwen3.6-35B-A3B-no-thinking",
 
       keymap_fim_accept_full = "§",
