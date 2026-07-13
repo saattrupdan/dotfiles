@@ -109,28 +109,28 @@ else
   echo
   echo "Configure your LLM provider. Press Enter to keep the default value."
   echo
-  
-  read -rp "Base URL [http://localhost:8080/v1]: " base_url
+
+  read -rp "Base URL [http://127.0.0.1:8080/v1]: " base_url
   read -rp "API key [default]: " api_key
   read -rp "Model ID: " model_id
   read -rp "Context window [262144]: " context_window
-  
-  base_url="${base_url:-http://localhost:8080/v1}"
+
+  base_url="${base_url:-http://127.0.0.1:8080/v1}"
   api_key="${api_key:-default}"
   model_id="${model_id:-}"
   context_window="${context_window:-262144}"
-  
+
   if [ -z "$model_id" ]; then
     echo "Error: Model ID is required"
     exit 1
   fi
-  
+
   echo
   echo "Writing models.json..."
-  
+
   # Build JSON file
   json_file="$PI_HOME/models.json"
-  
+
   printf '{\n  "providers": {\n    "default": {\n' > "$json_file"
   printf '      "baseUrl": "%s",\n' "$base_url" >> "$json_file"
   printf '      "api": "openai-completions",\n' >> "$json_file"
@@ -142,7 +142,7 @@ else
   printf '    }\n' >> "$json_file"
   printf '  }\n' >> "$json_file"
   printf '}\n' >> "$json_file"
-  
+
   echo "--- models.json created at $PI_HOME/models.json"
   echo
 fi

@@ -55,7 +55,7 @@
   // AI Assistant — LLM configuration for slide editing.
   // Set aiEnabled to false for production/finished decks — the AI feature is for development assistance only.
   const aiEnabled = true;
-  const aiApiBase = 'http://localhost:8080/v1';  // Local llama.cpp server
+  const aiApiBase = 'http://127.0.0.1:8080/v1';  // Local llama.cpp server
   const aiApiKey = '';  // Not needed for local server
   const aiModelId = 'qwen3.6-35B-A3B-no-thinking';
 </script>
@@ -2788,7 +2788,7 @@
       <button class="close-btn" id="ai-close-btn" aria-label="Close modal">&times;</button>
     </header>
     <div class="config-details">
-      Model: <code>qwen3.6-35B-A3B-no-thinking</code> &middot; Endpoint: <code>localhost:8080</code>
+      Model: <code>qwen3.6-35B-A3B-no-thinking</code> &middot; Endpoint: <code>127.0.0.1:8080</code>
     </div>
     <textarea id="ai-prompt" placeholder="Describe the slide content you'd like to generate or modify…"></textarea>
     <div id="ai-status" class="status"></div>
