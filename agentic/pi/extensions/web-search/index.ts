@@ -404,6 +404,13 @@ function formatResultsMarkdown(query: string, results: SearchResult[]): string {
 	return lines.join("\n");
 }
 
+function textContent(content: Array<{ type: string; text?: string }> | undefined): string {
+	return (content ?? [])
+		.filter((c) => c.type === "text")
+		.map((c) => c.text ?? "")
+		.join("\n");
+}
+
 export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "web_search",
@@ -466,6 +473,23 @@ export default function (pi: ExtensionAPI) {
 				0,
 				0,
 			);
+		},
+
+		renderResult(result, { expanded }, theme, context) {
+			const text = textContent(result.content);
+			if (expanded) return new Text(text || "(no results)", 0, 0);
+
+			const details = result.details as
+				| { count?: number; error?: string; tavilyError?: string }
+				| undefined;
+			const failed = context.isError || Boolean(details?.error || details?.tavilyError);
+			if (failed) {
+				return new Text(theme.fg("error", "✗ Web search failed"), 0, 0);
+			}
+
+			const count = details?.count ?? 0;
+			const noun = count === 1 ? "result" : "results";
+			return new Text(theme.fg("success", `✓ Found ${count} search ${noun}`), 0, 0);
 		},
 	});
 }
