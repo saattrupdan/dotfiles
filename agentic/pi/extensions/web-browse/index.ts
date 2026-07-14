@@ -97,6 +97,7 @@ export default function (pi: ExtensionAPI) {
 			if (args.length === 0) {
 				return {
 					content: [{ type: "text", text: "web_browse: empty command" }],
+					details: { error: "empty command" },
 				};
 			}
 
