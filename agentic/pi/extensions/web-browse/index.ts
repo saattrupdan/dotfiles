@@ -13,7 +13,7 @@
 
 import { spawn } from "node:child_process";
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, ExtensionAPI, Theme, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
@@ -149,6 +149,38 @@ export default function (pi: ExtensionAPI) {
 				0,
 				0,
 			);
+		},
+
+		renderResult(
+			result: AgentToolResult<unknown>,
+			{ expanded }: ToolRenderResultOptions,
+			theme: Theme,
+			context: { isError: boolean },
+		) {
+			const text =
+				result.content
+					.filter((c: { type: string; text?: string }): c is { type: "text"; text: string } => c.type === "text" && c.text != null)
+					.map((c: { type: string; text?: string }) => c.text)
+					.join("\n") || "(no output)";
+
+			if (expanded) {
+				return new Text(text, 0, 0);
+			}
+
+			// Check for failure conditions: context error, non-zero exit, timeout, or spawn error
+			const details = result.details as
+				| { exitCode?: number; timedOut?: boolean; error?: string }
+				| undefined;
+			const failed =
+				context.isError ||
+				(details?.exitCode != null && details.exitCode !== 0) ||
+				details?.timedOut === true ||
+				Boolean(details?.error);
+
+			if (failed) {
+				return new Text(theme.fg("error", "✗ Browser action failed"), 0, 0);
+			}
+			return new Text(theme.fg("success", "✓ Browser action completed"), 0, 0);
 		},
 	});
 }
