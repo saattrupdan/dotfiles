@@ -125,6 +125,7 @@ type SplashEditorFactory = NonNullable<Parameters<ExtensionContext["ui"]["setEdi
 let splashActive = false;
 let splashDismissed = true;
 let splashSessionKey: string | undefined;
+let splashScreenCleared = false;
 let splashReapplyTimer: ReturnType<typeof setTimeout> | undefined;
 
 function sessionKey(ctx: ExtensionContext): string {
@@ -254,21 +255,20 @@ function installSplash(pi: ExtensionAPI, ctx: ExtensionContext, clearScreen: boo
 		return;
 	}
 
-	const key = sessionKey(ctx);
-	const firstInstallForSession = !splashActive || splashSessionKey !== key;
 	splashActive = true;
 	splashDismissed = false;
-	splashSessionKey = key;
+	splashSessionKey = sessionKey(ctx);
 
 	// Give the shared PTT editor a context so hold-to-talk works on the splash.
 	setLiveCtx(pi, ctx);
 
-	if (clearScreen && firstInstallForSession) {
+	if (clearScreen && !splashScreenCleared) {
 		// Wipe the terminal and scrollback so the splash is the only thing
 		// visible — no chance of scrolling up to previous shell output.
 		// \x1b[2J clears the screen, \x1b[H homes the cursor, \x1b[3J clears
 		// the scrollback buffer (xterm/iTerm/Kitty/WezTerm/Ghostty support this).
 		process.stdout.write("\x1b[2J\x1b[H\x1b[3J");
+		splashScreenCleared = true;
 	}
 
 	// Hide the built-in header and footer for the splash view.
@@ -361,6 +361,7 @@ export default function (pi: ExtensionAPI) {
 		splashActive = true;
 		splashDismissed = false;
 		splashSessionKey = sessionKey(ctx);
+		splashScreenCleared = false;
 
 		// Defer splash installation to avoid race conditions when /reload and /new
 		// are called in quick succession. Pi's UI rebinding needs time to settle
