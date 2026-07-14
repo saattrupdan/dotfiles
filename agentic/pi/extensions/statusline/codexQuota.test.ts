@@ -36,6 +36,25 @@ test("is case-insensitive and accepts a Headers instance", () => {
 	expect(quota.session?.remaining).toBe(62);
 });
 
+test("maps active weekly primary limit and ignores disabled secondary limit", () => {
+	const quota = parseCodexQuotaHeaders({
+		"x-codex-active-limit": "premium",
+		"x-codex-primary-reset-after-seconds": "462618",
+		"x-codex-primary-reset-at": "1784487654",
+		"x-codex-primary-used-percent": "60",
+		"x-codex-primary-window-minutes": "10080",
+		"x-codex-secondary-reset-after-seconds": "0",
+		"x-codex-secondary-used-percent": "0",
+		"x-codex-secondary-window-minutes": "0",
+	});
+
+	expect(quota.session).toBeUndefined();
+	expect(quota.weekly?.used).toBe(60);
+	expect(quota.weekly?.remaining).toBe(40);
+	expect(quota.weekly?.window).toBe("7d");
+	expect(quota.weekly?.resetAt).toBe(1784487654000);
+});
+
 test("derives resetAt from reset-after-seconds when reset-at is absent", () => {
 	const before = Date.now();
 	const quota = parseCodexQuotaHeaders({

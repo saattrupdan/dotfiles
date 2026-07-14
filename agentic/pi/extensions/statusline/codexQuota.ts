@@ -48,11 +48,8 @@ export function parseCodexQuotaHeaders(headers: Headers | Record<string, string>
 	const h = asHeaderGetter(headers);
 	const result: CodexQuota = {};
 
-	const session = parseHeaderBucket(h, "primary");
-	if (session) result.session = session;
-
-	const weekly = parseHeaderBucket(h, "secondary");
-	if (weekly) result.weekly = weekly;
+	assignHeaderBucket(result, "primary", parseHeaderBucket(h, "primary"));
+	assignHeaderBucket(result, "secondary", parseHeaderBucket(h, "secondary"));
 
 	const balance = parseFiniteNumber(h.get("x-codex-credits-balance"));
 	const unlimited = parseBoolean(h.get("x-codex-credits-unlimited"));
@@ -74,6 +71,9 @@ function parseHeaderBucket(h: HeaderGetter, prefix: "primary" | "secondary"): Qu
 	if (usedPercent === undefined && windowMinutes === undefined && resetAtSeconds === undefined) {
 		return undefined;
 	}
+	// Codex now emits a disabled secondary bucket as used=0/window=0/reset-after=0.
+	// Treat that as absent instead of showing a bogus 5-minute quota bar.
+	if (windowMinutes !== undefined && windowMinutes <= 0) return undefined;
 
 	const resetAt = resetAtSeconds !== undefined
 		? Math.floor(resetAtSeconds * 1000)
@@ -89,6 +89,30 @@ function parseHeaderBucket(h: HeaderGetter, prefix: "primary" | "secondary"): Qu
 		resetAt,
 		window: classifyWindow(windowMinutes),
 	};
+}
+
+function assignHeaderBucket(
+	quota: CodexQuota,
+	prefix: "primary" | "secondary",
+	bucket: QuotaBucket | undefined,
+): void {
+	if (!bucket) return;
+
+	// Older Codex headers used primary=5h session and secondary=7d weekly.
+	// Newer headers can make primary the active 7d premium limit and disable
+	// secondary entirely, so classify by window when it is available.
+	if (bucket.window === "7d" || bucket.window === "30d") {
+		quota.weekly ??= bucket;
+		return;
+	}
+	if (bucket.window !== undefined) {
+		quota.session ??= bucket;
+		return;
+	}
+
+	// Fallback for historical/cache-like headers without window metadata.
+	if (prefix === "primary") quota.session ??= bucket;
+	else quota.weekly ??= bucket;
 }
 
 type CodexAuth = { access: string; accountId: string };
