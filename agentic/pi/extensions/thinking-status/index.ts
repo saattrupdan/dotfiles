@@ -61,8 +61,19 @@ export default function (pi: ExtensionAPI) {
 	// switches (resetExtensionUI), so re-apply our marker on the events that
 	// precede any render the user would see.
 	const HIDDEN_LABEL = "(...)";
-	pi.on("session_start", (_event, ctx) => ctx.ui.setHiddenThinkingLabel(HIDDEN_LABEL));
-	pi.on("agent_start", (_event, ctx) => ctx.ui.setHiddenThinkingLabel(HIDDEN_LABEL));
+
+	// Track ctx for event-bus handlers (they receive no ctx)
+	type CtxWithUI = { ui: { setWorkingMessage(message?: string): void; setWorkingVisible(visible: boolean): void } };
+	let lastCtx: CtxWithUI | undefined;
+
+	pi.on("session_start", (_event, ctx) => {
+		lastCtx = ctx as CtxWithUI;
+		ctx.ui.setHiddenThinkingLabel(HIDDEN_LABEL);
+	});
+	pi.on("agent_start", (_event, ctx) => {
+		lastCtx = ctx as CtxWithUI;
+		ctx.ui.setHiddenThinkingLabel(HIDDEN_LABEL);
+	});
 
 	// --- 2. Phase-specific footer spinner ------------------------------------
 	// Label from the current streaming block (thinking / tool-call arg generation).
@@ -70,14 +81,35 @@ export default function (pi: ExtensionAPI) {
 	// toolCallId -> label for tools currently executing (handles overlap; most
 	// recently started wins). Execution takes precedence over streaming.
 	const activeTools = new Map<string, string>();
+	// Highest-precedence override label (set via pi.events by other extensions).
+	let overrideLabel: string | undefined;
 
 	// undefined restores pi's default working message ("Working...").
 	const currentLabel = (): string | undefined => {
+		if (overrideLabel !== undefined) return overrideLabel;
 		if (activeTools.size > 0) return [...activeTools.values()].at(-1);
 		return streamLabel;
 	};
-	const apply = (ctx: { ui: { setWorkingMessage(message?: string): void } }) =>
+	const apply = (ctx: CtxWithUI) => {
+		lastCtx = ctx;
 		ctx.ui.setWorkingMessage(currentLabel());
+	};
+
+	// --- 3. Event-bus override channel ---------------------------------------
+	// Allows other extensions (e.g. claude-code-provider) to temporarily override
+	// the footer label for long-running non-streaming operations.
+	pi.events.on("thinking-status:override", (data) => {
+		const label = (data as { label?: string | undefined }).label;
+		if (!lastCtx) return;
+		if (label !== undefined && label !== "") {
+			overrideLabel = label;
+			lastCtx.ui.setWorkingVisible(true);
+			lastCtx.ui.setWorkingMessage(currentLabel());
+		} else {
+			overrideLabel = undefined;
+			lastCtx.ui.setWorkingMessage(currentLabel());
+		}
+	});
 
 	pi.on("message_update", (event, ctx) => {
 		// `AgentMessage` is a union (user/assistant/tool/custom); only some members
