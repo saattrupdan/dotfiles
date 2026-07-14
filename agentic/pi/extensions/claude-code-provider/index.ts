@@ -648,6 +648,8 @@ interface ClaudeInvocationResult {
 	emittedText: boolean;
 	/** Whether ANY Pi events (start, text_start/delta/end) were emitted. */
 	emittedAny: boolean;
+	/** Whether a Pi tool call was emitted (native or zero-shot). */
+	toolCallEmitted: boolean;
 	/** Error from Claude (nonzero exit, is_error result) if present. */
 	error?: Error;
 }
@@ -685,6 +687,7 @@ async function runClaudeInvocation(
 		resultEvent: null as ClaudeCodeResultEvent | null,
 		started: false,
 		emittedAny: false, // Track if ANY Pi events or visible text were emitted
+		toolCallEmitted: false, // Track if a Pi tool call was emitted
 	};
 	let stderr = "";
 	let invocationError: Error | undefined;
@@ -763,6 +766,8 @@ async function runClaudeInvocation(
 					} else if (blockType === "tool_use") {
 						// Handle tool_use blocks directly from Claude Code streaming
 						state.emittedAny = true;
+						state.toolCallEmitted = true;
+						output.stopReason = "toolUse";
 						const toolCallBlock = event.content_block as { id?: string; name?: string };
 						const toolCall: ToolCall = {
 							type: "toolCall",
@@ -780,6 +785,10 @@ async function runClaudeInvocation(
 				if (event.type === "content_block_delta") {
 					const mapping = blockMappings.get(event.index);
 					if (mapping && mapping.type === "text" && event.delta.type === "text_delta") {
+						// Once a Pi tool call has been emitted, drop any later visible text
+						// from the same Claude invocation. Pi sends real tool results next turn.
+						if (state.toolCallEmitted) return;
+
 						// Incremental streaming parser for zero-shot tool calls
 						const streamingState = textBlockStates.get(event.index);
 						if (!streamingState) return;
@@ -808,7 +817,8 @@ async function runClaudeInvocation(
 										streamingState.emittedText = true;
 										streamingState.emittedAny = true;
 										state.emittedText = true;
-										state.emittedAny = true;										stream.push({ type: "text_delta", contentIndex: streamingState.textBlockPiIndex!, delta: textBefore, partial: output });
+										state.emittedAny = true;
+										stream.push({ type: "text_delta", contentIndex: streamingState.textBlockPiIndex!, delta: textBefore, partial: output });
 									}
 									// Close text block if open
 									if (streamingState.textBlockOpen) {
@@ -876,6 +886,12 @@ async function runClaudeInvocation(
 										streamingState.toolcallStartEmitted = true;
 										streamingState.emittedAny = true;
 										state.emittedText = true; // Tool call content counts as emitted content
+										state.emittedAny = true;
+										state.toolCallEmitted = true;
+										output.stopReason = "toolUse";
+										streamingState.pending = "";
+										streamingState.mode = "text";
+										return;
 									} else {
 										// Parse failed - emit as visible text (fallback)
 										const fullSpan = TOOL_CALL_START_MARKER + jsonText + TOOL_CALL_END_MARKER;
@@ -898,18 +914,20 @@ async function runClaudeInvocation(
 									// Remove up to and including end marker, switch back to text
 									streamingState.pending = streamingState.pending.slice(endIndex + TOOL_CALL_END_MARKER.length);
 									streamingState.mode = 'text';
-									continue;							} else {
-								// No end marker yet - accumulate JSON safely, DO NOT emit anything yet
-								const suffix = computeBoundarySafeSuffix(streamingState.pending, TOOL_CALL_END_MARKER);
-								const safePrefix = streamingState.pending.slice(0, streamingState.pending.length - suffix.length);
+									continue;
+								} else {
+									// No end marker yet - accumulate JSON safely, DO NOT emit anything yet
+									const suffix = computeBoundarySafeSuffix(streamingState.pending, TOOL_CALL_END_MARKER);
+									const safePrefix = streamingState.pending.slice(0, streamingState.pending.length - suffix.length);
 
-								if (safePrefix.length > 0) {								// Accumulate JSON - defer toolcall_start until complete marker is parsed
-								streamingState.jsonAccumulator = (streamingState.jsonAccumulator || '') + safePrefix;
+									if (safePrefix.length > 0) {
+										// Accumulate JSON - defer toolcall_start until complete marker is parsed
+										streamingState.jsonAccumulator = (streamingState.jsonAccumulator || '') + safePrefix;
+									}
+
+									streamingState.pending = suffix;
+									break;
 								}
-
-								streamingState.pending = suffix;
-								break;
-							}
 							}
 						}
 					} else if (mapping && mapping.type === "tool_use") {
@@ -940,6 +958,16 @@ async function runClaudeInvocation(
 						// Flush remaining streaming state for this text block
 						const streamingState = textBlockStates.get(event.index);
 						if (streamingState) {
+							if (state.toolCallEmitted) {
+								if (streamingState.textBlockOpen) {
+									const textBlock = output.content[streamingState.textBlockPiIndex!] as TextContent;
+									stream.push({ type: "text_end", contentIndex: streamingState.textBlockPiIndex!, content: textBlock.text, partial: output });
+								}
+								textBlockStates.delete(event.index);
+								blockMappings.delete(event.index);
+								return;
+							}
+
 							if (streamingState.mode === 'text') {
 								// Flush any remaining pending as visible text
 								if (streamingState.pending.length > 0) {
@@ -1026,7 +1054,7 @@ async function runClaudeInvocation(
 					output.usage.cost.output = costUsd * 0.8;
 				}
 
-				if (data.stop_reason) {
+				if (data.stop_reason && !state.toolCallEmitted) {
 					output.stopReason = data.stop_reason === "end_turn" ? "stop" : data.stop_reason === "max_tokens" ? "length" : "stop";
 				}
 
@@ -1113,6 +1141,7 @@ async function runClaudeInvocation(
 		stderr,
 		emittedText: state.emittedText,
 		emittedAny: state.emittedAny,
+		toolCallEmitted: state.toolCallEmitted,
 		error: invocationError,
 	};
 }
@@ -1241,8 +1270,9 @@ function streamClaudeCode(
 						lastAttemptResult = firstAttemptResult;
 					}
 
-					// Fallback: if no text was streamed but result has text, emit it (same as normal path)
-					if (lastAttemptResult && !lastAttemptResult.emittedText && lastAttemptResult.resultEvent?.result) {
+					// Fallback: if no text was streamed but result has text, emit it (same as normal path).
+					// Do not append Claude's final result text after a Pi tool call.
+					if (lastAttemptResult && !lastAttemptResult.emittedText && !lastAttemptResult.toolCallEmitted && lastAttemptResult.resultEvent?.result) {
 						if (!lastAttemptResult.emittedAny) {
 							stream.push({ type: "start", partial: output });
 						}
@@ -1336,10 +1366,11 @@ function streamClaudeCode(
 					throw new Error("Request was aborted");
 				}
 
-				// Fallback: if no actual text was streamed but result has text, emit it
+				// Fallback: if no actual text was streamed but result has text, emit it.
 				// This handles cases where Claude returns a result without streaming deltas,
-				// or when a text block started but emitted no deltas (empty block).
-				if (lastAttemptResult && !lastAttemptResult.emittedText && lastAttemptResult.resultEvent?.result) {
+				// or when a text block started but emitted no deltas (empty block). Do not
+				// append Claude's final result text after a Pi tool call.
+				if (lastAttemptResult && !lastAttemptResult.emittedText && !lastAttemptResult.toolCallEmitted && lastAttemptResult.resultEvent?.result) {
 					// Ensure start is emitted exactly once
 					if (!lastAttemptResult.emittedAny) {
 						stream.push({ type: "start", partial: output });
