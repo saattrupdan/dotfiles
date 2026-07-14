@@ -727,41 +727,11 @@ async function runClaudeInvocation(
 			const data = parseJsonlLine(line);
 			if (data === null) return;
 
-			// Handle assistant records (emitted by Claude Code for slash commands)
-			// These have type: "assistant" and contain message with content blocks
-			// Reference: https://code.claude.com/docs/en/cli-reference#streaming-output-format
-			const isAssistantRecord = (d: unknown): d is { message: { content: Array<{ type: string; text?: string }> } } => {
-				if (d === null || typeof d !== "object") return false;
-				const obj = d as Record<string, unknown>;
-				if (obj.type !== "assistant") return false;
-				if (!("message" in obj) || obj.message === null || typeof obj.message !== "object") return false;
-				const msg = obj.message as Record<string, unknown>;
-				if (!("content" in msg) || !Array.isArray(msg.content)) return false;
-				return msg.content.every(
-					(block) => block !== null && typeof block === "object" && "type" in block,
-				);
-			};
-
-			if (isAssistantRecord(data)) {
-				// Extract text from content blocks (skip tool_use blocks which are handled separately)
-				const text = data.message.content
-					.filter((block): block is { type: "text"; text: string } => block.type === "text" && typeof (block as { text?: unknown }).text === "string")
-					.map((block) => block.text)
-					.join("");
-				if (!state.started) {
-					state.started = true;
-					state.emittedAny = true;
-					stream.push({ type: "start", partial: output });
-				}
-				if (text.trim()) {
-					const piIndex = output.content.length;
-					output.content.push({ type: "text", text: text });
-					stream.push({ type: "text_start", contentIndex: piIndex, partial: output });
-					stream.push({ type: "text_delta", contentIndex: piIndex, delta: text, partial: output });
-					stream.push({ type: "text_end", contentIndex: piIndex, content: text, partial: output });
-					state.emittedText = true;
-					state.emittedAny = true;
-				}
+			// Claude Code emits top-level assistant snapshots alongside partial stream_event
+			// deltas. The snapshots contain the same text as the deltas, so rendering both
+			// duplicates every assistant response. Ignore snapshots and rely on deltas,
+			// with the final result fallback below covering non-streaming responses.
+			if (data !== null && typeof data === "object" && (data as Record<string, unknown>).type === "assistant") {
 				return;
 			}
 
