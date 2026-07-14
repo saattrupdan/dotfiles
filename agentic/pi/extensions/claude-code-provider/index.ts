@@ -265,6 +265,7 @@ interface TextBlockStreamingState {
 	// When in collectingJson mode:
 	jsonAccumulator?: string; // Accumulated JSON string
 	toolcallStartEmitted?: boolean; // Whether toolcall_start has been emitted
+	toolCallEmitted?: boolean; // Whether a complete tool call (toolcall_end) was emitted
 	toolCallPiIndex?: number; // Pi contentIndex of the tool call
 	toolCall?: ToolCall; // The tool call object (after emission)
 	emittedText?: boolean; // Track if visible text was emitted
@@ -874,8 +875,14 @@ async function runClaudeInvocation(
 										}
 										stream.push({ type: "toolcall_end", contentIndex: toolPiIndex, toolCall: streamingState.toolCall, partial: output });
 										streamingState.toolcallStartEmitted = true;
+										streamingState.toolCallEmitted = true;
 										streamingState.emittedAny = true;
 										state.emittedText = true; // Tool call content counts as emitted content
+										// Set stop reason and discard remaining pending text after the tool call
+										output.stopReason = "toolUse";
+										streamingState.pending = '';
+										streamingState.mode = 'text';
+										break; // Stop processing this delta - tool call was emitted
 									} else {
 										// Parse failed - emit as visible text (fallback)
 										const fullSpan = TOOL_CALL_START_MARKER + jsonText + TOOL_CALL_END_MARKER;
@@ -895,21 +902,23 @@ async function runClaudeInvocation(
 										stream.push({ type: "text_delta", contentIndex: streamingState.textBlockPiIndex!, delta: fullSpan, partial: output });
 									}
 
-									// Remove up to and including end marker, switch back to text
+									// Parse failed case: remove up to and including end marker, switch back to text
 									streamingState.pending = streamingState.pending.slice(endIndex + TOOL_CALL_END_MARKER.length);
 									streamingState.mode = 'text';
-									continue;							} else {
-								// No end marker yet - accumulate JSON safely, DO NOT emit anything yet
-								const suffix = computeBoundarySafeSuffix(streamingState.pending, TOOL_CALL_END_MARKER);
-								const safePrefix = streamingState.pending.slice(0, streamingState.pending.length - suffix.length);
+									continue;
+								} else {
+									// No end marker yet - accumulate JSON safely, DO NOT emit anything yet
+									const suffix = computeBoundarySafeSuffix(streamingState.pending, TOOL_CALL_END_MARKER);
+									const safePrefix = streamingState.pending.slice(0, streamingState.pending.length - suffix.length);
 
-								if (safePrefix.length > 0) {								// Accumulate JSON - defer toolcall_start until complete marker is parsed
-								streamingState.jsonAccumulator = (streamingState.jsonAccumulator || '') + safePrefix;
+									if (safePrefix.length > 0) {
+										// Accumulate JSON - defer toolcall_start until complete marker is parsed
+										streamingState.jsonAccumulator = (streamingState.jsonAccumulator || '') + safePrefix;
+									}
+
+									streamingState.pending = suffix;
+									break;
 								}
-
-								streamingState.pending = suffix;
-								break;
-							}
 							}
 						}
 					} else if (mapping && mapping.type === "tool_use") {
@@ -941,29 +950,30 @@ async function runClaudeInvocation(
 						const streamingState = textBlockStates.get(event.index);
 						if (streamingState) {
 							if (streamingState.mode === 'text') {
-								// Flush any remaining pending as visible text
-								if (streamingState.pending.length > 0) {
-									if (!streamingState.textBlockOpen) {
-										const textPiIndex = output.content.length;
-										streamingState.textBlockPiIndex = textPiIndex;
-										output.content.push({ type: "text", text: "" });
-										streamingState.textBlockOpen = true;
-										stream.push({ type: "text_start", contentIndex: textPiIndex, partial: output });
-									}
-									const textBlock = output.content[streamingState.textBlockPiIndex!] as TextContent;
-									textBlock.text += streamingState.pending;
-									streamingState.emittedText = true;
-									streamingState.emittedAny = true;
-									state.emittedText = true;
-									state.emittedAny = true;
-									stream.push({ type: "text_delta", contentIndex: streamingState.textBlockPiIndex!, delta: streamingState.pending, partial: output });
+								// If a tool call was already emitted, do not flush pending as visible text.
+								// This prevents fabricated post-tool text from appearing after a tool call.
+								if (!streamingState.toolCallEmitted && streamingState.pending.length > 0) {
+								if (!streamingState.textBlockOpen) {
+									const textPiIndex = output.content.length;
+									streamingState.textBlockPiIndex = textPiIndex;
+									output.content.push({ type: "text", text: "" });
+									streamingState.textBlockOpen = true;
+									stream.push({ type: "text_start", contentIndex: textPiIndex, partial: output });
 								}
-								// Close text block if open
-								if (streamingState.textBlockOpen) {
-									const textBlock = output.content[streamingState.textBlockPiIndex!] as TextContent;
-									stream.push({ type: "text_end", contentIndex: streamingState.textBlockPiIndex!, content: textBlock.text, partial: output });
-								}
-							} else {
+								const textBlock = output.content[streamingState.textBlockPiIndex!] as TextContent;
+								textBlock.text += streamingState.pending;
+								streamingState.emittedText = true;
+								streamingState.emittedAny = true;
+								state.emittedText = true;
+								state.emittedAny = true;
+								stream.push({ type: "text_delta", contentIndex: streamingState.textBlockPiIndex!, delta: streamingState.pending, partial: output });
+							}
+							// Close text block if open
+							if (streamingState.textBlockOpen) {
+								const textBlock = output.content[streamingState.textBlockPiIndex!] as TextContent;
+								stream.push({ type: "text_end", contentIndex: streamingState.textBlockPiIndex!, content: textBlock.text, partial: output });
+							}
+						} else {
 								// collectingJson mode with no end marker (truncated/aborted)
 								// Truncated tool calls should NOT become executable - fall back to text
 								// toolcall_start was never emitted (we defer until complete marker), so no orphan possible
