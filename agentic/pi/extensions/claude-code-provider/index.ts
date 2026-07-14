@@ -1598,12 +1598,19 @@ export default function (pi: ExtensionAPI) {
 				);
 			}
 
+				// Show progress in footer during compaction (no model streaming, so force visible)
+				pi.events.emit("thinking-status:override", { label: "Claude Code compacting" });
+				try {
 				// Compact the conversation
 				await compactConversationWithHistory(conversationHistory, convIdentity, model);
 
 				// Compaction succeeded - state is stored in compactConversationWithHistory
 				ctx.ui.notify(`Conversation compacted successfully`, "info");
-			} catch (error) {
+			} finally {
+				// Always clear the override (success, error, or early return)
+				pi.events.emit("thinking-status:override", { label: undefined });
+			}
+		} catch (error) {
 				const msg = error instanceof Error ? error.message : "Unknown error";
 				if (msg.includes('rate limited')) {
 					ctx.ui.notify(`Rate limit: ${msg}. Try a different model or wait.`, "warning");
