@@ -69,6 +69,7 @@ export type LanguageKind =
 	| "csv"
 	| "yaml"
 	| "toml"
+	| "xml"
 	| "fallback";
 
 export type LanguageInfo = {
@@ -148,6 +149,15 @@ export function detectLanguage(filePath: string): LanguageInfo {
 			return { kind: "yaml" };
 		case ".toml":
 			return { kind: "toml" };
+		case ".xml":
+		case ".rss":
+		case ".atom":
+		case ".svg":
+		case ".xsd":
+		case ".xsl":
+		case ".xslt":
+		case ".plist":
+			return { kind: "xml" };
 		default:
 			return { kind: "fallback" };
 	}
