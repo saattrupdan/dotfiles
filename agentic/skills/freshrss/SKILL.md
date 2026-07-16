@@ -327,7 +327,7 @@ freshrss --help
 
 ```bash
 cd agentic/skills/freshrss
-uv run python -m pytest tests/test_freshrss.py -v
+uv run python -m unittest tests.test_freshrss -v
 ```
 
 ### Run CLI Tests

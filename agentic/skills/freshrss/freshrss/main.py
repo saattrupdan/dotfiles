@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import argparse
 import getpass
-import hashlib
 import json
 import re
-import shutil
 import subprocess
 import sys
 import urllib.error
@@ -52,13 +50,15 @@ def run_security(
 
 
 def store_credentials(username: str, password: str) -> bool:
-    """Store credentials in macOS Keychain. Returns True on success."""
-    delete_result = run_security(
-        ["delete-generic-password", "-s", KEYCHAIN_SERVICE]
-    )
+    """Store credentials in macOS Keychain. Returns True on success.
+
+    Uses -U flag to update existing credentials without delete-first,
+    preventing credential loss on failure.
+    """
     add_result = run_security(
         [
             "add-generic-password",
+            "-U",  # Update if exists, add if not (avoids delete-first loss)
             "-s",
             KEYCHAIN_SERVICE,
             "-a",
@@ -91,22 +91,28 @@ def get_credentials() -> tuple[str, str] | None:
     return (username, password)
 
 
-def build_auth_url(base_url: str, username: str, password: str) -> str:
-    """Build the Google Reader authentication URL."""
-    return (
-        f"{base_url}{API_PATH}/accounts/ClientLogin"
-        f"?Email={quote_plus(username)}"
-        f"&Passwd={quote_plus(password)}"
-        f"&service=reader流派"
-    )
-
-
 def get_auth_token(base_url: str, username: str, password: str) -> str | None:
-    """Get auth token from FreshRSS. Returns token or None on failure."""
-    url = build_auth_url(base_url, username, password)
+    """Get auth token from FreshRSS via POST form data.
+
+    Uses Google Reader ClientLogin API with form-encoded POST body.
+    Returns token or None on failure.
+    """
+    url = f"{base_url}{API_PATH}/accounts/ClientLogin"
+    # POST form data - avoid sending password in URL query
+    post_data = (
+        f"Email={quote_plus(username)}&"
+        f"Passwd={quote_plus(password)}&"
+        f"service=reader"
+    ).encode()
+
     req = urllib.request.Request(
         url,
-        headers={"User-Agent": USER_AGENT},
+        data=post_data,
+        headers={
+            "User-Agent": USER_AGENT,
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+        method="POST",
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -117,6 +123,26 @@ def get_auth_token(base_url: str, username: str, password: str) -> str | None:
     except urllib.error.URLError:
         return None
     return None
+
+
+def get_token(base_url: str, auth_token: str) -> str | None:
+    """Get edit token from FreshRSS for state-changing operations.
+
+    Returns token or None on failure.
+    """
+    url = f"{base_url}{API_PATH}/reader/api/0/token"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": USER_AGENT,
+            "Authorization": f"GoogleLogin auth={auth_token}",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.read().decode().strip()
+    except urllib.error.URLError:
+        return None
 
 
 def api_request(
@@ -177,8 +203,12 @@ def check_freshrss_reachable(base_url: str) -> tuple[bool, str]:
 
 def list_streams(base_url: str, auth_token: str) -> list[dict] | None:
     """List all subscription streams. Returns list of stream dicts or None."""
+    # Add output=json for proper JSON response
     body = api_request(
-        base_url, f"{API_PATH}/reader/api/0/subscription/list", auth_token
+        base_url,
+        f"{API_PATH}/reader/api/0/subscription/list",
+        auth_token,
+        {"output": "json"},
     )
     if not body:
         return None
@@ -192,55 +222,85 @@ def list_streams(base_url: str, auth_token: str) -> list[dict] | None:
 def list_items(
     base_url: str,
     auth_token: str,
-    stream_id: str | None = None,
     unread_only: bool = False,
     limit: int = 20,
 ) -> list[dict] | None:
-    """List items from a stream. Returns list of item dicts or None."""
-    params: dict[str, str] = {"n": str(limit)}
+    """List items from reading-list stream. Returns list of item dicts or None.
+
+    Uses Google Reader-compatible /stream/contents/reading-list endpoint.
+    For unread items: xt=user/-/state/com.google/read excludes read items.
+    """
+    # Use Google Reader-compatible reading-list endpoint
+    params: dict[str, str] = {
+        "n": str(limit),
+        "output": "json",
+    }
     if unread_only:
+        # xt= excludes items with this state (read state)
         params["xt"] = "user/-/state/com.google/read"
-    if stream_id:
-        params["s"] = stream_id
 
     body = api_request(
-        base_url, f"{API_PATH}/reader/api/0/stream/items/ids", auth_token, params
+        base_url,
+        f"{API_PATH}/reader/api/0/stream/contents/reading-list",
+        auth_token,
+        params,
     )
     if not body:
         return None
 
     try:
         data = json.loads(body)
-        item_ids = data.get("itemRefs", [])
-        if not item_ids:
-            return []
-
-        items = []
-        for ref in item_ids:
-            item_id = ref.get("id", "")
-            item_body = api_request(
-                base_url,
-                f"{API_PATH}/reader/api/0/stream/item/contents",
-                auth_token,
-                {"i": item_id.split("/")[-1]} if "/" in item_id else {"i": item_id},
-            )
-            if item_body:
-                try:
-                    item_data = json.loads(item_body)
-                    items.extend(item_data.get("items", []))
-                except json.JSONDecodeError:
-                    continue
+        items = data.get("items", [])
         return items
     except json.JSONDecodeError:
         return None
 
 
-def mark_as_read(base_url: str, auth_token: str, item_ids: list[str]) -> bool:
-    """Mark items as read. Returns True on success."""
+def get_item_contents(
+    base_url: str, auth_token: str, item_ids: list[str]
+) -> list[dict] | None:
+    """Fetch full contents for multiple items by ID.
+
+    Uses /stream/items/contents endpoint with POSTed item IDs.
+    Returns list of item dicts or None on failure.
+    """
+    if not item_ids:
+        return []
+
+    # POST item IDs as form data
+    data_parts = [f"i={quote_plus(item_id)}" for item_id in item_ids]
+    post_data = "&".join(data_parts).encode()
+
+    body = api_request(
+        base_url,
+        f"{API_PATH}/reader/api/0/stream/items/contents",
+        auth_token,
+        method="POST",
+        data=post_data,
+    )
+    if not body:
+        return None
+
+    try:
+        data = json.loads(body)
+        return data.get("items", [])
+    except json.JSONDecodeError:
+        return None
+
+
+def mark_as_read(
+    base_url: str, auth_token: str, edit_token: str, item_ids: list[str]
+) -> bool:
+    """Mark items as read. Returns True on success.
+
+    Requires edit token (T parameter) for state-changing operations.
+    """
     data_parts = []
     for item_id in item_ids:
         data_parts.append(f"i={quote_plus(item_id)}")
-        data_parts.append("a=user/-/state/com.google/read")
+    # Include T (edit token) and add read state
+    data_parts.append(f"T={quote_plus(edit_token)}")
+    data_parts.append("a=user/-/state/com.google/read")
     data = "&".join(data_parts).encode()
 
     result = api_request(
@@ -251,6 +311,14 @@ def mark_as_read(base_url: str, auth_token: str, item_ids: list[str]) -> bool:
         data=data,
     )
     return result is not None
+
+
+class GroupData(TypedDict):
+    """Data for grouped digest output."""
+
+    items: list[dict]
+    interest: bool
+    feed: str | None
 
 
 def load_interests() -> list[InterestGroup]:
@@ -276,9 +344,15 @@ def save_interests(groups: list[InterestGroup]) -> bool:
         return False
 
 
-def group_items_for_digest(items: list[dict], groups: list[InterestGroup]) -> dict:
-    """Group items by feed/date/interest for digest view."""
-    grouped: dict[str, dict] = {}
+def group_items_for_digest(
+    items: list[dict], groups: list[InterestGroup]
+) -> dict[str, GroupData]:
+    """Group items by feed/date/interest for digest view.
+
+    Returns dict mapping category name to grouped data with items,
+    interest flag, and optional feed name.
+    """
+    grouped: dict[str, GroupData] = {}
     for item in items:
         parsed = item.get("crawlTimeMsec", 0)
         date_key = str(parsed // 86400000)
@@ -405,7 +479,10 @@ def cmd_unread(args: argparse.Namespace) -> int:
         return 1
 
     if args.raw:
-        print(json.dumps(items, indent=2))
+        # Raw output returns grouped JSON matching docs
+        groups = load_interests()
+        grouped = group_items_for_digest(items, groups)
+        print(json.dumps({"groups": grouped}, indent=2))
         return 0
 
     if not items:
@@ -420,7 +497,7 @@ def cmd_unread(args: argparse.Namespace) -> int:
         for category, data in grouped.items():
             icon = "★" if data["interest"] else "○"
             interest_tag = (
-                f" [{data['interest_tag']}]" if data.get("interest_tag") else ""
+                f" [{data.get('interest_tag')}]" if data.get("interest_tag") else ""
             )
             print(f"{icon} {category}{interest_tag} ({len(data['items'])} items)")
 
@@ -435,7 +512,7 @@ def cmd_unread(args: argparse.Namespace) -> int:
             print()
     else:
         print(f"Unread items ({len(items)}):\n")
-        for i, item in enumerate(items[:args.limit], 1):
+        for i, item in enumerate(items[: args.limit or len(items)], 1):
             title = strip_html(item.get("title", ""))
             feed = item.get("origin", {}).get("title", "")
             print(f"{i}. [{feed}] {title}")
@@ -464,7 +541,10 @@ def cmd_read(args: argparse.Namespace) -> int:
         return 1
 
     items = list_items(
-        args.base_url, auth_token, unread_only=False, limit=args.limit or 10
+        args.base_url,
+        auth_token,
+        unread_only=False,
+        limit=args.limit or 10,
     )
     if items is None:
         print("Error: Failed to fetch read items", file=sys.stderr)
@@ -479,7 +559,7 @@ def cmd_read(args: argparse.Namespace) -> int:
         return 0
 
     print(f"Recently read items ({len(items)}):\n")
-    for i, item in enumerate(items[: args.limit], 1):
+    for i, item in enumerate(items[: args.limit or len(items)], 1):
         title = strip_html(item.get("title", ""))
         feed = item.get("origin", {}).get("title", "")
         print(f"{i}. [{feed}] {title}")
@@ -503,26 +583,18 @@ def cmd_view(args: argparse.Namespace) -> int:
         print("Error: Authentication failed", file=sys.stderr)
         return 1
 
-    item_body = api_request(
-        args.base_url,
-        f"{API_PATH}/reader/api/0/stream/item/contents",
-        auth_token,
-        {"i": args.id.split("/")[-1] if "/" in args.id else args.id},
-    )
-    if not item_body:
+    # Extract item ID (supports full ID or just the numeric part)
+    item_id = args.id.split("/")[-1] if "/" in args.id else args.id
+    contents = get_item_contents(args.base_url, auth_token, [item_id])
+    if not contents:
         print("Error: Failed to fetch item", file=sys.stderr)
         return 1
 
-    try:
-        data = json.loads(item_body)
-        items = data.get("items", [])
-        if not items:
-            print("Error: Item not found", file=sys.stderr)
-            return 1
-        item = items[0]
-    except json.JSONDecodeError:
-        print("Error: Invalid response", file=sys.stderr)
+    if not contents:
+        print("Error: Item not found", file=sys.stderr)
         return 1
+
+    item = contents[0]
 
     if args.raw:
         print(json.dumps(item, indent=2))
@@ -559,6 +631,12 @@ def cmd_mark_read(args: argparse.Namespace) -> int:
         print("Error: Authentication failed", file=sys.stderr)
         return 1
 
+    # Fetch edit token for state-changing operation
+    edit_token = get_token(args.base_url, auth_token)
+    if not edit_token:
+        print("Error: Failed to get edit token", file=sys.stderr)
+        return 1
+
     items = list(args.id) if args.id else []
     if not items:
         if not sys.stdin.isatty():
@@ -567,7 +645,7 @@ def cmd_mark_read(args: argparse.Namespace) -> int:
             print("Error: Provide item IDs as arguments or via stdin", file=sys.stderr)
             return 1
 
-    if mark_as_read(args.base_url, auth_token, items):
+    if mark_as_read(args.base_url, auth_token, edit_token, items):
         print(f"Marked {len(items)} item(s) as read")
         return 0
     else:
@@ -586,10 +664,6 @@ def cmd_interests_show(args: argparse.Namespace) -> int:
         print("No interests configured")
         print("\nAdd interests with:")
         print("  freshrss interests set --name python --keywords python,programming")
-        print(
-            "  freshrss interests add-keywords --name python "
-            "--keywords ai,machine-learning"
-        )
         return 0
 
     print("Current interests:\n")
@@ -652,6 +726,15 @@ def cmd_health(args: argparse.Namespace) -> int:
     return 0 if reachable and creds else 1
 
 
+def add_base_url_arg(parser: argparse.ArgumentParser) -> None:
+    """Add --base-url argument to a subcommand parser."""
+    parser.add_argument(
+        "--base-url",
+        default=DEFAULT_BASE_URL,
+        help=f"FreshRSS base URL (default: {DEFAULT_BASE_URL})",
+    )
+
+
 def main() -> int:
     """Entry point."""
     parser = argparse.ArgumentParser(
@@ -672,34 +755,46 @@ def main() -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     sub_init = subparsers.add_parser("init", help="Initialize credentials")
+    add_base_url_arg(sub_init)
     sub_init.set_defaults(func=cmd_init)
 
     sub_unread = subparsers.add_parser("unread", help="List unread items")
+    add_base_url_arg(sub_unread)
+    sub_unread.add_argument(
+        "--force",
+        action="store_true",
+        help="Proceed even if FreshRSS is not reachable",
+    )
     sub_unread.add_argument("-n", "--limit", type=int, help="Max items to fetch")
     sub_unread.add_argument("--digest", action="store_true", help="Show digest view")
     sub_unread.add_argument("--raw", action="store_true", help="Output raw JSON")
     sub_unread.set_defaults(func=cmd_unread)
 
     sub_read = subparsers.add_parser("read", help="List recently read items")
+    add_base_url_arg(sub_read)
     sub_read.add_argument("-n", "--limit", type=int, help="Max items to show")
     sub_read.add_argument("--raw", action="store_true", help="Output raw JSON")
     sub_read.set_defaults(func=cmd_read)
 
     sub_view = subparsers.add_parser("view", help="View single item by ID")
+    add_base_url_arg(sub_view)
     sub_view.add_argument("id", help="Item ID")
     sub_view.add_argument("--raw", action="store_true", help="Output raw JSON")
     sub_view.set_defaults(func=cmd_view)
 
     sub_mark = subparsers.add_parser("mark-read", help="Mark items as read")
+    add_base_url_arg(sub_mark)
     sub_mark.add_argument("id", nargs="*", help="Item IDs to mark as read")
     sub_mark.set_defaults(func=cmd_mark_read)
 
     sub_health = subparsers.add_parser(
         "health", help="Check connectivity and credentials"
     )
+    add_base_url_arg(sub_health)
     sub_health.set_defaults(func=cmd_health)
 
     sub_interests = subparsers.add_parser("interests", help="Manage interests")
+    add_base_url_arg(sub_interests)
     interests_sub = sub_interests.add_subparsers(dest="interests_cmd", required=True)
 
     sub_show = interests_sub.add_parser("show", help="Show current interests")

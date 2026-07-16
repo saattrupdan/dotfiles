@@ -13,10 +13,10 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from freshrss.main import (
-    KEYCHAIN_SERVICE,
-    build_auth_url,
+    InterestGroup,
     extractive_summary,
     get_auth_token,
+    get_token,
     group_items_for_digest,
     load_interests,
     run_security,
@@ -86,14 +86,15 @@ class TestStoreCredentials(unittest.TestCase):
     """Tests for credential storage."""
 
     @patch("freshrss.main.run_security")
-    def test_deletes_existing_first(self, mock_run: MagicMock) -> None:
-        """Should delete existing credentials before adding."""
+    def test_uses_update_flag(self, mock_run: MagicMock) -> None:
+        """Should use -U flag to update credentials without delete-first."""
         mock_run.return_value = CompletedProcess([], 0, "", "")
         store_credentials("user", "pass")
-        calls = mock_run.call_args_list
-        self.assertEqual(len(calls), 2)
-        # First call should be delete
-        self.assertEqual(calls[0][0][0][0], "delete-generic-password")
+        # Should only call add-generic-password once (with -U flag)
+        mock_run.assert_called_once()
+        call_args = mock_run.call_args[0][0]
+        self.assertEqual(call_args[0], "add-generic-password")
+        self.assertIn("-U", call_args)  # Update flag should be present
 
     @patch("freshrss.main.run_security")
     def test_returns_success_on_add(self, mock_run: MagicMock) -> None:
@@ -105,33 +106,41 @@ class TestStoreCredentials(unittest.TestCase):
     @patch("freshrss.main.run_security")
     def test_returns_failure_on_add_error(self, mock_run: MagicMock) -> None:
         """Should return False when add fails."""
-        mock_run.side_effect = [
-            CompletedProcess([], 0, "", ""),  # delete succeeds
-            CompletedProcess([], 1, "", ""),  # add fails
-        ]
+        mock_run.return_value = CompletedProcess([], 1, "", "")
         result = store_credentials("user", "pass")
         self.assertFalse(result)
 
 
-class TestBuildAuthUrl(unittest.TestCase):
-    """Tests for authentication URL building."""
-
-    def test_builds_correct_url(self) -> None:
-        """Should build correct authentication URL."""
-        url = build_auth_url("http://localhost:9999", "user", "pass")
-        self.assertIn("http://localhost:9999/api/greader.php", url)
-        self.assertIn("Email=user", url)
-        self.assertIn("Passwd=pass", url)
-        self.assertIn("service=reader", url)
-
-    def test_url_encodes_special_chars(self) -> None:
-        """Should URL-encode special characters in credentials."""
-        url = build_auth_url("http://localhost:9999", "user@test.com", "p@ss")
-        self.assertIn("Email=user%40test.com", url)
-
-
 class TestGetAuthToken(unittest.TestCase):
-    """Tests for auth token retrieval."""
+    """Tests for auth token retrieval via POST."""
+
+    @patch("freshrss.main.urllib.request.urlopen")
+    def test_uses_post_with_form_data(self, mock_urlopen: MagicMock) -> None:
+        """Should use POST with form-encoded data, not URL query params."""
+        mock_response = MagicMock()
+        mock_response.__enter__.return_value.read.return_value = b"Auth=abc123"
+        mock_urlopen.return_value = mock_response
+
+        get_auth_token("http://localhost", "user", "pass")
+
+        # Check that urlopen was called with POST and form data
+        call_args = mock_urlopen.call_args[0][0]
+        self.assertEqual(call_args.data, b"Email=user&Passwd=pass&service=reader")
+        self.assertEqual(call_args.method, "POST")
+
+    @patch("freshrss.main.urllib.request.urlopen")
+    def test_excludes_non_ascii_from_service(self, mock_urlopen: MagicMock) -> None:
+        """Should use service=reader without non-ASCII suffix."""
+        mock_response = MagicMock()
+        mock_response.__enter__.return_value.read.return_value = b"Auth=abc123"
+        mock_urlopen.return_value = mock_response
+
+        get_auth_token("http://localhost", "user", "pass")
+
+        call_args = mock_urlopen.call_args[0][0]
+        # Check no non-ASCII suffix in service param
+        self.assertNotIn(b"service=reader\xe6\xb4\xbe", call_args.data)
+        self.assertIn(b"service=reader", call_args.data)
 
     @patch("freshrss.main.urllib.request.urlopen")
     def test_extracts_auth_token(self, mock_urlopen: MagicMock) -> None:
@@ -165,6 +174,29 @@ class TestGetAuthToken(unittest.TestCase):
         self.assertIsNone(token)
 
 
+class TestGetToken(unittest.TestCase):
+    """Tests for edit token retrieval."""
+
+    @patch("freshrss.main.urllib.request.urlopen")
+    def test_fetches_token(self, mock_urlopen: MagicMock) -> None:
+        """Should fetch token from /token endpoint."""
+        mock_response = MagicMock()
+        mock_response.__enter__.return_value.read.return_value = b"12345abcde"
+        mock_urlopen.return_value = mock_response
+
+        token = get_token("http://localhost", "auth_token")
+        self.assertEqual(token, "12345abcde")
+
+    @patch("freshrss.main.urllib.request.urlopen")
+    def test_returns_none_on_error(self, mock_urlopen: MagicMock) -> None:
+        """Should return None on connection error."""
+        import urllib.error
+
+        mock_urlopen.side_effect = urllib.error.URLError("Connection refused")
+        token = get_token("http://localhost", "auth_token")
+        self.assertIsNone(token)
+
+
 class TestGroupItemsForDigest(unittest.TestCase):
     """Tests for digest grouping logic."""
 
@@ -190,7 +222,8 @@ class TestGroupItemsForDigest(unittest.TestCase):
                 "crawlTimeMsec": 3000,
             },
         ]
-        grouped = group_items_for_digest(items, [])
+        groups: list[InterestGroup] = []
+        grouped = group_items_for_digest(items, groups)
         self.assertEqual(len(grouped), 2)
         self.assertIn("Feed A", grouped)
         self.assertIn("Feed B", grouped)
@@ -207,7 +240,9 @@ class TestGroupItemsForDigest(unittest.TestCase):
                 "crawlTimeMsec": 1000,
             }
         ]
-        groups = [{"name": "Programming", "keywords": ["python", "programming"]}]
+        groups: list[InterestGroup] = [
+            {"name": "Programming", "keywords": ["python", "programming"]}
+        ]
         grouped = group_items_for_digest(items, groups)
         self.assertIn("Programming", grouped)
         self.assertTrue(grouped["Programming"]["interest"])
@@ -223,7 +258,9 @@ class TestGroupItemsForDigest(unittest.TestCase):
                 "crawlTimeMsec": 1000,
             }
         ]
-        groups = [{"name": "Tech", "keywords": ["python", "ai"]}]
+        groups: list[InterestGroup] = [
+            {"name": "Tech", "keywords": ["python", "ai"]}
+        ]
         grouped = group_items_for_digest(items, groups)
         self.assertIn("NewsFeed", grouped)
         self.assertFalse(grouped["NewsFeed"]["interest"])
@@ -282,7 +319,8 @@ class TestInterestsStorage(unittest.TestCase):
         mock_file.parent = mock_parent
         mock_file.open.return_value.__enter__.return_value = MagicMock()
 
-        save_interests([{"name": "Test", "keywords": ["a"]}])
+        groups: list[InterestGroup] = [{"name": "Test", "keywords": ["a"]}]
+        save_interests(groups)
         mock_parent.mkdir.assert_called_once_with(parents=True, exist_ok=True)
 
     @patch("freshrss.main.INTERESTS_FILE")
@@ -291,7 +329,7 @@ class TestInterestsStorage(unittest.TestCase):
         mock_handle = MagicMock()
         mock_file.open.return_value.__enter__.return_value = mock_handle
 
-        groups = [{"name": "Tech", "keywords": ["python"]}]
+        groups: list[InterestGroup] = [{"name": "Tech", "keywords": ["python"]}]
         save_interests(groups)
 
         mock_handle.write.assert_called()
@@ -328,6 +366,19 @@ class TestCLIHelp(unittest.TestCase):
         from freshrss.main import main
 
         with patch.object(sys, "argv", ["freshrss", "unread", "--help"]):
+            with self.assertRaises(SystemExit) as cm:
+                main()
+            self.assertEqual(cm.exception.code, 0)
+
+    def test_subcommand_base_url(self) -> None:
+        """Subcommands should accept --base-url."""
+        from freshrss.main import main
+
+        with patch.object(
+            sys,
+            "argv",
+            ["freshrss", "--base-url", "http://test:9999", "unread", "--help"],
+        ):
             with self.assertRaises(SystemExit) as cm:
                 main()
             self.assertEqual(cm.exception.code, 0)

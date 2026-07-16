@@ -73,7 +73,7 @@ freshrss unread --raw
 
 ```bash
 # Unit tests (no live FreshRSS required)
-uv run python -m pytest tests/test_freshrss.py -v
+uv run python -m unittest tests.test_freshrss -v
 
 # CLI tests
 bun run tests/test.ts
