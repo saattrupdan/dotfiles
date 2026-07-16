@@ -180,7 +180,8 @@ freshrss unread --digest --raw -n 50
 
 This returns structured JSON with topic-based groups. Each group contains:
 - `topic`: The topic/interest label used for grouping
-- `items`: Array of items with `title`, `content_snippet`, `link`, `id`, `source`
+- `items`: Array of items with `title`, `content_snippet`, `link`, `id`, `source`,
+  `interest` (per-item match flag)
 - `interest`: Boolean indicating if group matches configured interests
 - `sources`: Array of feed names that contributed items to this topic
 
@@ -198,7 +199,8 @@ Example structure:
           "title": "Python Tips",
           "content_snippet": "...",
           "link": "...",
-          "source": "Real Python"
+          "source": "Real Python",
+          "interest": true
         }
       ]
     }
