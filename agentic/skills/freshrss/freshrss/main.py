@@ -109,7 +109,9 @@ def get_credentials() -> tuple[str, str] | None:
     result2 = run_security(
         ["find-generic-password", "-s", KEYCHAIN_SERVICE, "-g"]
     )
-    match = re.search(r'"acct"<blob>="([^"]+)"', result2.stderr)
+    # Combine stdout and stderr - account metadata may appear on either stream
+    combined_output = result2.stdout + result2.stderr
+    match = re.search(r'"acct"<blob>="([^"]+)"', combined_output)
     if not match:
         return None
     username = match.group(1)
