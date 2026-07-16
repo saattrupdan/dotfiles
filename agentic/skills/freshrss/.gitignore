@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+uv.lock
+
+# Build
+build/
+dist/
+
+# Config
+.config/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

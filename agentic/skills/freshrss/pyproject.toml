@@ -1,0 +1,18 @@
+[project]
+name = "freshrss-cli"
+version = "1.0.0"
+description = "CLI for interacting with local FreshRSS instance via Google Reader API"
+requires-python = ">=3.12"
+
+[project.scripts]
+freshrss = "freshrss.main:main"
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
