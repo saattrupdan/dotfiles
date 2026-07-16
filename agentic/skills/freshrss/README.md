@@ -52,7 +52,8 @@ Enable API access in FreshRSS Settings > Profile.
 
 ## Digest Output
 
-The `--digest` flag produces **curated highlights** instead of a title dump:
+The `--digest` flag produces **curated highlights** grouped by topic, not by
+feed:
 
 ```bash
 freshrss unread --digest -n 50
@@ -60,9 +61,14 @@ freshrss unread --digest -n 50
 
 Output includes:
 - 📌 **Highlights** - 5-8 most relevant items with brief summaries
-- ★ **○** icons indicating interest matches vs. other sources
-- 📁 **Sources** - Condensed breakdown by feed/category
+- ★ **○** icons indicating interest matches vs. other items
+- 📁 **Topics** - Condensed breakdown by topic (e.g. Technology, Programming,
+  General) with source feeds shown as provenance metadata
 - Sample note if `-n` limit was reached
+
+**Important:** Items are grouped by topic/interest, NOT by feed name. Feed
+names appear only as secondary metadata (e.g. "Technology: 5 items (from The
+Verge, TechCrunch)").
 
 **Important:** `-n 50` fetches **up to 50 items** for review — it's not the
 total unread count. There may be more unread items in FreshRSS.
@@ -95,12 +101,18 @@ When building responses about FreshRSS items:
 3. **Check Pi memories** for user interests to prioritise relevant items
 4. **Present curated highlights** (5-8 items) with brief "why it matters" notes
 5. **Ask what to expand** — don't list every title from the fetch
+6. **Group by topic or interest, NOT by feed** — feed names are provenance
+   metadata only
 
 Example agent response:
 
 > "I've fetched 50 items for review. Here are the highlights most relevant
 > to your interests in Python and AI: [3-4 bullet summaries with item IDs].
 > Which would you like to explore?"
+
+**Do NOT output grouped-by-feed sections** like "○ AI | The Verge". The raw
+JSON already groups by topic with feed names in `sources` arrays for
+provenance.
 
 See `SKILL.md` for detailed agent workflows and gotchas.
 

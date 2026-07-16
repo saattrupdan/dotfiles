@@ -134,7 +134,8 @@ freshrss unread --base-url http://myserver:8080
 
 ## Digest View
 
-The `--digest` flag produces curated highlights instead of a title list:
+The `--digest` flag produces curated highlights organised by topic, not by
+feed/source:
 
 ```bash
 freshrss unread --digest -n 50
@@ -143,9 +144,16 @@ freshrss unread --digest -n 50
 Output format:
 - **📌 Highlights** - 5-8 most relevant items with brief summaries and IDs
 - **★ prefix** - Interest-matched items (prioritised first)
-- **○ prefix** - Other items grouped by feed/source
-- **📁 Sources** - Condensed list showing item counts per category
+- **○ prefix** - Other items grouped by derived topic (e.g. Technology, AI &
+  Machine Learning, Programming, General)
+- **📁 Topics** - Condensed list showing item counts per topic, with source
+  feeds listed as provenance metadata in parentheses
 - **Sample note** - Indicates when `-n` limit was reached
+
+**Important:** Items are grouped by topic/interest, NOT by feed name. Feed
+names appear only as secondary metadata (e.g. "Technology: 5 items (from The
+Verge, TechCrunch)"). This allows agents to regroup and summarise without
+relying on feed names as the primary organisation.
 
 ### Important: `-n` is a Fetch Limit, Not Total Count
 
@@ -170,8 +178,33 @@ For building your own curated response, use JSON output:
 freshrss unread --digest --raw -n 50
 ```
 
-This returns structured JSON with groups, items, and interest flags that
-you can process with Pi memories to decide what's relevant to the user.
+This returns structured JSON with topic-based groups. Each group contains:
+- `topic`: The topic/interest label used for grouping
+- `items`: Array of items with `title`, `content_snippet`, `link`, `id`, `source`
+- `interest`: Boolean indicating if group matches configured interests
+- `sources`: Array of feed names that contributed items to this topic
+
+Example structure:
+```json
+{
+  "groups": {
+    "Programming": {
+      "topic": "Programming",
+      "interest": true,
+      "sources": ["Real Python", "PyCoder's Weekly"],
+      "items": [
+        {
+          "id": "item:123",
+          "title": "Python Tips",
+          "content_snippet": "...",
+          "link": "...",
+          "source": "Real Python"
+        }
+      ]
+    }
+  }
+}
+```
 
 **Recommended agent workflow:**
 
@@ -181,6 +214,10 @@ you can process with Pi memories to decide what's relevant to the user.
 4. Present 5-8 curated highlights with brief "why it matters" summaries
 5. Ask user what to expand; don't list every title
 6. Use Pi memory to persist any new interest preferences
+
+**Do NOT present feed/source groups as the main organisation.** Group by
+topic, interest, or story cluster. Mention feed names only as provenance
+metadata when useful (e.g. "from The Verge").
 
 ## Interests Storage
 

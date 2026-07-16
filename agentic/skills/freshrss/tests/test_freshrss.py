@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from freshrss.main import (
     InterestGroup,
+    _derive_topic,
     cmd_health,
     cmd_read,
     cmd_unread,
@@ -207,34 +208,37 @@ class TestGetToken(unittest.TestCase):
 class TestGroupItemsForDigest(unittest.TestCase):
     """Tests for digest grouping logic."""
 
-    def test_groups_by_feed(self) -> None:
-        """Should group items by feed title."""
+    def test_groups_by_topic_not_feed(self) -> None:
+        """Should group items by derived topic, not by feed title."""
         items = [
             {
                 "id": "1",
-                "title": "Article 1",
+                "title": "Python coding tips",
                 "origin": {"title": "Feed A"},
                 "crawlTimeMsec": 1000,
             },
             {
                 "id": "2",
-                "title": "Article 2",
+                "title": "More programming advice",
                 "origin": {"title": "Feed A"},
                 "crawlTimeMsec": 2000,
             },
             {
                 "id": "3",
-                "title": "Article 3",
+                "title": "AI breakthrough announced",
                 "origin": {"title": "Feed B"},
                 "crawlTimeMsec": 3000,
             },
         ]
         groups: list[InterestGroup] = []
         grouped = group_items_for_digest(items, groups)
-        self.assertEqual(len(grouped), 2)
-        self.assertIn("Feed A", grouped)
-        self.assertIn("Feed B", grouped)
-        self.assertEqual(len(grouped["Feed A"]["items"]), 2)
+        # Items should be grouped by topic (Programming, AI & Machine Learning)
+        # not by feed name
+        self.assertIn("Programming", grouped)
+        self.assertIn("AI & Machine Learning", grouped)
+        self.assertEqual(len(grouped["Programming"]["items"]), 2)
+        # Sources should track feeds as metadata
+        self.assertIn("Feed A", grouped["Programming"]["sources"])
 
     def test_groups_by_interest_match(self) -> None:
         """Should group matching items by interest name."""
@@ -254,8 +258,8 @@ class TestGroupItemsForDigest(unittest.TestCase):
         self.assertIn("Programming", grouped)
         self.assertTrue(grouped["Programming"]["interest"])
 
-    def test_no_match_uses_feed(self) -> None:
-        """Should use feed title when no interest match."""
+    def test_no_match_uses_topic_bucket(self) -> None:
+        """Should use derived topic bucket when no interest match (not feed)."""
         items = [
             {
                 "id": "1",
@@ -269,8 +273,12 @@ class TestGroupItemsForDigest(unittest.TestCase):
             {"name": "Tech", "keywords": ["python", "ai"]}
         ]
         grouped = group_items_for_digest(items, groups)
-        self.assertIn("NewsFeed", grouped)
-        self.assertFalse(grouped["NewsFeed"]["interest"])
+        # Should use neutral "General" bucket for non-interest items
+        self.assertIn("General", grouped)
+        self.assertFalse(grouped["General"]["interest"])
+        # Feed should be tracked as source metadata, not as group name
+        self.assertIn("NewsFeed", grouped["General"]["sources"])
+        self.assertEqual(grouped["General"]["topic"], "General")
 
 
 class TestExtractiveSummary(unittest.TestCase):
@@ -293,6 +301,80 @@ class TestExtractiveSummary(unittest.TestCase):
         text = "One. Two. Three. Four."
         result = extractive_summary(text)
         self.assertEqual(result, "One. Two.")
+
+
+class TestDeriveTopic(unittest.TestCase):
+    """Tests for _derive_topic function."""
+
+    def test_derives_ai_topic(self) -> None:
+        """Should derive AI topic from relevant keywords."""
+        title = "New AI Model Released"
+        content = "The latest machine learning breakthrough"
+        result = _derive_topic(title, content)
+        self.assertEqual(result, "AI & Machine Learning")
+
+    def test_derives_programming_topic(self) -> None:
+        """Should derive Programming topic from code-related keywords."""
+        title = "Python Best Practices"
+        content = "Tips for writing better code"
+        result = _derive_topic(title, content)
+        self.assertEqual(result, "Programming")
+
+    def test_derives_technology_topic(self) -> None:
+        """Should derive Technology topic from tech keywords."""
+        title = "New Smartphone Launch"
+        content = "Latest device features improved hardware"
+        result = _derive_topic(title, content)
+        self.assertEqual(result, "Technology")
+
+    def test_derives_science_topic(self) -> None:
+        """Should derive Science topic from research keywords."""
+        title = "Research Breakthrough"
+        content = "Scientists discover new phenomenon in laboratory"
+        result = _derive_topic(title, content)
+        self.assertEqual(result, "Science")
+
+    def test_derives_health_topic(self) -> None:
+        """Should derive Health topic from medical keywords."""
+        title = "New Medicine Released"
+        content = "Hospital treatment works for disease patients"
+        result = _derive_topic(title, content)
+        self.assertEqual(result, "Health")
+
+    def test_derives_business_topic(self) -> None:
+        """Should derive Business topic from company keywords."""
+        title = "Startup Merger Announced"
+        content = "Firm reports revenue growth and new CEO hired"
+        result = _derive_topic(title, content)
+        self.assertEqual(result, "Business")
+
+    def test_derives_climate_topic(self) -> None:
+        """Should derive Climate topic from environment keywords."""
+        title = "Climate Report Released"
+        content = "Carbon emission targets for renewable energy"
+        result = _derive_topic(title, content)
+        self.assertEqual(result, "Climate & Environment")
+
+    def test_derives_security_topic(self) -> None:
+        """Should derive Security topic from cybersecurity keywords."""
+        title = "Data Breach Disclosed"
+        content = "Hackers exploit system vulnerability for cyber attack"
+        result = _derive_topic(title, content)
+        self.assertEqual(result, "Security")
+
+    def test_defaults_to_general(self) -> None:
+        """Should use General bucket when no topic keywords match."""
+        title = "Random News Update"
+        content = "Nothing special here today"
+        result = _derive_topic(title, content)
+        self.assertEqual(result, "General")
+
+    def test_case_insensitive(self) -> None:
+        """Topic matching should be case-insensitive."""
+        title = "PYTHON Programming GUIDE"
+        content = "Learn CODE development"
+        result = _derive_topic(title, content)
+        self.assertEqual(result, "Programming")
 
 
 class TestInterestsStorage(unittest.TestCase):
@@ -507,9 +589,11 @@ class TestGroupItemsCrawlTimeMsec(unittest.TestCase):
         ]
         groups: list[InterestGroup] = []
         grouped = group_items_for_digest(items, groups)
-        # Should not crash and should group correctly
-        self.assertIn("Feed A", grouped)
-        self.assertEqual(len(grouped["Feed A"]["items"]), 1)
+        # Should not crash and should group by topic (General for generic article)
+        self.assertIn("General", grouped)
+        self.assertEqual(len(grouped["General"]["items"]), 1)
+        # Feed should be tracked as source metadata
+        self.assertIn("Feed A", grouped["General"]["sources"])
 
     def test_crawl_time_as_int(self) -> None:
         """Should still handle crawlTimeMsec as int for backwards compatibility."""
@@ -523,7 +607,7 @@ class TestGroupItemsCrawlTimeMsec(unittest.TestCase):
         ]
         groups: list[InterestGroup] = []
         grouped = group_items_for_digest(items, groups)
-        self.assertIn("Feed A", grouped)
+        self.assertIn("General", grouped)
 
     def test_crawl_time_missing(self) -> None:
         """Should handle missing crawlTimeMsec."""
@@ -536,7 +620,7 @@ class TestGroupItemsCrawlTimeMsec(unittest.TestCase):
         ]
         groups: list[InterestGroup] = []
         grouped = group_items_for_digest(items, groups)
-        self.assertIn("Feed A", grouped)
+        self.assertIn("General", grouped)
 
     def test_crawl_time_empty_string(self) -> None:
         """Should handle empty string crawlTimeMsec."""
@@ -550,7 +634,7 @@ class TestGroupItemsCrawlTimeMsec(unittest.TestCase):
         ]
         groups: list[InterestGroup] = []
         grouped = group_items_for_digest(items, groups)
-        self.assertIn("Feed A", grouped)
+        self.assertIn("General", grouped)
 
 
 class TestBaseUrLPosition(unittest.TestCase):
@@ -901,12 +985,19 @@ class TestCmdUnread(unittest.TestCase):
             {"id": "item:1", "title": "Test", "content": "Test content"}
         ]
         mock_group.return_value = {
-            "Test Feed": {
+            "General": {
                 "items": [
-                {"id": "item:1", "title": "Test", "content_snippet": "Test", "link": ""}
-            ],
+                    {
+                        "id": "item:1",
+                        "title": "Test",
+                        "content_snippet": "Test",
+                        "link": "",
+                        "source": "Test Feed",
+                    }
+                ],
                 "interest": False,
-                "feed": "Test Feed",
+                "topic": "General",
+                "sources": ["Test Feed"],
             }
         }
         mock_load_interests.return_value = []
@@ -955,23 +1046,26 @@ class TestCmdUnread(unittest.TestCase):
             {"id": "item:2", "title": "Test 2", "content": "Content 2"},
         ]
         mock_group.return_value = {
-            "Interest Match": {
+            "Programming": {
                 "items": [
                     {
                         "id": "item:1",
                         "title": "Test 1",
                         "content_snippet": "Content 1",
                         "link": "",
+                        "source": "DevFeed",
                     },
                     {
                         "id": "item:2",
                         "title": "Test 2",
                         "content_snippet": "Content 2",
                         "link": "",
+                        "source": "DevFeed",
                     },
                 ],
                 "interest": True,
-                "feed": None,
+                "topic": "Programming",
+                "sources": ["DevFeed"],
             }
         }
         mock_load_interests.return_value = []
@@ -1021,18 +1115,20 @@ class TestCmdUnread(unittest.TestCase):
             for i in range(50)
         ]
         mock_group.return_value = {
-            "Test Feed": {
+            "General": {
                 "items": [
                 {
                     "id": f"item:{i}",
                     "title": f"Test {i}",
                     "content_snippet": f"Content {i}",
                     "link": "",
+                    "source": "Test Feed",
                 }
                 for i in range(50)
             ],
                 "interest": False,
-                "feed": "Test Feed",
+                "topic": "General",
+                "sources": ["Test Feed"],
             }
         }
         mock_load_interests.return_value = []

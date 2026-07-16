@@ -361,7 +361,8 @@ class GroupData(TypedDict):
 
     items: list[dict]
     interest: bool
-    feed: str | None
+    topic: str
+    sources: list[str]
 
 
 def load_interests() -> list[InterestGroup]:
@@ -387,13 +388,129 @@ def save_interests(groups: list[InterestGroup]) -> bool:
         return False
 
 
+def _derive_topic(title: str, content: str) -> str:
+    """Derive a topic label from title and content using simple heuristics.
+
+    Uses keyword matching to categorise into common topic buckets.
+    Returns a neutral topic label for grouping.
+
+    Args:
+        title: Article title.
+        content: Article content snippet.
+
+    Returns:
+        Topic label string for grouping.
+    """
+    text = f"{title} {content}".lower()
+
+    # Topic buckets with representative keywords
+    topic_keywords: dict[str, list[str]] = {
+        "Technology": [
+            "software",
+            "hardware",
+            "app",
+            "device",
+            "tech",
+            "digital",
+            "computing",
+        ],
+        "AI & Machine Learning": [
+            "ai",
+            "artificial intelligence",
+            "machine learning",
+            "ml",
+            "llm",
+            "model",
+            "neural",
+            "deep learning",
+            "gpt",
+            "transformer",
+        ],
+        "Programming": [
+            "python",
+            "javascript",
+            "typescript",
+            "code",
+            "developer",
+            "programming",
+            "coding",
+            "api",
+            "framework",
+            "library",
+        ],
+        "Science": [
+            "research",
+            "study",
+            "discovery",
+            "scientist",
+            "laboratory",
+            "experiment",
+        ],
+        "Health": [
+            "health",
+            "medical",
+            "medicine",
+            "disease",
+            "treatment",
+            "clinical",
+            "patient",
+        ],
+        "Business": [
+            "company",
+            "market",
+            "stock",
+            "investment",
+            "startup",
+            "revenue",
+            "acquisition",
+            "ceo",
+        ],
+        "Climate & Environment": [
+            "climate",
+            "environment",
+            "carbon",
+            "emission",
+            "renewable",
+            "sustainability",
+            "green",
+        ],
+        "Security": [
+            "security",
+            "vulnerability",
+            "breach",
+            "cyber",
+            "hack",
+            "encryption",
+            "privacy",
+        ],
+    }
+
+    for topic, keywords in topic_keywords.items():
+        for kw in keywords:
+            if kw in text:
+                return topic
+
+    # No specific topic found - use neutral bucket
+    return "General"
+
+
 def group_items_for_digest(
     items: list[dict], groups: list[InterestGroup]
 ) -> dict[str, GroupData]:
-    """Group items by feed/date/interest for digest view.
+    """Group items by topic/interest for digest view.
 
-    Returns dict mapping category name to grouped data with items,
-    interest flag, and optional feed name.
+    Primary grouping is by configured interests first, then by derived topic
+    for non-interest items. Feed/source is stored as metadata, not used for
+    grouping. This allows agents to regroup/summarise without relying on
+    feed names.
+
+    Args:
+        items: List of FreshRSS item dicts.
+        groups: List of configured interest groups.
+
+    Returns:
+        Dict mapping topic/interest name to grouped data with items,
+        interest flag, topic label, and list of source feeds.
     """
     grouped: dict[str, GroupData] = {}
     for item in items:
@@ -410,6 +527,7 @@ def group_items_for_digest(
         content_raw = item.get("content", "")
         content = strip_html(extract_content(content_raw))
 
+        # Check for interest match first (configured interests take priority)
         interest_match = None
         for group in groups:
             for kw in group.get("keywords", []):
@@ -419,13 +537,20 @@ def group_items_for_digest(
             if interest_match:
                 break
 
-        category = interest_match or feed_title
+        # Determine grouping category: interest name or derived topic
+        category = interest_match or _derive_topic(title, content)
+
         if category not in grouped:
             grouped[category] = {
                 "items": [],
                 "interest": interest_match is not None,
-                "feed": feed_title if not interest_match else None,
+                "topic": category,
+                "sources": [],
             }
+
+        # Track source feeds as metadata (deduplicated)
+        if feed_title not in grouped[category]["sources"]:
+            grouped[category]["sources"].append(feed_title)
 
         grouped[category]["items"].append(
             {
@@ -434,6 +559,7 @@ def group_items_for_digest(
                 "content_snippet": content[:200] if content else "",
                 "link": item.get("alternate", [{}])[0].get("href", ""),
                 "date": date_key,
+                "source": feed_title,  # Include source per-item for provenance
             }
         )
 
@@ -571,6 +697,7 @@ def cmd_unread(args: argparse.Namespace) -> int:
                     ),
                     "category": category,
                     "interest": True,
+                    "source": item.get("source", ""),
                 })
 
         # Then add other items if we need more highlights
@@ -589,6 +716,7 @@ def cmd_unread(args: argparse.Namespace) -> int:
                         ),
                         "category": category,
                         "interest": False,
+                        "source": item.get("source", ""),
                     })
                 if len(highlights) >= 8:
                     break
@@ -598,7 +726,8 @@ def cmd_unread(args: argparse.Namespace) -> int:
             print("📌 Highlights (most relevant first):\n")
             for hl in highlights[:8]:
                 icon = "★" if hl["interest"] else "○"
-                print(f"{icon} {hl['title']}")
+                source_note = f" | {hl['source']}" if hl.get("source") else ""
+                print(f"{icon} {hl['title']}{source_note}")
                 if hl["summary"]:
                     print(f"   → {hl['summary']}")
                 print(f"   [ID: {hl['id']}]")
@@ -607,12 +736,21 @@ def cmd_unread(args: argparse.Namespace) -> int:
             if len(highlights) > 8:
                 print(f"... and {len(highlights) - 8} more highlights available\n")
 
-        # Print grouped sources for context (condensed)
-        print("📁 Sources:\n")
+        # Print topic groups (feed names only as provenance metadata)
+        print("📁 Topics:\n")
         for category, data in grouped.items():
             icon = "★" if data["interest"] else "○"
             count = len(data["items"])
-            print(f"{icon} {category}: {count} item{'s' if count != 1 else ''}")
+            sources_str = ""
+            if data["sources"]:
+                sources_list = ", ".join(data["sources"][:3])
+                if len(data["sources"]) > 3:
+                    sources_list += f" +{len(data['sources']) - 3} more"
+                sources_str = f" (from {sources_list})"
+            else:
+                sources_str = ""
+            items_text = "item" if count == 1 else "items"
+            print(f"{icon} {category}: {count} {items_text}{sources_str}")
 
         # Note about limited sample
         if limit and len(items) == limit:
