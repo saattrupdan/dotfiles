@@ -16,12 +16,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from freshrss.main import (
     InterestGroup,
     cmd_health,
+    cmd_read,
     extract_content,
     extractive_summary,
     get_auth_token,
     get_credentials,
     get_token,
     group_items_for_digest,
+    list_items,
     load_interests,
     run_security,
     save_interests,
@@ -633,7 +635,7 @@ class TestGetCredentials(unittest.TestCase):
         self.assertEqual(result, ("testuser", "mysecretpassword"))
 
     @patch("freshrss.main.run_security")
-    def test_finds_account_in_stdout(self, mock_run_security: MagicMock) -> None:
+    def test_finds_account_in_stdio(self, mock_run_security: MagicMock) -> None:
         """Should find account metadata when emitted on stdout."""
         mock_run_security.side_effect = [
             CompletedProcess([], 0, "mysecretpassword", ""),
@@ -689,6 +691,134 @@ class TestGetCredentials(unittest.TestCase):
 
         result = get_credentials()
         self.assertIsNone(result)
+
+
+class TestListItems(unittest.TestCase):
+    """Tests for list_items API helper."""
+
+    @patch("freshrss.main.api_request")
+    def test_unread_uses_xt_parameter(self, mock_api: MagicMock) -> None:
+        """Unread items should use xt= to exclude read state."""
+        mock_api.return_value = json.dumps({"items": []})
+
+        list_items("http://localhost", "token", unread_only=True, limit=10)
+
+        # Check api_request was called with xt parameter
+        call_args = mock_api.call_args
+        params = call_args[0][3]  # params is 4th positional arg
+        self.assertEqual(params["xt"], "user/-/state/com.google/read")
+        self.assertNotIn("it", params)
+
+    @patch("freshrss.main.api_request")
+    def test_read_uses_it_parameter(self, mock_api: MagicMock) -> None:
+        """Read items should use it= parameter with reading-list stream."""
+        mock_api.return_value = json.dumps({"items": []})
+
+        list_items(
+            "http://localhost",
+            "token",
+            unread_only=False,
+            limit=10,
+            stream="reading-list",
+            include_tag="user/-/state/com.google/read",
+        )
+
+        # Check api_request was called with it parameter
+        call_args = mock_api.call_args
+        params = call_args[0][3]  # params is 4th positional arg
+        self.assertEqual(params["it"], "user/-/state/com.google/read")
+        self.assertNotIn("xt", params)
+
+    @patch("freshrss.main.api_request")
+    def test_default_stream_is_reading_list(self, mock_api: MagicMock) -> None:
+        """Default stream should be reading-list."""
+        mock_api.return_value = json.dumps({"items": []})
+
+        list_items("http://localhost", "token", limit=10)
+
+        # Check the path uses reading-list
+        call_args = mock_api.call_args
+        path = call_args[0][1]  # path is 2nd positional arg
+        self.assertIn("reading-list", path)
+
+
+class TestCmdRead(unittest.TestCase):
+    """Tests for cmd_read command."""
+
+    @patch("freshrss.main.list_items")
+    @patch("freshrss.main.get_auth_token")
+    @patch("freshrss.main.get_credentials")
+    def test_uses_reading_list_with_it_param(
+        self,
+        mock_creds: MagicMock,
+        mock_auth: MagicMock,
+        mock_list: MagicMock,
+    ) -> None:
+        """cmd_read should use reading-list stream with it= parameter."""
+        mock_creds.return_value = ("user", "pass")
+        mock_auth.return_value = "token"
+        mock_list.return_value = []
+
+        args = argparse.Namespace(
+            base_url="http://localhost:9999",
+            limit=10,
+            raw=False,
+        )
+        cmd_read(args)
+
+        # Verify list_items was called with correct parameters
+        mock_list.assert_called_once()
+        call_kwargs = mock_list.call_args[1]
+        self.assertEqual(call_kwargs["stream"], "reading-list")
+        self.assertEqual(
+            call_kwargs["include_tag"], "user/-/state/com.google/read"
+        )
+        self.assertFalse(call_kwargs["unread_only"])
+
+    @patch("freshrss.main.list_items")
+    @patch("freshrss.main.get_auth_token")
+    @patch("freshrss.main.get_credentials")
+    def test_no_credentials_error(
+        self,
+        mock_creds: MagicMock,
+        mock_auth: MagicMock,
+        mock_list: MagicMock,
+    ) -> None:
+        """Should error when no credentials found."""
+        mock_creds.return_value = None
+
+        args = argparse.Namespace(
+            base_url="http://localhost:9999",
+            limit=10,
+            raw=False,
+        )
+        result = cmd_read(args)
+
+        self.assertEqual(result, 1)
+        mock_list.assert_not_called()
+
+    @patch("freshrss.main.list_items")
+    @patch("freshrss.main.get_auth_token")
+    @patch("freshrss.main.get_credentials")
+    def test_auth_failure_error(
+        self,
+        mock_creds: MagicMock,
+        mock_auth: MagicMock,
+        mock_list: MagicMock,
+    ) -> None:
+        """Should error when authentication fails."""
+        mock_creds.return_value = ("user", "pass")
+        mock_auth.return_value = None
+
+        args = argparse.Namespace(
+            base_url="http://localhost:9999",
+            limit=10,
+            raw=False,
+        )
+        result = cmd_read(args)
+
+        self.assertEqual(result, 1)
+        mock_list.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -252,19 +252,21 @@ def list_items(
     unread_only: bool = False,
     limit: int = 20,
     stream: str = "reading-list",
+    include_tag: str | None = None,
 ) -> list[dict] | None:
     """List items from a stream. Returns list of item dicts or None.
 
     Uses Google Reader-compatible /stream/contents/ endpoint.
-    For unread items: xt=user/-/state/com.google/read excludes read items.
-    For read items: it=user/-/state/com.google/read fetches read state.
+    For unread items: xt= excludes read state.
+    For read items: use reading-list stream with include_tag for read state.
 
     Args:
         base_url: FreshRSS base URL.
         auth_token: Authentication token.
         unread_only: Whether to filter for unread items only.
         limit: Max items to fetch.
-        stream: Stream name (e.g. "reading-list", "user/-/state/com.google/read").
+        stream: Stream name (default: "reading-list").
+        include_tag: Include items with this tag (e.g. "user/-/state/com.google/read").
 
     Returns:
         List of item dicts or None on failure.
@@ -276,6 +278,9 @@ def list_items(
     if unread_only:
         # xt= excludes items with this state (read state)
         params["xt"] = "user/-/state/com.google/read"
+    if include_tag:
+        # it= includes items with this state (for reading list + read state filter)
+        params["it"] = include_tag
 
     body = api_request(
         base_url,
@@ -583,13 +588,15 @@ def cmd_read(args: argparse.Namespace) -> int:
         print("Error: Authentication failed", file=sys.stderr)
         return 1
 
-    # Fetch from read state, not reading-list
+    # Fetch from reading-list with it= filter for read state
+    # Correct API: /stream/contents/reading-list?it=user/-/state/com.google/read
     items = list_items(
         args.base_url,
         auth_token,
         unread_only=False,
         limit=args.limit or 10,
-        stream="user/-/state/com.google/read",
+        stream="reading-list",
+        include_tag="user/-/state/com.google/read",
     )
     if items is None:
         print("Error: Failed to fetch read items", file=sys.stderr)
