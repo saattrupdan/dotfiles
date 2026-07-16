@@ -1,1 +1,0 @@
-# freshrss package
