@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from freshrss.main import (
     InterestGroup,
+    extract_content,
     extractive_summary,
     get_auth_token,
     get_token,
@@ -382,6 +383,152 @@ class TestCLIHelp(unittest.TestCase):
             with self.assertRaises(SystemExit) as cm:
                 main()
             self.assertEqual(cm.exception.code, 0)
+
+
+class TestExtractContent(unittest.TestCase):
+    """Tests for extract_content helper."""
+
+    def test_string_input(self) -> None:
+        """Should return string as-is."""
+        self.assertEqual(extract_content("plain text"), "plain text")
+
+    def test_dict_with_content_key(self) -> None:
+        """Should extract content from dict with content key."""
+        raw = {"content": "nested content"}
+        self.assertEqual(extract_content(raw), "nested content")
+
+    def test_none_input(self) -> None:
+        """Should return empty string for None."""
+        self.assertEqual(extract_content(None), "")
+
+    def test_empty_dict(self) -> None:
+        """Should return empty string for dict without content key."""
+        self.assertEqual(extract_content({}), "")
+
+    def test_dict_with_non_string_content(self) -> None:
+        """Should handle dict with non-string content."""
+        raw = {"content": None}
+        self.assertEqual(extract_content(raw), "")
+
+
+class TestGroupItemsCrawlTimeMsec(unittest.TestCase):
+    """Tests for crawlTimeMsec handling in group_items_for_digest."""
+
+    def test_crawl_time_as_string(self) -> None:
+        """Should handle crawlTimeMsec as string (FreshRSS actual format)."""
+        items = [
+            {
+                "id": "1",
+                "title": "Article 1",
+                "origin": {"title": "Feed A"},
+                "crawlTimeMsec": "1700000000000",  # String format from FreshRSS
+            }
+        ]
+        groups: list[InterestGroup] = []
+        grouped = group_items_for_digest(items, groups)
+        # Should not crash and should group correctly
+        self.assertIn("Feed A", grouped)
+        self.assertEqual(len(grouped["Feed A"]["items"]), 1)
+
+    def test_crawl_time_as_int(self) -> None:
+        """Should still handle crawlTimeMsec as int for backwards compatibility."""
+        items = [
+            {
+                "id": "1",
+                "title": "Article 1",
+                "origin": {"title": "Feed A"},
+                "crawlTimeMsec": 1700000000000,  # Int format
+            }
+        ]
+        groups: list[InterestGroup] = []
+        grouped = group_items_for_digest(items, groups)
+        self.assertIn("Feed A", grouped)
+
+    def test_crawl_time_missing(self) -> None:
+        """Should handle missing crawlTimeMsec."""
+        items = [
+            {
+                "id": "1",
+                "title": "Article 1",
+                "origin": {"title": "Feed A"},
+            }
+        ]
+        groups: list[InterestGroup] = []
+        grouped = group_items_for_digest(items, groups)
+        self.assertIn("Feed A", grouped)
+
+    def test_crawl_time_empty_string(self) -> None:
+        """Should handle empty string crawlTimeMsec."""
+        items = [
+            {
+                "id": "1",
+                "title": "Article 1",
+                "origin": {"title": "Feed A"},
+                "crawlTimeMsec": "",
+            }
+        ]
+        groups: list[InterestGroup] = []
+        grouped = group_items_for_digest(items, groups)
+        self.assertIn("Feed A", grouped)
+
+
+class TestBaseUrLPosition(unittest.TestCase):
+    """Tests for --base-url argument position handling."""
+
+    def test_base_url_top_level(self) -> None:
+        """Top-level --base-url should be inherited by subcommand."""
+        from freshrss.main import main
+
+        with patch.object(
+            sys,
+            "argv",
+            ["freshrss", "--base-url", "http://custom:9999", "health"],
+        ):
+            with patch("freshrss.main.cmd_health") as mock_health:
+                mock_health.return_value = 0
+                try:
+                    main()
+                except SystemExit:
+                    pass
+                # Check that cmd_health was called with args.base_url = custom URL
+                call_args = mock_health.call_args[0][0]
+                self.assertEqual(call_args.base_url, "http://custom:9999")
+
+    def test_base_url_subcommand(self) -> None:
+        """Subcommand --base-url should override top-level."""
+        from freshrss.main import main
+
+        with patch.object(
+            sys,
+            "argv",
+            ["freshrss", "--base-url", "http://top:9999", "health", "--base-url", "http://sub:9999"],
+        ):
+            with patch("freshrss.main.cmd_health") as mock_health:
+                mock_health.return_value = 0
+                try:
+                    main()
+                except SystemExit:
+                    pass
+                call_args = mock_health.call_args[0][0]
+                self.assertEqual(call_args.base_url, "http://sub:9999")
+
+    def test_base_url_default(self) -> None:
+        """Default base URL should be used when neither is provided."""
+        from freshrss.main import DEFAULT_BASE_URL, main
+
+        with patch.object(
+            sys,
+            "argv",
+            ["freshrss", "health"],
+        ):
+            with patch("freshrss.main.cmd_health") as mock_health:
+                mock_health.return_value = 0
+                try:
+                    main()
+                except SystemExit:
+                    pass
+                call_args = mock_health.call_args[0][0]
+                self.assertEqual(call_args.base_url, DEFAULT_BASE_URL)
 
 
 if __name__ == "__main__":

@@ -37,6 +37,31 @@ def strip_html(text: str) -> str:
     return text.strip()
 
 
+def extract_content(raw: str | dict | None) -> str:
+    """Extract text content from FreshRSS item fields.
+
+    FreshRSS returns text fields in different formats:
+    - Stream items: content is a dict with 'content' key (e.g. summary.content)
+    - Item contents endpoint: content.content or just content string
+
+    Args:
+        raw: Raw content field which may be str, dict, or None.
+
+    Returns:
+        Extracted text content, or empty string if not found.
+    """
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        return raw
+    if isinstance(raw, dict):
+        # Prefer 'content' key first (covers both content.content and summary.content)
+        content = raw.get("content", "")
+        if isinstance(content, str):
+            return content
+    return ""
+
+
 def run_security(
     args: list[str], input_data: str | None = None
 ) -> subprocess.CompletedProcess:
@@ -224,13 +249,24 @@ def list_items(
     auth_token: str,
     unread_only: bool = False,
     limit: int = 20,
+    stream: str = "reading-list",
 ) -> list[dict] | None:
-    """List items from reading-list stream. Returns list of item dicts or None.
+    """List items from a stream. Returns list of item dicts or None.
 
-    Uses Google Reader-compatible /stream/contents/reading-list endpoint.
+    Uses Google Reader-compatible /stream/contents/ endpoint.
     For unread items: xt=user/-/state/com.google/read excludes read items.
+    For read items: it=user/-/state/com.google/read fetches read state.
+
+    Args:
+        base_url: FreshRSS base URL.
+        auth_token: Authentication token.
+        unread_only: Whether to filter for unread items only.
+        limit: Max items to fetch.
+        stream: Stream name (e.g. "reading-list", "user/-/state/com.google/read").
+
+    Returns:
+        List of item dicts or None on failure.
     """
-    # Use Google Reader-compatible reading-list endpoint
     params: dict[str, str] = {
         "n": str(limit),
         "output": "json",
@@ -241,7 +277,7 @@ def list_items(
 
     body = api_request(
         base_url,
-        f"{API_PATH}/reader/api/0/stream/contents/reading-list",
+        f"{API_PATH}/reader/api/0/stream/contents/{stream}",
         auth_token,
         params,
     )
@@ -354,13 +390,18 @@ def group_items_for_digest(
     """
     grouped: dict[str, GroupData] = {}
     for item in items:
-        parsed = item.get("crawlTimeMsec", 0)
-        date_key = str(parsed // 86400000)
+        # FreshRSS returns crawlTimeMsec as a string, safely cast to int
+        crawl_time_raw = item.get("crawlTimeMsec", 0)
+        try:
+            crawl_time_msec = int(crawl_time_raw) if crawl_time_raw else 0
+        except (ValueError, TypeError):
+            crawl_time_msec = 0
+        date_key = str(crawl_time_msec // 86400000)
         feed_title = item.get("origin", {}).get("title", "Unknown feed")
         title_raw = item.get("title", "")
-        title = strip_html(title_raw)
+        title = strip_html(extract_content(title_raw))
         content_raw = item.get("content", "")
-        content = strip_html(content_raw)
+        content = strip_html(extract_content(content_raw))
 
         interest_match = None
         for group in groups:
@@ -540,11 +581,13 @@ def cmd_read(args: argparse.Namespace) -> int:
         print("Error: Authentication failed", file=sys.stderr)
         return 1
 
+    # Fetch from read state, not reading-list
     items = list_items(
         args.base_url,
         auth_token,
         unread_only=False,
         limit=args.limit or 10,
+        stream="user/-/state/com.google/read",
     )
     if items is None:
         print("Error: Failed to fetch read items", file=sys.stderr)
@@ -600,8 +643,8 @@ def cmd_view(args: argparse.Namespace) -> int:
         print(json.dumps(item, indent=2))
         return 0
 
-    title = strip_html(item.get("title", ""))
-    content = strip_html(item.get("content", ""))
+    title = strip_html(extract_content(item.get("title", "")))
+    content = strip_html(extract_content(item.get("content", "")))
     feed = item.get("origin", {}).get("title", "")
     link = item.get("alternate", [{}])[0].get("href", "")
 
@@ -727,11 +770,15 @@ def cmd_health(args: argparse.Namespace) -> int:
 
 
 def add_base_url_arg(parser: argparse.ArgumentParser) -> None:
-    """Add --base-url argument to a subcommand parser."""
+    """Add --base-url argument to a subcommand parser.
+
+    Uses argparse.SUPPRESS as default so that top-level --base-url
+    is respected. Subcommand --base-url works independently.
+    """
     parser.add_argument(
         "--base-url",
-        default=DEFAULT_BASE_URL,
-        help=f"FreshRSS base URL (default: {DEFAULT_BASE_URL})",
+        default=argparse.SUPPRESS,
+        help="FreshRSS base URL (default: inherited from top-level)",
     )
 
 
