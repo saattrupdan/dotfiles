@@ -362,6 +362,7 @@ class TestCmdHealth(unittest.TestCase):
         result = cmd_health(args)
         self.assertEqual(result, 0)
 
+    @patch("freshrss.main.list_streams")
     @patch("freshrss.main.get_auth_token")
     @patch("freshrss.main.get_credentials")
     @patch("freshrss.main.check_freshrss_reachable")
@@ -370,11 +371,13 @@ class TestCmdHealth(unittest.TestCase):
         mock_reachable: MagicMock,
         mock_creds: MagicMock,
         mock_auth: MagicMock,
+        mock_streams: MagicMock,
     ) -> None:
         """Should exit 0 when reachable and auth succeeds."""
         mock_reachable.return_value = (True, "FreshRSS is reachable")
         mock_creds.return_value = ("user", "pass")
         mock_auth.return_value = "auth_token_123"
+        mock_streams.return_value = []
 
         args = argparse.Namespace(base_url="http://localhost:9999")
         result = cmd_health(args)
