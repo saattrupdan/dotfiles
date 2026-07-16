@@ -300,11 +300,11 @@ Which would you like to explore first?
 ### What NOT to Do
 
 ❌ **Don't claim the limit is the total count:**
-> "You have 50 unread items."  
+> "You have 50 unread items."
 > (Wrong — there may be 200 unread, you only fetched 50)
 
 ✅ **Do clarify it's a sample:**
-> "I've fetched 50 items for review."  
+> "I've fetched 50 items for review."
 > "Reviewing a sample of up to 50 items."
 
 ❌ **Don't dump all titles:**
