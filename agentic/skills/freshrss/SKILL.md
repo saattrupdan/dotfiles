@@ -138,88 +138,110 @@ The `--digest` flag produces curated highlights organised by topic, not by
 feed/source:
 
 ```bash
-freshrss unread --digest -n 50
+freshrss unread --digest          # Fetches ALL unread items (recommended)
+freshrss unread --digest -n 50    # Bounded fetch for debugging/testing
 ```
 
 Output format:
 - **📌 Highlights** - 5-8 most relevant items with brief summaries and IDs
 - **★ prefix** - Interest-matched items (prioritised first)
-- **○ prefix** - Other items grouped by derived topic (e.g. Technology, AI &
-  Machine Learning, Programming, General)
+- **○ prefix** - Other items grouped by specific topic clusters (e.g. AI agents,
+  code tooling, model releases, security vulnerabilities, tech updates)
 - **📁 Topics** - Condensed list showing item counts per topic, with source
   feeds listed as provenance metadata in parentheses
-- **Sample note** - Indicates when `-n` limit was reached
+- **Completeness indicator** - Says "reviewed all N unread items" vs
+  "reviewed N fetched items (bounded by --limit; more may exist)"
 
 **Important:** Items are grouped by topic/interest, NOT by feed name. Feed
-names appear only as secondary metadata (e.g. "Technology: 5 items (from The
-Verge, TechCrunch)"). This allows agents to regroup and summarise without
+names appear only as secondary metadata (e.g. "AI agents: 5 items (from Hacker
+News, The Verge)"). This allows agents to regroup and summarise without
 relying on feed names as the primary organisation.
 
-### Important: `-n` is a Fetch Limit, Not Total Count
+### Default: Complete Review of All Unread
 
-The `-n N` flag fetches **up to N items** from FreshRSS. It does NOT mean
-there are exactly N unread items total. The CLI output will say:
+Without `-n`, `--digest` fetches **all unread items** using pagination. The
+output will say:
 
-- `FreshRSS Digest - 50 fetched (sample of up to 50)` - if you hit the limit
-- `FreshRSS Digest - 23 fetched` - if fewer items exist than the limit
+```
+FreshRSS Digest - reviewed all 247 unread items
+```
 
-**Never tell the user "you have 50 unread items"** unless you actually
-know the total count (which requires fetching all items). Always phrase it as:
+This ensures important older unread items aren't missed.
 
-- "I've fetched up to 50 items for review"
-- "Reviewing a sample of 50 items from your feeds"
-- "Found 50 items in this fetch (may be more unread)"
+### `-n` is a Bounded Override (Debug/Testing)
+
+The `-n N` flag is an **optional safety/debug override** that fetches only up
+to N items. When used, the CLI explicitly discloses the bounded nature:
+
+```
+FreshRSS Digest - reviewed 50 fetched items (bounded by --limit; more may exist)
+```
+
+**Always disclose when using `-n`:** tell the user this is a bounded sample,
+not a complete review. Only use `-n` for:
+- Quick testing/debugging
+- When the user explicitly wants just a sample
+- Avoiding very long fetch times in constrained environments
 
 ### Using `--raw` for Agent Summarisation
 
 For building your own curated response, use JSON output:
 
 ```bash
-freshrss unread --digest --raw -n 50
+freshrss unread --digest --raw              # Complete review (recommended)
+freshrss unread --digest --raw -n 50        # Bounded sample
 ```
 
-This returns structured JSON with topic-based groups. Each group contains:
-- `topic`: The topic/interest label used for grouping
-- `items`: Array of items with `title`, `content_snippet`, `link`, `id`, `source`,
-  `interest` (per-item match flag)
-- `interest`: Boolean indicating if group matches configured interests
-- `sources`: Array of feed names that contributed items to this topic
+This returns structured JSON with topic-based groups and completeness metadata:
 
-Example structure:
 ```json
 {
   "groups": {
-    "Programming": {
-      "topic": "Programming",
+    "AI agents": {
+      "topic": "AI agents",
       "interest": true,
-      "sources": ["Real Python", "PyCoder's Weekly"],
+      "sources": ["Hacker News", "The Verge"],
       "items": [
         {
           "id": "item:123",
-          "title": "Python Tips",
+          "title": "New Code Agent Released",
           "content_snippet": "...",
           "link": "...",
-          "source": "Real Python",
+          "source": "Hacker News",
           "interest": true
         }
       ]
     }
-  }
+  },
+  "fetched_count": 247,
+  "complete": true,
+  "limit_applied": null
 }
 ```
+
+Raw output includes:
+- `groups`: Topic-clustered items
+- `fetched_count`: Number of items fetched
+- `complete`: Whether result encompasses all unread (true) or is bounded (false)
+- `limit_applied`: The explicit limit used, or null if unbounded
 
 **Recommended agent workflow:**
 
 1. Load user interests from Pi memory (`memory_suggest` with "fresh rss interests")
-2. Fetch digest with `freshrss unread --digest --raw -n 50`
-3. Prioritise interest-matched items using configured keywords
-4. Present 5-8 curated highlights with brief "why it matters" summaries
-5. Ask user what to expand; don't list every title
-6. Use Pi memory to persist any new interest preferences
+2. Fetch digest with `freshrss unread --digest --raw` (no `-n` for complete review)
+3. Check `complete` flag in output; if false, disclose bounded nature to user
+4. Prioritise interest-matched items using configured keywords
+5. Present 5-8 curated highlights with brief "why it matters" summaries
+6. Ask user what to expand; don't list every title
+7. Use Pi memory to persist any new interest preferences
 
 **Do NOT present feed/source groups as the main organisation.** Group by
 topic, interest, or story cluster. Mention feed names only as provenance
 metadata when useful (e.g. "from The Verge").
+
+**Use specific topic labels** like "AI agents", "code tooling", "model
+releases", "Grok/xAI", "security vulnerabilities" — not broad buckets like
+"Technology", "Programming", or "AI & Machine Learning".
 
 ## Interests Storage
 
@@ -267,18 +289,21 @@ accordingly for richer context.
 ### Recommended Flow
 
 1. **Check health first** - `freshrss health` to verify connectivity
-2. **Get digest with limit** - `freshrss unread --digest -n 50` (sample, not total)
-3. **Use raw mode for processing** - `freshrss unread --digest --raw -n 50`
+2. **Get complete digest** - `freshrss unread --digest --raw` (fetches ALL unread)
+3. **Check completeness** - Verify `complete: true` in raw output
 4. **Apply interests** - Match items against user interests from Pi memory
 5. **Curate highlights** - Select 5-8 most relevant, write brief summaries
-6. **Ask user preferences** - "Which topics interest you?" not "Here are all 50 titles"
+6. **Ask user preferences** - "Which topics interest you?" not "Here are all titles"
 7. **View specific items** - `freshrss view <id>` for full content on request
 8. **Confirm and mark read** - `freshrss mark-read <ids>` after user confirms
+
+**Only use `-n`** for debugging, testing, or when user explicitly wants a
+bounded sample. When using `-n`, always disclose it's incomplete.
 
 ### Example Agent Dialogue
 
 ```
-Agent: Checking your FreshRSS... Fetching up to 50 items for review.
+Agent: Checking your FreshRSS... Reviewing all 247 unread items.
 
 📌 Highlights (most relevant first):
 
@@ -290,8 +315,9 @@ Agent: Checking your FreshRSS... Fetching up to 50 items for review.
    → Rules cover async context managers and session lifetime.
    [ID: item:tag:example.com:def456]
 
-○ AI & Machine Learning: 12 items (from Hacker News, TechCrunch)
-○ Programming: 8 items (from Python Weekly, Real Python)
+○ code tooling: 12 items (from Hacker News, The Verge)
+○ model releases: 8 items (from TechCrunch, Ars Technica)
+○ AI agents: 6 items (from Llamacorn, Simon Willison)
 ...
 
 Which would you like to explore first?
@@ -299,24 +325,35 @@ Which would you like to explore first?
 
 ### What NOT to Do
 
-❌ **Don't claim the limit is the total count:**
-> "You have 50 unread items."
-> (Wrong — there may be 200 unread, you only fetched 50)
+❌ **Don't use `-n` by default**
+> `freshrss unread --digest -n 50` (misses older unread items)
 
-✅ **Do clarify it's a sample:**
-> "I've fetched 50 items for review."
-> "Reviewing a sample of up to 50 items."
+✅ **Do use complete fetch**
+> `freshrss unread --digest` (fetches all unread via pagination)
 
-❌ **Don't dump all titles:**
+❌ **Don't claim bounded sample is complete**
+> "Reviewed all 50 unread items" when you used `-n 50`
+
+✅ **Do disclose when using `-n`**
+> "Reviewed 50 items (bounded by --limit; more may exist)"
+
+❌ **Don't use broad topic labels**
+> "AI & Machine Learning", "Technology", "Programming", "General"
+
+✅ **Do use specific story clusters**
+> "AI agents", "code tooling", "model releases", "Grok/xAI", "security
+> vulnerabilities"
+
+❌ **Don't dump all titles**
 > Lists 50+ titles with no prioritisation
 
-✅ **Do curate highlights:**
+✅ **Do curate highlights**
 > Show 5-8 items most relevant to user interests, ask what to expand
 
-❌ **Don't mark items read without asking:**
+❌ **Don't mark items read without asking**
 > Automatically marking items as read
 
-✅ **Do confirm first:**
+✅ **Do confirm first**
 > "Mark these 8 items as read?" [y/N]
 
 ### Marking as Read
@@ -448,18 +485,21 @@ instead of your main login password for API access.
 Auth tokens don't expire, but re-authentication happens on each command.
 If login fails mid-session, re-run `freshrss init`.
 
-### `-n` is a Limit, Not Total Unread Count
+### `-n` is a Bounded Override, Default is Complete
 
-The `-n N` flag fetches **up to N items** — it's a sample size, not the
-total unread count. If you fetch 50 items, there may be 50, 200, or 500
-total unread items in FreshRSS.
+For `--digest`, the default is **all unread items** via pagination — no
+`-n` needed. The `-n N` flag is an optional override that fetches only up
+to N items (incomplete review).
+
+**When `-n` is used:**
+- Output explicitly states: "reviewed N fetched items (bounded by --limit; more may exist)"
+- Raw JSON includes `complete: false` and the limit value
+- Agent should disclose this is an incomplete sample
 
 **Correct phrasing:**
-- "Reviewing 50 items" ✓
-- "Fetched up to 50 for this digest" ✓
-- "You have 50 unread" ✗ (unless you checked the total separately)
-
-Default limit is 20 items. Use `-n 50` or `--digest` for morning briefings.
+- "Reviewed all 247 unread items" ✓ (default, complete)
+- "Reviewed 50 items (bounded; more may exist)" ✓ (with `-n 50`)
+- "You have 50 unread" ✗ (unless you verified the total separately)
 
 ## Examples
 

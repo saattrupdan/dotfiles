@@ -52,26 +52,29 @@ Enable API access in FreshRSS Settings > Profile.
 
 ## Digest Output
 
-The `--digest` flag produces **curated highlights** grouped by topic, not by
-feed:
+The `--digest` flag produces **curated highlights** grouped by specific topic
+clusters, not by feed:
 
 ```bash
-freshrss unread --digest -n 50
+freshrss unread --digest          # Fetches ALL unread (recommended)
+freshrss unread --digest -n 50    # Bounded sample for testing
 ```
 
 Output includes:
 - 📌 **Highlights** - 5-8 most relevant items with brief summaries
 - ★ **○** icons indicating interest matches vs. other items
-- 📁 **Topics** - Condensed breakdown by topic (e.g. Technology, Programming,
-  General) with source feeds shown as provenance metadata
-- Sample note if `-n` limit was reached
+- 📁 **Topics** - Specific clusters (e.g. AI agents, code tooling, model
+  releases, security vulnerabilities) with source feeds as provenance
+- **Completeness indicator** - "reviewed all N unread items" vs "reviewed N
+  fetched items (bounded by --limit; more may exist)"
 
 **Important:** Items are grouped by topic/interest, NOT by feed name. Feed
-names appear only as secondary metadata (e.g. "Technology: 5 items (from The
-Verge, TechCrunch)").
+names appear only as secondary metadata (e.g. "AI agents: 5 items (from
+Hacker News, The Verge)").
 
-**Important:** `-n 50` fetches **up to 50 items** for review — it's not the
-total unread count. There may be more unread items in FreshRSS.
+**Default behavior:** Without `-n`, `--digest` fetches **all unread items**
+via pagination. Use `-n` only for debugging or when user explicitly wants a
+bounded sample.
 
 ## Examples
 
@@ -96,19 +99,29 @@ freshrss unread --digest --raw
 
 When building responses about FreshRSS items:
 
-1. **Treat `-n` as a fetch limit** — not the total unread count
-2. **Use `--raw` mode** to get structured JSON for your own summarisation
-3. **Check Pi memories** for user interests to prioritise relevant items
-4. **Present curated highlights** (5-8 items) with brief "why it matters" notes
-5. **Ask what to expand** — don't list every title from the fetch
-6. **Group by topic or interest, NOT by feed** — feed names are provenance
-   metadata only
+1. **Default: fetch all unread** — use `freshrss unread --digest --raw` (no `-n`)
+2. **Check completeness** — raw JSON includes `complete` flag and `fetched_count`
+3. **Disclose bounded samples** — if `complete: false`, tell user it's incomplete
+4. **Use `--raw` mode** for structured JSON with topic clusters
+5. **Check Pi memories** for user interests to prioritise relevant items
+6. **Present curated highlights** (5-8 items) with brief "why it matters" notes
+7. **Ask what to expand** — don't list every title from the fetch
+8. **Group by specific topic clusters** — not broad buckets or feed names
 
 Example agent response:
 
-> "I've fetched 50 items for review. Here are the highlights most relevant
+> "I've reviewed all 247 unread items. Here are the highlights most relevant
 > to your interests in Python and AI: [3-4 bullet summaries with item IDs].
 > Which would you like to explore?"
+
+**When using `-n` for bounded review:**
+
+> "I've reviewed 50 items (bounded by --limit; more may exist). Here are the
+> highlights: [summaries]. Want me to fetch more?"
+
+**Topic labels:** Use specific clusters like "AI agents", "code tooling",
+"model releases", "Grok/xAI" — not broad labels like "Technology" or
+"Programming".
 
 **Do NOT output grouped-by-feed sections** like "○ AI | The Verge". The raw
 JSON already groups by topic with feed names in `sources` arrays for

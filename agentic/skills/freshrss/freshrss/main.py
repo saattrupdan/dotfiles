@@ -244,7 +244,7 @@ def list_items(
     base_url: str,
     auth_token: str,
     unread_only: bool = False,
-    limit: int = 20,
+    limit: int | None = 20,
     stream: str = "reading-list",
     include_tag: str | None = None,
 ) -> list[dict] | None:
@@ -254,43 +254,80 @@ def list_items(
     For unread items: xt= excludes read state.
     For read items: use reading-list stream with include_tag for read state.
 
+    Pagination: when limit=None, fetches all matching items using continuation
+    token (c parameter). Uses conservative page size to avoid large responses.
+    Stops if continuation token repeats or item count stops changing.
+
     Args:
         base_url: FreshRSS base URL.
         auth_token: Authentication token.
         unread_only: Whether to filter for unread items only.
-        limit: Max items to fetch.
+        limit: Max items to fetch per page, or None for all items.
         stream: Stream name (default: "reading-list").
         include_tag: Include items with this tag (e.g. "user/-/state/com.google/read").
 
     Returns:
         List of item dicts or None on failure.
     """
-    params: dict[str, str] = {
-        "n": str(limit),
-        "output": "json",
-    }
-    if unread_only:
-        # xt= excludes items with this state (read state)
-        params["xt"] = "user/-/state/com.google/read"
-    if include_tag:
-        # it= includes items with this state (for reading list + read state filter)
-        params["it"] = include_tag
+    all_items: list[dict] = []
+    page_size = 100  # Conservative page size
+    prev_count = -1  # Track to detect infinite loops
+    continuation: str | None = None
+    max_pages = 50  # Safety limit
+    page = 0
 
-    body = api_request(
-        base_url,
-        f"{API_PATH}/reader/api/0/stream/contents/{stream}",
-        auth_token,
-        params,
-    )
-    if not body:
-        return None
+    while True:
+        # Build params for this page
+        current_limit = limit if limit is not None else page_size
+        params: dict[str, str] = {
+            "n": str(current_limit),
+            "output": "json",
+        }
+        if unread_only:
+            params["xt"] = "user/-/state/com.google/read"
+        if include_tag:
+            params["it"] = include_tag
+        if continuation:
+            params["c"] = continuation
 
-    try:
-        data = json.loads(body)
-        items = data.get("items", [])
-        return items
-    except json.JSONDecodeError:
-        return None
+        body = api_request(
+            base_url,
+            f"{API_PATH}/reader/api/0/stream/contents/{stream}",
+            auth_token,
+            params,
+        )
+        if not body:
+            return None if page == 0 else all_items
+
+        try:
+            data = json.loads(body)
+            items = data.get("items", [])
+            all_items.extend(items)
+
+            # Check if we should stop
+            # 1. If limit was explicit and we've reached it
+            if limit is not None and len(all_items) >= limit:
+                return all_items[:limit]
+
+            # 2. Check for continuation token
+            continuation = data.get("continuation")
+            if not continuation:
+                return all_items
+
+            # 3. Safety: avoid infinite loops if continuation repeats or count stalls
+            if continuation == params.get("c") or len(items) == 0:
+                return all_items
+            if len(all_items) == prev_count:
+                return all_items
+            prev_count = len(all_items)
+
+            # 4. Safety: max pages limit
+            page += 1
+            if page >= max_pages:
+                return all_items
+
+        except json.JSONDecodeError:
+            return None if page == 0 else all_items
 
 
 def get_item_contents(
@@ -383,109 +420,291 @@ def save_interests(groups: list[InterestGroup]) -> bool:
 
 
 def _derive_topic(title: str, content: str) -> str:
-    """Derive a topic label from title and content using simple heuristics.
+    """Derive a specific topic label from title and content using heuristics.
 
-    Uses keyword matching to categorise into common topic buckets.
-    Returns a neutral topic label for grouping.
+    Uses keyword matching to produce granular, story-level clusters rather than
+    broad categories. Prioritises specific AI/tech sub-topics, then falls back
+    to more general (but still specific) labels. Avoids overly broad labels like
+    'Technology', 'Business', 'Programming', 'AI & Machine Learning', or 'General'.
 
     Args:
         title: Article title.
         content: Article content snippet.
 
     Returns:
-        Topic label string for grouping.
+        Specific topic label string for grouping, or 'Other updates' as fallback.
     """
     text = f"{title} {content}".lower()
 
-    # Topic buckets with representative keywords
-    topic_keywords: dict[str, list[str]] = {
-        "Technology": [
-            "software",
-            "hardware",
-            "app",
-            "device",
-            "tech",
-            "digital",
-            "computing",
+    # AI/ML sub-topics (most specific first)
+    ai_specific: dict[str, list[str]] = {
+        "AI agents": [
+            "agent",
+            "autonomous",
+            "code agent",
+            "coding agent",
+            "agentic",
         ],
-        "AI & Machine Learning": [
-            "ai",
-            "artificial intelligence",
+        "AI regulation/policy": [
+            "regulation",
+            "policy",
+            "governance",
+            "ai act",
+            "eu ai",
+            "compliance",
+            "policing",
+            "safety guidelines",
+        ],
+        "Grok/xAI": [
+            "grok",
+            "x.ai",
+            "xai",
+            "musk ai",
+        ],
+        "model releases": [
+            "model release",
+            "new model",
+            "model launch",
+            "launched",
+            "unveiled",
+            "announced",
+        ],
+        "compute markets": [
+            "compute",
+            "cloud compute",
+            "gpu cluster",
+            "compute cost",
+            "training cost",
+        ],
+        "AI hardware": [
+            "nvidia",
+            "amd chip",
+            "intel chip",
+            "tpu",
+            "tensor chip",
+            "inference chip",
+            "ai accelerator",
+        ],
+        "LLM training": [
+            "training",
+            "pretraining",
+            "fine-tuning",
+            "rlhf",
+            "alignment",
+        ],
+        "machine learning": [
             "machine learning",
-            "ml",
-            "llm",
-            "model",
-            "neural",
+            "ml model",
+            "neural network",
             "deep learning",
-            "gpt",
             "transformer",
         ],
-        "Programming": [
-            "python",
-            "javascript",
-            "typescript",
-            "code",
-            "developer",
-            "programming",
-            "coding",
-            "api",
-            "framework",
-            "library",
-        ],
-        "Science": [
-            "research",
-            "study",
-            "discovery",
-            "scientist",
-            "laboratory",
-            "experiment",
-        ],
-        "Health": [
-            "health",
-            "medical",
-            "medicine",
-            "disease",
-            "treatment",
-            "clinical",
-            "patient",
-        ],
-        "Business": [
-            "company",
-            "market",
-            "stock",
-            "investment",
-            "startup",
-            "revenue",
-            "acquisition",
-            "ceo",
-        ],
-        "Climate & Environment": [
-            "climate",
-            "environment",
-            "carbon",
-            "emission",
-            "renewable",
-            "sustainability",
-            "green",
-        ],
-        "Security": [
-            "security",
-            "vulnerability",
-            "breach",
-            "cyber",
-            "hack",
-            "encryption",
-            "privacy",
+        "AI research": [
+            "ai research",
+            "ai breakthrough",
+            "llm research",
         ],
     }
 
-    for topic, keywords in topic_keywords.items():
+    for topic, keywords in ai_specific.items():
         for kw in keywords:
             if kw in text:
                 return topic
 
-    # No specific topic found - use neutral bucket
-    return "General"
+    # Business/startup (before dev tools to avoid "api" in "capital" etc.)
+    business_topics: dict[str, list[str]] = {
+        "funding/VC": [
+            "funding",
+            "venture capital",
+            "series a",
+            "series b",
+            "series c",
+            "investor",
+            "valuation",
+            "seed round",
+        ],
+        "acquisitions": [
+            "acquisition",
+            "acquired",
+            "merger",
+            "bought",
+            "purchase",
+        ],
+        "layoffs": [
+            "layoff",
+            "layoffs",
+            "cut",
+            "job cut",
+            "workforce reduction",
+        ],
+        "earnings": [
+            "earnings",
+            "revenue",
+            "quarterly",
+            "profit",
+            "loss",
+        ],
+    }
+
+    for topic, keywords in business_topics.items():
+        for kw in keywords:
+            if kw in text:
+                return topic
+
+    # Programming/dev tools sub-topics
+    dev_specific: dict[str, list[str]] = {
+        "code tooling": [
+            "lint",
+            "linter",
+            "ruff",
+            "eslint",
+            "formatter",
+            "static analysis",
+            "type checker",
+            "mypy",
+        ],
+        "testing tools": [
+            "pytest",
+            "unit test",
+            "integration test",
+            "test framework",
+            "test runner",
+        ],
+        "python": [
+            "python",
+            "pypi",
+            "pip",
+            "cpython",
+        ],
+        "javascript/typescript": [
+            "javascript",
+            "typescript",
+            "node.js",
+            "nodejs",
+            "npm",
+            "bun",
+            "deno",
+        ],
+        "web frameworks": [
+            "fastapi",
+            "django",
+            "flask",
+            "react",
+            "vue",
+            "svelte",
+            "next.js",
+            "nuxt",
+        ],
+        "developer tools": [
+            "vs code",
+            "visual studio code",
+            "cursor",
+            "zed",
+            "neovim",
+            "ide",
+            "editor",
+        ],
+        "api development": [
+            "api endpoint",
+            "rest api",
+            "graphql",
+            "http endpoint",
+        ],
+    }
+
+    for topic, keywords in dev_specific.items():
+        for kw in keywords:
+            if kw in text:
+                return topic
+
+    # Security/privacy
+    security_topics: dict[str, list[str]] = {
+        "security vulnerabilities": [
+            "vulnerability",
+            "cve",
+            "exploit",
+            "zero-day",
+            "patch",
+            "security update",
+        ],
+        "data breaches": [
+            "breach",
+            "data leak",
+            "leaked",
+            "hacked",
+            "compromised",
+        ],
+        "privacy": [
+            "privacy",
+            "encryption",
+            "signal",
+            "tor",
+            "vpn",
+            "surveillance",
+        ],
+    }
+
+    for topic, keywords in security_topics.items():
+        for kw in keywords:
+            if kw in text:
+                return topic
+
+    # Science/health
+    science_topics: dict[str, list[str]] = {
+        "scientific research": [
+            "research",
+            "study",
+            "paper",
+            "journal",
+            "peer-reviewed",
+        ],
+        "health/medical": [
+            "health",
+            "medical",
+            "medicine",
+            "clinical",
+            "fda",
+            "trial",
+        ],
+    }
+
+    for topic, keywords in science_topics.items():
+        for kw in keywords:
+            if kw in text:
+                return topic
+
+    # Climate/environment
+    if any(
+        kw in text
+        for kw in [
+            "climate",
+            "carbon",
+            "emission",
+            "renewable",
+            "sustainability",
+            "environment",
+        ]
+    ):
+        return "climate/environment"
+
+    # General tech (fallback for anything tech-related but not matched above)
+    if any(
+        kw in text
+        for kw in [
+            "tech",
+            "software",
+            "hardware",
+            "device",
+            "digital",
+            "app",
+            "startup",
+            "company",
+        ]
+    ):
+        return "tech updates"
+
+    # Ultimate fallback
+    return "Other updates"
 
 
 def group_items_for_digest(
@@ -623,7 +842,11 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 
 def cmd_unread(args: argparse.Namespace) -> int:
-    """List unread items with optional digest grouping."""
+    """List unread items with optional digest grouping.
+
+    For --digest: defaults to fetching ALL unread items unless --limit is explicit.
+    Non-digest mode defaults to a safe display limit (20).
+    """
     creds = get_credentials()
     if not creds:
         print(
@@ -646,17 +869,34 @@ def cmd_unread(args: argparse.Namespace) -> int:
         print(f"Error: {msg}", file=sys.stderr)
         return 1
 
-    limit = args.limit or 20
+    # Default: --digest fetches all, non-digest shows limited view
+    if args.digest:
+        # For digest, default to ALL unread (limit=None triggers pagination)
+        limit = args.limit  # None means all, explicit value means bounded
+    else:
+        # Non-digest defaults to safe display limit
+        limit = args.limit or 20
+
     items = list_items(args.base_url, auth_token, unread_only=True, limit=limit)
     if items is None:
         print("Error: Failed to fetch unread items", file=sys.stderr)
         return 1
 
+    # Track whether result is complete or bounded
+    is_complete = args.limit is None or len(items) < args.limit
+    limit_applied = args.limit if args.limit is not None else None
+
     if args.raw:
-        # Raw output returns grouped JSON matching docs
+        # Raw output returns grouped JSON with completeness metadata
         groups = load_interests()
         grouped = group_items_for_digest(items, groups)
-        print(json.dumps({"groups": grouped}, indent=2))
+        output = {
+            "groups": grouped,
+            "fetched_count": len(items),
+            "complete": is_complete,
+            "limit_applied": limit_applied,
+        }
+        print(json.dumps(output, indent=2))
         return 0
 
     if not items:
@@ -667,11 +907,14 @@ def cmd_unread(args: argparse.Namespace) -> int:
         groups = load_interests()
         grouped = group_items_for_digest(items, groups)
 
-        # Header clarifies this is a sample, not total count
-        limit_note = (
-            f" (sample of up to {limit})" if limit and len(items) == limit else ""
-        )
-        print(f"FreshRSS Digest - {len(items)} fetched{limit_note}\n")
+        # Header distinguishes complete vs bounded review
+        if is_complete and limit_applied is None:
+            print(f"FreshRSS Digest - reviewed all {len(items)} unread items\n")
+        else:
+            print(
+                f"FreshRSS Digest - reviewed {len(items)} fetched items "
+                f"(bounded by --limit; more may exist)\n"
+            )
 
         # Build curated highlights: 5-8 top items with brief summaries.
         # Collect all items with priority scoring, then select top 5-8.
@@ -763,11 +1006,11 @@ def cmd_unread(args: argparse.Namespace) -> int:
             items_text = "item" if count == 1 else "items"
             print(f"{icon} {category}: {count} {items_text}{sources_str}")
 
-        # Note about limited sample
-        if limit and len(items) == limit:
+        # Note about bounded review
+        if not is_complete:
             print(
-                f"\nⓘ  Reviewed {limit} items - more may be available. "
-                "Use '-n N' to fetch more."
+                f"\nⓘ  Reviewed {len(items)} items (bounded by --limit); "
+                "more unread items may exist."
             )
         print()
     else:
@@ -1037,14 +1280,24 @@ def main() -> int:
         action="store_true",
         help="Proceed even if FreshRSS is not reachable",
     )
-    sub_unread.add_argument("-n", "--limit", type=int, help="Max items to fetch")
+    sub_unread.add_argument(
+        "-n",
+        "--limit",
+        type=int,
+        help="Optional max items to fetch (default: all for --digest, 20 otherwise)",
+    )
     sub_unread.add_argument("--digest", action="store_true", help="Show digest view")
     sub_unread.add_argument("--raw", action="store_true", help="Output raw JSON")
     sub_unread.set_defaults(func=cmd_unread)
 
     sub_read = subparsers.add_parser("read", help="List recently read items")
     add_base_url_arg(sub_read)
-    sub_read.add_argument("-n", "--limit", type=int, help="Max items to show")
+    sub_read.add_argument(
+        "-n",
+        "--limit",
+        type=int,
+        help="Optional max items to show (default: 10)",
+    )
     sub_read.add_argument("--raw", action="store_true", help="Output raw JSON")
     sub_read.set_defaults(func=cmd_read)
 
