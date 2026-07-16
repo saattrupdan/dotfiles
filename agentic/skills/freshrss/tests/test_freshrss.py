@@ -19,6 +19,7 @@ from freshrss.main import (
     extract_content,
     extractive_summary,
     get_auth_token,
+    get_credentials,
     get_token,
     group_items_for_digest,
     load_interests,
@@ -606,6 +607,88 @@ class TestBaseUrLPosition(unittest.TestCase):
                     pass
                 call_args = mock_health.call_args[0][0]
                 self.assertEqual(call_args.base_url, DEFAULT_BASE_URL)
+
+
+class TestGetCredentials(unittest.TestCase):
+    """Tests for credential retrieval from Keychain."""
+
+    @patch("freshrss.main.run_security")
+    def test_finds_account_in_stderr(self, mock_run_security: MagicMock) -> None:
+        """Should find account metadata when emitted on stderr."""
+        mock_run_security.return_value = CompletedProcess(
+            [], 0, "mysecretpassword", ""
+        )
+        mock_run_security.side_effect = [
+            CompletedProcess([], 0, "mysecretpassword", ""),
+            CompletedProcess(
+                [],
+                0,
+                "",
+                'keychain: "/Users/test/Keychains/login.keychain-db"'
+                '\n"acct"<blob>="testuser"\n',
+            ),
+        ]
+
+        result = get_credentials()
+        self.assertEqual(result, ("testuser", "mysecretpassword"))
+
+    @patch("freshrss.main.run_security")
+    def test_finds_account_in_stdout(self, mock_run_security: MagicMock) -> None:
+        """Should find account metadata when emitted on stdout."""
+        mock_run_security.side_effect = [
+            CompletedProcess([], 0, "mysecretpassword", ""),
+            CompletedProcess(
+                [],
+                0,
+                'keychain: "/Users/test/Keychains/login.keychain-db"'
+                '\n"acct"<blob>="testuser"\n',
+                "",
+            ),
+        ]
+
+        result = get_credentials()
+        self.assertEqual(result, ("testuser", "mysecretpassword"))
+
+    @patch("freshrss.main.run_security")
+    def test_finds_account_across_streams(self, mock_run_security: MagicMock) -> None:
+        """Should find account metadata when split across stdout and stderr."""
+        mock_run_security.side_effect = [
+            CompletedProcess([], 0, "mysecretpassword", ""),
+            CompletedProcess(
+                [],
+                0,
+                'keychain: "/Users/test/Library/Keychains/login.keychain-db"\n"',
+                'acct"<blob>="testuser"\n',
+            ),
+        ]
+
+        result = get_credentials()
+        self.assertEqual(result, ("testuser", "mysecretpassword"))
+
+    @patch("freshrss.main.run_security")
+    def test_returns_none_on_password_lookup_fail(
+        self, mock_run_security: MagicMock
+    ) -> None:
+        """Should return None when password lookup fails."""
+        mock_run_security.return_value = CompletedProcess(
+            [], 1, "", "error: no credentials found"
+        )
+
+        result = get_credentials()
+        self.assertIsNone(result)
+
+    @patch("freshrss.main.run_security")
+    def test_returns_none_on_missing_account_metadata(
+        self, mock_run_security: MagicMock
+    ) -> None:
+        """Should return None when account metadata is not found in output."""
+        mock_run_security.side_effect = [
+            CompletedProcess([], 0, "mysecretpassword", ""),
+            CompletedProcess([], 0, "some output", "no account info"),
+        ]
+
+        result = get_credentials()
+        self.assertIsNone(result)
 
 
 if __name__ == "__main__":
