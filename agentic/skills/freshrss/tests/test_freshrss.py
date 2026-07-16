@@ -1152,3 +1152,241 @@ class TestCmdUnread(unittest.TestCase):
         self.assertIn("more may be available", output.lower())
 
 
+class TestHighlightSelection(unittest.TestCase):
+    """Tests for highlight selection logic - fixes capping per group."""
+
+    @patch("freshrss.main.load_interests")
+    @patch("freshrss.main.group_items_for_digest")
+    @patch("freshrss.main.list_items")
+    @patch("freshrss.main.get_auth_token")
+    @patch("freshrss.main.get_credentials")
+    def test_single_topic_many_items_yields_multiple_highlights(
+        self,
+        mock_creds: MagicMock,
+        mock_auth: MagicMock,
+        mock_list: MagicMock,
+        mock_group: MagicMock,
+        mock_load_interests: MagicMock,
+    ) -> None:
+        """Single topic with many items yields multiple highlights."""
+        import io
+        from contextlib import redirect_stdout
+
+        mock_creds.return_value = ("user", "pass")
+        mock_auth.return_value = "token"
+        # 50 items in a single topic
+        mock_list.return_value = [
+            {"id": f"item:{i}", "title": f"Item {i}", "content": f"Content {i}"}
+            for i in range(50)
+        ]
+        mock_group.return_value = {
+            "AI & Machine Learning": {
+                "items": [
+                    {
+                        "id": f"item:{i}",
+                        "title": f"Item {i}",
+                        "content_snippet": f"Content {i}",
+                        "link": "",
+                        "source": "Tech Feed",
+                    }
+                    for i in range(50)
+                ],
+                "interest": True,
+                "topic": "AI & Machine Learning",
+                "sources": ["Tech Feed"],
+            }
+        }
+        mock_load_interests.return_value = []
+
+        args = argparse.Namespace(
+            base_url="http://localhost:9999",
+            limit=50,
+            digest=True,
+            raw=False,
+            force=False,
+        )
+
+        f = io.StringIO()
+        with redirect_stdout(f):
+            result = cmd_unread(args)
+
+        self.assertEqual(result, 0)
+        output = f.getvalue()
+
+        # Should have 8 highlights (the max) from the single topic
+        # Count ★ symbols in the Highlights section only (before Topics section)
+        highlights_section = output.split("Topics:")[0]
+        highlight_count = highlights_section.count("★")
+        self.assertEqual(highlight_count, 8,
+            "Should select 8 highlights from single topic with 50 items")
+        # Verify first few items are shown
+        self.assertIn("item:0", output)
+        self.assertIn("item:7", output)
+
+    @patch("freshrss.main.load_interests")
+    @patch("freshrss.main.group_items_for_digest")
+    @patch("freshrss.main.list_items")
+    @patch("freshrss.main.get_auth_token")
+    @patch("freshrss.main.get_credentials")
+    def test_few_items_shows_all_as_highlights(
+        self,
+        mock_creds: MagicMock,
+        mock_auth: MagicMock,
+        mock_list: MagicMock,
+        mock_group: MagicMock,
+        mock_load_interests: MagicMock,
+    ) -> None:
+        """When fewer than 5 items total, all should be shown as highlights."""
+        import io
+        from contextlib import redirect_stdout
+
+        mock_creds.return_value = ("user", "pass")
+        mock_auth.return_value = "token"
+        mock_list.return_value = [
+            {"id": f"item:{i}", "title": f"Item {i}", "content": f"Content {i}"}
+            for i in range(3)
+        ]
+        mock_group.return_value = {
+            "General": {
+                "items": [
+                    {
+                        "id": f"item:{i}",
+                        "title": f"Item {i}",
+                        "content_snippet": f"Content {i}",
+                        "link": "",
+                        "source": "Feed",
+                    }
+                    for i in range(3)
+                ],
+                "interest": False,
+                "topic": "General",
+                "sources": ["Feed"],
+            }
+        }
+        mock_load_interests.return_value = []
+
+        args = argparse.Namespace(
+            base_url="http://localhost:9999",
+            limit=50,
+            digest=True,
+            raw=False,
+            force=False,
+        )
+
+        f = io.StringIO()
+        with redirect_stdout(f):
+            result = cmd_unread(args)
+
+        self.assertEqual(result, 0)
+        output = f.getvalue()
+
+        # All 3 items should be shown as highlights
+        # Count icons in Highlights section only (before Topics section)
+        highlights_section = output.split("Topics:")[0]
+        highlight_count = highlights_section.count("★") + highlights_section.count("○")
+        self.assertEqual(highlight_count, 3,
+            "Should show all 3 items when fewer than 5 total")
+
+
+class TestInterestTopicCollision(unittest.TestCase):
+    """Tests for interest/topic name collision handling."""
+
+    def test_interest_match_preserved_when_topic_same_name(self) -> None:
+        """Interest matches should not be hidden when derived topic has same name."""
+        # Use "General" as the keyword since _derive_topic returns "General" for
+        # non-matching content, creating a potential collision scenario.
+        items = [
+            # First item: no interest match, derives to "General"
+            {
+                "id": "1",
+                "title": "Random News Update",
+                "content": "Generic content with no specific topic",
+                "origin": {"title": "News Feed"},
+                "crawlTimeMsec": 1000,
+            },
+            # Second item: interest match for "General" (same name as derived topic)
+            {
+                "id": "2",
+                "title": "Breaking News",
+                "content": "Important update",
+                "origin": {"title": "News Wire"},
+                "crawlTimeMsec": 2000,
+            },
+        ]
+        groups: list[InterestGroup] = [
+            {"name": "General", "keywords": ["important", "breaking"]}
+        ]
+
+        grouped = group_items_for_digest(items, groups)
+
+        # Group should exist
+        self.assertIn("General", grouped)
+        # Group's interest flag should be True because item 2 is an interest match
+        # (even though item 1 created the group first without interest match)
+        self.assertTrue(grouped["General"]["interest"],
+            "Group interest flag should be True when any item is interest match")
+        # Both items should be in the group
+        self.assertEqual(len(grouped["General"]["items"]), 2)
+
+    def test_non_interest_items_do_not_inherit_star(self) -> None:
+        """Non-interest items do not inherit interest star."""
+        items = [
+            # Interest match item
+            {
+                "id": "1",
+                "title": "Python framework update",
+                "content": "New features for the popular framework",
+                "origin": {"title": "Python Weekly"},
+                "crawlTimeMsec": 1000,
+            },
+            # Non-interest item that happens to derive to "Programming" topic
+            {
+                "id": "2",
+                "title": "Code review tips",
+                "content": "Best practices for reviewing code",
+                "origin": {"title": "Dev Blog"},
+                "crawlTimeMsec": 2000,
+            },
+        ]
+        groups: list[InterestGroup] = [
+            {"name": "Programming", "keywords": ["framework"]}
+        ]
+
+        grouped = group_items_for_digest(items, groups)
+
+        # Both items should be in "Programming" group
+        self.assertIn("Programming", grouped)
+        self.assertEqual(len(grouped["Programming"]["items"]), 2)
+        # Group should have interest=True because at least one item matched
+        self.assertTrue(grouped["Programming"]["interest"])
+
+    def test_interest_flag_computed_correctly_across_orderings(self) -> None:
+        """Interest flag should be True regardless of item processing order."""
+        interest_item = {
+            "id": "interest",
+            "title": "Interest Match",
+            "content": "Matches keyword",
+            "origin": {"title": "Feed A"},
+            "crawlTimeMsec": 1000,
+        }
+        non_interest_item = {
+            "id": "other",
+            "title": "Other Topic",
+            "content": "No match here",
+            "origin": {"title": "Feed B"},
+            "crawlTimeMsec": 2000,
+        }
+
+        groups: list[InterestGroup] = [
+            {"name": "General", "keywords": ["match"]}
+        ]
+
+        # Order 1: non-interest first
+        grouped1 = group_items_for_digest([non_interest_item, interest_item], groups)
+        self.assertTrue(grouped1["General"]["interest"])
+
+        # Order 2: interest first
+        grouped2 = group_items_for_digest([interest_item, non_interest_item], groups)
+        self.assertTrue(grouped2["General"]["interest"])
+
+

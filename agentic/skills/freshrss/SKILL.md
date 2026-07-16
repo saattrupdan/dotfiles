@@ -288,8 +288,8 @@ Agent: Checking your FreshRSS... Fetching up to 50 items for review.
    → Rules cover async context managers and session lifetime.
    [ID: item:tag:example.com:def456]
 
-○ Hacker News (12 items)
-○ Python Weekly (8 items)
+○ AI & Machine Learning: 12 items (from Hacker News, TechCrunch)
+○ Programming: 8 items (from Python Weekly, Real Python)
 ...
 
 Which would you like to explore first?

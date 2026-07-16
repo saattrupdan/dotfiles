@@ -547,6 +547,13 @@ def group_items_for_digest(
                 "topic": category,
                 "sources": [],
             }
+        else:
+            # Update interest flag: True if ANY item in group is interest match.
+            # This handles name collisions where an interest group name matches
+            # a derived topic name - the group's interest flag reflects whether
+            # any item matched a configured interest.
+            if interest_match is not None:
+                grouped[category]["interest"] = True
 
         # Track source feeds as metadata (deduplicated)
         if feed_title not in grouped[category]["sources"]:
@@ -681,45 +688,58 @@ def cmd_unread(args: argparse.Namespace) -> int:
         )
         print(f"FreshRSS Digest - {len(items)} fetched{limit_note}\n")
 
-        # Build curated highlights: 5-8 top items with brief summaries
+        # Build curated highlights: 5-8 top items with brief summaries.
+        # Collect all items with priority scoring, then select top 5-8.
+        # Interest-matched items are prioritised, then fill from other items.
         highlights: list[dict] = []
 
-        # First, add interest-matched items (prioritised)
+        # Collect all interest-matched items first (highest priority)
+        interest_items: list[tuple[str, dict]] = []  # (category, item)
         for category, data in interest_groups.items():
-            for item in data["items"][:2]:  # Max 2 per interest group
+            for item in data["items"]:
+                interest_items.append((category, item))
+
+        # Collect all other items (lower priority)
+        other_items: list[tuple[str, dict]] = []  # (category, item)
+        for category, data in other_groups.items():
+            for item in data["items"]:
+                other_items.append((category, item))
+
+        # Select up to 8 highlights: prioritise interest items, then fill
+        # Aim for 5-8 highlights. If fewer than 5 total items, show all.
+        target_min, target_max = 5, 8
+
+        # Add interest-matched items first (up to target_max)
+        for category, item in interest_items[:target_max]:
+            highlights.append({
+                "id": item["id"],
+                "title": item["title"],
+                "summary": (
+                        extractive_summary(item["content_snippet"])
+                        if item["content_snippet"]
+                        else ""
+                ),
+                "category": category,
+                "interest": True,
+                "source": item.get("source", ""),
+            })
+
+        # Fill remaining slots from other items if needed
+        if len(highlights) < target_min:
+            remaining = target_max - len(highlights)
+            for category, item in other_items[:remaining]:
                 highlights.append({
                     "id": item["id"],
                     "title": item["title"],
                     "summary": (
-                            extractive_summary(item["content_snippet"])
-                            if item["content_snippet"]
-                            else ""
+                        extractive_summary(item["content_snippet"])
+                        if item["content_snippet"]
+                        else ""
                     ),
                     "category": category,
-                    "interest": True,
+                    "interest": False,
                     "source": item.get("source", ""),
                 })
-
-        # Then add other items if we need more highlights
-        if len(highlights) < 5:
-            for category, data in other_groups.items():
-                for item in data["items"][:1]:  # Max 1 per other group
-                    if len(highlights) >= 8:
-                        break
-                    highlights.append({
-                        "id": item["id"],
-                        "title": item["title"],
-                        "summary": (
-                            extractive_summary(item["content_snippet"])
-                            if item["content_snippet"]
-                            else ""
-                        ),
-                        "category": category,
-                        "interest": False,
-                        "source": item.get("source", ""),
-                    })
-                if len(highlights) >= 8:
-                    break
 
         # Print curated highlights section
         if highlights:
