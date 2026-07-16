@@ -88,6 +88,8 @@ export function outline(filePath: string, source: string): OutlineResult {
 				return { entries: outlineYaml(source) };
 			case "toml":
 				return { entries: outlineToml(source) };
+			case "xml":
+				return { entries: outlineXml(source) };
 			case "fallback":
 			default:
 				return { entries: fallbackOutline(source) };
@@ -1541,6 +1543,164 @@ function outlineYaml(source: string): OutlineEntry[] {
 	return out;
 }
 
+// ---------------------------------------------------------------------------
+// XML / RSS / Atom
+// ---------------------------------------------------------------------------
+
+function outlineXml(source: string): OutlineEntry[] {
+	const out: OutlineEntry[] = [];
+	// Track current line for offset computation as we walk regex matches.
+	const lineStarts: number[] = [0];
+	for (let i = 0; i < source.length; i++) {
+		if (source[i] === "\n") lineStarts.push(i + 1);
+	}
+	const offsetToLine = (off: number): number => {
+		// binary search
+		let lo = 0, hi = lineStarts.length - 1;
+		while (lo < hi) {
+			const mid = (lo + hi + 1) >> 1;
+			if (lineStarts[mid]! <= off) lo = mid; else hi = mid - 1;
+		}
+		return lo + 1;
+	};
+
+	// Detect flavour: RSS has <rss or <channel, Atom has <feed
+	const isFeed = /<(?:rss(?:\s|>)|channel\b|feed\b)/i.test(source.slice(0, 2000));
+
+	if (isFeed) {
+		// RSS/Atom feed mode: find the feed/channel title, then items/entries
+		// 1. Feed title: <channel><title> for RSS, <feed><title> for Atom
+		const channelTitleRe = /<channel\b[^>]*>\s*<title\b[^>]*>([\s\S]*?)<\/title>/i;
+		const feedTitleRe = /<feed\b[^>]*>\s*<title\b[^>]*>([\s\S]*?)<\/title>/i;
+		const anyTitleRe = /<(?:channel|feed)\b[^>]*>[\s\S]*?<title\b[^>]*>([\s\S]*?)<\/title>/i;
+		const titleMatch = channelTitleRe.exec(source) ?? feedTitleRe.exec(source) ?? anyTitleRe.exec(source);
+		if (titleMatch) {
+			const titleText = titleMatch[1]!.replace(/<!\[CDATA\[/g, "").replace(/\]\]>/g, "").replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+			if (titleText) {
+				const startLine = offsetToLine(titleMatch.index);
+				const endLine = offsetToLine(titleMatch.index + titleMatch[0].length - 1);
+				out.push({
+					line: startLine,
+					lineEnd: endLine,
+					kind: "block",
+					name: truncate(titleText, DOC_CAP),
+					signature: "(feed title)",
+				});
+			}
+		}
+
+		// 2. Items/entries
+		const itemRe = /<(item|entry)\b([^>]*)>([\s\S]*?)<\/\1>/gi;
+		let m: RegExpExecArray | null;
+		let iterations = 0;
+		const ITER_CAP = 5000;
+		while ((m = itemRe.exec(source)) && iterations < ITER_CAP) {
+			iterations++;
+			const tagName = m[1]!;
+			const content = m[3] ?? "";
+			// Extract <title> from within the item/entry
+			const itemTitleRe = /<title\b[^>]*>([\s\S]*?)<\/title>/i;
+			const itemTitleMatch = itemTitleRe.exec(content);
+			const itemTitle = itemTitleMatch
+				? itemTitleMatch[1]!.replace(/<!\[CDATA\[/g, "").replace(/\]\]>/g, "").replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim()
+				: "untitled";
+			const startLine = offsetToLine(m.index);
+			const endLine = offsetToLine(m.index + m[0].length - 1);
+			out.push({
+				line: startLine,
+				lineEnd: endLine,
+				kind: "block",
+				name: truncate(itemTitle, DOC_CAP),
+				signature: `<${tagName}>`,
+			});
+		}
+	} else {
+		// Generic XML mode: root element + direct children
+		// Find root element
+		const rootRe = /<([A-Za-z_:][\w:.-]*)\b[^>]*>/;
+		const rootMatch = rootRe.exec(source);
+		if (!rootMatch) return out;
+		const rootTag = rootMatch[1]!;
+
+		// Find direct children of root: <child ...>...</child> at depth 1
+		// We scan for elements that appear at the top level within the root
+		const rootOpenRe = new RegExp(`<${rootTag}(?:\\s[^>]*)?>`, "i");
+		const rootCloseRe = new RegExp(`</${rootTag}>`, "i");
+		const rootOpenMatch = rootOpenRe.exec(source);
+		const rootCloseMatch = rootCloseRe.exec(source);
+		if (!rootOpenMatch || !rootCloseMatch) return out;
+
+		const rootContentStart = rootOpenMatch.index + rootOpenMatch[0].length;
+		const rootContentEnd = rootCloseMatch.index;
+		const rootContent = source.slice(rootContentStart, rootContentEnd);
+
+		// Match child elements with simple regex (handles well-formed XML)
+		const childRe = /<([A-Za-z_:][\w:.-]*)\b(?:\s+[^>]*)?>/g;
+		const childPositions: { tag: string; index: number; fullMatch: string }[] = [];
+		let childMatch: RegExpExecArray | null;
+		let iterations = 0;
+		const ITER_CAP = 5000;
+		while ((childMatch = childRe.exec(rootContent)) && iterations < ITER_CAP) {
+			iterations++;
+			// Check depth by counting '<' before this position
+			const before = rootContent.slice(0, childMatch.index);
+			let depth = 0;
+			for (let i = 0; i < before.length; i++) {
+				if (before[i] === "<" && before[i + 1] !== "/") depth++;
+				if (before[i] === "<" && before[i + 1] === "/") depth--;
+			}
+			if (depth === 0) {
+				childPositions.push({ tag: childMatch[1]!, index: childMatch.index, fullMatch: childMatch[0] });
+			}
+		}
+
+		// Count occurrences of each child tag
+		const tagCounts = new Map<string, number>();
+		for (const { tag } of childPositions) {
+			tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
+		}
+
+		// Emit entries for unique child tags
+		const emittedTags = new Set<string>();
+		for (const { tag, index } of childPositions) {
+			if (emittedTags.has(tag)) continue;
+			const count = tagCounts.get(tag)!;
+			// Find the full element span
+			const elemStartAbs = rootContentStart + index;
+			// Find closing tag
+			const closeTagRe = new RegExp(`</${tag}\\b[^>]*>`, "i");
+			const afterContent = source.slice(elemStartAbs);
+			const closeMatch = closeTagRe.exec(afterContent);
+			const elemEndAbs = closeMatch ? elemStartAbs + closeMatch.index + closeMatch[0].length : elemStartAbs;
+			const startLine = offsetToLine(elemStartAbs);
+			const endLine = offsetToLine(elemEndAbs - 1);
+
+			// signature: count or key attribute
+			let signature: string | undefined;
+			if (count > 1) {
+				signature = `(×${count})`;
+			} else {
+				// Try to extract id or name attribute
+				const attrMatch = /\b(id|name)\s*=\s*["']([^"']+)["']/i.exec(childPositions.find((cp) => cp.tag === tag)!.fullMatch);
+				if (attrMatch) {
+					signature = `(${attrMatch[1]}="${attrMatch[2]}")`;
+				}
+			}
+
+			out.push({
+				line: startLine,
+				lineEnd: endLine,
+				kind: "block",
+				name: tag,
+				signature,
+			});
+			emittedTags.add(tag);
+		}
+	}
+
+	out.sort((a, b) => a.line - b.line);
+	return out;
+}
 // ---------------------------------------------------------------------------
 // TOML
 // ---------------------------------------------------------------------------
