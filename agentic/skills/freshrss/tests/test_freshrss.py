@@ -171,9 +171,7 @@ class TestGetAuthToken(unittest.TestCase):
         self.assertIsNone(token)
 
     @patch("freshrss.main.urllib.request.urlopen")
-    def test_returns_none_on_connection_error(
-        self, mock_urlopen: MagicMock
-    ) -> None:
+    def test_returns_none_on_connection_error(self, mock_urlopen: MagicMock) -> None:
         """Should return None on connection error."""
         import urllib.error
 
@@ -269,9 +267,7 @@ class TestGroupItemsForDigest(unittest.TestCase):
                 "crawlTimeMsec": 1000,
             }
         ]
-        groups: list[InterestGroup] = [
-            {"name": "Tech", "keywords": ["python", "ai"]}
-        ]
+        groups: list[InterestGroup] = [{"name": "Tech", "keywords": ["python", "ai"]}]
         grouped = group_items_for_digest(items, groups)
         # Should use neutral "General" bucket for non-interest items
         self.assertIn("General", grouped)
@@ -666,7 +662,14 @@ class TestBaseUrLPosition(unittest.TestCase):
         with patch.object(
             sys,
             "argv",
-            ["freshrss", "--base-url", "http://top:9999", "health", "--base-url", "http://sub:9999"],
+            [
+                "freshrss",
+                "--base-url",
+                "http://top:9999",
+                "health",
+                "--base-url",
+                "http://sub:9999",
+            ],
         ):
             with patch("freshrss.main.cmd_health") as mock_health:
                 mock_health.return_value = 0
@@ -702,9 +705,7 @@ class TestGetCredentials(unittest.TestCase):
     @patch("freshrss.main.run_security")
     def test_finds_account_in_stderr(self, mock_run_security: MagicMock) -> None:
         """Should find account metadata when emitted on stderr."""
-        mock_run_security.return_value = CompletedProcess(
-            [], 0, "mysecretpassword", ""
-        )
+        mock_run_security.return_value = CompletedProcess([], 0, "mysecretpassword", "")
         mock_run_security.side_effect = [
             CompletedProcess([], 0, "mysecretpassword", ""),
             CompletedProcess(
@@ -855,9 +856,7 @@ class TestCmdRead(unittest.TestCase):
         mock_list.assert_called_once()
         call_kwargs = mock_list.call_args[1]
         self.assertEqual(call_kwargs["stream"], "reading-list")
-        self.assertEqual(
-            call_kwargs["include_tag"], "user/-/state/com.google/read"
-        )
+        self.assertEqual(call_kwargs["include_tag"], "user/-/state/com.google/read")
         self.assertFalse(call_kwargs["unread_only"])
 
     @patch("freshrss.main.list_items")
@@ -993,6 +992,7 @@ class TestCmdUnread(unittest.TestCase):
                         "content_snippet": "Test",
                         "link": "",
                         "source": "Test Feed",
+                        "interest": False,
                     }
                 ],
                 "interest": False,
@@ -1054,6 +1054,7 @@ class TestCmdUnread(unittest.TestCase):
                         "content_snippet": "Content 1",
                         "link": "",
                         "source": "DevFeed",
+                        "interest": True,
                     },
                     {
                         "id": "item:2",
@@ -1061,6 +1062,7 @@ class TestCmdUnread(unittest.TestCase):
                         "content_snippet": "Content 2",
                         "link": "",
                         "source": "DevFeed",
+                        "interest": True,
                     },
                 ],
                 "interest": True,
@@ -1117,15 +1119,16 @@ class TestCmdUnread(unittest.TestCase):
         mock_group.return_value = {
             "General": {
                 "items": [
-                {
-                    "id": f"item:{i}",
-                    "title": f"Test {i}",
-                    "content_snippet": f"Content {i}",
-                    "link": "",
-                    "source": "Test Feed",
-                }
-                for i in range(50)
-            ],
+                    {
+                        "id": f"item:{i}",
+                        "title": f"Test {i}",
+                        "content_snippet": f"Content {i}",
+                        "link": "",
+                        "source": "Test Feed",
+                        "interest": False,
+                    }
+                    for i in range(50)
+                ],
                 "interest": False,
                 "topic": "General",
                 "sources": ["Test Feed"],
@@ -1150,6 +1153,81 @@ class TestCmdUnread(unittest.TestCase):
 
         # Verify sample note is shown
         self.assertIn("more may be available", output.lower())
+
+    @patch("freshrss.main.load_interests")
+    @patch("freshrss.main.group_items_for_digest")
+    @patch("freshrss.main.list_items")
+    @patch("freshrss.main.get_auth_token")
+    @patch("freshrss.main.get_credentials")
+    def test_digest_non_interest_items_no_star(
+        self,
+        mock_creds: MagicMock,
+        mock_auth: MagicMock,
+        mock_list: MagicMock,
+        mock_group: MagicMock,
+        mock_load_interests: MagicMock,
+    ) -> None:
+        """Non-interest items in interest-matched group should not show with star."""
+        import io
+        from contextlib import redirect_stdout
+
+        mock_creds.return_value = ("user", "pass")
+        mock_auth.return_value = "token"
+        mock_list.return_value = [
+            {"id": "item:1", "title": "Interest match", "content": "Matches keyword"},
+            {"id": "item:2", "title": "No match", "content": "Generic content"},
+        ]
+        # Group has interest=True (at least one match), but items have per-item flags
+        mock_group.return_value = {
+            "Programming": {
+                "items": [
+                    {
+                        "id": "item:1",
+                        "title": "Interest match",
+                        "content_snippet": "Matches keyword",
+                        "link": "",
+                        "source": "DevFeed",
+                        "interest": True,  # This item matched
+                    },
+                    {
+                        "id": "item:2",
+                        "title": "No match",
+                        "content_snippet": "Generic content",
+                        "link": "",
+                        "source": "DevFeed",
+                        "interest": False,  # This item did not match
+                    },
+                ],
+                "interest": True,  # Group has at least one match
+                "topic": "Programming",
+                "sources": ["DevFeed"],
+            }
+        }
+        mock_load_interests.return_value = []
+
+        args = argparse.Namespace(
+            base_url="http://localhost:9999",
+            limit=50,
+            digest=True,
+            raw=False,
+            force=False,
+        )
+
+        f = io.StringIO()
+        with redirect_stdout(f):
+            result = cmd_unread(args)
+
+        self.assertEqual(result, 0)
+        output = f.getvalue()
+
+        # Interest-matched item should have star
+        self.assertIn("★ Interest match", output)
+        # Non-interest item should NOT have star (should use ○ or no icon in highlights)
+        # The highlights section uses ★ for interest, ○ for non-interest
+        lines = output.split("\n")
+        for line in lines:
+            if "No match" in line and "★" in line:
+                self.fail("Non-interest item 'No match' should not have star icon")
 
 
 class TestHighlightSelection(unittest.TestCase):
@@ -1188,6 +1266,7 @@ class TestHighlightSelection(unittest.TestCase):
                         "content_snippet": f"Content {i}",
                         "link": "",
                         "source": "Tech Feed",
+                        "interest": True,  # Per-item interest flag
                     }
                     for i in range(50)
                 ],
@@ -1217,8 +1296,11 @@ class TestHighlightSelection(unittest.TestCase):
         # Count ★ symbols in the Highlights section only (before Topics section)
         highlights_section = output.split("Topics:")[0]
         highlight_count = highlights_section.count("★")
-        self.assertEqual(highlight_count, 8,
-            "Should select 8 highlights from single topic with 50 items")
+        self.assertEqual(
+            highlight_count,
+            8,
+            "Should select 8 highlights from single topic with 50 items",
+        )
         # Verify first few items are shown
         self.assertIn("item:0", output)
         self.assertIn("item:7", output)
@@ -1255,6 +1337,7 @@ class TestHighlightSelection(unittest.TestCase):
                         "content_snippet": f"Content {i}",
                         "link": "",
                         "source": "Feed",
+                        "interest": False,
                     }
                     for i in range(3)
                 ],
@@ -1284,8 +1367,9 @@ class TestHighlightSelection(unittest.TestCase):
         # Count icons in Highlights section only (before Topics section)
         highlights_section = output.split("Topics:")[0]
         highlight_count = highlights_section.count("★") + highlights_section.count("○")
-        self.assertEqual(highlight_count, 3,
-            "Should show all 3 items when fewer than 5 total")
+        self.assertEqual(
+            highlight_count, 3, "Should show all 3 items when fewer than 5 total"
+        )
 
 
 class TestInterestTopicCollision(unittest.TestCase):
@@ -1323,8 +1407,10 @@ class TestInterestTopicCollision(unittest.TestCase):
         self.assertIn("General", grouped)
         # Group's interest flag should be True because item 2 is an interest match
         # (even though item 1 created the group first without interest match)
-        self.assertTrue(grouped["General"]["interest"],
-            "Group interest flag should be True when any item is interest match")
+        self.assertTrue(
+            grouped["General"]["interest"],
+            "Group interest flag should be True when any item is interest match",
+        )
         # Both items should be in the group
         self.assertEqual(len(grouped["General"]["items"]), 2)
 
@@ -1359,6 +1445,15 @@ class TestInterestTopicCollision(unittest.TestCase):
         self.assertEqual(len(grouped["Programming"]["items"]), 2)
         # Group should have interest=True because at least one item matched
         self.assertTrue(grouped["Programming"]["interest"])
+        # Per-item interest flags: first item matched, second did not
+        self.assertTrue(
+            grouped["Programming"]["items"][0]["interest"],
+            "Interest-matched item should have interest=True",
+        )
+        self.assertFalse(
+            grouped["Programming"]["items"][1]["interest"],
+            "Non-interest item should not inherit interest=True from group",
+        )
 
     def test_interest_flag_computed_correctly_across_orderings(self) -> None:
         """Interest flag should be True regardless of item processing order."""
@@ -1377,9 +1472,7 @@ class TestInterestTopicCollision(unittest.TestCase):
             "crawlTimeMsec": 2000,
         }
 
-        groups: list[InterestGroup] = [
-            {"name": "General", "keywords": ["match"]}
-        ]
+        groups: list[InterestGroup] = [{"name": "General", "keywords": ["match"]}]
 
         # Order 1: non-interest first
         grouped1 = group_items_for_digest([non_interest_item, interest_item], groups)
@@ -1388,5 +1481,3 @@ class TestInterestTopicCollision(unittest.TestCase):
         # Order 2: interest first
         grouped2 = group_items_for_digest([interest_item, non_interest_item], groups)
         self.assertTrue(grouped2["General"]["interest"])
-
-

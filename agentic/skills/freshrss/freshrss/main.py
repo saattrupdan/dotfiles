@@ -100,15 +100,11 @@ def get_credentials() -> tuple[str, str] | None:
 
     Returns (username, password) or None.
     """
-    result = run_security(
-        ["find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"]
-    )
+    result = run_security(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"])
     if result.returncode != 0:
         return None
     password = result.stdout.strip()
-    result2 = run_security(
-        ["find-generic-password", "-s", KEYCHAIN_SERVICE, "-g"]
-    )
+    result2 = run_security(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-g"])
     # Combine stdout and stderr - account metadata may appear on either stream
     combined_output = result2.stdout + result2.stderr
     match = re.search(r'"acct"<blob>="([^"]+)"', combined_output)
@@ -127,9 +123,7 @@ def get_auth_token(base_url: str, username: str, password: str) -> str | None:
     url = f"{base_url}{API_PATH}/accounts/ClientLogin"
     # POST form data - avoid sending password in URL query
     post_data = (
-        f"Email={quote_plus(username)}&"
-        f"Passwd={quote_plus(password)}&"
-        f"service=reader"
+        f"Email={quote_plus(username)}&Passwd={quote_plus(password)}&service=reader"
     ).encode()
 
     req = urllib.request.Request(
@@ -567,6 +561,7 @@ def group_items_for_digest(
                 "link": item.get("alternate", [{}])[0].get("href", ""),
                 "date": date_key,
                 "source": feed_title,  # Include source per-item for provenance
+                "interest": interest_match is not None,  # Per-item interest flag
             }
         )
 
@@ -621,8 +616,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         return 0
     else:
         print(
-            "Warning: Could not store in Keychain. "
-            "Credentials validated but not saved."
+            "Warning: Could not store in Keychain. Credentials validated but not saved."
         )
         print(f"Username: {username}")  # Only show username, not password
         return 0
@@ -642,8 +636,7 @@ def cmd_unread(args: argparse.Namespace) -> int:
     auth_token = get_auth_token(args.base_url, username, password)
     if not auth_token:
         print(
-            "Error: Authentication failed. "
-            "Run 'freshrss init' to update credentials.",
+            "Error: Authentication failed. Run 'freshrss init' to update credentials.",
             file=sys.stderr,
         )
         return 1
@@ -674,14 +667,6 @@ def cmd_unread(args: argparse.Namespace) -> int:
         groups = load_interests()
         grouped = group_items_for_digest(items, groups)
 
-        # Separate interest-matched and other items for prioritised display
-        interest_groups = {
-            k: v for k, v in grouped.items() if v["interest"]
-        }
-        other_groups = {
-            k: v for k, v in grouped.items() if not v["interest"]
-        }
-
         # Header clarifies this is a sample, not total count
         limit_note = (
             f" (sample of up to {limit})" if limit and len(items) == limit else ""
@@ -693,17 +678,19 @@ def cmd_unread(args: argparse.Namespace) -> int:
         # Interest-matched items are prioritised, then fill from other items.
         highlights: list[dict] = []
 
-        # Collect all interest-matched items first (highest priority)
-        interest_items: list[tuple[str, dict]] = []  # (category, item)
-        for category, data in interest_groups.items():
+        # Collect all items from all groups, using per-item interest flag
+        all_items: list[tuple[str, dict]] = []  # (category, item)
+        for category, data in grouped.items():
             for item in data["items"]:
-                interest_items.append((category, item))
+                all_items.append((category, item))
 
-        # Collect all other items (lower priority)
-        other_items: list[tuple[str, dict]] = []  # (category, item)
-        for category, data in other_groups.items():
-            for item in data["items"]:
-                other_items.append((category, item))
+        # Sort by interest flag (True first), preserving order within each group
+        interest_items = [
+            (cat, item) for cat, item in all_items if item.get("interest", False)
+        ]
+        other_items = [
+            (cat, item) for cat, item in all_items if not item.get("interest", False)
+        ]
 
         # Select up to 8 highlights: prioritise interest items, then fill
         # Aim for 5-8 highlights. If fewer than 5 total items, show all.
@@ -711,24 +698,8 @@ def cmd_unread(args: argparse.Namespace) -> int:
 
         # Add interest-matched items first (up to target_max)
         for category, item in interest_items[:target_max]:
-            highlights.append({
-                "id": item["id"],
-                "title": item["title"],
-                "summary": (
-                        extractive_summary(item["content_snippet"])
-                        if item["content_snippet"]
-                        else ""
-                ),
-                "category": category,
-                "interest": True,
-                "source": item.get("source", ""),
-            })
-
-        # Fill remaining slots from other items if needed
-        if len(highlights) < target_min:
-            remaining = target_max - len(highlights)
-            for category, item in other_items[:remaining]:
-                highlights.append({
+            highlights.append(
+                {
                     "id": item["id"],
                     "title": item["title"],
                     "summary": (
@@ -737,9 +708,29 @@ def cmd_unread(args: argparse.Namespace) -> int:
                         else ""
                     ),
                     "category": category,
-                    "interest": False,
+                    "interest": item.get("interest", False),
                     "source": item.get("source", ""),
-                })
+                }
+            )
+
+        # Fill remaining slots from other items if needed
+        if len(highlights) < target_min:
+            remaining = target_max - len(highlights)
+            for category, item in other_items[:remaining]:
+                highlights.append(
+                    {
+                        "id": item["id"],
+                        "title": item["title"],
+                        "summary": (
+                            extractive_summary(item["content_snippet"])
+                            if item["content_snippet"]
+                            else ""
+                        ),
+                        "category": category,
+                        "interest": item.get("interest", False),
+                        "source": item.get("source", ""),
+                    }
+                )
 
         # Print curated highlights section
         if highlights:
