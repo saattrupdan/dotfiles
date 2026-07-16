@@ -1611,7 +1611,7 @@ function outlineXml(source: string): OutlineEntry[] {
 				lineEnd: endLine,
 				kind: "block",
 				name: truncate(itemTitle, DOC_CAP),
-				signature: `<${tagName}>`,
+				signature: `(<${tagName}>)`,
 			});
 		}
 	} else {
@@ -1634,54 +1634,190 @@ function outlineXml(source: string): OutlineEntry[] {
 		const rootContentEnd = rootCloseMatch.index;
 		const rootContent = source.slice(rootContentStart, rootContentEnd);
 
-		// Match child elements with simple regex (handles well-formed XML)
-		const childRe = /<([A-Za-z_:][\w:.-]*)\b(?:\s+[^>]*)?>/g;
-		const childPositions: { tag: string; index: number; fullMatch: string }[] = [];
-		let childMatch: RegExpExecArray | null;
-		let iterations = 0;
+		// Single forward pass over rootContent to tokenize and track depth in O(n).
+		// Handles: self-closing tags (no depth change), comments, CDATA, PIs, DOCTYPE
+		type ChildInfo = { tag: string; absStart: number; openTagText: string };
+		const children: ChildInfo[] = [];
+		let depth = 0;
+		let i = 0;
 		const ITER_CAP = 5000;
-		while ((childMatch = childRe.exec(rootContent)) && iterations < ITER_CAP) {
+		let iterations = 0;
+		while (i < rootContent.length && iterations < ITER_CAP) {
 			iterations++;
-			// Check depth by counting '<' before this position
-			const before = rootContent.slice(0, childMatch.index);
-			let depth = 0;
-			for (let i = 0; i < before.length; i++) {
-				if (before[i] === "<" && before[i + 1] !== "/") depth++;
-				if (before[i] === "<" && before[i + 1] === "/") depth--;
+			const ch = rootContent[i];
+			if (ch !== "<") {
+				i++;
+				continue;
 			}
+			// We're at a '<'. Determine what kind of tag/construct it is.
+			const rest = rootContent.slice(i);
+
+			// Comment: <!-- ... -->
+			if (rest.startsWith("<!--")) {
+				const endIdx = rootContent.indexOf("-->", i + 4);
+				if (endIdx !== -1) {
+					i = endIdx + 3;
+				} else {
+					i++;
+				}
+				continue;
+			}
+
+			// CDATA: <![CDATA[ ... ]]>
+			if (rest.startsWith("<![CDATA[")) {
+				const endIdx = rootContent.indexOf("]]>", i + 9);
+				if (endIdx !== -1) {
+					i = endIdx + 3;
+				} else {
+					i++;
+				}
+				continue;
+			}
+
+			// Processing instruction: <? ... ?> or XML declaration <?xml ... ?>
+			if (rest.startsWith("<?")) {
+				const endIdx = rootContent.indexOf("?>", i + 2);
+				if (endIdx !== -1) {
+					i = endIdx + 2;
+				} else {
+					i++;
+				}
+				continue;
+			}
+
+			// DOCTYPE or other declaration: <! ... >
+			if (rest.startsWith("<!") && !rest.startsWith("<!--") && !rest.startsWith("<![CDATA[")) {
+				const endIdx = rootContent.indexOf(">", i + 2);
+				if (endIdx !== -1) {
+					i = endIdx + 1;
+				} else {
+					i++;
+				}
+				continue;
+			}
+
+			// Regular tag: <tagname ... > or <tagname .../>
+			const tagMatch = /^<([A-Za-z_:][\w:.-]*)([^>]*?)(\/?)>/g.exec(rest);
+			if (!tagMatch) {
+				i++;
+				continue;
+			}
+			const tagName = tagMatch[1]!;
+			const selfClosing = tagMatch[3] === "/";
+			const fullOpenTag = tagMatch[0];
+
 			if (depth === 0) {
-				childPositions.push({ tag: childMatch[1]!, index: childMatch.index, fullMatch: childMatch[0] });
+				// Direct child of root
+				children.push({ tag: tagName, absStart: rootContentStart + i, openTagText: fullOpenTag });
+			}
+
+			// Update depth: open tag increments, close tag decrements, self-closing does nothing
+			if (!selfClosing) {
+				depth++;
+			}
+
+			// Move past the opening tag
+			i += fullOpenTag.length;
+
+			// If not self-closing, find the matching close tag
+			if (!selfClosing) {
+				// Skip content until we find the matching closing tag for this element
+				let nestedDepth = 1;
+				while (i < rootContent.length && nestedDepth > 0 && iterations < ITER_CAP) {
+					iterations++;
+					if (rootContent[i] !== "<") {
+						i++;
+						continue;
+					}
+					const nestedRest = rootContent.slice(i);
+
+					// Skip comments
+					if (nestedRest.startsWith("<!--")) {
+						const endIdx = rootContent.indexOf("-->", i + 4);
+						if (endIdx !== -1) i = endIdx + 3; else i++;
+						continue;
+					}
+					// Skip CDATA
+					if (nestedRest.startsWith("<![CDATA[")) {
+						const endIdx = rootContent.indexOf("]]>", i + 9);
+						if (endIdx !== -1) i = endIdx + 3; else i++;
+						continue;
+					}
+					// Skip PIs
+					if (nestedRest.startsWith("<?")) {
+						const endIdx = rootContent.indexOf("?>", i + 2);
+						if (endIdx !== -1) i = endIdx + 2; else i++;
+						continue;
+					}
+					// Skip declarations
+					if (nestedRest.startsWith("<!")) {
+						const endIdx = rootContent.indexOf(">", i + 2);
+						if (endIdx !== -1) i = endIdx + 1; else i++;
+						continue;
+					}
+
+					// Check for close tag
+					if (nestedRest.startsWith("</")) {
+						const closeEnd = rootContent.indexOf(">", i);
+						if (closeEnd !== -1) {
+							nestedDepth--;
+							i = closeEnd + 1;
+							continue;
+						}
+					}
+
+					// Check for open tag (self-closing doesn't affect nestedDepth)
+					const openTagMatch = /^<([A-Za-z_:][\w:.-]*)([^>]*?)(\/?)>/g.exec(nestedRest);
+					if (openTagMatch) {
+						if (openTagMatch[3] !== "/") {
+							nestedDepth++;
+						}
+						i += openTagMatch[0].length;
+						continue;
+					}
+
+					i++;
+				}
+				// After closing this element, decrement the outer depth counter
+				depth--;
 			}
 		}
 
 		// Count occurrences of each child tag
 		const tagCounts = new Map<string, number>();
-		for (const { tag } of childPositions) {
+		for (const { tag } of children) {
 			tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
 		}
 
 		// Emit entries for unique child tags
 		const emittedTags = new Set<string>();
-		for (const { tag, index } of childPositions) {
+		for (const { tag, absStart, openTagText } of children) {
 			if (emittedTags.has(tag)) continue;
 			const count = tagCounts.get(tag)!;
-			// Find the full element span
-			const elemStartAbs = rootContentStart + index;
-			// Find closing tag
-			const closeTagRe = new RegExp(`</${tag}\\b[^>]*>`, "i");
-			const afterContent = source.slice(elemStartAbs);
-			const closeMatch = closeTagRe.exec(afterContent);
-			const elemEndAbs = closeMatch ? elemStartAbs + closeMatch.index + closeMatch[0].length : elemStartAbs;
-			const startLine = offsetToLine(elemStartAbs);
-			const endLine = offsetToLine(elemEndAbs - 1);
+
+			// Determine element end: for self-closing tags, end at close of opening tag
+			// For regular tags, find the closing tag
+			const isSelfClosing = openTagText.trimEnd().endsWith("/>");
+			let elemEndAbs: number;
+			if (isSelfClosing) {
+				elemEndAbs = absStart + openTagText.length - 1;
+			} else {
+				const closeTagRe = new RegExp(`</${tag}\\b[^>]*>`, "i");
+				const afterContent = source.slice(absStart);
+				const closeMatch = closeTagRe.exec(afterContent);
+				elemEndAbs = closeMatch ? absStart + closeMatch.index + closeMatch[0].length - 1 : absStart + openTagText.length - 1;
+			}
+			const startLine = offsetToLine(absStart);
+			// Clamp endLine to be at least startLine
+			const endLine = Math.max(startLine, offsetToLine(elemEndAbs));
 
 			// signature: count or key attribute
 			let signature: string | undefined;
 			if (count > 1) {
 				signature = `(×${count})`;
 			} else {
-				// Try to extract id or name attribute
-				const attrMatch = /\b(id|name)\s*=\s*["']([^"']+)["']/i.exec(childPositions.find((cp) => cp.tag === tag)!.fullMatch);
+				// Try to extract id or name attribute from the opening tag text
+				const attrMatch = /\b(id|name)\s*=\s*["']([^"']+)["']/i.exec(openTagText);
 				if (attrMatch) {
 					signature = `(${attrMatch[1]}="${attrMatch[2]}")`;
 				}
