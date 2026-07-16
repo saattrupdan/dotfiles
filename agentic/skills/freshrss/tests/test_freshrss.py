@@ -217,26 +217,26 @@ class TestGroupItemsForDigest(unittest.TestCase):
             },
             {
                 "id": "2",
-                "title": "More programming advice",
+                "title": "More Python advice",
                 "origin": {"title": "Feed A"},
                 "crawlTimeMsec": 2000,
             },
             {
                 "id": "3",
-                "title": "AI breakthrough announced",
+                "title": "AI agent breakthrough announced",
                 "origin": {"title": "Feed B"},
                 "crawlTimeMsec": 3000,
             },
         ]
         groups: list[InterestGroup] = []
         grouped = group_items_for_digest(items, groups)
-        # Items should be grouped by topic (Programming, AI & Machine Learning)
+        # Items should be grouped by specific topic (python, AI agents)
         # not by feed name
-        self.assertIn("Programming", grouped)
-        self.assertIn("AI & Machine Learning", grouped)
-        self.assertEqual(len(grouped["Programming"]["items"]), 2)
+        self.assertIn("python", grouped)
+        self.assertIn("AI agents", grouped)
+        self.assertEqual(len(grouped["python"]["items"]), 2)
         # Sources should track feeds as metadata
-        self.assertIn("Feed A", grouped["Programming"]["sources"])
+        self.assertIn("Feed A", grouped["python"]["sources"])
 
     def test_groups_by_interest_match(self) -> None:
         """Should group matching items by interest name."""
@@ -250,11 +250,11 @@ class TestGroupItemsForDigest(unittest.TestCase):
             }
         ]
         groups: list[InterestGroup] = [
-            {"name": "Programming", "keywords": ["python", "programming"]}
+            {"name": "Python Dev", "keywords": ["python", "programming"]}
         ]
         grouped = group_items_for_digest(items, groups)
-        self.assertIn("Programming", grouped)
-        self.assertTrue(grouped["Programming"]["interest"])
+        self.assertIn("Python Dev", grouped)
+        self.assertTrue(grouped["Python Dev"]["interest"])
 
     def test_no_match_uses_topic_bucket(self) -> None:
         """Should use derived topic bucket when no interest match (not feed)."""
@@ -269,12 +269,12 @@ class TestGroupItemsForDigest(unittest.TestCase):
         ]
         groups: list[InterestGroup] = [{"name": "Tech", "keywords": ["python", "ai"]}]
         grouped = group_items_for_digest(items, groups)
-        # Should use neutral "General" bucket for non-interest items
-        self.assertIn("General", grouped)
-        self.assertFalse(grouped["General"]["interest"])
+        # Should use neutral "Other updates" bucket for non-interest items
+        self.assertIn("Other updates", grouped)
+        self.assertFalse(grouped["Other updates"]["interest"])
         # Feed should be tracked as source metadata, not as group name
-        self.assertIn("NewsFeed", grouped["General"]["sources"])
-        self.assertEqual(grouped["General"]["topic"], "General")
+        self.assertIn("NewsFeed", grouped["Other updates"]["sources"])
+        self.assertEqual(grouped["Other updates"]["topic"], "Other updates")
 
 
 class TestExtractiveSummary(unittest.TestCase):
@@ -302,75 +302,145 @@ class TestExtractiveSummary(unittest.TestCase):
 class TestDeriveTopic(unittest.TestCase):
     """Tests for _derive_topic function."""
 
-    def test_derives_ai_topic(self) -> None:
-        """Should derive AI topic from relevant keywords."""
+    def test_derives_model_releases(self) -> None:
+        """Should derive model releases from relevant keywords."""
         title = "New AI Model Released"
-        content = "The latest machine learning breakthrough"
+        content = "The latest machine learning model launch announced today"
         result = _derive_topic(title, content)
-        self.assertEqual(result, "AI & Machine Learning")
+        self.assertEqual(result, "model releases")
 
-    def test_derives_programming_topic(self) -> None:
-        """Should derive Programming topic from code-related keywords."""
+    def test_derives_ai_agents(self) -> None:
+        """Should derive AI agents from relevant keywords."""
+        title = "Autonomous Code Agent Released"
+        content = "New coding agent can write and test software"
+        result = _derive_topic(title, content)
+        self.assertEqual(result, "AI agents")
+
+    def test_derives_code_tooling(self) -> None:
+        """Should derive code tooling from keywords."""
+        title = "Ruff Adds New Linting Rules"
+        content = "Linter improvements include static analysis and formatting"
+        result = _derive_topic(title, content)
+        self.assertEqual(result, "code tooling")
+
+    def test_derives_llm_training(self) -> None:
+        """Should derive LLM training from keywords."""
+        title = "LLM Pretraining Advances"
+        content = "New RLHF alignment techniques improve model performance"
+        result = _derive_topic(title, content)
+        self.assertEqual(result, "LLM training")
+
+    def test_derives_machine_learning(self) -> None:
+        """Should derive machine learning from keywords."""
+        title = "Deep Learning Research"
+        content = "Neural network transformer architecture improvements"
+        result = _derive_topic(title, content)
+        self.assertEqual(result, "machine learning")
+
+    def test_derives_python(self) -> None:
+        """Should derive python from keywords."""
         title = "Python Best Practices"
-        content = "Tips for writing better code"
+        content = "Tips for writing better python code with pypi packages"
         result = _derive_topic(title, content)
-        self.assertEqual(result, "Programming")
+        self.assertEqual(result, "python")
 
-    def test_derives_technology_topic(self) -> None:
-        """Should derive Technology topic from tech keywords."""
+    def test_derives_tech_updates(self) -> None:
+        """Should derive tech updates from general tech keywords."""
         title = "New Smartphone Launch"
-        content = "Latest device features improved hardware"
+        content = "Latest device features improved hardware and software app"
         result = _derive_topic(title, content)
-        self.assertEqual(result, "Technology")
+        self.assertEqual(result, "tech updates")
 
-    def test_derives_science_topic(self) -> None:
-        """Should derive Science topic from research keywords."""
+    def test_derives_scientific_research(self) -> None:
+        """Should derive scientific research from keywords."""
         title = "Research Breakthrough"
-        content = "Scientists discover new phenomenon in laboratory"
+        content = "Scientists publish peer-reviewed paper on discovery"
         result = _derive_topic(title, content)
-        self.assertEqual(result, "Science")
+        self.assertEqual(result, "scientific research")
 
-    def test_derives_health_topic(self) -> None:
-        """Should derive Health topic from medical keywords."""
-        title = "New Medicine Released"
-        content = "Hospital treatment works for disease patients"
+    def test_derives_health_medical(self) -> None:
+        """Should derive health/medical from keywords."""
+        title = "New Medicine Approved"
+        content = "FDA approves clinical trial treatment for patients"
         result = _derive_topic(title, content)
-        self.assertEqual(result, "Health")
+        self.assertEqual(result, "health/medical")
 
-    def test_derives_business_topic(self) -> None:
-        """Should derive Business topic from company keywords."""
-        title = "Startup Merger Announced"
-        content = "Firm reports revenue growth and new CEO hired"
+    def test_derives_funding_vc(self) -> None:
+        """Should derive funding/VC from keywords."""
+        title = "Startup Raises Series B"
+        content = "Venture capital investors fund company valuation"
         result = _derive_topic(title, content)
-        self.assertEqual(result, "Business")
+        self.assertEqual(result, "funding/VC")
 
-    def test_derives_climate_topic(self) -> None:
-        """Should derive Climate topic from environment keywords."""
+    def test_derives_acquisitions(self) -> None:
+        """Should derive acquisitions from keywords."""
+        title = "Tech Giant Acquires Startup"
+        content = "Company purchased in merger deal for billions"
+        result = _derive_topic(title, content)
+        self.assertEqual(result, "acquisitions")
+
+    def test_derives_climate_environment(self) -> None:
+        """Should derive climate/environment from keywords."""
         title = "Climate Report Released"
-        content = "Carbon emission targets for renewable energy"
+        content = "Carbon emission targets for renewable energy sustainability"
         result = _derive_topic(title, content)
-        self.assertEqual(result, "Climate & Environment")
+        self.assertEqual(result, "climate/environment")
 
-    def test_derives_security_topic(self) -> None:
-        """Should derive Security topic from cybersecurity keywords."""
-        title = "Data Breach Disclosed"
-        content = "Hackers exploit system vulnerability for cyber attack"
+    def test_derives_security_vulnerabilities(self) -> None:
+        """Should derive security vulnerabilities from keywords."""
+        title = "CVE-2024-1234 Patched"
+        content = "Security update fixes zero-day exploit vulnerability"
         result = _derive_topic(title, content)
-        self.assertEqual(result, "Security")
+        self.assertEqual(result, "security vulnerabilities")
 
-    def test_defaults_to_general(self) -> None:
-        """Should use General bucket when no topic keywords match."""
+    def test_derives_data_breaches(self) -> None:
+        """Should derive data breaches from keywords."""
+        title = "Data Leak Disclosed"
+        content = "Company hacked, user data compromised and leaked"
+        result = _derive_topic(title, content)
+        self.assertEqual(result, "data breaches")
+
+    def test_derives_grok_xai(self) -> None:
+        """Should derive Grok/xAI from keywords."""
+        title = "Grok 3 Announced"
+        content = "xAI musk ai launches new version"
+        result = _derive_topic(title, content)
+        self.assertEqual(result, "Grok/xAI")
+
+    def test_derives_ai_hardware(self) -> None:
+        """Should derive AI hardware from keywords."""
+        title = "New GPU for AI Workloads"
+        content = "Nvidia chip accelerator improves inference performance"
+        result = _derive_topic(title, content)
+        self.assertEqual(result, "AI hardware")
+
+    def test_derives_compute_markets(self) -> None:
+        """Should derive compute markets from keywords."""
+        title = "Cloud Compute Pricing Changes"
+        content = "GPU cluster training costs increase for ai workloads"
+        result = _derive_topic(title, content)
+        self.assertEqual(result, "compute markets")
+
+    def test_derives_ai_regulation_policy(self) -> None:
+        """Should derive AI regulation/policy from keywords."""
+        title = "EU AI Act Compliance Guide"
+        content = "New governance regulation safety guidelines for ai"
+        result = _derive_topic(title, content)
+        self.assertEqual(result, "AI regulation/policy")
+
+    def test_defaults_to_other_updates(self) -> None:
+        """Should use 'Other updates' when no topic keywords match."""
         title = "Random News Update"
         content = "Nothing special here today"
         result = _derive_topic(title, content)
-        self.assertEqual(result, "General")
+        self.assertEqual(result, "Other updates")
 
     def test_case_insensitive(self) -> None:
         """Topic matching should be case-insensitive."""
-        title = "PYTHON Programming GUIDE"
-        content = "Learn CODE development"
+        title = "PYTHON Agent with CODE Capabilities"
+        content = "Learn about AI AGENTS and AUTONOMOUS systems"
         result = _derive_topic(title, content)
-        self.assertEqual(result, "Programming")
+        self.assertEqual(result, "AI agents")
 
 
 class TestInterestsStorage(unittest.TestCase):
@@ -585,11 +655,11 @@ class TestGroupItemsCrawlTimeMsec(unittest.TestCase):
         ]
         groups: list[InterestGroup] = []
         grouped = group_items_for_digest(items, groups)
-        # Should not crash and should group by topic (General for generic article)
-        self.assertIn("General", grouped)
-        self.assertEqual(len(grouped["General"]["items"]), 1)
+        # Should not crash and should group by topic (Other updates for generic article)
+        self.assertIn("Other updates", grouped)
+        self.assertEqual(len(grouped["Other updates"]["items"]), 1)
         # Feed should be tracked as source metadata
-        self.assertIn("Feed A", grouped["General"]["sources"])
+        self.assertIn("Feed A", grouped["Other updates"]["sources"])
 
     def test_crawl_time_as_int(self) -> None:
         """Should still handle crawlTimeMsec as int for backwards compatibility."""
@@ -603,7 +673,7 @@ class TestGroupItemsCrawlTimeMsec(unittest.TestCase):
         ]
         groups: list[InterestGroup] = []
         grouped = group_items_for_digest(items, groups)
-        self.assertIn("General", grouped)
+        self.assertIn("Other updates", grouped)
 
     def test_crawl_time_missing(self) -> None:
         """Should handle missing crawlTimeMsec."""
@@ -616,7 +686,7 @@ class TestGroupItemsCrawlTimeMsec(unittest.TestCase):
         ]
         groups: list[InterestGroup] = []
         grouped = group_items_for_digest(items, groups)
-        self.assertIn("General", grouped)
+        self.assertIn("Other updates", grouped)
 
     def test_crawl_time_empty_string(self) -> None:
         """Should handle empty string crawlTimeMsec."""
@@ -630,7 +700,7 @@ class TestGroupItemsCrawlTimeMsec(unittest.TestCase):
         ]
         groups: list[InterestGroup] = []
         grouped = group_items_for_digest(items, groups)
-        self.assertIn("General", grouped)
+        self.assertIn("Other updates", grouped)
 
 
 class TestBaseUrLPosition(unittest.TestCase):
@@ -827,6 +897,107 @@ class TestListItems(unittest.TestCase):
         path = call_args[0][1]  # path is 2nd positional arg
         self.assertIn("reading-list", path)
 
+    @patch("freshrss.main.api_request")
+    def test_pagination_with_continuation_token(self, mock_api: MagicMock) -> None:
+        """Should fetch all items using continuation token when limit=None."""
+        # Simulate paginated response with continuation
+        page1 = json.dumps(
+            {"items": [{"id": f"item{i}"} for i in range(100)], "continuation": "tok1"}
+        )
+        page2 = json.dumps(
+            {
+                "items": [{"id": f"item{i}"} for i in range(100, 150)],
+                "continuation": "tok2",
+            }
+        )
+        page3 = json.dumps({"items": []})  # No more items (no continuation)
+
+        mock_api.side_effect = [page1, page2, page3]
+
+        result = list_items("http://localhost", "token", limit=None)
+        assert result is not None
+
+        # Should have fetched all items across pages
+        self.assertEqual(len(result), 150)
+        self.assertEqual(mock_api.call_count, 3)
+
+        # Check continuation token is passed
+        call2_args = mock_api.call_args_list[1][0][3]
+        self.assertIn("c", call2_args)
+        self.assertEqual(call2_args["c"], "tok1")
+
+    @patch("freshrss.main.api_request")
+    def test_pagination_stops_at_explicit_limit(self, mock_api: MagicMock) -> None:
+        """Should stop when explicit limit is reached."""
+        page1 = json.dumps(
+            {"items": [{"id": f"item{i}"} for i in range(100)], "continuation": "tok1"}
+        )
+        page2 = json.dumps(
+            {
+                "items": [{"id": f"item{i}"} for i in range(100, 200)],
+                "continuation": "tok2",
+            }
+        )
+
+        mock_api.side_effect = [page1, page2]
+
+        result = list_items("http://localhost", "token", limit=150)
+        assert result is not None
+
+        # Should have exactly 150 items
+        self.assertEqual(len(result), 150)
+        # Should have stopped after second page (150 >= 150)
+        self.assertEqual(mock_api.call_count, 2)
+
+    @patch("freshrss.main.api_request")
+    def test_pagination_stops_when_no_continuation(self, mock_api: MagicMock) -> None:
+        """Should stop when no continuation token in response."""
+        page1 = json.dumps({"items": [{"id": f"item{i}"} for i in range(100)]})
+        page2 = json.dumps({"items": [{"id": f"item{i}"} for i in range(100, 120)]})
+
+        mock_api.side_effect = [page1, page2]
+
+        result = list_items("http://localhost", "token", limit=None)
+        assert result is not None
+
+        # Should stop after first page (no continuation)
+        self.assertEqual(len(result), 100)
+        self.assertEqual(mock_api.call_count, 1)
+
+    @patch("freshrss.main.api_request")
+    def test_pagination_stops_on_max_pages(self, mock_api: MagicMock) -> None:
+        """Should stop after max_pages to avoid infinite loops."""
+        page = json.dumps(
+            {"items": [{"id": f"item{i}"} for i in range(100)], "continuation": "tok"}
+        )
+
+        # Pagination will keep going forever
+        mock_api.return_value = page
+
+        result = list_items("http://localhost", "token", limit=None)
+        assert result is not None
+
+        # Should stop after max_pages (50 pages × 100 items = 5000)
+        self.assertLessEqual(len(result), 5000)
+
+    @patch("freshrss.main.api_request")
+    def test_pagination_stops_on_stalled_count(self, mock_api: MagicMock) -> None:
+        """Should stop if total item count stops changing."""
+        # Page 1 returns 5 items, page 2 returns 0 items (stall detection)
+        page1 = json.dumps(
+            {"items": [{"id": f"item{i}"} for i in range(5)], "continuation": "tok1"}
+        )
+        page2 = json.dumps({"items": [], "continuation": "tok2"})  # Empty page = stall
+
+        mock_api.side_effect = [page1, page2]
+
+        result = list_items("http://localhost", "token", limit=None)
+        assert result is not None
+
+        # Should stop after detecting stalled count
+        self.assertEqual(len(result), 5)
+        self.assertEqual(mock_api.call_count, 2)
+
 
 class TestCmdRead(unittest.TestCase):
     """Tests for cmd_read command."""
@@ -984,7 +1155,7 @@ class TestCmdUnread(unittest.TestCase):
             {"id": "item:1", "title": "Test", "content": "Test content"}
         ]
         mock_group.return_value = {
-            "General": {
+            "Other updates": {
                 "items": [
                     {
                         "id": "item:1",
@@ -996,7 +1167,7 @@ class TestCmdUnread(unittest.TestCase):
                     }
                 ],
                 "interest": False,
-                "topic": "General",
+                "topic": "Other updates",
                 "sources": ["Test Feed"],
             }
         }
@@ -1017,10 +1188,234 @@ class TestCmdUnread(unittest.TestCase):
         self.assertEqual(result, 0)
         output = f.getvalue()
 
-        # Verify output says "fetched" not "50 unread items"
+        # Verify output says "fetched" and discloses bounded nature
         self.assertIn("fetched", output)
+        self.assertIn("bounded by --limit", output)
         # Should NOT say "50 unread items" as if that's the total
         self.assertNotIn("50 unread items", output)
+
+    @patch("freshrss.main.load_interests")
+    @patch("freshrss.main.group_items_for_digest")
+    @patch("freshrss.main.list_items")
+    @patch("freshrss.main.get_auth_token")
+    @patch("freshrss.main.get_credentials")
+    def test_digest_complete_review_wording(
+        self,
+        mock_creds: MagicMock,
+        mock_auth: MagicMock,
+        mock_list: MagicMock,
+        mock_group: MagicMock,
+        mock_load_interests: MagicMock,
+    ) -> None:
+        """Digest with limit=None should say 'reviewed all N unread items'."""
+        import io
+        from contextlib import redirect_stdout
+
+        mock_creds.return_value = ("user", "pass")
+        mock_auth.return_value = "token"
+        mock_list.return_value = [
+            {"id": f"item:{i}", "title": f"Test {i}", "content": f"Content {i}"}
+            for i in range(50)
+        ]
+        mock_group.return_value = {
+            "AI agents": {
+                "items": [
+                    {
+                        "id": "item:1",
+                        "title": "Test 1",
+                        "content_snippet": "Test",
+                        "link": "",
+                        "source": "Test Feed",
+                        "interest": False,
+                    }
+                ],
+                "interest": False,
+                "topic": "AI agents",
+                "sources": ["Test Feed"],
+            }
+        }
+        mock_load_interests.return_value = []
+
+        args = argparse.Namespace(
+            base_url="http://localhost:9999",
+            limit=None,
+            digest=True,
+            raw=False,
+            force=False,
+        )
+
+        f = io.StringIO()
+        with redirect_stdout(f):
+            result = cmd_unread(args)
+
+        self.assertEqual(result, 0)
+        output = f.getvalue()
+
+        # Verify output says "all N unread items"
+        self.assertIn("reviewed all 50 unread items", output)
+        # Should NOT say "bounded" or "fetched" for complete review
+        self.assertNotIn("bounded", output)
+
+    @patch("freshrss.main.load_interests")
+    @patch("freshrss.main.group_items_for_digest")
+    @patch("freshrss.main.list_items")
+    @patch("freshrss.main.get_auth_token")
+    @patch("freshrss.main.get_credentials")
+    def test_digest_bounded_review_wording(
+        self,
+        mock_creds: MagicMock,
+        mock_auth: MagicMock,
+        mock_list: MagicMock,
+        mock_group: MagicMock,
+        mock_load_interests: MagicMock,
+    ) -> None:
+        """Digest with explicit limit should disclose bounded/incomplete review."""
+        import io
+        from contextlib import redirect_stdout
+
+        mock_creds.return_value = ("user", "pass")
+        mock_auth.return_value = "token"
+        mock_list.return_value = [
+            {"id": f"item:{i}", "title": f"Test {i}", "content": f"Content {i}"}
+            for i in range(50)
+        ]
+        mock_group.return_value = {
+            "code tooling": {
+                "items": [
+                    {
+                        "id": "item:1",
+                        "title": "Test 1",
+                        "content_snippet": "Test",
+                        "link": "",
+                        "source": "Test Feed",
+                        "interest": False,
+                    }
+                ],
+                "interest": False,
+                "topic": "code tooling",
+                "sources": ["Test Feed"],
+            }
+        }
+        mock_load_interests.return_value = []
+
+        args = argparse.Namespace(
+            base_url="http://localhost:9999",
+            limit=50,
+            digest=True,
+            raw=False,
+            force=False,
+        )
+
+        f = io.StringIO()
+        with redirect_stdout(f):
+            result = cmd_unread(args)
+
+        self.assertEqual(result, 0)
+        output = f.getvalue()
+
+        # Verify output discloses bounded nature
+        self.assertIn("bounded by --limit", output)
+        self.assertIn("more may exist", output)
+        # Should NOT say "all N unread items" for bounded review
+        self.assertNotIn("reviewed all", output)
+
+    @patch("freshrss.main.load_interests")
+    @patch("freshrss.main.group_items_for_digest")
+    @patch("freshrss.main.list_items")
+    @patch("freshrss.main.get_auth_token")
+    @patch("freshrss.main.get_credentials")
+    def test_raw_output_includes_completeness_metadata(
+        self,
+        mock_creds: MagicMock,
+        mock_auth: MagicMock,
+        mock_list: MagicMock,
+        mock_group: MagicMock,
+        mock_load_interests: MagicMock,
+    ) -> None:
+        """Raw output should include fetched_count, complete, and limit_applied."""
+        import io
+        import json
+        from contextlib import redirect_stdout
+
+        mock_creds.return_value = ("user", "pass")
+        mock_auth.return_value = "token"
+        mock_list.return_value = [
+            {"id": "item:1", "title": "Test", "content": "Test content"}
+        ]
+        mock_group.return_value = {
+            "AI agents": {
+                "items": [
+                    {
+                        "id": "item:1",
+                        "title": "Test",
+                        "content_snippet": "Test",
+                        "link": "",
+                        "source": "Test Feed",
+                        "interest": False,
+                    }
+                ],
+                "interest": False,
+                "topic": "AI agents",
+                "sources": ["Test Feed"],
+            }
+        }
+        mock_load_interests.return_value = []
+
+        # Test complete review (limit=None)
+        args = argparse.Namespace(
+            base_url="http://localhost:9999",
+            limit=None,
+            digest=True,
+            raw=True,
+            force=False,
+        )
+
+        f = io.StringIO()
+        with redirect_stdout(f):
+            result = cmd_unread(args)
+
+        self.assertEqual(result, 0)
+        output = json.loads(f.getvalue())
+
+        self.assertIn("groups", output)
+        self.assertIn("fetched_count", output)
+        self.assertEqual(output["fetched_count"], 1)
+        self.assertIn("complete", output)
+        self.assertTrue(output["complete"])
+        self.assertIn("limit_applied", output)
+        self.assertIsNone(output["limit_applied"])
+
+        # Test bounded review (limit=50, hits the limit = incomplete)
+        mock_list.return_value = [
+            {"id": f"item:{i}", "title": f"Test {i}", "content": f"Content {i}"}
+            for i in range(50)
+        ]
+        mock_group.return_value = {
+            "AI agents": {
+                "items": [
+                    {
+                        "id": f"item:{i}",
+                        "title": f"Test {i}",
+                        "content_snippet": f"Content {i}",
+                        "link": "",
+                        "source": "Test Feed",
+                        "interest": False,
+                    }
+                    for i in range(50)
+                ],
+                "interest": False,
+                "topic": "AI agents",
+                "sources": ["Test Feed"],
+            }
+        }
+        f2 = io.StringIO()
+        args.limit = 50
+        with redirect_stdout(f2):
+            result = cmd_unread(args)
+
+        output2 = json.loads(f2.getvalue())
+        self.assertFalse(output2["complete"])
+        self.assertEqual(output2["limit_applied"], 50)
 
     @patch("freshrss.main.load_interests")
     @patch("freshrss.main.group_items_for_digest")
@@ -1046,7 +1441,7 @@ class TestCmdUnread(unittest.TestCase):
             {"id": "item:2", "title": "Test 2", "content": "Content 2"},
         ]
         mock_group.return_value = {
-            "Programming": {
+            "python": {
                 "items": [
                     {
                         "id": "item:1",
@@ -1066,7 +1461,7 @@ class TestCmdUnread(unittest.TestCase):
                     },
                 ],
                 "interest": True,
-                "topic": "Programming",
+                "topic": "python",
                 "sources": ["DevFeed"],
             }
         }
@@ -1117,7 +1512,7 @@ class TestCmdUnread(unittest.TestCase):
             for i in range(50)
         ]
         mock_group.return_value = {
-            "General": {
+            "Other updates": {
                 "items": [
                     {
                         "id": f"item:{i}",
@@ -1130,7 +1525,7 @@ class TestCmdUnread(unittest.TestCase):
                     for i in range(50)
                 ],
                 "interest": False,
-                "topic": "General",
+                "topic": "Other updates",
                 "sources": ["Test Feed"],
             }
         }
@@ -1151,8 +1546,9 @@ class TestCmdUnread(unittest.TestCase):
         self.assertEqual(result, 0)
         output = f.getvalue()
 
-        # Verify sample note is shown
-        self.assertIn("more may be available", output.lower())
+        # Verify bounded review note is shown
+        self.assertIn("bounded by --limit", output.lower())
+        self.assertIn("more unread items may exist", output.lower())
 
     @patch("freshrss.main.load_interests")
     @patch("freshrss.main.group_items_for_digest")
@@ -1179,7 +1575,7 @@ class TestCmdUnread(unittest.TestCase):
         ]
         # Group has interest=True (at least one match), but items have per-item flags
         mock_group.return_value = {
-            "Programming": {
+            "python": {
                 "items": [
                     {
                         "id": "item:1",
@@ -1199,7 +1595,7 @@ class TestCmdUnread(unittest.TestCase):
                     },
                 ],
                 "interest": True,  # Group has at least one match
-                "topic": "Programming",
+                "topic": "python",
                 "sources": ["DevFeed"],
             }
         }
@@ -1329,7 +1725,7 @@ class TestHighlightSelection(unittest.TestCase):
             for i in range(3)
         ]
         mock_group.return_value = {
-            "General": {
+            "Other updates": {
                 "items": [
                     {
                         "id": f"item:{i}",
@@ -1342,7 +1738,7 @@ class TestHighlightSelection(unittest.TestCase):
                     for i in range(3)
                 ],
                 "interest": False,
-                "topic": "General",
+                "topic": "Other updates",
                 "sources": ["Feed"],
             }
         }
@@ -1377,10 +1773,10 @@ class TestInterestTopicCollision(unittest.TestCase):
 
     def test_interest_match_preserved_when_topic_same_name(self) -> None:
         """Interest matches should not be hidden when derived topic has same name."""
-        # Use "General" as the keyword since _derive_topic returns "General" for
+        # Use "Other updates" as the keyword since _derive_topic returns it for
         # non-matching content, creating a potential collision scenario.
         items = [
-            # First item: no interest match, derives to "General"
+            # First item: no interest match, derives to "Other updates"
             {
                 "id": "1",
                 "title": "Random News Update",
@@ -1388,7 +1784,8 @@ class TestInterestTopicCollision(unittest.TestCase):
                 "origin": {"title": "News Feed"},
                 "crawlTimeMsec": 1000,
             },
-            # Second item: interest match for "General" (same name as derived topic)
+            # Second item: matches "Other updates" interest
+            # (same name as derived topic)
             {
                 "id": "2",
                 "title": "Breaking News",
@@ -1398,26 +1795,26 @@ class TestInterestTopicCollision(unittest.TestCase):
             },
         ]
         groups: list[InterestGroup] = [
-            {"name": "General", "keywords": ["important", "breaking"]}
+            {"name": "Other updates", "keywords": ["important", "breaking"]}
         ]
 
         grouped = group_items_for_digest(items, groups)
 
         # Group should exist
-        self.assertIn("General", grouped)
+        self.assertIn("Other updates", grouped)
         # Group's interest flag should be True because item 2 is an interest match
         # (even though item 1 created the group first without interest match)
         self.assertTrue(
-            grouped["General"]["interest"],
+            grouped["Other updates"]["interest"],
             "Group interest flag should be True when any item is interest match",
         )
         # Both items should be in the group
-        self.assertEqual(len(grouped["General"]["items"]), 2)
+        self.assertEqual(len(grouped["Other updates"]["items"]), 2)
 
     def test_non_interest_items_do_not_inherit_star(self) -> None:
         """Non-interest items do not inherit interest star."""
         items = [
-            # Interest match item
+            # Interest match item - matches "framework" keyword
             {
                 "id": "1",
                 "title": "Python framework update",
@@ -1425,34 +1822,34 @@ class TestInterestTopicCollision(unittest.TestCase):
                 "origin": {"title": "Python Weekly"},
                 "crawlTimeMsec": 1000,
             },
-            # Non-interest item that happens to derive to "Programming" topic
+            # Interest match item - matches "python" keyword
             {
                 "id": "2",
-                "title": "Code review tips",
-                "content": "Best practices for reviewing code",
+                "title": "Python code review tips",
+                "content": "Best practices for reviewing python code",
                 "origin": {"title": "Dev Blog"},
                 "crawlTimeMsec": 2000,
             },
         ]
         groups: list[InterestGroup] = [
-            {"name": "Programming", "keywords": ["framework"]}
+            {"name": "Python Dev", "keywords": ["framework", "python"]}
         ]
 
         grouped = group_items_for_digest(items, groups)
 
-        # Both items should be in "Programming" group
-        self.assertIn("Programming", grouped)
-        self.assertEqual(len(grouped["Programming"]["items"]), 2)
-        # Group should have interest=True because at least one item matched
-        self.assertTrue(grouped["Programming"]["interest"])
-        # Per-item interest flags: first item matched, second did not
+        # Both items should be in "Python Dev" group (both match interest)
+        self.assertIn("Python Dev", grouped)
+        self.assertEqual(len(grouped["Python Dev"]["items"]), 2)
+        # Group should have interest=True because both items matched
+        self.assertTrue(grouped["Python Dev"]["interest"])
+        # Per-item interest flags: both should be True
         self.assertTrue(
-            grouped["Programming"]["items"][0]["interest"],
+            grouped["Python Dev"]["items"][0]["interest"],
             "Interest-matched item should have interest=True",
         )
-        self.assertFalse(
-            grouped["Programming"]["items"][1]["interest"],
-            "Non-interest item should not inherit interest=True from group",
+        self.assertTrue(
+            grouped["Python Dev"]["items"][1]["interest"],
+            "Interest-matched item should have interest=True",
         )
 
     def test_interest_flag_computed_correctly_across_orderings(self) -> None:
