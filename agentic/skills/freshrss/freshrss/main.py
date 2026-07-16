@@ -751,10 +751,12 @@ def cmd_health(args: argparse.Namespace) -> int:
     print(f"Connectivity: {'✓' if reachable else '✗'} - {msg}")
 
     creds = get_credentials()
+    auth_ok = False
     if creds:
         username, password = creds
         auth_token = get_auth_token(args.base_url, username, password)
         if auth_token:
+            auth_ok = True
             print(f"Credentials: ✓ - authenticated as {username}")
             streams = list_streams(args.base_url, auth_token)
             if streams:
@@ -766,7 +768,9 @@ def cmd_health(args: argparse.Namespace) -> int:
     else:
         print("Credentials: ✗ - not found (run 'freshrss init')")
 
-    return 0 if reachable and creds else 1
+    # Exit 0 only when reachable and (no credentials configured or auth succeeds)
+    # Exit 1 when not reachable, or when credentials exist but auth fails
+    return 0 if reachable and (creds is None or auth_ok) else 1
 
 
 def add_base_url_arg(parser: argparse.ArgumentParser) -> None:

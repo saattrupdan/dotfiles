@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 import unittest
@@ -14,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from freshrss.main import (
     InterestGroup,
+    cmd_health,
     extract_content,
     extractive_summary,
     get_auth_token,
@@ -338,6 +340,78 @@ class TestInterestsStorage(unittest.TestCase):
         written = "".join(call[0][0] for call in mock_handle.write.call_args_list)
         parsed = json.loads(written)
         self.assertEqual(parsed["groups"][0]["name"], "Tech")
+
+
+class TestCmdHealth(unittest.TestCase):
+    """Tests for cmd_health exit code logic."""
+
+    @patch("freshrss.main.get_auth_token")
+    @patch("freshrss.main.get_credentials")
+    @patch("freshrss.main.check_freshrss_reachable")
+    def test_health_reachable_no_creds(
+        self,
+        mock_reachable: MagicMock,
+        mock_creds: MagicMock,
+        mock_auth: MagicMock,
+    ) -> None:
+        """Should exit 0 when reachable and no credentials configured."""
+        mock_reachable.return_value = (True, "FreshRSS is reachable")
+        mock_creds.return_value = None
+
+        args = argparse.Namespace(base_url="http://localhost:9999")
+        result = cmd_health(args)
+        self.assertEqual(result, 0)
+
+    @patch("freshrss.main.get_auth_token")
+    @patch("freshrss.main.get_credentials")
+    @patch("freshrss.main.check_freshrss_reachable")
+    def test_health_reachable_auth_success(
+        self,
+        mock_reachable: MagicMock,
+        mock_creds: MagicMock,
+        mock_auth: MagicMock,
+    ) -> None:
+        """Should exit 0 when reachable and auth succeeds."""
+        mock_reachable.return_value = (True, "FreshRSS is reachable")
+        mock_creds.return_value = ("user", "pass")
+        mock_auth.return_value = "auth_token_123"
+
+        args = argparse.Namespace(base_url="http://localhost:9999")
+        result = cmd_health(args)
+        self.assertEqual(result, 0)
+
+    @patch("freshrss.main.get_auth_token")
+    @patch("freshrss.main.get_credentials")
+    @patch("freshrss.main.check_freshrss_reachable")
+    def test_health_reachable_auth_failure(
+        self,
+        mock_reachable: MagicMock,
+        mock_creds: MagicMock,
+        mock_auth: MagicMock,
+    ) -> None:
+        """Should exit 1 when reachable but auth fails with credentials configured."""
+        mock_reachable.return_value = (True, "FreshRSS is reachable")
+        mock_creds.return_value = ("user", "pass")
+        mock_auth.return_value = None
+
+        args = argparse.Namespace(base_url="http://localhost:9999")
+        result = cmd_health(args)
+        self.assertEqual(result, 1)
+
+    @patch("freshrss.main.get_credentials")
+    @patch("freshrss.main.check_freshrss_reachable")
+    def test_health_not_reachable(
+        self,
+        mock_reachable: MagicMock,
+        mock_creds: MagicMock,
+    ) -> None:
+        """Should exit 1 when FreshRSS is not reachable."""
+        mock_reachable.return_value = (False, "Connection refused")
+        mock_creds.return_value = None
+
+        args = argparse.Namespace(base_url="http://localhost:9999")
+        result = cmd_health(args)
+        self.assertEqual(result, 1)
 
 
 class TestCLIHelp(unittest.TestCase):
