@@ -2,11 +2,12 @@
 name: freshrss
 description: CLI for FreshRSS - local RSS reader with Google Reader API
 tagline: FreshRSS CLI via macOS Keychain auth, digest views for agents
-last-updated: 2026-07-02
+last-updated: 2026-07-16
 autoload:
   tools:
     - bash
     - question
+    - memory_suggest
 ---
 
 # FreshRSS CLI Skill
@@ -133,30 +134,53 @@ freshrss unread --base-url http://myserver:8080
 
 ## Digest View
 
-The `--digest` flag groups items for agent-friendly summarisation:
+The `--digest` flag produces curated highlights instead of a title list:
 
 ```bash
 freshrss unread --digest -n 50
 ```
 
-Output groups items by:
-1. **Interest match** - Items matching configured keywords (★ prefix)
-2. **Feed title** - Other items grouped by source (○ prefix)
+Output format:
+- **📌 Highlights** - 5-8 most relevant items with brief summaries and IDs
+- **★ prefix** - Interest-matched items (prioritised first)
+- **○ prefix** - Other items grouped by feed/source
+- **📁 Sources** - Condensed list showing item counts per category
+- **Sample note** - Indicates when `-n` limit was reached
 
-Each group shows:
-- Item count
-- First 3 item titles with extractive summaries
-- "N more" indicator for larger groups
+### Important: `-n` is a Fetch Limit, Not Total Count
 
-### --raw JSON Mode
+The `-n N` flag fetches **up to N items** from FreshRSS. It does NOT mean
+there are exactly N unread items total. The CLI output will say:
 
-All commands support `--raw` for machine-readable output:
+- `FreshRSS Digest - 50 fetched (sample of up to 50)` - if you hit the limit
+- `FreshRSS Digest - 23 fetched` - if fewer items exist than the limit
+
+**Never tell the user "you have 50 unread items"** unless you actually
+know the total count (which requires fetching all items). Always phrase it as:
+
+- "I've fetched up to 50 items for review"
+- "Reviewing a sample of 50 items from your feeds"
+- "Found 50 items in this fetch (may be more unread)"
+
+### Using `--raw` for Agent Summarisation
+
+For building your own curated response, use JSON output:
 
 ```bash
-freshrss unread --digest --raw | jq '.[] | select(.interest)'
+freshrss unread --digest --raw -n 50
 ```
 
-Agents should use `--raw` output for their own summarisation logic.
+This returns structured JSON with groups, items, and interest flags that
+you can process with Pi memories to decide what's relevant to the user.
+
+**Recommended agent workflow:**
+
+1. Load user interests from Pi memory (`memory_suggest` with "fresh rss interests")
+2. Fetch digest with `freshrss unread --digest --raw -n 50`
+3. Prioritise interest-matched items using configured keywords
+4. Present 5-8 curated highlights with brief "why it matters" summaries
+5. Ask user what to expand; don't list every title
+6. Use Pi memory to persist any new interest preferences
 
 ## Interests Storage
 
@@ -204,25 +228,57 @@ accordingly for richer context.
 ### Recommended Flow
 
 1. **Check health first** - `freshrss health` to verify connectivity
-2. **Get digest** - `freshrss unread --digest -n 50` for overview
-3. **Highlight matches** - Point out interest-matched items (★ prefix)
-4. **Ask user preferences** - "Which feeds or topics interest you?"
-5. **View specific items** - `freshrss view <id>` for full content
-6. **Confirm and mark read** - `freshrss mark-read <ids>` after user confirms
+2. **Get digest with limit** - `freshrss unread --digest -n 50` (sample, not total)
+3. **Use raw mode for processing** - `freshrss unread --digest --raw -n 50`
+4. **Apply interests** - Match items against user interests from Pi memory
+5. **Curate highlights** - Select 5-8 most relevant, write brief summaries
+6. **Ask user preferences** - "Which topics interest you?" not "Here are all 50 titles"
+7. **View specific items** - `freshrss view <id>` for full content on request
+8. **Confirm and mark read** - `freshrss mark-read <ids>` after user confirms
 
 ### Example Agent Dialogue
 
 ```
-Agent: Checking your FreshRSS... You have 47 unread items.
+Agent: Checking your FreshRSS... Fetching up to 50 items for review.
 
-Highlights:
-★ Python (5 items) - pytest 9.0 release, new ruff rules
-★ AI (3 items) - agent-browser updates, llama.cpp quantisation
-○ Tech News (12 items)
-○ Blogs (27 items)
+📌 Highlights (most relevant first):
+
+★ pytest 9.0 released with improved assert rewriting
+   → New version includes better error messages and xdist support.
+   [ID: item:tag:example.com:abc123]
+
+★ Ruff adds 15 new linting rules for aiohttp
+   → Rules cover async context managers and session lifetime.
+   [ID: item:tag:example.com:def456]
+
+○ Hacker News (12 items)
+○ Python Weekly (8 items)
+...
 
 Which would you like to explore first?
 ```
+
+### What NOT to Do
+
+❌ **Don't claim the limit is the total count:**
+> "You have 50 unread items."  
+> (Wrong — there may be 200 unread, you only fetched 50)
+
+✅ **Do clarify it's a sample:**
+> "I've fetched 50 items for review."  
+> "Reviewing a sample of up to 50 items."
+
+❌ **Don't dump all titles:**
+> Lists 50+ titles with no prioritisation
+
+✅ **Do curate highlights:**
+> Show 5-8 items most relevant to user interests, ask what to expand
+
+❌ **Don't mark items read without asking:**
+> Automatically marking items as read
+
+✅ **Do confirm first:**
+> "Mark these 8 items as read?" [y/N]
 
 ### Marking as Read
 
@@ -247,12 +303,6 @@ freshrss health
 
 ```bash
 docker run -d -p 9999:80 --name freshrss freshrss/freshrss
-```
-
-If the port is already in use, check existing container:
-
-```bash
-docker ps | grep freshrss
 ```
 
 ### Docker Daemon Not Running
@@ -281,7 +331,7 @@ freshrss init
 
 If `freshrss unread` shows "No unread items":
 1. Check if you actually have unread items in FreshRSS web UI
-2. Try `freshrss unread raw` to see raw API response
+2. Try `freshrss unread --raw` to see raw API response
 3. Check subscription list: `freshrss health` shows feed count
 
 ### Keychain Errors
@@ -312,6 +362,7 @@ freshrss init
 - **Single account** - no multi-account support
 - **No OPML import/export** - use FreshRSS web UI for feed management
 - **Digest summarisation extractive only** - no LLM summarisation built-in
+  (agents should use `--raw` and build their own highlights)
 
 ## Testing
 
@@ -358,17 +409,25 @@ instead of your main login password for API access.
 Auth tokens don't expire, but re-authentication happens on each command.
 If login fails mid-session, re-run `freshrss init`.
 
-### Large Unread Counts
+### `-n` is a Limit, Not Total Unread Count
 
-Default limit is 20 items for `unread`. Always use `-n` flag or `--digest`
-to avoid dumping thousands of items.
+The `-n N` flag fetches **up to N items** — it's a sample size, not the
+total unread count. If you fetch 50 items, there may be 50, 200, or 500
+total unread items in FreshRSS.
+
+**Correct phrasing:**
+- "Reviewing 50 items" ✓
+- "Fetched up to 50 for this digest" ✓
+- "You have 50 unread" ✗ (unless you checked the total separately)
+
+Default limit is 20 items. Use `-n 50` or `--digest` for morning briefings.
 
 ## Examples
 
 ### Morning Digest Routine
 
 ```bash
-# Check what's new
+# Check what's new (sample of up to 30)
 freshrss unread --digest -n 30
 
 # View specific item
@@ -376,6 +435,16 @@ freshrss view item:tag:example.com:abc123
 
 # Mark as read after reading
 freshrss mark-read item:tag:example.com:abc123
+```
+
+### Agent Curated Highlights (using --raw)
+
+```bash
+# Get structured data for agent processing
+freshrss unread --digest --raw -n 50 > /tmp/freshrss.json
+
+# Agent reads JSON, applies user interests from Pi memory,
+# and presents 5-8 highlights with brief summaries
 ```
 
 ### Filter by Interest

@@ -541,23 +541,86 @@ def cmd_unread(args: argparse.Namespace) -> int:
         groups = load_interests()
         grouped = group_items_for_digest(items, groups)
 
-        print(f"FreshRSS Digest ({len(items)} unread items)\n")
+        # Separate interest-matched and other items for prioritised display
+        interest_groups = {
+            k: v for k, v in grouped.items() if v["interest"]
+        }
+        other_groups = {
+            k: v for k, v in grouped.items() if not v["interest"]
+        }
+
+        # Header clarifies this is a sample, not total count
+        limit_note = (
+            f" (sample of up to {limit})" if limit and len(items) == limit else ""
+        )
+        print(f"FreshRSS Digest - {len(items)} fetched{limit_note}\n")
+
+        # Build curated highlights: 5-8 top items with brief summaries
+        highlights: list[dict] = []
+
+        # First, add interest-matched items (prioritised)
+        for category, data in interest_groups.items():
+            for item in data["items"][:2]:  # Max 2 per interest group
+                highlights.append({
+                    "id": item["id"],
+                    "title": item["title"],
+                    "summary": (
+                            extractive_summary(item["content_snippet"])
+                            if item["content_snippet"]
+                            else ""
+                    ),
+                    "category": category,
+                    "interest": True,
+                })
+
+        # Then add other items if we need more highlights
+        if len(highlights) < 5:
+            for category, data in other_groups.items():
+                for item in data["items"][:1]:  # Max 1 per other group
+                    if len(highlights) >= 8:
+                        break
+                    highlights.append({
+                        "id": item["id"],
+                        "title": item["title"],
+                        "summary": (
+                            extractive_summary(item["content_snippet"])
+                            if item["content_snippet"]
+                            else ""
+                        ),
+                        "category": category,
+                        "interest": False,
+                    })
+                if len(highlights) >= 8:
+                    break
+
+        # Print curated highlights section
+        if highlights:
+            print("📌 Highlights (most relevant first):\n")
+            for hl in highlights[:8]:
+                icon = "★" if hl["interest"] else "○"
+                print(f"{icon} {hl['title']}")
+                if hl["summary"]:
+                    print(f"   → {hl['summary']}")
+                print(f"   [ID: {hl['id']}]")
+                print()
+
+            if len(highlights) > 8:
+                print(f"... and {len(highlights) - 8} more highlights available\n")
+
+        # Print grouped sources for context (condensed)
+        print("📁 Sources:\n")
         for category, data in grouped.items():
             icon = "★" if data["interest"] else "○"
-            interest_tag = (
-                f" [{data.get('interest_tag')}]" if data.get("interest_tag") else ""
-            )
-            print(f"{icon} {category}{interest_tag} ({len(data['items'])} items)")
+            count = len(data["items"])
+            print(f"{icon} {category}: {count} item{'s' if count != 1 else ''}")
 
-            for item in data["items"][:3]:
-                print(f"   • {item['title']}")
-                if item["content_snippet"]:
-                    summary = extractive_summary(item["content_snippet"])
-                    if summary:
-                        print(f"     → {summary}")
-            if len(data["items"]) > 3:
-                print(f"   ... and {len(data['items']) - 3} more")
-            print()
+        # Note about limited sample
+        if limit and len(items) == limit:
+            print(
+                f"\nⓘ  Reviewed {limit} items - more may be available. "
+                "Use '-n N' to fetch more."
+            )
+        print()
     else:
         print(f"Unread items ({len(items)}):\n")
         for i, item in enumerate(items[: args.limit or len(items)], 1):

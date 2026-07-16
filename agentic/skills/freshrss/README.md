@@ -19,7 +19,7 @@ uv pip install -e .
 # Initialise credentials
 freshrss init
 
-# View unread digest
+# View curated digest
 freshrss unread --digest
 
 # Mark items as read
@@ -50,10 +50,27 @@ docker run -d -p 9999:80 --name freshrss freshrss/freshrss
 
 Enable API access in FreshRSS Settings > Profile.
 
+## Digest Output
+
+The `--digest` flag produces **curated highlights** instead of a title dump:
+
+```bash
+freshrss unread --digest -n 50
+```
+
+Output includes:
+- 📌 **Highlights** - 5-8 most relevant items with brief summaries
+- ★ **○** icons indicating interest matches vs. other sources
+- 📁 **Sources** - Condensed breakdown by feed/category
+- Sample note if `-n` limit was reached
+
+**Important:** `-n 50` fetches **up to 50 items** for review — it's not the
+total unread count. There may be more unread items in FreshRSS.
+
 ## Examples
 
 ```bash
-# Morning digest
+# Morning digest with curated highlights
 freshrss unread --digest -n 30
 
 # Set interests for filtering
@@ -65,9 +82,27 @@ freshrss health
 # Full item view
 freshrss view item:tag:example.com:abc123
 
-# Raw JSON output for agents
-freshrss unread --raw
+# Raw JSON for agent processing
+freshrss unread --digest --raw
 ```
+
+## For Agents
+
+When building responses about FreshRSS items:
+
+1. **Treat `-n` as a fetch limit** — not the total unread count
+2. **Use `--raw` mode** to get structured JSON for your own summarisation
+3. **Check Pi memories** for user interests to prioritise relevant items
+4. **Present curated highlights** (5-8 items) with brief "why it matters" notes
+5. **Ask what to expand** — don't list every title from the fetch
+
+Example agent response:
+
+> "I've fetched 50 items for review. Here are the highlights most relevant
+> to your interests in Python and AI: [3-4 bullet summaries with item IDs].
+> Which would you like to explore?"
+
+See `SKILL.md` for detailed agent workflows and gotchas.
 
 ## Testing
 

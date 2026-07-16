@@ -17,6 +17,7 @@ from freshrss.main import (
     InterestGroup,
     cmd_health,
     cmd_read,
+    cmd_unread,
     extract_content,
     extractive_summary,
     get_auth_token,
@@ -823,3 +824,235 @@ class TestCmdRead(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCmdUnread(unittest.TestCase):
+    """Tests for cmd_unread command."""
+
+    @patch("freshrss.main.list_items")
+    @patch("freshrss.main.get_auth_token")
+    @patch("freshrss.main.get_credentials")
+    def test_no_credentials_error(
+        self,
+        mock_creds: MagicMock,
+        mock_auth: MagicMock,
+        mock_list: MagicMock,
+    ) -> None:
+        """Should error when no credentials found."""
+        mock_creds.return_value = None
+
+        args = argparse.Namespace(
+            base_url="http://localhost:9999",
+            limit=20,
+            digest=False,
+            raw=False,
+            force=False,
+        )
+        result = cmd_unread(args)
+
+        self.assertEqual(result, 1)
+        mock_list.assert_not_called()
+
+    @patch("freshrss.main.list_items")
+    @patch("freshrss.main.get_auth_token")
+    @patch("freshrss.main.get_credentials")
+    def test_auth_failure_error(
+        self,
+        mock_creds: MagicMock,
+        mock_auth: MagicMock,
+        mock_list: MagicMock,
+    ) -> None:
+        """Should error when authentication fails."""
+        mock_creds.return_value = ("user", "pass")
+        mock_auth.return_value = None
+
+        args = argparse.Namespace(
+            base_url="http://localhost:9999",
+            limit=20,
+            digest=False,
+            raw=False,
+            force=False,
+        )
+        result = cmd_unread(args)
+
+        self.assertEqual(result, 1)
+        mock_list.assert_not_called()
+
+    @patch("freshrss.main.load_interests")
+    @patch("freshrss.main.group_items_for_digest")
+    @patch("freshrss.main.list_items")
+    @patch("freshrss.main.get_auth_token")
+    @patch("freshrss.main.get_credentials")
+    def test_digest_output_does_not_claim_total_count(
+        self,
+        mock_creds: MagicMock,
+        mock_auth: MagicMock,
+        mock_list: MagicMock,
+        mock_group: MagicMock,
+        mock_load_interests: MagicMock,
+    ) -> None:
+        """Digest output should say 'fetched' not imply limit is total unread count."""
+        import io
+        from contextlib import redirect_stdout
+
+        mock_creds.return_value = ("user", "pass")
+        mock_auth.return_value = "token"
+        mock_list.return_value = [
+            {"id": "item:1", "title": "Test", "content": "Test content"}
+        ]
+        mock_group.return_value = {
+            "Test Feed": {
+                "items": [
+                {"id": "item:1", "title": "Test", "content_snippet": "Test", "link": ""}
+            ],
+                "interest": False,
+                "feed": "Test Feed",
+            }
+        }
+        mock_load_interests.return_value = []
+
+        args = argparse.Namespace(
+            base_url="http://localhost:9999",
+            limit=50,
+            digest=True,
+            raw=False,
+            force=False,
+        )
+
+        f = io.StringIO()
+        with redirect_stdout(f):
+            result = cmd_unread(args)
+
+        self.assertEqual(result, 0)
+        output = f.getvalue()
+
+        # Verify output says "fetched" not "50 unread items"
+        self.assertIn("fetched", output)
+        # Should NOT say "50 unread items" as if that's the total
+        self.assertNotIn("50 unread items", output)
+
+    @patch("freshrss.main.load_interests")
+    @patch("freshrss.main.group_items_for_digest")
+    @patch("freshrss.main.list_items")
+    @patch("freshrss.main.get_auth_token")
+    @patch("freshrss.main.get_credentials")
+    def test_digest_shows_highlights_section(
+        self,
+        mock_creds: MagicMock,
+        mock_auth: MagicMock,
+        mock_list: MagicMock,
+        mock_group: MagicMock,
+        mock_load_interests: MagicMock,
+    ) -> None:
+        """Digest output should include curated highlights section."""
+        import io
+        from contextlib import redirect_stdout
+
+        mock_creds.return_value = ("user", "pass")
+        mock_auth.return_value = "token"
+        mock_list.return_value = [
+            {"id": "item:1", "title": "Test 1", "content": "Content 1"},
+            {"id": "item:2", "title": "Test 2", "content": "Content 2"},
+        ]
+        mock_group.return_value = {
+            "Interest Match": {
+                "items": [
+                    {
+                        "id": "item:1",
+                        "title": "Test 1",
+                        "content_snippet": "Content 1",
+                        "link": "",
+                    },
+                    {
+                        "id": "item:2",
+                        "title": "Test 2",
+                        "content_snippet": "Content 2",
+                        "link": "",
+                    },
+                ],
+                "interest": True,
+                "feed": None,
+            }
+        }
+        mock_load_interests.return_value = []
+
+        args = argparse.Namespace(
+            base_url="http://localhost:9999",
+            limit=50,
+            digest=True,
+            raw=False,
+            force=False,
+        )
+
+        f = io.StringIO()
+        with redirect_stdout(f):
+            result = cmd_unread(args)
+
+        self.assertEqual(result, 0)
+        output = f.getvalue()
+
+        # Verify highlights section is present
+        self.assertIn("Highlights", output)
+        # Verify items are shown with IDs for follow-up
+        self.assertIn("item:1", output)
+
+    @patch("freshrss.main.load_interests")
+    @patch("freshrss.main.group_items_for_digest")
+    @patch("freshrss.main.list_items")
+    @patch("freshrss.main.get_auth_token")
+    @patch("freshrss.main.get_credentials")
+    def test_digest_shows_sample_note_when_limit_reached(
+        self,
+        mock_creds: MagicMock,
+        mock_auth: MagicMock,
+        mock_list: MagicMock,
+        mock_group: MagicMock,
+        mock_load_interests: MagicMock,
+    ) -> None:
+        """Digest should note when sample limit was reached."""
+        import io
+        from contextlib import redirect_stdout
+
+        mock_creds.return_value = ("user", "pass")
+        mock_auth.return_value = "token"
+        # Return exactly `limit` items to trigger the sample note
+        mock_list.return_value = [
+            {"id": f"item:{i}", "title": f"Test {i}", "content": f"Content {i}"}
+            for i in range(50)
+        ]
+        mock_group.return_value = {
+            "Test Feed": {
+                "items": [
+                {
+                    "id": f"item:{i}",
+                    "title": f"Test {i}",
+                    "content_snippet": f"Content {i}",
+                    "link": "",
+                }
+                for i in range(50)
+            ],
+                "interest": False,
+                "feed": "Test Feed",
+            }
+        }
+        mock_load_interests.return_value = []
+
+        args = argparse.Namespace(
+            base_url="http://localhost:9999",
+            limit=50,
+            digest=True,
+            raw=False,
+            force=False,
+        )
+
+        f = io.StringIO()
+        with redirect_stdout(f):
+            result = cmd_unread(args)
+
+        self.assertEqual(result, 0)
+        output = f.getvalue()
+
+        # Verify sample note is shown
+        self.assertIn("more may be available", output.lower())
+
+
