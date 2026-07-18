@@ -118,7 +118,12 @@ function isInjectedContinuationPrompt(text: string): boolean {
 function isRetryableBlockedAbort(stopReason: string | undefined, errorMessage: string | undefined): boolean {
 	if (stopReason !== "aborted") return false;
 	const msg = errorMessage?.toLowerCase() ?? "";
-	return msg.length === 0 || msg.includes("block") || msg.includes("tool call");
+	return (
+		msg.length === 0 ||
+		msg === "operation aborted" ||
+		msg.includes("block") ||
+		msg.includes("tool call")
+	);
 }
 
 export default function (pi: ExtensionAPI) {
