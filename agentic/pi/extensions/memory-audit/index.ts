@@ -288,21 +288,103 @@ export default function (pi: ExtensionAPI) {
 		return { block: true, reason };
 	});
 
+	// Early streamed blocking for tool-name triggers (event: "tool").
+	// Watches message_update for toolCall blocks, aborts generation early so
+	// the model sees the memory before finishing the call. Guarded against
+	// recursive loops via a per-turn flag.
+	const MEMORY_TOOLS = new Set(["memory_read", "memory_index", "memory_suggest"]);
+	let abortArmed = false; // True while we've aborted and are sending a user message
+
+	pi.on("message_update", async (event, ctx) => {
+		if (!hasUI) return;
+		if (abortArmed) return; // Prevent recursive abort loops
+
+		// Detect streaming tool call: last content block has type === "toolCall"
+		const content = (event.message as { content?: unknown } | undefined)?.content;
+		const blocks = Array.isArray(content) ? content : undefined;
+		const last = blocks ? blocks[blocks.length - 1] : undefined;
+		if (!last || last.type !== "toolCall" || typeof last.name !== "string") return;
+
+		const toolName = last.name;
+
+		// Exclude memory tools to avoid deadlocks
+		if (MEMORY_TOOLS.has(toolName)) return;
+
+		// Check for tool-name triggers (event: "tool") matching this tool
+		const sessionId = ctx.sessionManager?.getSessionId() ?? "unknown";
+		ensureLoaded(sessionId, ctx.cwd);
+
+		// Track tool-name blocks separately (once per session, even for trigger_frequency: always)
+		const toolBlockKey = `tool-block:${toolName}`;
+		if (injected.has(toolBlockKey)) return; // Already blocked this tool this session
+
+		// Find matching memories with event: "tool" for this tool name
+		const fired: MemoryDoc[] = [];
+		for (const m of loadTriggeredMemories(ctx.cwd)) {
+			const key = memKey(m);
+			// Skip memories saved during this session
+			if (!existingMemories.has(key)) continue;
+			// Tool-name blocks are always once-per-session
+			if (injected.has(key)) continue;
+
+			// Check for event: "tool" trigger matching this tool name
+			const hasToolTrigger = m.triggers.some(
+				(t) => t.event === "tool" && t.tool === toolName,
+			);
+			if (hasToolTrigger) {
+				fired.push(m);
+			}
+		}
+
+		if (fired.length === 0) return;
+
+		// CAP at 3 memories per injection event
+		const MAX_PER_INJECTION = 3;
+		if (fired.length > MAX_PER_INJECTION) {
+			fired.sort((a, b) => {
+				const aAlways = a.triggerFrequency === "always" ? 1 : 0;
+				const bAlways = b.triggerFrequency === "always" ? 1 : 0;
+				if (aAlways !== bAlways) return bAlways - aAlways;
+				return a.description.length - b.description.length;
+			});
+			fired.splice(MAX_PER_INJECTION);
+		}
+
+		// Mark as injected (both the memory keys and the tool-block key)
+		for (const m of fired) {
+			injected.add(memKey(m));
+		}
+		injected.add(toolBlockKey);
+		persist(sessionId);
+
+		// Abort the current streaming generation
+		abortArmed = true;
+		ctx.abort();
+
+		// Send user message with the memory block (hard directive to read first)
+		const block = formatMemories(fired, true);
+		// Release the abort guard on next tick so the input event passes through
+		setImmediate(() => {
+			abortArmed = false;
+		});
+		pi.sendUserMessage(block);
+	});
+
 	// Auto-inject on tool output: tool + pattern triggers (matched against the
 	// tool name and its textual output). Appended to the tool result content so
 	// pattern triggers can fire on what a tool actually produced.
 	//
 	// CASCADE PREVENTION: memory tools (memory_read, memory_index, memory_suggest)
-	// are excluded from pattern触发 to prevent recursive injection loops where
+	// are excluded from pattern triggers to prevent recursive injection loops where
 	// reading memories triggers more memories ad infinitum.
 	pi.on("tool_result", async (event, ctx) => {
 		if (!hasUI) return undefined;
-		
+
 		// Skip memory tools to prevent cascade injection
-		if (event.toolName === "memory_read" || event.toolName === "memory_index" || event.toolName === "memory_suggest") {
+		if (MEMORY_TOOLS.has(event.toolName)) {
 			return undefined;
 		}
-		
+
 		const output = event.content
 			.filter((c): c is { type: "text"; text: string } => c.type === "text")
 			.map((c) => c.text)
