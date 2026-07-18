@@ -100,6 +100,27 @@ function truncate(s: string, max = 120): string {
 	return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
 }
 
+function isInjectedContinuationPrompt(text: string): boolean {
+	return (
+		text.startsWith("you hit a rate limit") ||
+		text.includes("http 429") ||
+		text.startsWith("your last turn ended on a tool call") ||
+		text.startsWith("stop — this tool call was deliberately blocked") ||
+		text.includes("the original tool call was blocked once") ||
+		text.includes("retry the exact original tool call now") ||
+		text.startsWith("re-reading the same path won't show more") ||
+		text.startsWith("you already have the body of") ||
+		(text.startsWith("you just called `") && text.includes("with identical arguments")) ||
+		text.startsWith("alternating loop detected:")
+	);
+}
+
+function isRetryableBlockedAbort(stopReason: string | undefined, errorMessage: string | undefined): boolean {
+	if (stopReason !== "aborted") return false;
+	const msg = errorMessage?.toLowerCase() ?? "";
+	return msg.length === 0 || msg.includes("block") || msg.includes("tool call");
+}
+
 export default function (pi: ExtensionAPI) {
 	// Subagent children don't drive a UI; the orchestrator gets the events
 	// that actually matter to the human.
@@ -132,20 +153,11 @@ export default function (pi: ExtensionAPI) {
 	pi.on("agent_end", async (event) => {
 		const msgs = event.messages ?? [];
 
-		// Skip notifications for extension-injected retry/nudge loops.
-		// Both rate-limit-retry and double-check inject hidden user messages
-		// to trigger additional turns. We detect these by checking if the
-		// most recent user message is an injected prompt.
-		//
-		// Coupling notes (text-based, not exported):
-		// - rate-limit-retry: PROMPT = "You hit a rate limit (HTTP 429)..."
-		//   → matches: text.startsWith("you hit a rate limit") || text.includes("http 429")
-		// - double-check: PROMPT = "Your last turn ended on a tool call..."
-		//   → matches: text.startsWith("your last turn ended on a tool call")
-		//
-		// If either extension changes its injected prompt text, update the
-		// matching logic here. This is a deliberate text-based coupling to
-		// avoid requiring exports or a protocol between extensions.
+		// Skip notifications for extension-injected retry/nudge/block loops.
+		// These are prompts inserted by extensions so the agent can continue on
+		// its own; notifying the user would incorrectly suggest Pi needs help.
+		// This is deliberate text-based coupling to avoid requiring exports or
+		// a protocol between extensions.
 		let lastUserMsg: { role?: string; content?: string | Array<{ text?: string }> } | undefined;
 		for (let i = msgs.length - 1; i >= 0; i--) {
 			const msg = msgs[i] as { role?: string; content?: string | Array<{ text?: string }> };
@@ -159,13 +171,7 @@ export default function (pi: ExtensionAPI) {
 				? lastUserMsg.content.map((b) => b.text ?? "").join("\n")
 				: lastUserMsg.content ?? "";
 			const text = typeof content === "string" ? content.toLowerCase() : "";
-			if (text.startsWith("you hit a rate limit") || text.includes("http 429"))
-				return;
-			if (text.startsWith("your last turn ended on a tool call"))
-				return;
-			if (text.startsWith("stop — this tool call was deliberately blocked"))
-				return;
-			if (text.startsWith("↪ ") && (text.includes(" skill injected") || text.includes(" skills injected")))
+			if (isInjectedContinuationPrompt(text))
 				return;
 		}
 
@@ -182,6 +188,8 @@ export default function (pi: ExtensionAPI) {
 			}
 		}
 		if (stopReason === "error" || stopReason === "aborted") {
+			if (isRetryableBlockedAbort(stopReason, errorMessage)) return;
+
 			// Skip notifications for transient/retryable errors:
 			// - "terminated" = Node.js version mismatch (Node 26 undici bug), auto-recovers
 			// - 429 = rate limit, Pi retries automatically
