@@ -2,19 +2,11 @@ import type { ExtensionAPI, ExtensionContext, Skill } from "@earendil-works/pi-c
 
 import { recordAutoloadRetry } from "../no-repeat/retry.ts";
 import { discoverAutoloadSkills, readSkillContent } from "./discovery.ts";
-import { extractPathFromPartialInput, matchesAutoloadRule, matchingAutoloadSkills, targetPathForToolCall } from "./matchers.ts";
+import { extractPathFromPartialInput, matchingAutoloadSkills, targetPathForToolCall } from "./matchers.ts";
 import { AUTOLOAD_TOOL_NAMES, type DiscoveredSkill } from "./types.ts";
 
 const loaded = new Set<string>();
 let currentSessionId: string | undefined;
-
-// Cache for early-detected skills from message_update, used by tool_call to block/inject.
-// Key: toolName\0path -> array of skill names to inject
-const earlyDetectedSkills = new Map<string, string[]>();
-
-function earlyCacheKey(toolName: string, path: string): string {
-	return `${toolName}\0${path}`;
-}
 
 function sessionId(ctx: ExtensionContext): string {
 	return ctx.sessionManager?.getSessionId() ?? "runtime";
@@ -75,19 +67,22 @@ export function registerAutoload(pi: ExtensionAPI): void {
 	pi.on("session_start", async () => {
 		loaded.clear();
 		currentSessionId = undefined;
-		earlyDetectedSkills.clear();
 	});
+
+	let earlyAutoloadInFlight = false;
 
 	/**
 	 * Handle early skill autoload from streamed tool-call arguments.
 	 * This runs during message_update to detect matching skills as soon as
-	 * the path is fully available. Skills are cached for tool_call to use.
+	 * the path is fully available, before large write/edit bodies finish streaming.
 	 */
 	function handleEarlyDetection(
 		ctx: ExtensionContext,
 		toolName: string,
 		partialInput: unknown,
 	): void {
+		if (earlyAutoloadInFlight) return;
+
 		const pathStr = extractPathFromPartialInput(partialInput);
 		if (!pathStr || pathStr.length === 0) return;
 
@@ -105,31 +100,51 @@ export function registerAutoload(pi: ExtensionAPI): void {
 
 		if (matches.length === 0) return;
 
-		// Cache the skill names for tool_call to use
-		const key = earlyCacheKey(toolName, target.raw);
-		const skillNames = matches.map((s) => s.name);
-		earlyDetectedSkills.set(key, skillNames);
+		const injected = matches.flatMap((skill) => {
+			try {
+				return [{ skill, content: readSkillContent(skill) }];
+			} catch {
+				return [];
+			}
+		});
 
-		// Abort the current generation to trigger a retry
-		// The retry will fire tool_call where we can properly block/inject
+		if (injected.length === 0) return;
+
+		const session = syncSession(ctx);
+		const retryInput = { path: target.raw };
+		for (const { skill } of injected) {
+			markSkillLoadedForSession(ctx, skill);
+		}
+		recordAutoloadRetry(session, toolName, retryInput);
+
+		earlyAutoloadInFlight = true;
 		ctx.abort();
+		pi.sendUserMessage(formatAutoloadInjection(injected, toolName, target.raw), {
+			deliverAs: "followUp",
+		});
+		setImmediate(() => {
+			earlyAutoloadInFlight = false;
+		});
 	}
 
 	pi.on("message_update", (event, ctx) => {
-		// Detect toolCall blocks streaming in the message
+		if (!ctx.hasUI) return;
+
+		// Detect toolCall blocks streaming in the message.
 		const content = (event.message as { content?: unknown } | undefined)?.content;
 		const blocks = Array.isArray(content) ? content : undefined;
 		if (!blocks || blocks.length === 0) return;
 
 		const last = blocks[blocks.length - 1];
-		if (last?.type !== "toolCall") return;
+		if (!last || last.type !== "toolCall") return;
 
 		const toolName = (last as { name?: string }).name;
 		if (!toolName || !AUTOLOAD_TOOL_NAMES.has(toolName)) return;
 
-		// Try to extract path from the streaming arguments
-		// Arguments may be a string (streaming JSON) or a partial object
-		const args = (last as { arguments?: unknown }).arguments;
+		// Try to extract path from raw streamed JSON text. Do not trust partial
+		// parsed argument objects here: string fields may still be incomplete.
+		const streamed = (last as { text?: unknown; arguments?: unknown }).text;
+		const args = typeof streamed === "string" ? streamed : (last as { arguments?: unknown }).arguments;
 		handleEarlyDetection(ctx, toolName, args);
 	});
 
@@ -139,32 +154,13 @@ export function registerAutoload(pi: ExtensionAPI): void {
 		const target = targetPathForToolCall(event.input, ctx.cwd);
 		if (!target) return undefined;
 
-		// Check if skills were detected early from message_update
-		const earlyKey = earlyCacheKey(event.toolName, target.raw);
-		const earlySkillNames = earlyDetectedSkills.get(earlyKey);
 		let matches: DiscoveredSkill[];
-
-		if (earlySkillNames && earlySkillNames.length > 0) {
-			// Use early-detected skills
-			const allSkills = discoverAutoloadSkills(ctx.cwd);
-			matches = allSkills.filter(
-				(skill) =>
-					earlySkillNames.includes(skill.name) &&
-					skill.autoload &&
-					matchesAutoloadRule(skill.autoload, event.toolName, target) &&
-					!alreadyLoadedForSession(ctx, skill),
+		try {
+			matches = matchingAutoloadSkills(discoverAutoloadSkills(ctx.cwd), event.toolName, target).filter(
+				(skill) => !alreadyLoadedForSession(ctx, skill),
 			);
-			// Clear the cache entry
-			earlyDetectedSkills.delete(earlyKey);
-		} else {
-			// Normal autoload path (no early detection)
-			try {
-				matches = matchingAutoloadSkills(discoverAutoloadSkills(ctx.cwd), event.toolName, target).filter(
-					(skill) => !alreadyLoadedForSession(ctx, skill),
-				);
-			} catch {
-				return undefined;
-			}
+		} catch {
+			return undefined;
 		}
 
 		if (matches.length === 0) return undefined;

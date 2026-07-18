@@ -100,40 +100,31 @@ export function matchingAutoloadSkills(skills: DiscoveredSkill[], toolName: stri
  * If path is incomplete or malformed, returns undefined to let fallback handle it.
  */
 export function extractPathFromPartialInput(input: unknown): string | undefined {
-	// Case 1: input is already a complete object with path
-	if (input && typeof input === "object" && !Array.isArray(input)) {
-		const raw = (input as { path?: unknown }).path;
-		if (typeof raw === "string" && raw.length > 0) {
-			return raw;
+	// During message_update, Pi may expose incrementally parsed argument objects
+	// where string fields are prefixes of the final value. For early autoload we
+	// only trust raw streamed JSON text, where we can see that the path string has
+	// a closing quote. Complete object input is handled later by the deterministic
+	// tool_call fallback via targetPathForToolCall().
+	if (typeof input !== "string") return undefined;
+
+	// Try parsing as complete JSON first.
+	try {
+		const parsed = JSON.parse(input) as { path?: unknown };
+		if (parsed && typeof parsed === "object" && typeof parsed.path === "string" && parsed.path.length > 0) {
+			return parsed.path;
 		}
+	} catch {
+		// Not valid JSON yet, try extracting path from partial stream.
 	}
 
-	// Case 2: input is a string (streaming JSON text or partial)
-	// Try to extract a complete quoted "path" value
-	if (typeof input === "string") {
-		// Try parsing as complete JSON first
-		try {
-			const parsed = JSON.parse(input) as { path?: unknown };
-			if (parsed && typeof parsed === "object" && typeof parsed.path === "string" && parsed.path.length > 0) {
-				return parsed.path;
-			}
-		} catch {
-			// Not valid JSON yet, try extracting path from partial stream
-		}
+	// Extract path from partial/incomplete JSON. We require a complete quoted
+	// value (closing quote present) before returning anything.
+	const pathMatch = /"path"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(input);
+	if (!pathMatch) return undefined;
 
-		// Extract path from partial/incomplete JSON
-		// Match patterns like: "path":"value" or "path": "value" or 'path':'value'
-		// We need the value to be fully quoted (closing quote present)
-		const pathMatch = /"path"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(input);
-		if (pathMatch) {
-			// Unescape the JSON string value
-			try {
-				return JSON.parse(`"${pathMatch[1]}"`) as string;
-			} catch {
-				return pathMatch[1];
-			}
-		}
+	try {
+		return JSON.parse(`"${pathMatch[1]}"`) as string;
+	} catch {
+		return pathMatch[1];
 	}
-
-	return undefined;
 }

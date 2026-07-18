@@ -367,7 +367,7 @@ export default function (pi: ExtensionAPI) {
 		setImmediate(() => {
 			abortArmed = false;
 		});
-		pi.sendUserMessage(block);
+		pi.sendUserMessage(block, { deliverAs: "followUp" });
 	});
 
 	// Auto-inject on tool output: tool + pattern triggers (matched against the

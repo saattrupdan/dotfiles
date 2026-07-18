@@ -58,7 +58,7 @@ const MIN_GAP_MS = 400;
 
 let lastNotifyAt = 0;
 let hasUI = false;
-let sessionManager: ExtensionAPI["sessionManager"] | undefined;
+let sessionManager: { getSessionName(): string | undefined } | undefined;
 
 function escapeForAppleScript(s: string): string {
 	return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -146,15 +146,26 @@ export default function (pi: ExtensionAPI) {
 		// If either extension changes its injected prompt text, update the
 		// matching logic here. This is a deliberate text-based coupling to
 		// avoid requiring exports or a protocol between extensions.
-		const lastUserMsg = msgs.findLast((m) => m?.role === "user");
+		let lastUserMsg: { role?: string; content?: string | Array<{ text?: string }> } | undefined;
+		for (let i = msgs.length - 1; i >= 0; i--) {
+			const msg = msgs[i] as { role?: string; content?: string | Array<{ text?: string }> };
+			if (msg?.role === "user") {
+				lastUserMsg = msg;
+				break;
+			}
+		}
 		if (lastUserMsg) {
 			const content = Array.isArray(lastUserMsg.content)
-				? lastUserMsg.content.map((b) => (b as { text?: string; type?: string }).text ?? "").join("\n")
-				: (lastUserMsg.content as string) ?? "";
+				? lastUserMsg.content.map((b) => b.text ?? "").join("\n")
+				: lastUserMsg.content ?? "";
 			const text = typeof content === "string" ? content.toLowerCase() : "";
 			if (text.startsWith("you hit a rate limit") || text.includes("http 429"))
 				return;
 			if (text.startsWith("your last turn ended on a tool call"))
+				return;
+			if (text.startsWith("stop — this tool call was deliberately blocked"))
+				return;
+			if (text.startsWith("↪ ") && (text.includes(" skill injected") || text.includes(" skills injected")))
 				return;
 		}
 
