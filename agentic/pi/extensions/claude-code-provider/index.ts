@@ -82,7 +82,7 @@ const TOOL_CALL_START_MARKER = "TOOL_CALL_START";
 const TOOL_CALL_END_MARKER = "TOOL_CALL_END";
 
 /** Debug mode environment variable name */
-const CLAUDE_CODE_DEBUG_ENV = "CLAUDE_CODE_DEBUG";
+const CLAUDE_CODE_DEBUG_ENV = "PI_CLAUDE_CODE_PROVIDER_DEBUG";
 /** Whether debug logging is enabled */
 const CLAUDE_CODE_DEBUG_ENABLED = process.env[CLAUDE_CODE_DEBUG_ENV] === "1";
 /** Error message for stale tool results */
@@ -355,8 +355,9 @@ interface ToolResultValidationResult {
 function logClaudeCodeProvider(message: string, data?: unknown): void {
 	if (CLAUDE_CODE_DEBUG_ENABLED) {
 		const timestamp = new Date().toISOString();
+		const logEntry = { timestamp, event: message, ...(data ?? {}) };
 		// eslint-disable-next-line no-console
-		console.log(`[${timestamp}] [claude-code-provider] ${message}`, data ?? '');
+		console.log(JSON.stringify(logEntry));
 	}
 }
 
@@ -929,7 +930,7 @@ async function runClaudeInvocation(
 	const invocationSequence = nextInvocationSequence++;
 	const emittedToolCallIds: string[] = [];
 
-	logClaudeCodeProvider(`invocation_start seq=${invocationSequence}`);
+	logClaudeCodeProvider('invocation_start', { invocationSequence });
 
 	const invocationArgs = [
 		...baseArgs,
@@ -1039,6 +1040,7 @@ async function runClaudeInvocation(
 						invocationSequence,
 					};
 					registerToolCall(invocationSequence, toolCallId, toolCallSequence, toolCall.name, 'pi', toolCall.arguments, true);
+					logClaudeCodeProvider('tool_call_registered', { invocationSequence, toolCallId, toolCallSequence, name: toolCall.name, source: 'pi', argsLength: JSON.stringify(toolCall.arguments).length });
 					output.content.push(toolCall);
 					blockMappings.set(claudeIndex, { claudeIndex, piIndex, type: "tool_use", toolCall, partialJson: "" });
 					stream.push({ type: "toolcall_start", contentIndex: piIndex, partial: output });
@@ -1150,6 +1152,7 @@ async function runClaudeInvocation(
 										invocationSequence,
 									};
 									registerToolCall(invocationSequence, toolCallId, toolCallSequence, parsedToolCall.name, 'claude', parsedToolCall.arguments ?? {}, true);
+								logClaudeCodeProvider('tool_call_registered', { invocationSequence, toolCallId, toolCallSequence, name: parsedToolCall.name, source: 'claude', argsLength: JSON.stringify(parsedToolCall.arguments ?? {}).length });
 									output.content.push(streamingState.toolCall);
 									// Emit toolcall_start, toolcall_delta (json), and toolcall_end in quick succession
 									stream.push({ type: "toolcall_start", contentIndex: toolPiIndex, partial: output });
@@ -1216,6 +1219,7 @@ async function runClaudeInvocation(
 								// Keep last valid arguments or empty object
 							}
 							stream.push({ type: "toolcall_delta", contentIndex: mapping.piIndex, delta: delta.partial_json, partial: output });
+							logClaudeCodeProvider('toolcall_delta', { invocationSequence, toolCallId: mapping.toolCall?.id || 'unknown', deltaLength: delta.partial_json.length });
 						}
 					}
 					return;
@@ -1301,6 +1305,14 @@ async function runClaudeInvocation(
 
 			if (isResultEvent(data)) {
 				state.resultEvent = data;
+				logClaudeCodeProvider('claude_result_event', { 
+					invocationSequence, 
+					hasResult: !!data.result, 
+					resultLength: data.result?.length || 0, 
+					hasUsage: !!(data.usage || data.modelUsage),
+					stopReason: data.stop_reason,
+					hasError: !!(data.is_error || data.error || (Array.isArray(data.errors) && data.errors.length > 0))
+				});
 
 				const usage = data.usage || data.modelUsage;
 				if (usage) {
@@ -1329,9 +1341,9 @@ async function runClaudeInvocation(
 				if (data.is_error || data.error || (Array.isArray(data.errors) && data.errors.length > 0)) {
 					const errorDetails = [data.error, ...(data.errors ?? []), data.is_error ? data.result : undefined]
 						.filter((error): error is string => typeof error === "string" && error.length > 0)
-						.join("\n");
-					invocationError = new Error(`Claude Code error: ${errorDetails || "Unknown error"}`);
-					// Don't reject here - caller needs to inspect emittedAny/emittedText state
+						.join("\n");				invocationError = new Error(`Claude Code error: ${errorDetails || "Unknown error"}`);
+				logClaudeCodeProvider('invocation_error', { invocationSequence, error: invocationError.message, errorLength: invocationError.message.length });
+				// Don't reject here - caller needs to inspect emittedAny/emittedText state
 				}
 			}
 		};
@@ -1377,9 +1389,11 @@ async function runClaudeInvocation(
 				if (invocationError) {
 					if (stderrText) {
 						invocationError = new Error(`${invocationError.message}\n${stderrText}`);
+						logClaudeCodeProvider('invocation_error', { invocationSequence, error: invocationError.message, errorLength: invocationError.message.length, hasStderr: true });
 					}
 				} else {
 					invocationError = new Error(`Claude Code error (exit ${code}): ${stderrText || `exit code ${code}`}`);
+					logClaudeCodeProvider('invocation_error', { invocationSequence, error: invocationError.message, exitCode: code, hasStderr: !!stderrText });
 				}
 			}
 
@@ -1403,6 +1417,16 @@ async function runClaudeInvocation(
 		}
 	});
 
+	logClaudeCodeProvider('invocation_close', { 
+		invocationSequence, 
+		success: !invocationError, 
+		hasResultEvent: !!state.resultEvent, 
+		hasError: !!invocationError,
+		emittedText: state.emittedText,
+		emittedAny: state.emittedAny,
+		toolCallEmitted: state.toolCallEmitted,
+		emittedToolCallIdsCount: emittedToolCallIds.length
+	});
 	return {
 		success: !invocationError,
 		resultEvent: state.resultEvent,
@@ -1481,6 +1505,7 @@ function streamClaudeCode(
 						? latestUserMessage.content.filter((c) => c.type === "text").map((c) => c.text).join(" ")
 						: "";
 			}
+			logClaudeCodeProvider('input_selected', { isToolResult, inputLength: inputText.length, firstNChars: inputText.slice(0, 50) });
 
 			// Inject compaction summary into the first user turn after compaction
 			const compactionState = compactionStates.get(getConversationIdentity(context));
@@ -1490,6 +1515,7 @@ function streamClaudeCode(
 				compactionStates.set(getConversationIdentity(context), compactionState);
 			}
 
+				logClaudeCodeProvider('compaction_injection', { summaryLength: compactionState.summary.length });
 			// If the message is a slash command (starts with / followed by a word character), forward it to Claude Code CLI
 			// Avoid matching absolute paths like /tmp/foo or /Users/... by requiring the command to be followed by whitespace, colon, or end
 			if (/^\/[A-Za-z][\w:-]*(?:\s|$)/.test(inputText)) {
@@ -1497,6 +1523,7 @@ function streamClaudeCode(
 				// Use generation-based session ID if compaction has occurred
 				const generation = getCompactionGeneration(context);
 				const sessionId = generateSessionUUID(conversationIdentity, process.cwd(), generation);
+				logClaudeCodeProvider('session_id_generated', { sessionId, conversationIdentity: conversationIdentity.slice(0, 30), generation, mode: 'slash_command' });
 				const releaseMutex = await acquireSessionMutex(sessionId);
 
 				try {
@@ -1533,6 +1560,7 @@ function streamClaudeCode(
 						const isAlreadyInUse = errorMsg.includes("already in use");
 
 						if ((isNoConversation || isAlreadyInUse) && !firstAttemptResult.emittedAny) {
+							logClaudeCodeProvider('retry_decision', { mode: 'slash_command', retrying: !firstAttemptResult.emittedAny, reason: isNoConversation ? 'no_conversation' : 'already_in_use', emittedAny: firstAttemptResult.emittedAny });
 							lastAttemptResult = await runClaudeInvocation(
 								slashCommandArgs,
 								{ kind: "session-id", sessionId },
@@ -1580,6 +1608,7 @@ function streamClaudeCode(
 			const generation = getCompactionGeneration(context);
 			const sessionId = generateSessionUUID(conversationIdentity, process.cwd(), generation);
 
+			logClaudeCodeProvider('session_id_generated', { sessionId, conversationIdentity: conversationIdentity.slice(0, 30), generation, mode: 'normal' });
 			// Acquire mutex to prevent concurrent session ID conflicts
 			const releaseMutex = await acquireSessionMutex(sessionId);
 
@@ -1620,6 +1649,7 @@ function streamClaudeCode(
 					const isAlreadyInUse = errorMsg.includes("already in use");
 
 					if (isNoConversation || isAlreadyInUse) {
+					logClaudeCodeProvider('retry_decision', { mode: 'normal', retrying: !firstAttemptResult.emittedAny, reason: isNoConversation ? 'no_conversation' : 'already_in_use', emittedAny: firstAttemptResult.emittedAny });
 						// --resume failed because session doesn't exist (or is locked).
 						// Only retry with --session-id if the first attempt emitted NO Pi events.
 						// If anything was emitted (start, partial text), retrying would duplicate output.
@@ -1679,6 +1709,7 @@ function streamClaudeCode(
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
+			logClaudeCodeProvider('catch_error', { error: error instanceof Error ? error.message : JSON.stringify(error), isErrorInstance: error instanceof Error, aborted: options?.signal?.aborted });
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -1724,6 +1755,7 @@ function observePiSession(ctx: ExtensionContext, reason: string): void {
 		clearSessionScopedState(reason, prevId, nextId);
 		activePiSessionId = nextId;
 	}
+		logClaudeCodeProvider('session_observed', { reason, prevId: prevId?.slice(0, 30) || null, nextId: nextId?.slice(0, 30) || null, sessionChanged: prevId !== nextId });
 }
 
 /**
@@ -1773,6 +1805,7 @@ async function compactConversationWithHistory(
 	piSessionId?: string,
 ): Promise<string | null> {
 	if (!conversationHistory.trim()) {
+	logClaudeCodeProvider('compaction_start', { conversationIdentity: conversationIdentity.slice(0, 30), historyLength: conversationHistory.length, hasPrompt: !!prompt });
 		return null;
 	}
 
@@ -1830,6 +1863,7 @@ Summary:`;
 						const resetsAt = info.resetsAt ? new Date(info.resetsAt * 1000).toLocaleTimeString() : 'unknown';
 						const reason = info.overageDisabledReason || info.rateLimitType || 'rate limit exceeded';
 						reject(new Error(`Claude API rate limited (${reason}). Resets at ${resetsAt}`));
+						logClaudeCodeProvider('compaction_failure', { reason: 'rate_limit', error: `Claude API rate limited (${reason}). Resets at ${resetsAt}` });
 						return;
 					}
 					// Handle result event (fallback when no assistant content streamed)
@@ -1876,9 +1910,11 @@ Summary:`;
 					postCompactionSessionId,
 					piSessionId,
 				});
+				logClaudeCodeProvider('compaction_success', { summaryLength: summary.trim().length, newGeneration: newGeneration });
 				resolve(summary.trim());
 			} else {
 				const errorMsg = stderr.trim() || "no stderr output";
+				logClaudeCodeProvider('compaction_failure', { exitCode: code, stderrLength: errorMsg.length, error: errorMsg });
 				reject(new Error(`Claude exited with code ${code}: ${errorMsg}`));
 			}
 		});
@@ -2021,4 +2057,5 @@ export default function (pi: ExtensionAPI) {
 		],
 		streamSimple: streamClaudeCode as unknown as ProviderConfig["streamSimple"],
 	});
+	logClaudeCodeProvider('provider_registered', { provider: 'claude-code', modelsCount: 4 });
 }
