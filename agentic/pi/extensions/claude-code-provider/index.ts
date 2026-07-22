@@ -55,7 +55,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import type { SessionMessageEntry } from "@earendil-works/pi-coding-agent";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai/compat";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { spawn } from "child_process";
 import { createHash } from "crypto";
 import { v4 as uuidv4 } from "uuid";
@@ -1707,7 +1707,7 @@ let activePiSessionId: string | null = null;
  * @param ctx - Extension context with session manager
  * @returns Pi session ID or null if not available
  */
-function getPiSessionId(ctx: Parameters<ExtensionAPI["on"]>[1]): string | null {
+function getPiSessionId(ctx: ExtensionContext): string | null {
 	return ctx.sessionManager?.getSessionId() ?? null;
 }
 
@@ -1717,7 +1717,7 @@ function getPiSessionId(ctx: Parameters<ExtensionAPI["on"]>[1]): string | null {
  * @param ctx - Extension context
  * @param reason - Reason for observation (e.g., "agent_start", "cc-compact")
  */
-function observePiSession(ctx: Parameters<ExtensionAPI["on"]>[1], reason: string): void {
+function observePiSession(ctx: ExtensionContext, reason: string): void {
 	const prevId = activePiSessionId;
 	const nextId = getPiSessionId(ctx);
 	if (prevId !== nextId) {
