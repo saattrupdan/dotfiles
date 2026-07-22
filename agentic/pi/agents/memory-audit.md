@@ -3,7 +3,7 @@ name: memory-audit
 description: Audits the orchestrator's recent turn for missed memory-save opportunities.
 model:
   - inference/qwen3.5-397b
-  - llamacpp/qwopus-35b
+  - llamacpp/ornith-1.0-35b
 tools: memory_index, memory_read, memory_suggest, question
 skills: []
 worktree: false
