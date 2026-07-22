@@ -151,11 +151,19 @@ echo
 
 # --- 3. Node -----------------------------------------------------------------
 
-# The native modules (better-sqlite3, tree-sitter) are N-API, so the built
-# binaries are ABI-stable and run under any Node major — we don't care which
-# Node version is used, only that one exists. So leave whatever Node is already
-# installed alone (switching it risks orphaning a global `pi`), and only
-# bootstrap an LTS Node via nvm when none is present at all.
+# IMPORTANT: the native modules (better-sqlite3, tree-sitter) are node-gyp
+# addons whose compiled binaries are ABI-LOCKED to a Node major
+# (NODE_MODULE_VERSION) — they are NOT portable across versions. They must be
+# built with the SAME Node that executes `pi`, or pi crashes at startup with
+# "compiled against a different Node.js version".
+#
+# `pi`'s launcher is `#!/usr/bin/env node`, so pi runs under the first `node` on
+# PATH at launch — on macOS that's Homebrew node@24, while an interactive shell
+# often defaults to nvm's Node (lazy, not on PATH until sourced). Building with
+# the wrong one is exactly what breaks pi. So we still only bootstrap an LTS Node
+# via nvm when none exists at all, but then resolve the exact node pi will use
+# (see resolve_pi_node below) and build with THAT — a shell that happens to have
+# a different node active can no longer poison the build.
 NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 export NVM_DIR
 
@@ -191,6 +199,36 @@ if ! command -v npm >/dev/null 2>&1; then
   echo "error: npm still not on PATH after Node setup" >&2
   exit 1
 fi
+
+# Resolve the Node that will actually execute `pi`, and build native modules with
+# it (see the note above). Priority: explicit $PI_NODE override > an absolute node
+# hard-coded in pi's shebang > a non-nvm node matching `env node` when nvm isn't
+# loaded (Homebrew/system) > whatever node exists (Linux/Spark: nvm's node is the
+# real one pi uses too).
+PI_BIN="$(command -v pi 2>/dev/null || true)"
+resolve_pi_node() {
+  if [ -n "${PI_NODE:-}" ] && command -v "$PI_NODE" >/dev/null 2>&1; then
+    command -v "$PI_NODE"; return
+  fi
+  if [ -n "$PI_BIN" ]; then
+    sb="$(head -1 "$PI_BIN" 2>/dev/null)"
+    case "$sb" in
+      "#!/"*/node) echo "${sb#\#!}"; return ;;   # absolute node in shebang
+    esac
+  fi
+  for c in /opt/homebrew/bin/node /usr/local/bin/node /usr/bin/node; do
+    [ -x "$c" ] && { echo "$c"; return; }
+  done
+  command -v node 2>/dev/null
+}
+PI_NODE="$(resolve_pi_node)"
+if [ -z "$PI_NODE" ] || [ ! -x "$PI_NODE" ]; then
+  echo "error: could not locate the Node that runs pi (set PI_NODE=/path/to/node)" >&2
+  exit 1
+fi
+PI_NODE_BIN_DIR="$(cd "$(dirname "$PI_NODE")" && pwd)"
+echo "Building native modules with pi's Node: $PI_NODE ($("$PI_NODE" -v), ABI $("$PI_NODE" -e 'process.stdout.write(process.versions.modules)'))"
+echo
 
 # --- 4. Build toolchain & GNU Make ------------------------------------------
 
@@ -276,8 +314,10 @@ for pkg in "$EXT_DIR"/*/package.json; do
   # half-built or wrong-arch native modules left by a previous failed run).
   rm -rf "$dir/node_modules"
 
-  echo "--- $name: npm $INSTALL_CMD"
-  if (cd "$dir" && CXXFLAGS="--std=c++20" npm "$INSTALL_CMD" --legacy-peer-deps); then
+  echo "--- $name: npm $INSTALL_CMD (Node $("$PI_NODE" -v))"
+  # Force pi's Node to the front of PATH so npm/node-gyp build against its ABI,
+  # regardless of which node is otherwise active in this shell.
+  if (cd "$dir" && PATH="$PI_NODE_BIN_DIR:$PATH" CXXFLAGS="--std=c++20" npm "$INSTALL_CMD" --legacy-peer-deps); then
     installed=$((installed + 1))
   else
     echo "!!! $name: install failed" >&2
@@ -293,3 +333,25 @@ if [ -n "$failed" ]; then
   echo "build-essential + python3 are installed, and GNU Make >= 4.4, then re-run." >&2
   exit 1
 fi
+
+# --- 6. Verify native modules load under pi's Node --------------------------
+# An ABI mismatch otherwise stays silent until pi crashes at startup. Load every
+# freshly built binding under pi's Node and fail loudly here if any was compiled
+# against a different Node major.
+echo
+echo "Verifying native modules load under pi's Node ($("$PI_NODE" -v))…"
+abi_bad=""
+for nodefile in $(find "$EXT_DIR"/*/node_modules -name '*.node' -path '*/build/Release/*' 2>/dev/null); do
+  err="$("$PI_NODE" -e 'try{require(process.argv[1])}catch(e){process.stderr.write(e.message)}' "$nodefile" 2>&1 >/dev/null)"
+  case "$err" in
+    *NODE_MODULE_VERSION*|*"different Node.js version"*)
+      echo "!!! ABI mismatch: $nodefile" >&2
+      abi_bad="yes" ;;
+  esac
+done
+if [ -n "$abi_bad" ]; then
+  echo "error: native modules were built against the wrong Node ABI — they must" >&2
+  echo "       match pi's Node ($PI_NODE). Re-run with a correct PATH or set PI_NODE." >&2
+  exit 1
+fi
+echo "All native modules load cleanly under pi's Node."
