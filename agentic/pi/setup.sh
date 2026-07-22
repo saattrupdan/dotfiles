@@ -69,8 +69,17 @@ link() {
     return
   fi
 
-  # A real file/dir (not a symlink) lives here — e.g. configs copied in
-  # manually. Back it up to <name>.bak and replace it with the symlink.
+  # A real directory here is intentional curation (e.g. a `skills` dir that
+  # aggregates skills from several repos) — clobbering it into a repo-only
+  # symlink would silently drop those. Leave it untouched; remove it yourself
+  # if you want setup.sh to manage this link.
+  if [ -d "$dest" ] && [ ! -L "$dest" ]; then
+    echo "=== $name: real directory present — left as-is (not symlinked)"
+    return
+  fi
+
+  # A real file (not a symlink) lives here — e.g. a config copied in manually.
+  # Back it up to <name>.bak and replace it with the symlink.
   if [ -e "$dest" ] && [ ! -L "$dest" ]; then
     backup="$dest.bak"
     i=1
