@@ -49,6 +49,25 @@ bindkey -M menuselect  '^[[C'  .forward-char  '^[OC'  .forward-char
 znap source zsh-syntax-highlighting
 
 
+#=====================
+# Command history
+#=====================
+
+# Large, timestamped, durable history. Previously history had no timestamps and kept only
+# ~1000 lines, so it rolled over within days — useless for after-the-fact forensics (e.g.
+# "what command was run on date X?"). These settings keep a full, time-stamped record.
+HISTFILE="$HOME/.zsh_history"
+HISTSIZE=200000            # commands kept in memory for the running shell
+SAVEHIST=200000            # commands persisted to $HISTFILE
+setopt EXTENDED_HISTORY    # store as `: <start-epoch>:<elapsed>;<command>` — adds timestamps
+setopt SHARE_HISTORY       # write each command immediately + share live across open shells
+setopt HIST_FCNTL_LOCK     # lock $HISTFILE with fcntl() — safe concurrent writes, no corruption
+setopt HIST_REDUCE_BLANKS  # trim redundant whitespace before saving
+setopt HIST_VERIFY         # on `!`-style expansion, show the expanded line before running it
+# NB: dups are deliberately NOT collapsed and HIST_IGNORE_SPACE is off, so the record stays
+# complete. Downside: a secret typed inline on the command line will be saved to history.
+
+
 #=========================================
 # General plugin-agnostic ZSH keybindings
 #=========================================
