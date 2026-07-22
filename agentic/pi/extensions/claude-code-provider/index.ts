@@ -535,51 +535,53 @@ function parseJsonlLine(line: string): unknown | null {
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function buildConversationHistory(messages: Context["messages"], compactedSummary?: string): string {
-	const lines: string[] = [];
+		const lines: string[] = [];
 
-	// Prepend compacted summary if available
-	if (compactedSummary) {
-		lines.push(`[Conversation Summary from Previous Turns]\n${compactedSummary}\n[End Summary]\n`);
-	}
+		// Prepend compacted summary if available
+		if (compactedSummary) {
+			lines.push(`[Conversation Summary from Previous Turns]\n${compactedSummary}\n[End Summary]\n`);
+		}
 
-	for (const msg of messages) {
-		if (msg.role === "user") {
-			const text = typeof msg.content === "string" ? msg.content : extractTextFromContent(msg.content);
-			lines.push(`User: ${text}`);
-		} else if (msg.role === "assistant") {
-			// Check if this message contains tool calls
-			const textContent = Array.isArray(msg.content)
-				? msg.content
-					.filter((c) => c.type === "text")
-					.map((c) => c.text)
-					.join(" ")
-				: "";
+		for (const msg of messages) {
+			if (msg.role === "user") {
+				const text = typeof msg.content === "string" ? msg.content : extractTextFromContent(msg.content);
+				lines.push(`User: ${text}`);
+			} else if (msg.role === "assistant") {
+				// Check if this message contains tool calls
+				const textContent = Array.isArray(msg.content)
+					? msg.content
+						.filter((c) => c.type === "text")
+						.map((c) => c.text)
+						.join(" ")
+					: "";
 
-			const toolCalls = Array.isArray(msg.content)
-				? msg.content.filter((c) => c.type === "toolCall")
-				: [];
+				const toolCalls = Array.isArray(msg.content)
+					? msg.content.filter((c) => c.type === "toolCall")
+					: [];
 
-			if (toolCalls.length > 0) {
-				for (const toolCall of toolCalls) {
-					if (toolCall.type === "toolCall") {
-						lines.push(`Assistant: [Calling tool: ${toolCall.name}]`);
-						lines.push(`TOOL_CALL_START${JSON.stringify({ name: toolCall.name, arguments: toolCall.arguments })}TOOL_CALL_END`);
+				if (toolCalls.length > 0) {
+					for (const toolCall of toolCalls) {
+						if (toolCall.type === "toolCall") {
+							const toolCallWithMeta = toolCall as ToolCallWithReplayMetadata;
+							const seqInfo = toolCallWithMeta.toolCallSequence !== undefined ? ` #${toolCallWithMeta.toolCallSequence}` : '';
+							lines.push(`Assistant: [Calling tool: ${toolCall.name}${seqInfo} toolCallId=${toolCall.id}]`);
+							lines.push(`TOOL_CALL_START${JSON.stringify({ name: toolCall.name, arguments: toolCall.arguments })}TOOL_CALL_END`);
+						}
 					}
 				}
-			}
 
-			if (textContent.trim()) {
-				lines.push(`Assistant: ${textContent}`);
+				if (textContent.trim()) {
+					lines.push(`Assistant: ${textContent}`);
+				}
+			} else if (msg.role === "toolResult") {
+				const text = Array.isArray(msg.content)
+					? msg.content.filter((c) => c.type === "text").map((c) => c.text).join(" ")
+					: "";
+				lines.push(`Tool Result [${msg.toolName}]: ${text || "(no output)"}`);
 			}
-		} else if (msg.role === "toolResult") {
-			const text = Array.isArray(msg.content)
-				? msg.content.filter((c) => c.type === "text").map((c) => c.text).join(" ")
-				: "";
-			lines.push(`Tool Result [${msg.toolName}]: ${text || "(no output)"}`);
 		}
-	}
 
-	return lines.join("\n\n");
+		return lines.join("\n\n");
 }
 
 /**
@@ -673,52 +675,53 @@ function buildFilteredConversationHistory(messages: Context["messages"], compact
 /**
  * Helper to build history text from a list of messages.
  * Tool results are truncated to first line / 200 chars.
- */
-function buildHistoryFromMessages(messages: Context["messages"][0][]): string {
-	const TOOL_RESULT_TRUNCATE = 200;
-	const lines: string[] = [];
+ */	function buildHistoryFromMessages(messages: Context["messages"][0][]): string {
+		const TOOL_RESULT_TRUNCATE = 200;
+		const lines: string[] = [];
 
-	for (const msg of messages) {
-		if (msg.role === "user") {
-			const text = typeof msg.content === "string" ? msg.content : extractTextFromContent(msg.content);
-			lines.push(`User: ${text}`);
-		} else if (msg.role === "assistant") {
-			// Check if this message contains tool calls
-			const textContent = Array.isArray(msg.content)
-				? msg.content
-					.filter((c) => c.type === "text")
-					.map((c) => c.text)
-					.join(" ")
-				: "";
+		for (const msg of messages) {
+			if (msg.role === "user") {
+				const text = typeof msg.content === "string" ? msg.content : extractTextFromContent(msg.content);
+				lines.push(`User: ${text}`);
+			} else if (msg.role === "assistant") {
+				// Check if this message contains tool calls
+				const textContent = Array.isArray(msg.content)
+					? msg.content
+						.filter((c) => c.type === "text")
+						.map((c) => c.text)
+						.join(" ")
+					: "";
 
-			const toolCalls = Array.isArray(msg.content)
-				? msg.content.filter((c) => c.type === "toolCall")
-				: [];
+				const toolCalls = Array.isArray(msg.content)
+					? msg.content.filter((c) => c.type === "toolCall")
+					: [];
 
-			if (toolCalls.length > 0) {
-				for (const toolCall of toolCalls) {
-					if (toolCall.type === "toolCall") {
-						lines.push(`Assistant: [Calling tool: ${toolCall.name}]`);
-						lines.push(`TOOL_CALL_START${JSON.stringify({ name: toolCall.name, arguments: toolCall.arguments })}TOOL_CALL_END`);
+				if (toolCalls.length > 0) {
+					for (const toolCall of toolCalls) {
+						if (toolCall.type === "toolCall") {
+							const toolCallWithMeta = toolCall as ToolCallWithReplayMetadata;
+							const seqInfo = toolCallWithMeta.toolCallSequence !== undefined ? ` #${toolCallWithMeta.toolCallSequence}` : '';
+							lines.push(`Assistant: [Calling tool: ${toolCall.name}${seqInfo} toolCallId=${toolCall.id}]`);
+							lines.push(`TOOL_CALL_START${JSON.stringify({ name: toolCall.name, arguments: toolCall.arguments })}TOOL_CALL_END`);
+						}
 					}
 				}
-			}
 
-			if (textContent.trim()) {
-				lines.push(`Assistant: ${textContent}`);
+				if (textContent.trim()) {
+					lines.push(`Assistant: ${textContent}`);
+				}
+			} else if (msg.role === "toolResult") {
+				const text = Array.isArray(msg.content)
+					? msg.content.filter((c) => c.type === "text").map((c) => c.text).join(" ")
+					: "";
+				// Truncate tool results to first line / 200 chars
+				const truncated = text.length > TOOL_RESULT_TRUNCATE ? text.substring(0, TOOL_RESULT_TRUNCATE) + "..." : text;
+				const firstLine = truncated.split("\n")[0] || "(no output)";
+				lines.push(`Tool Result [${msg.toolName}]: ${firstLine || "(no output)"}`);
 			}
-		} else if (msg.role === "toolResult") {
-			const text = Array.isArray(msg.content)
-				? msg.content.filter((c) => c.type === "text").map((c) => c.text).join(" ")
-				: "";
-			// Truncate tool results to first line / 200 chars
-			const truncated = text.length > TOOL_RESULT_TRUNCATE ? text.substring(0, TOOL_RESULT_TRUNCATE) + "..." : text;
-			const firstLine = truncated.split("\n")[0] || "(no output)";
-			lines.push(`Tool Result [${msg.toolName}]: ${firstLine || "(no output)"}`);
 		}
-	}
 
-	return lines.join("\n\n");
+		return lines.join("\n\n");
 }
 
 /**
@@ -756,6 +759,8 @@ function buildSystemPromptWithTools(basePrompt: string | undefined, tools: Tool[
 	// Tool calling format instruction
 	parts.push("## Tool Calling Format");
 	parts.push("To call a tool, output: TOOL_CALL_START{\"name\": \"toolName\", \"arguments\": {...}}TOOL_CALL_END");
+	parts.push("");
+	parts.push("**Note:** The provider assigns toolCallId automatically. Do not invent or include toolCallId in your output.");
 	parts.push("");
 
 	// List available tools with parameter schemas
@@ -919,6 +924,11 @@ async function runClaudeInvocation(
 	output: AssistantMessage,
 	options?: SimpleStreamOptions,
 ): Promise<ClaudeInvocationResult> {
+	const invocationSequence = nextInvocationSequence++;
+	const emittedToolCallIds: string[] = [];
+
+	logClaudeCodeProvider(`invocation_start seq=${invocationSequence}`);
+
 	const invocationArgs = [
 		...baseArgs,
 		sessionMode.kind === "session-id" ? "--session-id" : "--resume",
@@ -1014,12 +1024,19 @@ async function runClaudeInvocation(
 					state.toolCallEmitted = true;
 					output.stopReason = "toolUse";
 					const toolCallBlock = event.content_block as { id?: string; name?: string };
-					const toolCall: ToolCall = {
+					const toolCallId = toolCallBlock.id || uuidv4();
+					const toolCallSequence = nextToolCallSequence++;
+					emittedToolCallIds.push(toolCallId);
+					const toolCall: ToolCallWithReplayMetadata = {
 						type: "toolCall",
-						id: toolCallBlock.id || uuidv4(),
+						id: toolCallId,
 						name: toolCallBlock.name || "unknown",
 						arguments: {},
+						toolCallSequence,
+						source: 'pi',
+						invocationSequence,
 					};
+					registerToolCall(invocationSequence, toolCallId, toolCallSequence, toolCall.name, 'pi', toolCall.arguments, true);
 					output.content.push(toolCall);
 					blockMappings.set(claudeIndex, { claudeIndex, piIndex, type: "tool_use", toolCall, partialJson: "" });
 					stream.push({ type: "toolcall_start", contentIndex: piIndex, partial: output });
@@ -1114,29 +1131,36 @@ async function runClaudeInvocation(
 								if (endIndex !== -1) {
 									// Found end marker - combine accumulated JSON with final pending slice before parsing
 									const jsonText = (streamingState.jsonAccumulator || '') + streamingState.pending.slice(0, endIndex);
-									const parsedToolCall = tryParseToolCall(jsonText);					if (parsedToolCall) {
-						// Complete valid marker parsed - now emit the tool call atomically
-						const toolPiIndex = output.content.length;
-						streamingState.toolCallPiIndex = toolPiIndex;
-						streamingState.toolCall = {
-							type: "toolCall",
-							id: uuidv4(),
-							name: parsedToolCall.name,
-							arguments: parsedToolCall.arguments ?? {},
-						};
-						output.content.push(streamingState.toolCall);
-						// Emit toolcall_start, toolcall_delta (json), and toolcall_end in quick succession
-						stream.push({ type: "toolcall_start", contentIndex: toolPiIndex, partial: output });
-						if (jsonText.trim()) {
-							stream.push({ type: "toolcall_delta", contentIndex: toolPiIndex, delta: jsonText, partial: output });
-						}
-						stream.push({ type: "toolcall_end", contentIndex: toolPiIndex, toolCall: streamingState.toolCall, partial: output });
-						streamingState.toolcallStartEmitted = true;
-						streamingState.emittedAny = true;
-						state.emittedText = true; // Tool call content counts as emitted content
-						state.toolCallEmitted = true;
-						// Set stopReason to toolUse - a tool call was detected
-						output.stopReason = "toolUse";
+									const parsedToolCall = tryParseToolCall(jsonText);								if (parsedToolCall) {
+									// Complete valid marker parsed - now emit the tool call atomically
+									const toolPiIndex = output.content.length;
+									const toolCallId = uuidv4();
+									const toolCallSequence = nextToolCallSequence++;
+									emittedToolCallIds.push(toolCallId);
+									streamingState.toolCallPiIndex = toolPiIndex;
+									streamingState.toolCall = {
+										type: "toolCall",
+										id: toolCallId,
+										name: parsedToolCall.name,
+										arguments: parsedToolCall.arguments ?? {},
+										toolCallSequence,
+										source: 'claude',
+										invocationSequence,
+									};
+									registerToolCall(invocationSequence, toolCallId, toolCallSequence, parsedToolCall.name, 'claude', parsedToolCall.arguments ?? {}, true);
+									output.content.push(streamingState.toolCall);
+									// Emit toolcall_start, toolcall_delta (json), and toolcall_end in quick succession
+									stream.push({ type: "toolcall_start", contentIndex: toolPiIndex, partial: output });
+									if (jsonText.trim()) {
+										stream.push({ type: "toolcall_delta", contentIndex: toolPiIndex, delta: jsonText, partial: output });
+									}
+									stream.push({ type: "toolcall_end", contentIndex: toolPiIndex, toolCall: streamingState.toolCall, partial: output });
+									streamingState.toolcallStartEmitted = true;
+									streamingState.emittedAny = true;
+									state.emittedText = true; // Tool call content counts as emitted content
+									state.toolCallEmitted = true;
+									// Set stopReason to toolUse - a tool call was detected
+									output.stopReason = "toolUse";
 									} else {
 										// Parse failed - emit as visible text (fallback)
 										const fullSpan = TOOL_CALL_START_MARKER + jsonText + TOOL_CALL_END_MARKER;
@@ -1385,6 +1409,8 @@ async function runClaudeInvocation(
 		emittedAny: state.emittedAny,
 		toolCallEmitted: state.toolCallEmitted,
 		error: invocationError,
+		invocationSequence,
+		emittedToolCallIds,
 	};
 }
 
@@ -1423,17 +1449,27 @@ function streamClaudeCode(
 			const isToolResult = lastMessage && lastMessage.role === "toolResult";
 
 			if (isToolResult) {
-				// Collect consecutive toolResult messages from the end
-				const toolResults: string[] = [];
-				for (let i = context.messages.length - 1; i >= 0; i--) {
-					const msg = context.messages[i];
-					if (msg.role !== "toolResult") break;
-					const text = Array.isArray(msg.content)
-						? msg.content.filter((c) => c.type === "text").map((c) => c.text).join(" ")
-						: "";
-					toolResults.unshift(`Tool Result [${msg.toolName}]: ${text || "(no output)"}`);
+				// Collect and validate tool results from the tail of messages
+				// Use previous invocation sequence (decremented) since this is responding to prior turn's tool calls
+				const previousInvocationSequence = nextInvocationSequence - 1;
+				const tailResults = collectTailToolResults(context.messages, previousInvocationSequence);
+				
+				// Validate each tool result
+				const validatedToolResults: string[] = [];
+				for (const result of tailResults) {
+					const validation = validateTailToolResults(result, previousInvocationSequence);
+					if (!validation.isValid) {
+						// Reject stale tool results
+						throw new Error(STALE_TOOL_RESULT_ERROR);
+					}
+					// Look up tool name from replay state
+					const replayMap = toolCallReplayStates.get(previousInvocationSequence);
+					const toolName = replayMap?.get(result.toolCallId)?.name || 'unknown';
+					// Format valid result with sequence number
+					const formattedResult = formatToolResultForClaude(toolName, result.result, result.expectedSequence);
+					validatedToolResults.push(formattedResult);
 				}
-				inputText = toolResults.join("\n\n");
+				inputText = validatedToolResults.join("\n\n");
 			} else {
 				// Send the latest user message
 				const latestUserMessage = context.messages.filter((m) => m.role === "user").pop();			inputText =
