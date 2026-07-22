@@ -17,8 +17,18 @@ source ~/znap-plugins/znap/znap.zsh  # Start Znap
 # Autocomplete plugin. This block owns the completion system while present, and is safe
 # to delete wholesale: the guarded `compinit` lower down takes over automatically if
 # it's gone, so no other edits are needed.
+#
+# PINNED. We hold this at a known-good commit rather than tracking main. Commit bbba73e
+# ("Add support for tiny terminals") hangs every new shell on zsh 5.9 — you can't open a
+# tab. The commit below loads cleanly and has the later completion-widget/fd fixes, so
+# don't move it to an older one. To bump it deliberately: cd into the repo, `git pull`,
+# test, then update this hash. The rev-parse guard re-pins if `znap pull` ever moves it.
+_autocomplete_commit=20f6c34f20270084b21211428afb6d2534aae8e9
 [[ -r ~/znap-plugins/marlonrichert/zsh-autocomplete ]] ||
   znap clone marlonrichert/zsh-autocomplete
+[[ $(git -C ~/znap-plugins/marlonrichert/zsh-autocomplete rev-parse HEAD 2>/dev/null) == $_autocomplete_commit ]] ||
+  git -C ~/znap-plugins/marlonrichert/zsh-autocomplete checkout -q $_autocomplete_commit 2>/dev/null
+unset _autocomplete_commit
 znap source zsh-autocomplete
 zstyle ':autocomplete:*' append-semicolon no
 bindkey -M menuselect '\r' .accept-line
