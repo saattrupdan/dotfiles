@@ -79,6 +79,13 @@ interface CompactionState {
 const TOOL_CALL_START_MARKER = "TOOL_CALL_START";
 const TOOL_CALL_END_MARKER = "TOOL_CALL_END";
 
+/** Debug mode environment variable name */
+const CLAUDE_CODE_DEBUG_ENV = "CLAUDE_CODE_DEBUG";
+/** Whether debug logging is enabled */
+const CLAUDE_CODE_DEBUG_ENABLED = process.env[CLAUDE_CODE_DEBUG_ENV] === "1";
+/** Error message for stale tool results */
+const STALE_TOOL_RESULT_ERROR = "[Error: Tool result is stale - invocation sequence mismatch]";
+
 /** Parse text for tool call patterns and return segments (text/toolCall)
  * Does simple string matching instead of regex to avoid statefulness issues.
  */
@@ -254,6 +261,12 @@ interface ContentBlockMapping {
 	text?: string;
 	toolCall?: ToolCall;
 	partialJson?: string;
+	/** Tool call ID for tracking */
+	toolCallId?: string;
+	/** Tool call sequence number */
+	toolCallSequence?: number;
+	/** Source of the tool call */
+	source?: ToolCallSource;
 }
 
 /** Streaming state for a text block that may contain zero-shot tool calls */
@@ -269,6 +282,235 @@ interface TextBlockStreamingState {
 	toolCall?: ToolCall; // The tool call object (after emission)
 	emittedText?: boolean; // Track if visible text was emitted
 	emittedAny?: boolean; // Track if anything was emitted
+	/** Tool call ID for tracking */
+	toolCallId?: string;
+	/** Tool call sequence number */
+	toolCallSequence?: number;
+}
+
+/** Source of a tool call: 'claude' for zero-shot, 'pi' for Pi-initiated */
+type ToolCallSource = 'claude' | 'pi';
+
+/** Replay state for tracking tool calls with sequence numbers */
+interface ToolCallReplayState {
+	/** Tool call ID (Pi-generated) */
+	toolCallId: string;
+	/** Tool call sequence number (Pi side) */
+	toolCallSequence: number;
+	/** Tool name */
+	name: string;
+	/** Source of the tool call */
+	source: ToolCallSource;
+	/** Arguments passed to the tool */
+	arguments: Record<string, unknown>;
+	/** Whether the tool call was emitted to Pi */
+	emitted: boolean;
+	/** Invocation sequence when the tool call was made */
+	invocationSequence: number;
+}
+
+/** Tool call with replay metadata attached */
+interface ToolCallWithReplayMetadata extends ToolCall {
+	/** Sequence number for replay tracking */
+	toolCallSequence: number;
+	/** Source of the tool call */
+	source: ToolCallSource;
+	/** Invocation sequence when the tool call was made */
+	invocationSequence: number;
+}
+
+/** Replay state for tracking tool results */
+interface ToolResultReplayState {
+	/** Tool call ID this result corresponds to */
+	toolCallId: string;
+	/** Expected sequence number for this result */
+	expectedSequence: number;
+	/** Invocation sequence when the result was received */
+	invocationSequence: number;
+	/** Result text content */
+	result: string;
+	/** Whether the result has been validated */
+	validated: boolean;
+}
+
+/** Result of validating a tool result against replay state */
+interface ToolResultValidationResult {
+	/** Whether the result is valid (not stale) */
+	isValid: boolean;
+	/** Whether the result matches an expected tool call */
+	isMatched: boolean;
+	/** Error message if validation failed */
+	error?: string;
+	/** The validated result text (may be error message if stale) */
+	validatedResult: string;
+}
+
+/**
+ * Log debug message if debug mode is enabled.
+ * @param message - Message to log
+ * @param data - Optional data to include
+ */
+function logClaudeCodeProvider(message: string, data?: unknown): void {
+	if (CLAUDE_CODE_DEBUG_ENABLED) {
+		const timestamp = new Date().toISOString();
+		// eslint-disable-next-line no-console
+		console.log(`[${timestamp}] [claude-code-provider] ${message}`, data ?? '');
+	}
+}
+
+/**
+ * Register a tool call in the replay state.
+ * @param invocationSequence - The invocation sequence number
+ * @param toolCallId - The tool call ID
+ * @param toolCallSequence - The tool call sequence number
+ * @param name - Tool name
+ * @param source - Source of the tool call
+ * @param args - Tool arguments
+ * @param emitted - Whether the tool call was emitted
+ */
+function registerToolCall(
+	invocationSequence: number,
+	toolCallId: string,
+	toolCallSequence: number,
+	name: string,
+	source: ToolCallSource,
+	args: Record<string, unknown>,
+	emitted: boolean,
+): void {
+	if (!toolCallReplayStates.has(invocationSequence)) {
+		toolCallReplayStates.set(invocationSequence, new Map());
+	}
+	const replayMap = toolCallReplayStates.get(invocationSequence)!;
+	replayMap.set(toolCallId, {
+		toolCallId,
+		toolCallSequence,
+		name,
+		source,
+		arguments: args,
+		emitted,
+		invocationSequence,
+	});
+}
+
+/**
+ * Get tool call ID from a Pi message.
+ * @param message - Pi message object
+ * @returns Tool call ID if present
+ */
+function getMessageToolCallId(message: Context["messages"][0]): string | null {
+	if ('toolCallId' in message && typeof message.toolCallId === 'string') {
+		return message.toolCallId;
+	}
+	return null;
+}
+
+/**
+ * Get the replay sequence number for a tool call.
+ * @param invocationSequence - The invocation sequence
+ * @param toolCallId - The tool call ID
+ * @returns Tool call sequence number if found
+ */
+function getToolCallReplaySequence(invocationSequence: number, toolCallId: string): number | null {
+	const replayMap = toolCallReplayStates.get(invocationSequence);
+	if (!replayMap) return null;
+	const state = replayMap.get(toolCallId);
+	return state?.toolCallSequence ?? null;
+}
+
+/**
+ * Extract text content from a tool result message.
+ * @param message - Tool result message
+ * @returns Extracted text
+ */
+function extractToolResultText(message: Context["messages"][0]): string {
+	if (typeof message.content === 'string') {
+		return message.content;
+	}
+	if (Array.isArray(message.content)) {
+		return message.content
+			.filter((block): block is TextContent => block.type === 'text')
+			.map(block => block.text)
+			.join('\n');
+	}
+	return '';
+}
+
+/**
+ * Collect tool results from the tail of messages.
+ * @param messages - Context messages array
+ * @param invocationSequence - Expected invocation sequence
+ * @returns Array of tool result replay states
+ */
+function collectTailToolResults(
+	messages: Context["messages"],
+	invocationSequence: number,
+): ToolResultReplayState[] {
+	const results: ToolResultReplayState[] = [];
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const msg = messages[i];
+		if (msg.role !== 'tool') break;
+		const toolCallId = getMessageToolCallId(msg);
+		if (!toolCallId) continue;
+		const expectedSequence = getToolCallReplaySequence(invocationSequence, toolCallId);
+		if (expectedSequence === null) continue;
+		results.push({
+			toolCallId,
+			expectedSequence,
+			invocationSequence,
+			result: extractToolResultText(msg),
+			validated: false,
+		});
+	}
+	return results.reverse();
+}
+
+/**
+ * Validate a tool result against replay state.
+ * @param result - Tool result replay state
+ * @param invocationSequence - Current invocation sequence
+ * @returns Validation result
+ */
+function validateTailToolResults(
+	result: ToolResultReplayState,
+	invocationSequence: number,
+): ToolResultValidationResult {
+	if (result.invocationSequence !== invocationSequence) {
+		return {
+			isValid: false,
+			isMatched: false,
+			error: 'Invocation sequence mismatch',
+			validatedResult: STALE_TOOL_RESULT_ERROR,
+		};
+	}
+	return {
+		isValid: true,
+		isMatched: true,
+		validatedResult: result.result,
+	};
+}
+
+/**
+ * Find expected tool calls before tail marker.
+ * @param invocationSequence - Invocation sequence to check
+ * @returns Array of expected tool call IDs
+ */
+function findExpectedToolCallsBeforeTail(invocationSequence: number): string[] {
+	const replayMap = toolCallReplayStates.get(invocationSequence);
+	if (!replayMap) return [];
+	return Array.from(replayMap.values())
+		.filter(state => state.emitted)
+		.map(state => state.toolCallId);
+}
+
+/**
+ * Format tool result for Claude with replay metadata.
+ * @param toolName - Name of the tool
+ * @param result - Result text
+ * @param sequence - Tool call sequence number
+ * @returns Formatted result string
+ */
+function formatToolResultForClaude(toolName: string, result: string, sequence: number): string {
+	return `Tool Result [${toolName} #${sequence}]: ${result}`;
 }
 
 /** Parse a single JSONL line, returning null for incomplete/invalid lines */
@@ -652,6 +894,10 @@ interface ClaudeInvocationResult {
 	toolCallEmitted: boolean;
 	/** Error from Claude (nonzero exit, is_error result) if present. */
 	error?: Error;
+	/** Invocation sequence number for this turn */
+	invocationSequence: number;
+	/** Tool call IDs emitted during this invocation */
+	emittedToolCallIds: string[];
 }
 
 /**
@@ -1408,6 +1654,15 @@ function streamClaudeCode(
  * Key: session identity, Value: compaction state with summary and generation.
  */
 const compactionStates = new Map<string, CompactionState>();
+
+/** Next invocation sequence number (incremented per turn) */
+let nextInvocationSequence = 0;
+/** Next tool call sequence number (incremented per tool call) */
+let nextToolCallSequence = 0;
+/** Replay states for active invocations, keyed by invocation sequence */
+const toolCallReplayStates = new Map<number, Map<string, ToolCallReplayState>>();
+/** Active Pi session ID for tracking replay context */
+let activePiSessionId: string | null = null;
 
 /**
  * Compact the conversation by asking Claude to summarize it.
