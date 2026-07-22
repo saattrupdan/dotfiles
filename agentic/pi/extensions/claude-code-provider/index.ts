@@ -281,7 +281,7 @@ interface TextBlockStreamingState {
 	jsonAccumulator?: string; // Accumulated JSON string
 	toolcallStartEmitted?: boolean; // Whether toolcall_start has been emitted
 	toolCallPiIndex?: number; // Pi contentIndex of the tool call
-	toolCall?: ToolCall; // The tool call object (after emission)
+	toolCall?: ToolCallWithReplayMetadata; // The tool call object (after emission)
 	emittedText?: boolean; // Track if visible text was emitted
 	emittedAny?: boolean; // Track if anything was emitted
 	/** Tool call ID for tracking */
@@ -356,7 +356,6 @@ function logClaudeCodeProvider(message: string, data?: unknown): void {
 	if (CLAUDE_CODE_DEBUG_ENABLED) {
 		const timestamp = new Date().toISOString();
 		const logEntry = { timestamp, event: message, ...(data ?? {}) };
-		// eslint-disable-next-line no-console
 		console.log(JSON.stringify(logEntry));
 	}
 }
@@ -451,7 +450,7 @@ function collectTailToolResults(
 	const results: ToolResultReplayState[] = [];
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i];
-		if (msg.role !== 'tool') break;
+		if (msg.role !== 'toolResult') break;
 		const toolCallId = getMessageToolCallId(msg);
 		if (!toolCallId) continue;
 		const expectedSequence = getToolCallReplaySequence(invocationSequence, toolCallId);
@@ -490,19 +489,6 @@ function validateTailToolResults(
 		isMatched: true,
 		validatedResult: result.result,
 	};
-}
-
-/**
- * Find expected tool calls before tail marker.
- * @param invocationSequence - Invocation sequence to check
- * @returns Array of expected tool call IDs
- */
-function findExpectedToolCallsBeforeTail(invocationSequence: number): string[] {
-	const replayMap = toolCallReplayStates.get(invocationSequence);
-	if (!replayMap) return [];
-	return Array.from(replayMap.values())
-		.filter(state => state.emitted)
-		.map(state => state.toolCallId);
 }
 
 /**
@@ -678,7 +664,8 @@ function buildFilteredConversationHistory(messages: Context["messages"], compact
 /**
  * Helper to build history text from a list of messages.
  * Tool results are truncated to first line / 200 chars.
- */	function buildHistoryFromMessages(messages: Context["messages"][0][]): string {
+ */
+function buildHistoryFromMessages(messages: Context["messages"][0][]): string {
 		const TOOL_RESULT_TRUNCATE = 200;
 		const lines: string[] = [];
 
@@ -1334,14 +1321,14 @@ async function runClaudeInvocation(
 					if (state.toolCallEmitted) {
 						output.stopReason = "toolUse";
 					} else {
-						output.stopReason = data.stop_reason === "end_turn" ? "stop" : data.stop_reason === "max_tokens" ? "length" : "stop";
-					}
-				}
+						output.stopReason = data.stop_reason === "end_turn" ? "stop" : data.stop_reason === "max_tokens" ? "length" : "stop";				}
+			}
 
-				if (data.is_error || data.error || (Array.isArray(data.errors) && data.errors.length > 0)) {
-					const errorDetails = [data.error, ...(data.errors ?? []), data.is_error ? data.result : undefined]
-						.filter((error): error is string => typeof error === "string" && error.length > 0)
-						.join("\n");				invocationError = new Error(`Claude Code error: ${errorDetails || "Unknown error"}`);
+			if (data.is_error || data.error || (Array.isArray(data.errors) && data.errors.length > 0)) {
+				const errorDetails = [data.error, ...(data.errors ?? []), data.is_error ? data.result : undefined]
+					.filter((error): error is string => typeof error === "string" && error.length > 0)
+					.join("\n");
+				invocationError = new Error(`Claude Code error: ${errorDetails || "Unknown error"}`);
 				logClaudeCodeProvider('invocation_error', { invocationSequence, error: invocationError.message, errorLength: invocationError.message.length });
 				// Don't reject here - caller needs to inspect emittedAny/emittedText state
 				}
@@ -1487,10 +1474,14 @@ function streamClaudeCode(
 					if (!validation.isValid) {
 						// Reject stale tool results
 						throw new Error(STALE_TOOL_RESULT_ERROR);
-					}
-					// Look up tool name from replay state
-					const replayMap = toolCallReplayStates.get(previousInvocationSequence);
-					const toolName = replayMap?.get(result.toolCallId)?.name || 'unknown';
+				}
+				// Look up tool name from replay state
+				const replayMap = toolCallReplayStates.get(previousInvocationSequence);
+				const replayState = replayMap?.get(result.toolCallId);
+				if (!replayState) {
+					logClaudeCodeProvider('unmatched_tool_result', { invocationSequence: previousInvocationSequence, toolCallId: result.toolCallId });
+				}
+				const toolName = replayState?.name || 'unknown';
 					// Format valid result with sequence number
 					const formattedResult = formatToolResultForClaude(toolName, result.result, result.expectedSequence);
 					validatedToolResults.push(formattedResult);
@@ -1498,7 +1489,8 @@ function streamClaudeCode(
 				inputText = validatedToolResults.join("\n\n");
 			} else {
 				// Send the latest user message
-				const latestUserMessage = context.messages.filter((m) => m.role === "user").pop();			inputText =
+				const latestUserMessage = context.messages.filter((m) => m.role === "user").pop();
+				inputText =
 				latestUserMessage && typeof latestUserMessage.content === "string"
 					? latestUserMessage.content
 					: latestUserMessage && Array.isArray(latestUserMessage.content)
@@ -1513,9 +1505,8 @@ function streamClaudeCode(
 				inputText = `${compactionState.summary}\n\n${inputText}`;
 				compactionState.injected = true;
 				compactionStates.set(getConversationIdentity(context), compactionState);
-			}
-
 				logClaudeCodeProvider('compaction_injection', { summaryLength: compactionState.summary.length });
+			}
 			// If the message is a slash command (starts with / followed by a word character), forward it to Claude Code CLI
 			// Avoid matching absolute paths like /tmp/foo or /Users/... by requiring the command to be followed by whitespace, colon, or end
 			if (/^\/[A-Za-z][\w:-]*(?:\s|$)/.test(inputText)) {
@@ -1770,7 +1761,13 @@ function clearSessionScopedState(reason: string, prevId: string | null, nextId: 
 	const clearedReplayCount = toolCallReplayStates.size;
 	compactionStates.clear();
 	toolCallReplayStates.clear();
-	console.log(`[claude-code-provider] session_state_invalidated: reason=${reason}, prevSessionId=${prevId}, nextSessionId=${nextId}, clearedCompactionStates=${clearedCompactionCount}, clearedReplayStates=${clearedReplayCount}`);
+	logClaudeCodeProvider('session_state_invalidated', {
+		reason,
+		prevSessionId: prevId ? `${prevId.slice(0, 8)}...` : null,
+		nextSessionId: nextId ? `${nextId.slice(0, 8)}...` : null,
+		clearedCompactionStates: clearedCompactionCount,
+		clearedReplayStates: clearedReplayCount,
+	});
 }
 
 /**
@@ -1805,7 +1802,6 @@ async function compactConversationWithHistory(
 	piSessionId?: string,
 ): Promise<string | null> {
 	if (!conversationHistory.trim()) {
-	logClaudeCodeProvider('compaction_start', { conversationIdentity: conversationIdentity.slice(0, 30), historyLength: conversationHistory.length, hasPrompt: !!prompt });
 		return null;
 	}
 
@@ -1816,6 +1812,7 @@ ${conversationHistory}
 
 Summary:`;
 
+	logClaudeCodeProvider('compaction_start', { conversationIdentity: conversationIdentity.slice(0, 30), historyLength: conversationHistory.length, promptLength: prompt.length });
 
 	const args = [
 		"-p",
@@ -1951,11 +1948,10 @@ export default function (pi: ExtensionAPI) {
 				if (messages.length === 0) {
 					ctx.ui.notify(`Found ${entries.length} entries but 0 messages. Entries: ${entries.map(e => e.type).join(",")}`, "error");
 					return;
-				}
-
-				// Get system prompt from context
+				}				// Get system prompt from context
 				const systemPrompt = ctx.getSystemPrompt();
-				const convIdentity = getConversationIdentityFromMessages(messages, systemPrompt);			const previousSummary = compactionStates.get(convIdentity)?.summary || undefined;
+				const convIdentity = getConversationIdentityFromMessages(messages, systemPrompt);
+				const previousSummary = compactionStates.get(convIdentity)?.summary || undefined;
 
 			// Build filtered conversation history for compaction
 			const conversationHistory = buildFilteredConversationHistory(messages, previousSummary);
@@ -2001,11 +1997,6 @@ export default function (pi: ExtensionAPI) {
 				}
 			}
 		},
-	});
-
-	// Observe Pi session changes on agent_start to clear session-scoped state
-	pi.on("agent_start", (_event, ctx) => {
-		observePiSession(ctx, "agent_start");
 	});
 
 	pi.registerProvider("claude-code", {
