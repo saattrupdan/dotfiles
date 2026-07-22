@@ -55,7 +55,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import type { SessionMessageEntry } from "@earendil-works/pi-coding-agent";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai/compat";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { spawn } from "child_process";
 import { createHash } from "crypto";
 import { v4 as uuidv4 } from "uuid";
@@ -75,9 +75,18 @@ interface CompactionState {
 	postCompactionSessionId?: string;
 	/** Whether the summary has been injected into the first post-compaction turn */
 	injected?: boolean;
+	/** Pi session ID that created this compaction - used for invalidation on session switch */
+	piSessionId?: string;
 }
 const TOOL_CALL_START_MARKER = "TOOL_CALL_START";
 const TOOL_CALL_END_MARKER = "TOOL_CALL_END";
+
+/** Debug mode environment variable name */
+const CLAUDE_CODE_DEBUG_ENV = "PI_CLAUDE_CODE_PROVIDER_DEBUG";
+/** Whether debug logging is enabled */
+const CLAUDE_CODE_DEBUG_ENABLED = process.env[CLAUDE_CODE_DEBUG_ENV] === "1";
+/** Error message for stale tool results */
+const STALE_TOOL_RESULT_ERROR = "[Error: Tool result is stale - invocation sequence mismatch]";
 
 /** Parse text for tool call patterns and return segments (text/toolCall)
  * Does simple string matching instead of regex to avoid statefulness issues.
@@ -254,6 +263,12 @@ interface ContentBlockMapping {
 	text?: string;
 	toolCall?: ToolCall;
 	partialJson?: string;
+	/** Tool call ID for tracking */
+	toolCallId?: string;
+	/** Tool call sequence number */
+	toolCallSequence?: number;
+	/** Source of the tool call */
+	source?: ToolCallSource;
 }
 
 /** Streaming state for a text block that may contain zero-shot tool calls */
@@ -266,9 +281,249 @@ interface TextBlockStreamingState {
 	jsonAccumulator?: string; // Accumulated JSON string
 	toolcallStartEmitted?: boolean; // Whether toolcall_start has been emitted
 	toolCallPiIndex?: number; // Pi contentIndex of the tool call
-	toolCall?: ToolCall; // The tool call object (after emission)
+	toolCall?: ToolCallWithReplayMetadata; // The tool call object (after emission)
 	emittedText?: boolean; // Track if visible text was emitted
 	emittedAny?: boolean; // Track if anything was emitted
+	/** Tool call ID for tracking */
+	toolCallId?: string;
+	/** Tool call sequence number */
+	toolCallSequence?: number;
+}
+
+/** Source of a tool call: 'claude' for zero-shot, 'pi' for Pi-initiated */
+type ToolCallSource = 'claude' | 'pi';
+
+/** Replay state for tracking tool calls with sequence numbers */
+interface ToolCallReplayState {
+	/** Tool call ID (Pi-generated) */
+	toolCallId: string;
+	/** Tool call sequence number (Pi side) */
+	toolCallSequence: number;
+	/** Tool name */
+	name: string;
+	/** Source of the tool call */
+	source: ToolCallSource;
+	/** Arguments passed to the tool */
+	arguments: Record<string, unknown>;
+	/** Whether the tool call was emitted to Pi */
+	emitted: boolean;
+	/** Invocation sequence when the tool call was made */
+	invocationSequence: number;
+}
+
+/** Tool call with replay metadata attached */
+interface ToolCallWithReplayMetadata extends ToolCall {
+	/** Sequence number for replay tracking */
+	toolCallSequence: number;
+	/** Source of the tool call */
+	source: ToolCallSource;
+	/** Invocation sequence when the tool call was made */
+	invocationSequence: number;
+}
+
+/** Replay state for tracking tool results */
+interface ToolResultReplayState {
+	/** Tool call ID this result corresponds to */
+	toolCallId: string;
+	/** Expected sequence number for this result */
+	expectedSequence: number;
+	/** Invocation sequence when the result was received */
+	invocationSequence: number;
+	/** Result text content */
+	result: string;
+	/** Whether the result has been validated */
+	validated: boolean;
+}
+
+/** Result of validating a tool result against replay state */
+interface ToolResultValidationResult {
+	/** Whether the result is valid (not stale) */
+	isValid: boolean;
+	/** Whether the result matches an expected tool call */
+	isMatched: boolean;
+	/** Error message if validation failed */
+	error?: string;
+	/** The validated result text (may be error message if stale) */
+	validatedResult: string;
+}
+
+interface UnmatchedToolResult {
+	/** Tool call ID from the tool result message */
+	toolCallId: string;
+	/** Result text content */
+	result: string;
+}
+
+interface CollectTailToolResultsResult {
+	/** Tool results that matched a replay state */
+	matchedResults: ToolResultReplayState[];
+	/** Tool results with no matching replay state (stale/orphaned) */
+	unmatchedResults: UnmatchedToolResult[];
+}
+
+/**
+ * Log debug message if debug mode is enabled.
+ * @param message - Message to log
+ * @param data - Optional data to include
+ */
+function logClaudeCodeProvider(message: string, data?: unknown): void {
+	if (CLAUDE_CODE_DEBUG_ENABLED) {
+		const timestamp = new Date().toISOString();
+		const logEntry = { timestamp, event: message, ...(data ?? {}) };
+		console.log(JSON.stringify(logEntry));
+	}
+}
+
+/**
+ * Register a tool call in the replay state.
+ * @param invocationSequence - The invocation sequence number
+ * @param toolCallId - The tool call ID
+ * @param toolCallSequence - The tool call sequence number
+ * @param name - Tool name
+ * @param source - Source of the tool call
+ * @param args - Tool arguments
+ * @param emitted - Whether the tool call was emitted
+ */
+function registerToolCall(
+	invocationSequence: number,
+	toolCallId: string,
+	toolCallSequence: number,
+	name: string,
+	source: ToolCallSource,
+	args: Record<string, unknown>,
+	emitted: boolean,
+): void {
+	if (!toolCallReplayStates.has(invocationSequence)) {
+		toolCallReplayStates.set(invocationSequence, new Map());
+	}
+	const replayMap = toolCallReplayStates.get(invocationSequence)!;
+	replayMap.set(toolCallId, {
+		toolCallId,
+		toolCallSequence,
+		name,
+		source,
+		arguments: args,
+		emitted,
+		invocationSequence,
+	});
+}
+
+/**
+ * Get tool call ID from a Pi message.
+ * @param message - Pi message object
+ * @returns Tool call ID if present
+ */
+function getMessageToolCallId(message: Context["messages"][0]): string | null {
+	if ('toolCallId' in message && typeof message.toolCallId === 'string') {
+		return message.toolCallId;
+	}
+	return null;
+}
+
+/**
+ * Get the replay sequence number for a tool call.
+ * @param invocationSequence - The invocation sequence
+ * @param toolCallId - The tool call ID
+ * @returns Tool call sequence number if found
+ */
+function getToolCallReplaySequence(invocationSequence: number, toolCallId: string): number | null {
+	const replayMap = toolCallReplayStates.get(invocationSequence);
+	if (!replayMap) return null;
+	const state = replayMap.get(toolCallId);
+	return state?.toolCallSequence ?? null;
+}
+
+/**
+ * Extract text content from a tool result message.
+ * @param message - Tool result message
+ * @returns Extracted text
+ */
+function extractToolResultText(message: Context["messages"][0]): string {
+	if (typeof message.content === 'string') {
+		return message.content;
+	}
+	if (Array.isArray(message.content)) {
+		return message.content
+			.filter((block): block is TextContent => block.type === 'text')
+			.map(block => block.text)
+			.join('\n');
+	}
+	return '';
+}
+
+/**
+/**
+ * Collect tool results from the tail of messages.
+ * @param messages - Context messages array
+ * @param invocationSequence - Expected invocation sequence
+ * @returns Object with matched and unmatched tool result replay states
+ */
+function collectTailToolResults(
+	messages: Context["messages"],
+	invocationSequence: number,
+): CollectTailToolResultsResult {
+	const matchedResults: ToolResultReplayState[] = [];
+	const unmatchedResults: UnmatchedToolResult[] = [];
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const msg = messages[i];
+		if (msg.role !== 'toolResult') break;
+		const toolCallId = getMessageToolCallId(msg);
+		if (!toolCallId) continue;
+		const expectedSequence = getToolCallReplaySequence(invocationSequence, toolCallId);
+		const resultText = extractToolResultText(msg);
+		if (expectedSequence === null) {
+			// No replay state match - this is an unmatched/stale result
+			unmatchedResults.push({ toolCallId, result: resultText });
+			continue;
+		}
+		matchedResults.push({
+			toolCallId,
+			expectedSequence,
+			invocationSequence,
+			result: resultText,
+			validated: false,
+		});
+	}
+	return {
+		matchedResults: matchedResults.reverse(),
+		unmatchedResults: unmatchedResults.reverse(),
+	};
+}
+
+/**
+ * Validate a tool result against replay state.
+ * @param result - Tool result replay state
+ * @param invocationSequence - Current invocation sequence
+ * @returns Validation result
+ */
+function validateTailToolResults(
+	result: ToolResultReplayState,
+	invocationSequence: number,
+): ToolResultValidationResult {
+	if (result.invocationSequence !== invocationSequence) {
+		return {
+			isValid: false,
+			isMatched: false,
+			error: 'Invocation sequence mismatch',
+			validatedResult: STALE_TOOL_RESULT_ERROR,
+		};
+	}
+	return {
+		isValid: true,
+		isMatched: true,
+		validatedResult: result.result,
+	};
+}
+
+/**
+ * Format tool result for Claude with replay metadata.
+ * @param toolName - Name of the tool
+ * @param result - Result text
+ * @param sequence - Tool call sequence number
+ * @returns Formatted result string
+ */
+function formatToolResultForClaude(toolName: string, result: string, sequence: number): string {
+	return `Tool Result [${toolName} #${sequence}]: ${result}`;
 }
 
 /** Parse a single JSONL line, returning null for incomplete/invalid lines */
@@ -293,51 +548,53 @@ function parseJsonlLine(line: string): unknown | null {
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function buildConversationHistory(messages: Context["messages"], compactedSummary?: string): string {
-	const lines: string[] = [];
+		const lines: string[] = [];
 
-	// Prepend compacted summary if available
-	if (compactedSummary) {
-		lines.push(`[Conversation Summary from Previous Turns]\n${compactedSummary}\n[End Summary]\n`);
-	}
+		// Prepend compacted summary if available
+		if (compactedSummary) {
+			lines.push(`[Conversation Summary from Previous Turns]\n${compactedSummary}\n[End Summary]\n`);
+		}
 
-	for (const msg of messages) {
-		if (msg.role === "user") {
-			const text = typeof msg.content === "string" ? msg.content : extractTextFromContent(msg.content);
-			lines.push(`User: ${text}`);
-		} else if (msg.role === "assistant") {
-			// Check if this message contains tool calls
-			const textContent = Array.isArray(msg.content)
-				? msg.content
-					.filter((c) => c.type === "text")
-					.map((c) => c.text)
-					.join(" ")
-				: "";
+		for (const msg of messages) {
+			if (msg.role === "user") {
+				const text = typeof msg.content === "string" ? msg.content : extractTextFromContent(msg.content);
+				lines.push(`User: ${text}`);
+			} else if (msg.role === "assistant") {
+				// Check if this message contains tool calls
+				const textContent = Array.isArray(msg.content)
+					? msg.content
+						.filter((c) => c.type === "text")
+						.map((c) => c.text)
+						.join(" ")
+					: "";
 
-			const toolCalls = Array.isArray(msg.content)
-				? msg.content.filter((c) => c.type === "toolCall")
-				: [];
+				const toolCalls = Array.isArray(msg.content)
+					? msg.content.filter((c) => c.type === "toolCall")
+					: [];
 
-			if (toolCalls.length > 0) {
-				for (const toolCall of toolCalls) {
-					if (toolCall.type === "toolCall") {
-						lines.push(`Assistant: [Calling tool: ${toolCall.name}]`);
-						lines.push(`TOOL_CALL_START${JSON.stringify({ name: toolCall.name, arguments: toolCall.arguments })}TOOL_CALL_END`);
+				if (toolCalls.length > 0) {
+					for (const toolCall of toolCalls) {
+						if (toolCall.type === "toolCall") {
+							const toolCallWithMeta = toolCall as ToolCallWithReplayMetadata;
+							const seqInfo = toolCallWithMeta.toolCallSequence !== undefined ? ` #${toolCallWithMeta.toolCallSequence}` : '';
+							lines.push(`Assistant: [Calling tool: ${toolCall.name}${seqInfo} toolCallId=${toolCall.id}]`);
+							lines.push(`TOOL_CALL_START${JSON.stringify({ name: toolCall.name, arguments: toolCall.arguments })}TOOL_CALL_END`);
+						}
 					}
 				}
-			}
 
-			if (textContent.trim()) {
-				lines.push(`Assistant: ${textContent}`);
+				if (textContent.trim()) {
+					lines.push(`Assistant: ${textContent}`);
+				}
+			} else if (msg.role === "toolResult") {
+				const text = Array.isArray(msg.content)
+					? msg.content.filter((c) => c.type === "text").map((c) => c.text).join(" ")
+					: "";
+				lines.push(`Tool Result [${msg.toolName}]: ${text || "(no output)"}`);
 			}
-		} else if (msg.role === "toolResult") {
-			const text = Array.isArray(msg.content)
-				? msg.content.filter((c) => c.type === "text").map((c) => c.text).join(" ")
-				: "";
-			lines.push(`Tool Result [${msg.toolName}]: ${text || "(no output)"}`);
 		}
-	}
 
-	return lines.join("\n\n");
+		return lines.join("\n\n");
 }
 
 /**
@@ -433,50 +690,52 @@ function buildFilteredConversationHistory(messages: Context["messages"], compact
  * Tool results are truncated to first line / 200 chars.
  */
 function buildHistoryFromMessages(messages: Context["messages"][0][]): string {
-	const TOOL_RESULT_TRUNCATE = 200;
-	const lines: string[] = [];
+		const TOOL_RESULT_TRUNCATE = 200;
+		const lines: string[] = [];
 
-	for (const msg of messages) {
-		if (msg.role === "user") {
-			const text = typeof msg.content === "string" ? msg.content : extractTextFromContent(msg.content);
-			lines.push(`User: ${text}`);
-		} else if (msg.role === "assistant") {
-			// Check if this message contains tool calls
-			const textContent = Array.isArray(msg.content)
-				? msg.content
-					.filter((c) => c.type === "text")
-					.map((c) => c.text)
-					.join(" ")
-				: "";
+		for (const msg of messages) {
+			if (msg.role === "user") {
+				const text = typeof msg.content === "string" ? msg.content : extractTextFromContent(msg.content);
+				lines.push(`User: ${text}`);
+			} else if (msg.role === "assistant") {
+				// Check if this message contains tool calls
+				const textContent = Array.isArray(msg.content)
+					? msg.content
+						.filter((c) => c.type === "text")
+						.map((c) => c.text)
+						.join(" ")
+					: "";
 
-			const toolCalls = Array.isArray(msg.content)
-				? msg.content.filter((c) => c.type === "toolCall")
-				: [];
+				const toolCalls = Array.isArray(msg.content)
+					? msg.content.filter((c) => c.type === "toolCall")
+					: [];
 
-			if (toolCalls.length > 0) {
-				for (const toolCall of toolCalls) {
-					if (toolCall.type === "toolCall") {
-						lines.push(`Assistant: [Calling tool: ${toolCall.name}]`);
-						lines.push(`TOOL_CALL_START${JSON.stringify({ name: toolCall.name, arguments: toolCall.arguments })}TOOL_CALL_END`);
+				if (toolCalls.length > 0) {
+					for (const toolCall of toolCalls) {
+						if (toolCall.type === "toolCall") {
+							const toolCallWithMeta = toolCall as ToolCallWithReplayMetadata;
+							const seqInfo = toolCallWithMeta.toolCallSequence !== undefined ? ` #${toolCallWithMeta.toolCallSequence}` : '';
+							lines.push(`Assistant: [Calling tool: ${toolCall.name}${seqInfo} toolCallId=${toolCall.id}]`);
+							lines.push(`TOOL_CALL_START${JSON.stringify({ name: toolCall.name, arguments: toolCall.arguments })}TOOL_CALL_END`);
+						}
 					}
 				}
-			}
 
-			if (textContent.trim()) {
-				lines.push(`Assistant: ${textContent}`);
+				if (textContent.trim()) {
+					lines.push(`Assistant: ${textContent}`);
+				}
+			} else if (msg.role === "toolResult") {
+				const text = Array.isArray(msg.content)
+					? msg.content.filter((c) => c.type === "text").map((c) => c.text).join(" ")
+					: "";
+				// Truncate tool results to first line / 200 chars
+				const truncated = text.length > TOOL_RESULT_TRUNCATE ? text.substring(0, TOOL_RESULT_TRUNCATE) + "..." : text;
+				const firstLine = truncated.split("\n")[0] || "(no output)";
+				lines.push(`Tool Result [${msg.toolName}]: ${firstLine || "(no output)"}`);
 			}
-		} else if (msg.role === "toolResult") {
-			const text = Array.isArray(msg.content)
-				? msg.content.filter((c) => c.type === "text").map((c) => c.text).join(" ")
-				: "";
-			// Truncate tool results to first line / 200 chars
-			const truncated = text.length > TOOL_RESULT_TRUNCATE ? text.substring(0, TOOL_RESULT_TRUNCATE) + "..." : text;
-			const firstLine = truncated.split("\n")[0] || "(no output)";
-			lines.push(`Tool Result [${msg.toolName}]: ${firstLine || "(no output)"}`);
 		}
-	}
 
-	return lines.join("\n\n");
+		return lines.join("\n\n");
 }
 
 /**
@@ -514,6 +773,8 @@ function buildSystemPromptWithTools(basePrompt: string | undefined, tools: Tool[
 	// Tool calling format instruction
 	parts.push("## Tool Calling Format");
 	parts.push("To call a tool, output: TOOL_CALL_START{\"name\": \"toolName\", \"arguments\": {...}}TOOL_CALL_END");
+	parts.push("");
+	parts.push("**Note:** The provider assigns toolCallId automatically. Do not invent or include toolCallId in your output.");
 	parts.push("");
 
 	// List available tools with parameter schemas
@@ -652,6 +913,10 @@ interface ClaudeInvocationResult {
 	toolCallEmitted: boolean;
 	/** Error from Claude (nonzero exit, is_error result) if present. */
 	error?: Error;
+	/** Invocation sequence number for this turn */
+	invocationSequence: number;
+	/** Tool call IDs emitted during this invocation */
+	emittedToolCallIds: string[];
 }
 
 /**
@@ -673,6 +938,11 @@ async function runClaudeInvocation(
 	output: AssistantMessage,
 	options?: SimpleStreamOptions,
 ): Promise<ClaudeInvocationResult> {
+	const invocationSequence = nextInvocationSequence++;
+	const emittedToolCallIds: string[] = [];
+
+	logClaudeCodeProvider('invocation_start', { invocationSequence });
+
 	const invocationArgs = [
 		...baseArgs,
 		sessionMode.kind === "session-id" ? "--session-id" : "--resume",
@@ -768,12 +1038,20 @@ async function runClaudeInvocation(
 					state.toolCallEmitted = true;
 					output.stopReason = "toolUse";
 					const toolCallBlock = event.content_block as { id?: string; name?: string };
-					const toolCall: ToolCall = {
+					const toolCallId = toolCallBlock.id || uuidv4();
+					const toolCallSequence = nextToolCallSequence++;
+					emittedToolCallIds.push(toolCallId);
+					const toolCall: ToolCallWithReplayMetadata = {
 						type: "toolCall",
-						id: toolCallBlock.id || uuidv4(),
+						id: toolCallId,
 						name: toolCallBlock.name || "unknown",
 						arguments: {},
+						toolCallSequence,
+						source: 'pi',
+						invocationSequence,
 					};
+					registerToolCall(invocationSequence, toolCallId, toolCallSequence, toolCall.name, 'pi', toolCall.arguments, true);
+					logClaudeCodeProvider('tool_call_registered', { invocationSequence, toolCallId, toolCallSequence, name: toolCall.name, source: 'pi', argsLength: JSON.stringify(toolCall.arguments).length });
 					output.content.push(toolCall);
 					blockMappings.set(claudeIndex, { claudeIndex, piIndex, type: "tool_use", toolCall, partialJson: "" });
 					stream.push({ type: "toolcall_start", contentIndex: piIndex, partial: output });
@@ -868,29 +1146,37 @@ async function runClaudeInvocation(
 								if (endIndex !== -1) {
 									// Found end marker - combine accumulated JSON with final pending slice before parsing
 									const jsonText = (streamingState.jsonAccumulator || '') + streamingState.pending.slice(0, endIndex);
-									const parsedToolCall = tryParseToolCall(jsonText);					if (parsedToolCall) {
-						// Complete valid marker parsed - now emit the tool call atomically
-						const toolPiIndex = output.content.length;
-						streamingState.toolCallPiIndex = toolPiIndex;
-						streamingState.toolCall = {
-							type: "toolCall",
-							id: uuidv4(),
-							name: parsedToolCall.name,
-							arguments: parsedToolCall.arguments ?? {},
-						};
-						output.content.push(streamingState.toolCall);
-						// Emit toolcall_start, toolcall_delta (json), and toolcall_end in quick succession
-						stream.push({ type: "toolcall_start", contentIndex: toolPiIndex, partial: output });
-						if (jsonText.trim()) {
-							stream.push({ type: "toolcall_delta", contentIndex: toolPiIndex, delta: jsonText, partial: output });
-						}
-						stream.push({ type: "toolcall_end", contentIndex: toolPiIndex, toolCall: streamingState.toolCall, partial: output });
-						streamingState.toolcallStartEmitted = true;
-						streamingState.emittedAny = true;
-						state.emittedText = true; // Tool call content counts as emitted content
-						state.toolCallEmitted = true;
-						// Set stopReason to toolUse - a tool call was detected
-						output.stopReason = "toolUse";
+									const parsedToolCall = tryParseToolCall(jsonText);								if (parsedToolCall) {
+									// Complete valid marker parsed - now emit the tool call atomically
+									const toolPiIndex = output.content.length;
+									const toolCallId = uuidv4();
+									const toolCallSequence = nextToolCallSequence++;
+									emittedToolCallIds.push(toolCallId);
+									streamingState.toolCallPiIndex = toolPiIndex;
+									streamingState.toolCall = {
+										type: "toolCall",
+										id: toolCallId,
+										name: parsedToolCall.name,
+										arguments: parsedToolCall.arguments ?? {},
+										toolCallSequence,
+										source: 'claude',
+										invocationSequence,
+									};
+									registerToolCall(invocationSequence, toolCallId, toolCallSequence, parsedToolCall.name, 'claude', parsedToolCall.arguments ?? {}, true);
+								logClaudeCodeProvider('tool_call_registered', { invocationSequence, toolCallId, toolCallSequence, name: parsedToolCall.name, source: 'claude', argsLength: JSON.stringify(parsedToolCall.arguments ?? {}).length });
+									output.content.push(streamingState.toolCall);
+									// Emit toolcall_start, toolcall_delta (json), and toolcall_end in quick succession
+									stream.push({ type: "toolcall_start", contentIndex: toolPiIndex, partial: output });
+									if (jsonText.trim()) {
+										stream.push({ type: "toolcall_delta", contentIndex: toolPiIndex, delta: jsonText, partial: output });
+									}
+									stream.push({ type: "toolcall_end", contentIndex: toolPiIndex, toolCall: streamingState.toolCall, partial: output });
+									streamingState.toolcallStartEmitted = true;
+									streamingState.emittedAny = true;
+									state.emittedText = true; // Tool call content counts as emitted content
+									state.toolCallEmitted = true;
+									// Set stopReason to toolUse - a tool call was detected
+									output.stopReason = "toolUse";
 									} else {
 										// Parse failed - emit as visible text (fallback)
 										const fullSpan = TOOL_CALL_START_MARKER + jsonText + TOOL_CALL_END_MARKER;
@@ -944,6 +1230,7 @@ async function runClaudeInvocation(
 								// Keep last valid arguments or empty object
 							}
 							stream.push({ type: "toolcall_delta", contentIndex: mapping.piIndex, delta: delta.partial_json, partial: output });
+							logClaudeCodeProvider('toolcall_delta', { invocationSequence, toolCallId: mapping.toolCall?.id || 'unknown', deltaLength: delta.partial_json.length });
 						}
 					}
 					return;
@@ -1029,6 +1316,14 @@ async function runClaudeInvocation(
 
 			if (isResultEvent(data)) {
 				state.resultEvent = data;
+				logClaudeCodeProvider('claude_result_event', { 
+					invocationSequence, 
+					hasResult: !!data.result, 
+					resultLength: data.result?.length || 0, 
+					hasUsage: !!(data.usage || data.modelUsage),
+					stopReason: data.stop_reason,
+					hasError: !!(data.is_error || data.error || (Array.isArray(data.errors) && data.errors.length > 0))
+				});
 
 				const usage = data.usage || data.modelUsage;
 				if (usage) {
@@ -1050,16 +1345,16 @@ async function runClaudeInvocation(
 					if (state.toolCallEmitted) {
 						output.stopReason = "toolUse";
 					} else {
-						output.stopReason = data.stop_reason === "end_turn" ? "stop" : data.stop_reason === "max_tokens" ? "length" : "stop";
-					}
-				}
+						output.stopReason = data.stop_reason === "end_turn" ? "stop" : data.stop_reason === "max_tokens" ? "length" : "stop";				}
+			}
 
-				if (data.is_error || data.error || (Array.isArray(data.errors) && data.errors.length > 0)) {
-					const errorDetails = [data.error, ...(data.errors ?? []), data.is_error ? data.result : undefined]
-						.filter((error): error is string => typeof error === "string" && error.length > 0)
-						.join("\n");
-					invocationError = new Error(`Claude Code error: ${errorDetails || "Unknown error"}`);
-					// Don't reject here - caller needs to inspect emittedAny/emittedText state
+			if (data.is_error || data.error || (Array.isArray(data.errors) && data.errors.length > 0)) {
+				const errorDetails = [data.error, ...(data.errors ?? []), data.is_error ? data.result : undefined]
+					.filter((error): error is string => typeof error === "string" && error.length > 0)
+					.join("\n");
+				invocationError = new Error(`Claude Code error: ${errorDetails || "Unknown error"}`);
+				logClaudeCodeProvider('invocation_error', { invocationSequence, error: invocationError.message, errorLength: invocationError.message.length });
+				// Don't reject here - caller needs to inspect emittedAny/emittedText state
 				}
 			}
 		};
@@ -1105,9 +1400,11 @@ async function runClaudeInvocation(
 				if (invocationError) {
 					if (stderrText) {
 						invocationError = new Error(`${invocationError.message}\n${stderrText}`);
+						logClaudeCodeProvider('invocation_error', { invocationSequence, error: invocationError.message, errorLength: invocationError.message.length, hasStderr: true });
 					}
 				} else {
 					invocationError = new Error(`Claude Code error (exit ${code}): ${stderrText || `exit code ${code}`}`);
+					logClaudeCodeProvider('invocation_error', { invocationSequence, error: invocationError.message, exitCode: code, hasStderr: !!stderrText });
 				}
 			}
 
@@ -1131,6 +1428,16 @@ async function runClaudeInvocation(
 		}
 	});
 
+	logClaudeCodeProvider('invocation_close', { 
+		invocationSequence, 
+		success: !invocationError, 
+		hasResultEvent: !!state.resultEvent, 
+		hasError: !!invocationError,
+		emittedText: state.emittedText,
+		emittedAny: state.emittedAny,
+		toolCallEmitted: state.toolCallEmitted,
+		emittedToolCallIdsCount: emittedToolCallIds.length
+	});
 	return {
 		success: !invocationError,
 		resultEvent: state.resultEvent,
@@ -1139,6 +1446,8 @@ async function runClaudeInvocation(
 		emittedAny: state.emittedAny,
 		toolCallEmitted: state.toolCallEmitted,
 		error: invocationError,
+		invocationSequence,
+		emittedToolCallIds,
 	};
 }
 
@@ -1177,26 +1486,54 @@ function streamClaudeCode(
 			const isToolResult = lastMessage && lastMessage.role === "toolResult";
 
 			if (isToolResult) {
-				// Collect consecutive toolResult messages from the end
-				const toolResults: string[] = [];
-				for (let i = context.messages.length - 1; i >= 0; i--) {
-					const msg = context.messages[i];
-					if (msg.role !== "toolResult") break;
-					const text = Array.isArray(msg.content)
-						? msg.content.filter((c) => c.type === "text").map((c) => c.text).join(" ")
-						: "";
-					toolResults.unshift(`Tool Result [${msg.toolName}]: ${text || "(no output)"}`);
-				}
-				inputText = toolResults.join("\n\n");
+				// Collect and validate tool results from the tail of messages
+				// Use previous invocation sequence (decremented) since this is responding to prior turn's tool calls
+				const previousInvocationSequence = nextInvocationSequence - 1;
+				const tailResults = collectTailToolResults(context.messages, previousInvocationSequence);
+				
+				// Reject unmatched/stale tool results - these indicate invocation sequence corruption
+				if (tailResults.unmatchedResults.length > 0) {
+					const unmatchedIds = tailResults.unmatchedResults.map(r => r.toolCallId).join(', ');
+					throw new Error(`[Error: Unmatched tool results detected - invocation sequence mismatch. Unmatched toolCallIds: ${unmatchedIds}]`);
+			}
+
+			// Validate each matched tool result
+				const validatedToolResults: string[] = [];
+				for (const result of tailResults.matchedResults) {
+					const validation = validateTailToolResults(result, previousInvocationSequence);
+					if (!validation.isValid) {
+						// Reject stale tool results
+						throw new Error(STALE_TOOL_RESULT_ERROR);
+					}
+					// Look up tool name from replay state
+					const replayMap = toolCallReplayStates.get(previousInvocationSequence);
+					const replayState = replayMap?.get(result.toolCallId);
+					if (!replayState) {
+						// This should not happen after the unmatched check above, but handle defensively
+						logClaudeCodeProvider('unmatched_tool_result', { invocationSequence: previousInvocationSequence, toolCallId: result.toolCallId });
+						throw new Error(`[Error: Tool result has no replay state - toolCallId: ${result.toolCallId}]`);
+					}
+					const toolName = replayState.name;
+					// Format valid result with sequence number
+					const formattedResult = formatToolResultForClaude(toolName, result.result, result.expectedSequence);				validatedToolResults.push(formattedResult);
+			}
+
+			// Reject if no matched results but tool result messages exist
+				if (validatedToolResults.length === 0 && tailResults.matchedResults.length === 0) {				throw new Error('[Error: No valid tool results found - all tool results were unmatched or invalid]');
+		}
+
+		inputText = validatedToolResults.join("\n\n");
 			} else {
 				// Send the latest user message
-				const latestUserMessage = context.messages.filter((m) => m.role === "user").pop();			inputText =
+				const latestUserMessage = context.messages.filter((m) => m.role === "user").pop();
+				inputText =
 				latestUserMessage && typeof latestUserMessage.content === "string"
 					? latestUserMessage.content
 					: latestUserMessage && Array.isArray(latestUserMessage.content)
 						? latestUserMessage.content.filter((c) => c.type === "text").map((c) => c.text).join(" ")
 						: "";
 			}
+			logClaudeCodeProvider('input_selected', { isToolResult, inputLength: inputText.length, firstNChars: inputText.slice(0, 50) });
 
 			// Inject compaction summary into the first user turn after compaction
 			const compactionState = compactionStates.get(getConversationIdentity(context));
@@ -1204,8 +1541,8 @@ function streamClaudeCode(
 				inputText = `${compactionState.summary}\n\n${inputText}`;
 				compactionState.injected = true;
 				compactionStates.set(getConversationIdentity(context), compactionState);
+				logClaudeCodeProvider('compaction_injection', { summaryLength: compactionState.summary.length });
 			}
-
 			// If the message is a slash command (starts with / followed by a word character), forward it to Claude Code CLI
 			// Avoid matching absolute paths like /tmp/foo or /Users/... by requiring the command to be followed by whitespace, colon, or end
 			if (/^\/[A-Za-z][\w:-]*(?:\s|$)/.test(inputText)) {
@@ -1213,6 +1550,7 @@ function streamClaudeCode(
 				// Use generation-based session ID if compaction has occurred
 				const generation = getCompactionGeneration(context);
 				const sessionId = generateSessionUUID(conversationIdentity, process.cwd(), generation);
+				logClaudeCodeProvider('session_id_generated', { sessionId, conversationIdentity: conversationIdentity.slice(0, 30), generation, mode: 'slash_command' });
 				const releaseMutex = await acquireSessionMutex(sessionId);
 
 				try {
@@ -1249,6 +1587,7 @@ function streamClaudeCode(
 						const isAlreadyInUse = errorMsg.includes("already in use");
 
 						if ((isNoConversation || isAlreadyInUse) && !firstAttemptResult.emittedAny) {
+							logClaudeCodeProvider('retry_decision', { mode: 'slash_command', retrying: !firstAttemptResult.emittedAny, reason: isNoConversation ? 'no_conversation' : 'already_in_use', emittedAny: firstAttemptResult.emittedAny });
 							lastAttemptResult = await runClaudeInvocation(
 								slashCommandArgs,
 								{ kind: "session-id", sessionId },
@@ -1296,6 +1635,7 @@ function streamClaudeCode(
 			const generation = getCompactionGeneration(context);
 			const sessionId = generateSessionUUID(conversationIdentity, process.cwd(), generation);
 
+			logClaudeCodeProvider('session_id_generated', { sessionId, conversationIdentity: conversationIdentity.slice(0, 30), generation, mode: 'normal' });
 			// Acquire mutex to prevent concurrent session ID conflicts
 			const releaseMutex = await acquireSessionMutex(sessionId);
 
@@ -1336,6 +1676,7 @@ function streamClaudeCode(
 					const isAlreadyInUse = errorMsg.includes("already in use");
 
 					if (isNoConversation || isAlreadyInUse) {
+					logClaudeCodeProvider('retry_decision', { mode: 'normal', retrying: !firstAttemptResult.emittedAny, reason: isNoConversation ? 'no_conversation' : 'already_in_use', emittedAny: firstAttemptResult.emittedAny });
 						// --resume failed because session doesn't exist (or is locked).
 						// Only retry with --session-id if the first attempt emitted NO Pi events.
 						// If anything was emitted (start, partial text), retrying would duplicate output.
@@ -1395,6 +1736,7 @@ function streamClaudeCode(
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
+			logClaudeCodeProvider('catch_error', { error: error instanceof Error ? error.message : JSON.stringify(error), isErrorInstance: error instanceof Error, aborted: options?.signal?.aborted });
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -1409,11 +1751,60 @@ function streamClaudeCode(
  */
 const compactionStates = new Map<string, CompactionState>();
 
-/**
- * Compact the conversation by asking Claude to summarize it.
- * Called when user types /compact with Claude Code model active.
- */
+/** Next invocation sequence number (incremented per turn) */
+let nextInvocationSequence = 0;
+/** Next tool call sequence number (incremented per tool call) */
+let nextToolCallSequence = 0;
+/** Replay states for active invocations, keyed by invocation sequence */
+const toolCallReplayStates = new Map<number, Map<string, ToolCallReplayState>>();
+/** Active Pi session ID for tracking replay context */
+let activePiSessionId: string | null = null;
 
+/**
+ * Get Pi session ID from extension context.
+ * @param ctx - Extension context with session manager
+ * @returns Pi session ID or null if not available
+ */
+function getPiSessionId(ctx: ExtensionContext): string | null {
+	return ctx.sessionManager?.getSessionId() ?? null;
+}
+
+/**
+ * Observe Pi session changes and clear session-scoped state when session switches.
+ * Tracks the current session ID and detects when it changes ( session replacement).
+ * @param ctx - Extension context
+ * @param reason - Reason for observation (e.g., "agent_start", "cc-compact")
+ */
+function observePiSession(ctx: ExtensionContext, reason: string): void {
+	const prevId = activePiSessionId;
+	const nextId = getPiSessionId(ctx);
+	if (prevId !== nextId) {
+		clearSessionScopedState(reason, prevId, nextId);
+		activePiSessionId = nextId;
+	}
+		logClaudeCodeProvider('session_observed', { reason, prevId: prevId?.slice(0, 30) || null, nextId: nextId?.slice(0, 30) || null, sessionChanged: prevId !== nextId });
+}
+
+/**
+ * Clear session-scoped state when Pi session changes.
+ * Clears compactionStates and toolCallReplayStates, logs session_state_invalidated event.
+ * @param reason - Reason for clearing
+ * @param prevId - Previous session ID
+ * @param nextId - New session ID
+ */
+function clearSessionScopedState(reason: string, prevId: string | null, nextId: string | null): void {
+	const clearedCompactionCount = compactionStates.size;
+	const clearedReplayCount = toolCallReplayStates.size;
+	compactionStates.clear();
+	toolCallReplayStates.clear();
+	logClaudeCodeProvider('session_state_invalidated', {
+		reason,
+		prevSessionId: prevId ? `${prevId.slice(0, 8)}...` : null,
+		nextSessionId: nextId ? `${nextId.slice(0, 8)}...` : null,
+		clearedCompactionStates: clearedCompactionCount,
+		clearedReplayStates: clearedReplayCount,
+	});
+}
 
 /**
  * Get conversation identity from messages array (for use in input handler where we don't have Context).
@@ -1444,6 +1835,7 @@ async function compactConversationWithHistory(
 	conversationHistory: string,
 	conversationIdentity: string,
 	model: Model<Api>,
+	piSessionId?: string,
 ): Promise<string | null> {
 	if (!conversationHistory.trim()) {
 		return null;
@@ -1456,6 +1848,7 @@ ${conversationHistory}
 
 Summary:`;
 
+	logClaudeCodeProvider('compaction_start', { conversationIdentity: conversationIdentity.slice(0, 30), historyLength: conversationHistory.length, promptLength: prompt.length });
 
 	const args = [
 		"-p",
@@ -1503,6 +1896,7 @@ Summary:`;
 						const resetsAt = info.resetsAt ? new Date(info.resetsAt * 1000).toLocaleTimeString() : 'unknown';
 						const reason = info.overageDisabledReason || info.rateLimitType || 'rate limit exceeded';
 						reject(new Error(`Claude API rate limited (${reason}). Resets at ${resetsAt}`));
+						logClaudeCodeProvider('compaction_failure', { reason: 'rate_limit', error: `Claude API rate limited (${reason}). Resets at ${resetsAt}` });
 						return;
 					}
 					// Handle result event (fallback when no assistant content streamed)
@@ -1547,10 +1941,13 @@ Summary:`;
 					summary: summary.trim(),
 					generation: newGeneration,
 					postCompactionSessionId,
+					piSessionId,
 				});
+				logClaudeCodeProvider('compaction_success', { summaryLength: summary.trim().length, newGeneration: newGeneration });
 				resolve(summary.trim());
 			} else {
 				const errorMsg = stderr.trim() || "no stderr output";
+				logClaudeCodeProvider('compaction_failure', { exitCode: code, stderrLength: errorMsg.length, error: errorMsg });
 				reject(new Error(`Claude exited with code ${code}: ${errorMsg}`));
 			}
 		});
@@ -1558,11 +1955,19 @@ Summary:`;
 }
 
 export default function (pi: ExtensionAPI) {
+	// Observe Pi session changes on agent_start to clear stale compaction state
+	pi.on("agent_start", (_event, ctx) => {
+		observePiSession(ctx, "agent_start");
+	});
+
 	// Register /cc-compact as a proper command so it shows in autocomplete dropdown
 	pi.registerCommand("cc-compact", {
 		description: "Compact Claude Code conversation context",
 		async handler(_args, ctx) {
 			try {
+				// Observe Pi session changes and clear state if session switched
+				observePiSession(ctx, "cc-compact");
+
 				// Get conversation messages from session branch
 				const entries = ctx.sessionManager.getBranch();
 				
@@ -1579,11 +1984,10 @@ export default function (pi: ExtensionAPI) {
 				if (messages.length === 0) {
 					ctx.ui.notify(`Found ${entries.length} entries but 0 messages. Entries: ${entries.map(e => e.type).join(",")}`, "error");
 					return;
-				}
-
-				// Get system prompt from context
+				}				// Get system prompt from context
 				const systemPrompt = ctx.getSystemPrompt();
-				const convIdentity = getConversationIdentityFromMessages(messages, systemPrompt);			const previousSummary = compactionStates.get(convIdentity)?.summary || undefined;
+				const convIdentity = getConversationIdentityFromMessages(messages, systemPrompt);
+				const previousSummary = compactionStates.get(convIdentity)?.summary || undefined;
 
 			// Build filtered conversation history for compaction
 			const conversationHistory = buildFilteredConversationHistory(messages, previousSummary);
@@ -1610,7 +2014,7 @@ export default function (pi: ExtensionAPI) {
 				pi.events.emit("thinking-status:override", { label: "Claude Code compacting" });
 				try {
 				// Compact the conversation
-				await compactConversationWithHistory(conversationHistory, convIdentity, model);
+				await compactConversationWithHistory(conversationHistory, convIdentity, model, getPiSessionId(ctx) ?? undefined);
 
 				// Compaction succeeded - state is stored in compactConversationWithHistory
 				ctx.ui.notify(`Conversation compacted successfully`, "info");
@@ -1680,4 +2084,5 @@ export default function (pi: ExtensionAPI) {
 		],
 		streamSimple: streamClaudeCode as unknown as ProviderConfig["streamSimple"],
 	});
+	logClaudeCodeProvider('provider_registered', { provider: 'claude-code', modelsCount: 4 });
 }
