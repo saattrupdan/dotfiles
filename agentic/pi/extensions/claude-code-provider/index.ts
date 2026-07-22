@@ -75,6 +75,8 @@ interface CompactionState {
 	postCompactionSessionId?: string;
 	/** Whether the summary has been injected into the first post-compaction turn */
 	injected?: boolean;
+	/** Pi session ID that created this compaction - used for invalidation on session switch */
+	piSessionId?: string;
 }
 const TOOL_CALL_START_MARKER = "TOOL_CALL_START";
 const TOOL_CALL_END_MARKER = "TOOL_CALL_END";
@@ -1701,10 +1703,43 @@ const toolCallReplayStates = new Map<number, Map<string, ToolCallReplayState>>()
 let activePiSessionId: string | null = null;
 
 /**
- * Compact the conversation by asking Claude to summarize it.
- * Called when user types /compact with Claude Code model active.
+ * Get Pi session ID from extension context.
+ * @param ctx - Extension context with session manager
+ * @returns Pi session ID or null if not available
  */
+function getPiSessionId(ctx: Parameters<ExtensionAPI["on"]>[1]): string | null {
+	return ctx.sessionManager?.getSessionId() ?? null;
+}
 
+/**
+ * Observe Pi session changes and clear session-scoped state when session switches.
+ * Tracks the current session ID and detects when it changes ( session replacement).
+ * @param ctx - Extension context
+ * @param reason - Reason for observation (e.g., "agent_start", "cc-compact")
+ */
+function observePiSession(ctx: Parameters<ExtensionAPI["on"]>[1], reason: string): void {
+	const prevId = activePiSessionId;
+	const nextId = getPiSessionId(ctx);
+	if (prevId !== nextId) {
+		clearSessionScopedState(reason, prevId, nextId);
+		activePiSessionId = nextId;
+	}
+}
+
+/**
+ * Clear session-scoped state when Pi session changes.
+ * Clears compactionStates and toolCallReplayStates, logs session_state_invalidated event.
+ * @param reason - Reason for clearing
+ * @param prevId - Previous session ID
+ * @param nextId - New session ID
+ */
+function clearSessionScopedState(reason: string, prevId: string | null, nextId: string | null): void {
+	const clearedCompactionCount = compactionStates.size;
+	const clearedReplayCount = toolCallReplayStates.size;
+	compactionStates.clear();
+	toolCallReplayStates.clear();
+	console.log(`[claude-code-provider] session_state_invalidated: reason=${reason}, prevSessionId=${prevId}, nextSessionId=${nextId}, clearedCompactionStates=${clearedCompactionCount}, clearedReplayStates=${clearedReplayCount}`);
+}
 
 /**
  * Get conversation identity from messages array (for use in input handler where we don't have Context).
@@ -1735,6 +1770,7 @@ async function compactConversationWithHistory(
 	conversationHistory: string,
 	conversationIdentity: string,
 	model: Model<Api>,
+	piSessionId?: string,
 ): Promise<string | null> {
 	if (!conversationHistory.trim()) {
 		return null;
@@ -1838,6 +1874,7 @@ Summary:`;
 					summary: summary.trim(),
 					generation: newGeneration,
 					postCompactionSessionId,
+					piSessionId,
 				});
 				resolve(summary.trim());
 			} else {
@@ -1849,11 +1886,19 @@ Summary:`;
 }
 
 export default function (pi: ExtensionAPI) {
+	// Observe Pi session changes on agent_start to clear stale compaction state
+	pi.on("agent_start", (_event, ctx) => {
+		observePiSession(ctx, "agent_start");
+	});
+
 	// Register /cc-compact as a proper command so it shows in autocomplete dropdown
 	pi.registerCommand("cc-compact", {
 		description: "Compact Claude Code conversation context",
 		async handler(_args, ctx) {
 			try {
+				// Observe Pi session changes and clear state if session switched
+				observePiSession(ctx, "cc-compact");
+
 				// Get conversation messages from session branch
 				const entries = ctx.sessionManager.getBranch();
 				
@@ -1901,7 +1946,7 @@ export default function (pi: ExtensionAPI) {
 				pi.events.emit("thinking-status:override", { label: "Claude Code compacting" });
 				try {
 				// Compact the conversation
-				await compactConversationWithHistory(conversationHistory, convIdentity, model);
+				await compactConversationWithHistory(conversationHistory, convIdentity, model, getPiSessionId(ctx) ?? undefined);
 
 				// Compaction succeeded - state is stored in compactConversationWithHistory
 				ctx.ui.notify(`Conversation compacted successfully`, "info");
@@ -1920,6 +1965,11 @@ export default function (pi: ExtensionAPI) {
 				}
 			}
 		},
+	});
+
+	// Observe Pi session changes on agent_start to clear session-scoped state
+	pi.on("agent_start", (_event, ctx) => {
+		observePiSession(ctx, "agent_start");
 	});
 
 	pi.registerProvider("claude-code", {
