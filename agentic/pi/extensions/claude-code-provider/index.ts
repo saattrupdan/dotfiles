@@ -347,6 +347,20 @@ interface ToolResultValidationResult {
 	validatedResult: string;
 }
 
+interface UnmatchedToolResult {
+	/** Tool call ID from the tool result message */
+	toolCallId: string;
+	/** Result text content */
+	result: string;
+}
+
+interface CollectTailToolResultsResult {
+	/** Tool results that matched a replay state */
+	matchedResults: ToolResultReplayState[];
+	/** Tool results with no matching replay state (stale/orphaned) */
+	unmatchedResults: UnmatchedToolResult[];
+}
+
 /**
  * Log debug message if debug mode is enabled.
  * @param message - Message to log
@@ -438,32 +452,42 @@ function extractToolResultText(message: Context["messages"][0]): string {
 }
 
 /**
+/**
  * Collect tool results from the tail of messages.
  * @param messages - Context messages array
  * @param invocationSequence - Expected invocation sequence
- * @returns Array of tool result replay states
+ * @returns Object with matched and unmatched tool result replay states
  */
 function collectTailToolResults(
 	messages: Context["messages"],
 	invocationSequence: number,
-): ToolResultReplayState[] {
-	const results: ToolResultReplayState[] = [];
+): CollectTailToolResultsResult {
+	const matchedResults: ToolResultReplayState[] = [];
+	const unmatchedResults: UnmatchedToolResult[] = [];
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i];
 		if (msg.role !== 'toolResult') break;
 		const toolCallId = getMessageToolCallId(msg);
 		if (!toolCallId) continue;
 		const expectedSequence = getToolCallReplaySequence(invocationSequence, toolCallId);
-		if (expectedSequence === null) continue;
-		results.push({
+		const resultText = extractToolResultText(msg);
+		if (expectedSequence === null) {
+			// No replay state match - this is an unmatched/stale result
+			unmatchedResults.push({ toolCallId, result: resultText });
+			continue;
+		}
+		matchedResults.push({
 			toolCallId,
 			expectedSequence,
 			invocationSequence,
-			result: extractToolResultText(msg),
+			result: resultText,
 			validated: false,
 		});
 	}
-	return results.reverse();
+	return {
+		matchedResults: matchedResults.reverse(),
+		unmatchedResults: unmatchedResults.reverse(),
+	};
 }
 
 /**
@@ -1467,26 +1491,38 @@ function streamClaudeCode(
 				const previousInvocationSequence = nextInvocationSequence - 1;
 				const tailResults = collectTailToolResults(context.messages, previousInvocationSequence);
 				
-				// Validate each tool result
+				// Reject unmatched/stale tool results - these indicate invocation sequence corruption
+				if (tailResults.unmatchedResults.length > 0) {
+					const unmatchedIds = tailResults.unmatchedResults.map(r => r.toolCallId).join(', ');
+					throw new Error(`[Error: Unmatched tool results detected - invocation sequence mismatch. Unmatched toolCallIds: ${unmatchedIds}]`);
+			}
+
+			// Validate each matched tool result
 				const validatedToolResults: string[] = [];
-				for (const result of tailResults) {
+				for (const result of tailResults.matchedResults) {
 					const validation = validateTailToolResults(result, previousInvocationSequence);
 					if (!validation.isValid) {
 						// Reject stale tool results
 						throw new Error(STALE_TOOL_RESULT_ERROR);
-				}
-				// Look up tool name from replay state
-				const replayMap = toolCallReplayStates.get(previousInvocationSequence);
-				const replayState = replayMap?.get(result.toolCallId);
-				if (!replayState) {
-					logClaudeCodeProvider('unmatched_tool_result', { invocationSequence: previousInvocationSequence, toolCallId: result.toolCallId });
-				}
-				const toolName = replayState?.name || 'unknown';
+					}
+					// Look up tool name from replay state
+					const replayMap = toolCallReplayStates.get(previousInvocationSequence);
+					const replayState = replayMap?.get(result.toolCallId);
+					if (!replayState) {
+						// This should not happen after the unmatched check above, but handle defensively
+						logClaudeCodeProvider('unmatched_tool_result', { invocationSequence: previousInvocationSequence, toolCallId: result.toolCallId });
+						throw new Error(`[Error: Tool result has no replay state - toolCallId: ${result.toolCallId}]`);
+					}
+					const toolName = replayState.name;
 					// Format valid result with sequence number
-					const formattedResult = formatToolResultForClaude(toolName, result.result, result.expectedSequence);
-					validatedToolResults.push(formattedResult);
-				}
-				inputText = validatedToolResults.join("\n\n");
+					const formattedResult = formatToolResultForClaude(toolName, result.result, result.expectedSequence);				validatedToolResults.push(formattedResult);
+			}
+
+			// Reject if no matched results but tool result messages exist
+				if (validatedToolResults.length === 0 && tailResults.matchedResults.length === 0) {				throw new Error('[Error: No valid tool results found - all tool results were unmatched or invalid]');
+		}
+
+		inputText = validatedToolResults.join("\n\n");
 			} else {
 				// Send the latest user message
 				const latestUserMessage = context.messages.filter((m) => m.role === "user").pop();
