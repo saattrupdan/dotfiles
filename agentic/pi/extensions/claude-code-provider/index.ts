@@ -829,6 +829,10 @@ async function runClaudeInvocation(
 									}
 									// Remove up to and including start marker, switch mode
 									streamingState.pending = streamingState.pending.slice(markerIndex + TOOL_CALL_START_MARKER.length);
+									// Handle doubled START markers - skip duplicate to prevent it being accumulated as JSON
+									if (streamingState.pending.startsWith(TOOL_CALL_START_MARKER)) {
+										streamingState.pending = streamingState.pending.slice(TOOL_CALL_START_MARKER.length);
+									}
 									streamingState.mode = 'collectingJson';
 									streamingState.jsonAccumulator = '';
 									streamingState.toolcallStartEmitted = false;
@@ -952,6 +956,8 @@ async function runClaudeInvocation(
 						const streamingState = textBlockStates.get(event.index);
 						if (streamingState) {
 							if (streamingState.mode === 'text') {
+								// Suppress flush if tool call already emitted - prevents mixed content
+								if (state.toolCallEmitted) return;
 								// Flush any remaining pending as visible text
 								if (streamingState.pending.length > 0) {
 									if (!streamingState.textBlockOpen) {
@@ -976,6 +982,8 @@ async function runClaudeInvocation(
 								}
 							} else {
 								// collectingJson mode with no end marker (truncated/aborted)
+								// Suppress flush if tool call already emitted - prevents mixed content
+								if (state.toolCallEmitted) return;
 								// Truncated tool calls should NOT become executable - fall back to text
 								// toolcall_start was never emitted (we defer until complete marker), so no orphan possible
 								const bufferedJson = streamingState.jsonAccumulator || '';
