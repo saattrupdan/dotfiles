@@ -1,4 +1,13 @@
 #=====================================
+# Resource limits
+#=====================================
+
+# Raise the open-file soft limit. macOS defaults to 256 (launchctl limit maxfiles), which
+# async zsh plugins can slowly exhaust over a long-lived shell, causing "too many open
+# files". The hard limit is unlimited, so this is safe.
+ulimit -n 8192
+
+#=====================================
 # Load external ZSH plugins
 #=====================================
 
@@ -23,17 +32,21 @@ source ~/znap-plugins/znap/znap.zsh  # Start Znap
 # tab. The commit below loads cleanly and has the later completion-widget/fd fixes, so
 # don't move it to an older one. To bump it deliberately: cd into the repo, `git pull`,
 # test, then update this hash. The rev-parse guard re-pins if `znap pull` ever moves it.
-_autocomplete_commit=20f6c34f20270084b21211428afb6d2534aae8e9
-[[ -r ~/znap-plugins/marlonrichert/zsh-autocomplete ]] ||
-  znap clone marlonrichert/zsh-autocomplete
-[[ $(git -C ~/znap-plugins/marlonrichert/zsh-autocomplete rev-parse HEAD 2>/dev/null) == $_autocomplete_commit ]] ||
-  git -C ~/znap-plugins/marlonrichert/zsh-autocomplete checkout -q $_autocomplete_commit 2>/dev/null
-unset _autocomplete_commit
-znap source zsh-autocomplete
-zstyle ':autocomplete:*' append-semicolon no
-bindkey -M menuselect '\r' .accept-line
-bindkey -a 'j' down-line-or-search
-bindkey -a 'k' up-line-or-search
+# DISABLED 2026-07-24: zsh-autocomplete's async workers leak pipe fds over long-lived
+# shells, eventually hitting the 256 soft maxfiles limit ("cannot duplicate fd 1: too many
+# open files"). Standard compinit (see the guard further down) takes over completion when
+# this is off. To re-enable, uncomment this block.
+# _autocomplete_commit=20f6c34f20270084b21211428afb6d2534aae8e9
+# [[ -r ~/znap-plugins/marlonrichert/zsh-autocomplete ]] ||
+#   znap clone marlonrichert/zsh-autocomplete
+# [[ $(git -C ~/znap-plugins/marlonrichert/zsh-autocomplete rev-parse HEAD 2>/dev/null) == $_autocomplete_commit ]] ||
+#   git -C ~/znap-plugins/marlonrichert/zsh-autocomplete checkout -q $_autocomplete_commit 2>/dev/null
+# unset _autocomplete_commit
+# znap source zsh-autocomplete
+# zstyle ':autocomplete:*' append-semicolon no
+# bindkey -M menuselect '\r' .accept-line
+# bindkey -a 'j' down-line-or-search
+# bindkey -a 'k' up-line-or-search
 
 # Another autocomplete plugin
 [[ -r ~/znap-plugins/zsh-users/zsh-autosuggestions ]] ||
@@ -108,7 +121,7 @@ PROMPT+='%F{154}%2~$ %f'
 # in iTerm2 Settings → Profiles → [profile] → General → Title.
 set_tab_title() {
   local title
-  
+
   # If connected via SSH, show the remote host name (e.g., "sparkie")
   if [ -n "$SSH_CONNECTION" ] || [ -n "$SSH_CLIENT" ]; then
     # On the remote machine, hostname -s gives the short host name
@@ -117,7 +130,7 @@ set_tab_title() {
     # Local session: show only current directory name (basename)
     title=$(basename "$PWD")
   fi
-  
+
   # Set tab title using combined icon+window title sequence
   echo -ne "\033]0;$title\007"
 }
