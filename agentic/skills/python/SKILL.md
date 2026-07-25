@@ -52,8 +52,6 @@ autoload:
 - Use `uv add <package>` to add packages to the project, do not just add them manually
   to `pyproject.toml`. Add development dependencies with `uv add --group=dev <package>`
 - Use the `tree -a --gitignore -I .git .` command to see the directory structure
-- Order functions in order of computation order, so that main functions are at the top
-  and all helper functions used are always beneath them.
 
 ### Code Quality
 
@@ -76,6 +74,8 @@ autoload:
 - All imports should happen at the top of each file. The only excuse for not doing this
   is if the import would cause a circular import, in which case this should be stated in
   a comment next to the import statement
+- Order functions in order of computation order, so that main functions are at the top
+  and all helper functions used are always beneath them.
 - Never use the old %-style string formatting. Use f-strings instead
 - Never use `print` statements - use a logger instead
 - Use `pathlib.Path` objects over strings for file paths

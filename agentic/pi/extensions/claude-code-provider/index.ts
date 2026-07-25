@@ -163,21 +163,21 @@ const sessionMutexes = new Map<string, Promise<void>[]>();
  */
 async function acquireSessionMutex(sessionId: string): Promise<() => void> {
 	const queue = sessionMutexes.get(sessionId) || [];
-	
+
 	// Create a promise that resolves when it's this caller's turn
 	let release: () => void = () => {};
 	const waitPromise = new Promise<void>((resolve) => {
 		release = resolve;
 	});
-	
+
 	queue.push(waitPromise);
 	sessionMutexes.set(sessionId, queue);
-	
+
 	// Wait for all previous operations to complete
 	if (queue.length > 1) {
 		await queue[queue.length - 2];
 	}
-	
+
 	// Return release function
 	return () => {
 		const currentQueue = sessionMutexes.get(sessionId) || [];
@@ -800,13 +800,13 @@ function extractTextFromContent(
 	if (typeof content === "string") {
 		return content;
 	}
-	
+
 	return content
 		.map((item) => {
 			if (typeof item === "string") {
 				return item;
 			}
-			
+
 			if ("type" in item) {
 				switch (item.type) {
 					case "text":
@@ -821,7 +821,7 @@ function extractTextFromContent(
 						return "";
 				}
 			}
-			
+
 			return "";
 		})
 		.join("");
@@ -842,13 +842,13 @@ function selectModelUsage(
 	if (isClaudeCodeUsage(usage)) {
 		return usage;
 	}
-	
+
 	// Try exact model match, then fallback to first available
 	const modelUsage = usage[modelId];
 	if (modelUsage) {
 		return modelUsage;
 	}
-	
+
 	const firstKey = Object.keys(usage)[0];
 	return firstKey ? usage[firstKey] : { inputTokens: 0, outputTokens: 0 };
 }
@@ -1222,7 +1222,7 @@ async function runClaudeInvocation(
 							// Accumulate partial JSON string
 							const accumulatedJson = (mapping.partialJson || "") + delta.partial_json;
 							mapping.partialJson = accumulatedJson;
-							
+
 							// Try to parse and update arguments
 							try {
 								toolCall.arguments = JSON.parse(accumulatedJson);
@@ -1316,10 +1316,10 @@ async function runClaudeInvocation(
 
 			if (isResultEvent(data)) {
 				state.resultEvent = data;
-				logClaudeCodeProvider('claude_result_event', { 
-					invocationSequence, 
-					hasResult: !!data.result, 
-					resultLength: data.result?.length || 0, 
+				logClaudeCodeProvider('claude_result_event', {
+					invocationSequence,
+					hasResult: !!data.result,
+					resultLength: data.result?.length || 0,
 					hasUsage: !!(data.usage || data.modelUsage),
 					stopReason: data.stop_reason,
 					hasError: !!(data.is_error || data.error || (Array.isArray(data.errors) && data.errors.length > 0))
@@ -1428,10 +1428,10 @@ async function runClaudeInvocation(
 		}
 	});
 
-	logClaudeCodeProvider('invocation_close', { 
-		invocationSequence, 
-		success: !invocationError, 
-		hasResultEvent: !!state.resultEvent, 
+	logClaudeCodeProvider('invocation_close', {
+		invocationSequence,
+		success: !invocationError,
+		hasResultEvent: !!state.resultEvent,
 		hasError: !!invocationError,
 		emittedText: state.emittedText,
 		emittedAny: state.emittedAny,
@@ -1490,7 +1490,7 @@ function streamClaudeCode(
 				// Use previous invocation sequence (decremented) since this is responding to prior turn's tool calls
 				const previousInvocationSequence = nextInvocationSequence - 1;
 				const tailResults = collectTailToolResults(context.messages, previousInvocationSequence);
-				
+
 				// Reject unmatched/stale tool results - these indicate invocation sequence corruption
 				if (tailResults.unmatchedResults.length > 0) {
 					const unmatchedIds = tailResults.unmatchedResults.map(r => r.toolCallId).join(', ');
@@ -1970,7 +1970,7 @@ export default function (pi: ExtensionAPI) {
 
 				// Get conversation messages from session branch
 				const entries = ctx.sessionManager.getBranch();
-				
+
 				// Check for empty session first
 				if (entries.length === 0) {
 					ctx.ui.notify("No session entries found - this may be a fresh conversation", "error");
@@ -2052,8 +2052,8 @@ export default function (pi: ExtensionAPI) {
 				maxTokens: 128000,
 			},
 			{
-				id: "claude-opus-4-8",
-				name: "Claude Opus 4.8 (Claude Code)",
+				id: "claude-opus-5",
+				name: "Claude Opus 5 (Claude Code)",
 				api: CLAUDE_CODE_API,
 				reasoning: true,
 				input: ["text", "image"],
