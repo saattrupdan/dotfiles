@@ -15,6 +15,7 @@
 #   ~/.pi/agent/settings.json   -> agentic/pi/settings.json
 #   ~/.pi/agent/keybindings.json-> agentic/pi/keybindings.json
 #   ~/.pi/agent/SYSTEM.md       -> agentic/pi/SYSTEM.md
+#   ~/.pi/agent/AGENTS.md       -> agentic/pi/AGENTS.md
 #   ~/.pi/agent/skills          -> agentic/skills
 #   ~/.pi/agent/themes          -> agentic/pi/themes
 #
@@ -100,6 +101,7 @@ link prompts          "$SCRIPT_DIR/prompts"
 link settings.json    "$SCRIPT_DIR/settings.json"
 link keybindings.json "$SCRIPT_DIR/keybindings.json"
 link SYSTEM.md        "$SCRIPT_DIR/SYSTEM.md"
+link AGENTS.md        "$SCRIPT_DIR/AGENTS.md"
 link skills           "$REPO_AGENTIC/skills"
 link themes           "$SCRIPT_DIR/themes"
 echo
