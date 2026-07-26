@@ -65,7 +65,7 @@ orchestrator uses `subagent` to invoke them.
   through to the image reader.
 - **`skill`** — Loads a named skill's `SKILL.md` verbatim (no outlining, no truncation).
   Use this for skill content; `read` will truncate.
-- **`subagent`** — Delegation tool. Three call modes: `single`, `parallel` (up to 8
+- **`subagent`** — Delegation tool. Three call modes: `single`, `parallel` (up to 16
   tasks, 4 concurrent), `chain` (sequential with `{previous}` substitution). No CLI
   flags — JSON params only.
 - **`_outliner`** — Shared library (underscore prefix = not loaded as extension).
