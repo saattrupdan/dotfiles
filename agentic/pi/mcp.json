@@ -13,7 +13,7 @@
       "env": {
         "TAVILY_API_KEY": "!cat \"$HOME/.pi/agent/secrets/tavily-api-key\""
       },
-      "lifecycle": "lazy",
+      "lifecycle": "eager",
       "directTools": [
         "tavily_search"
       ]

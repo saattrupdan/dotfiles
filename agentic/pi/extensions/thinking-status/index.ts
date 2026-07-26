@@ -46,7 +46,7 @@ const TOOL_LABELS: Record<string, string> = {
 	skill: "Upskilling...",
 	question: "Questioning...",
 	web_browse: "Browsing...",
-	web_search: "Googling...",
+	tavily_search: "Googling...",
 	subagent: "Whipping the subagents...",
 };
 

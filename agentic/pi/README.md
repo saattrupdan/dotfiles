@@ -21,7 +21,8 @@ Each subdirectory under `extensions/` is a self-contained pi extension. They
 fall into three categories:
 
 - **Tools the agent calls** — `read`, `skill`, `search`, `code-tree`,
-  `web-search`, `web-browse`, `subagent`.
+  `web-browse`, `subagent`. (Web search is no longer a local extension — it's
+  the `tavily_search` MCP tool; see below.)
 - **Behavioural guardrails** (no tools registered) — `no-repeat`, `caffeinate`.
 - **Shared internal library** — `_outliner` (consumed by `read` and `search`).
 
@@ -88,12 +89,16 @@ counts per directory. The agent probes deeper by passing `path` and/or
 `.gitignore` is honoured automatically; falls back to a filesystem walk
 outside a git repo.
 
-### `web-search`
+### Web search (`tavily_search`, MCP)
 
-DuckDuckGo HTML-endpoint search. Returns the top results (title, URL,
-snippet) as a compact Markdown list. Access-controlled: only agents whose
-frontmatter lists `web_search` in `tools:` see it (in this config, the
-`explorer` subagent).
+Web search is not a local extension. It's provided by the **Tavily MCP
+server**, wired through `pi-mcp-adapter` and configured in `mcp.json`. Tavily
+is `eager` (always-on) with `directTools: ["tavily_search"]`, so only the
+single `tavily_search` tool is exposed as a first-class tool (Tavily's other
+MCP tools are hidden). Access-controlled the same way as any tool: only agents
+whose frontmatter lists `tavily_search` in `tools:` see it (in this config, the
+`explorer` subagent). The API key is read at runtime from
+`~/.pi/agent/secrets/tavily-api-key` via the `!cat …` marker in `mcp.json`.
 
 ### `web-browse`
 

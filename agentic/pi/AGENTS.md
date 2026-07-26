@@ -24,7 +24,6 @@ agentic/pi/
 │   ├── subagent/      # Delegation: single / parallel / chain modes
 │   ├── skill/         # Load named skill SKILL.md verbatim
 │   ├── web-browse/    # Headless browser interaction
-│   ├── web-search/    # Web search (DuckDuckGo)
 │   ├── no-repeat/     # Prevent duplicate tool calls
 │   ├── copy-paste/    # Clipboard operations
 │   ├── notify/        # Desktop notifications
@@ -44,7 +43,7 @@ agentic/pi/
 | ---------- | ---------------------------------------------------------------- | -------- | --------------------------------------------------------------------------------- |
 | `planner`  | Turns requests into ordered, parallel-friendly plans. Read-only. | No       | `read`, `memory_query`, `question`                                     |
 | `builder`  | Implements one scoped code change. Commits before exiting.       | **Yes**  | `search`, `read`, `write`, `edit`, `bash`, `memory_query`, `question`  |
-| `explorer` | Read-only navigation of local codebase and the web.              | No       | `code_tree`, `search`, `read`, `web_browse`, `web_search`, `memory_query`, `question` |
+| `explorer` | Read-only navigation of local codebase and the web.              | No       | `code_tree`, `search`, `read`, `web_browse`, `tavily_search`, `memory_query`, `question` |
 | `reviewer` | Audits recent commits, produces verdict.                         | No       | `read`, `search`, `bash`, `memory_query`, `question`                   |
 
 Only the **orchestrator** (you) may call `subagent`. Subagents may not delegate further.

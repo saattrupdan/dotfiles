@@ -127,10 +127,10 @@ function formatToolCall(
 			if (depth !== undefined) text += themeFg("dim", ` depth=${depth}`);
 			return text;
 		}
-		case "web_search": {
+		case "tavily_search": {
 			const query = (args.query || "") as string;
 			const preview = query.length > 80 ? `${query.slice(0, 80)}...` : query;
-			return themeFg("muted", "web_search ") + themeFg("accent", `"${preview}"`);
+			return themeFg("muted", "tavily_search ") + themeFg("accent", `"${preview}"`);
 		}
 		case "web_browse": {
 			const command = (args.command || "...") as string;

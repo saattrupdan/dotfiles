@@ -75,7 +75,7 @@ the same outline + `symbol="<heading>"` flow works on them. See the
    60      ### `skill`
    73      ### `search`
    83      ### `code-tree`
-   92      ### `web-search`
+   92      ### Web search (`tavily_search`, MCP)
    99      ### `web-browse`
   107      ### `subagent`
   127      ### `no-repeat`
