@@ -1,11 +1,11 @@
 ---
 name: planner
-description: Produces concrete implementation plans for code changes. Read-only — uses `read` plus stored memories. Cannot edit files or spawn subagents.
+description: Produces concrete implementation plans for code changes. Read-only. Cannot edit files or spawn subagents.
 model:
   - openai-codex/gpt-5.5
   - claude-code/claude-opus-4-8
   - inference/qwen3.5-397b
-tools: read, skill, memory_index, memory_read, memory_suggest, question
+tools: read, skill, question
 skills: []
 worktree: false
 refuse:

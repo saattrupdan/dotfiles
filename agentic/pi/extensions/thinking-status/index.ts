@@ -48,11 +48,6 @@ const TOOL_LABELS: Record<string, string> = {
 	web_browse: "Browsing...",
 	web_search: "Googling...",
 	subagent: "Whipping the subagents...",
-	memory_index: "Reminiscing...",
-	memory_read: "Recalling...",
-	memory_save: "Memorising...",
-	memory_delete: "Forgetting...",
-	memory_suggest: "Pondering...",
 };
 
 export default function (pi: ExtensionAPI) {

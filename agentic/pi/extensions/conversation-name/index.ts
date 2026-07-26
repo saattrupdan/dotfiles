@@ -72,13 +72,7 @@ export default function (pi: ExtensionAPI) {
 			}
 		}
 
-		// Strip the memory-audit auto-injection wrapper if present. That
-		// extension rewrites the user's input to `${block}\n\n---\n${query}`,
-		// where the block starts with the marker below. Without this, the
-		// session gets named after the injected memory preamble instead of the
-		// actual prompt. Only strip when the exact marker leads, so normal
-		// prompts (which may legitimately contain "---") are left untouched.
-		firstPrompt = stripInjectedMemoryBlock(firstPrompt).trim();
+		firstPrompt = firstPrompt.trim();
 
 		if (!firstPrompt) {
 			return;
@@ -145,7 +139,6 @@ async function generateNameWithModel(
 		`- Use Title Case\n` +
 		`- No trailing punctuation\n` +
 		`- Do NOT truncate mid-word or use ellipses\n` +
-		`- Do NOT reference memories, auto-injection, or system context\n` +
 		`- Be specific: include key nouns/verbs from the request\n\n` +
 		`Request: ${request}`;
 
@@ -190,36 +183,7 @@ function sanitizeTitle(raw: string): string {
 	// Drop trailing sentence punctuation.
 	title = title.replace(/[.!?,;:]+$/, "").trim();
 
-	// Reject titles that reference auto-injected memories.
-	if (MEMORY_TITLE_PATTERN.test(title)) {
-		return "";
-	}
-
 	return title;
-}
-
-/** Leading marker of the memory-audit auto-injection block. */
-const INJECTED_MEMORY_MARKER =
-	/^Relevant (?:memor(?:y|ies) found for this request|memor(?:y|ies)) \(auto-injected\)\./;
-
-/** Separator memory-audit places between its block and the real query. */
-const INJECTED_MEMORY_SEP = "\n\n---\n";
-
-/** Pattern to detect titles that reference auto-injected memories. Titles matching this are rejected. */
-const MEMORY_TITLE_PATTERN =
-	/\b(memory|memories|injected|auto-injected|auto-injection|context|triggers?|startup)\b/i;
-
-/**
- * If `text` is a memory-audit auto-injection (`${block}\n\n---\n${query}`),
- * return just the user's query. Otherwise return `text` unchanged.
- */
-function stripInjectedMemoryBlock(text: string): string {
-	if (!INJECTED_MEMORY_MARKER.test(text)) {
-		return text;
-	}
-	// The block contains no separator, so the first one is the real boundary.
-	const idx = text.indexOf(INJECTED_MEMORY_SEP);
-	return idx === -1 ? text : text.slice(idx + INJECTED_MEMORY_SEP.length);
 }
 
 /**

@@ -15,7 +15,7 @@ never edit the installed package or its upstream source.
   That directory is `$PI_CODING_AGENT_DIR/extensions` (default `~/.pi/agent/extensions/`).
 - Loading is **automatic** — there is no `extensions` array in `settings.json`. Drop a
   directory in and it's live next launch.
-- Directories whose name starts with `_` (e.g. `_outliner`, `_types`, `_memory`) are
+- Directories whose name starts with `_` (e.g. `_outliner`, `_types`) are
   **shared libraries** imported by other extensions, not loaded as extensions themselves.
 - Extensions are TypeScript and loaded directly — **no build step**. Match the existing
   style: **tabs**, `import type` for type-only imports, a top-of-file doc comment
@@ -214,5 +214,5 @@ extensions, skills, prompts, themes, keybindings) or restart pi to pick up the c
 
 **Adding a tool?** When you register a new tool with `pi.registerTool`, also add its
 `name -> "Doing..."` entry to a footer-status extension's `TOOL_LABELS` map (the names
-must match the tool's registered `name`, e.g. `web_browse`, `memory_save`). Otherwise the
+must match the tool's registered `name`, e.g. `web_browse`, `subagent`). Otherwise the
 new tool silently shows the generic "Working..." instead of a phase-specific label.

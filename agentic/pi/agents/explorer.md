@@ -4,7 +4,7 @@ description: Read-only locator for code and the web. Returns paths, line ranges,
 model:
   - inference/qwen3.5-397b
   - llamacpp/ornith-1.0-35b
-tools: code_tree, search, read, skill, web_browse, web_search, memory_index, memory_read, memory_suggest, question
+tools: code_tree, search, read, skill, web_browse, web_search, question
 skills: []
 worktree: false
 refuse:

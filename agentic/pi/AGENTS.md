@@ -25,7 +25,6 @@ agentic/pi/
 │   ├── skill/         # Load named skill SKILL.md verbatim
 │   ├── web-browse/    # Headless browser interaction
 │   ├── web-search/    # Web search (DuckDuckGo)
-│   ├── memory/        # Memory CRUD (index, read, save, delete, suggest)
 │   ├── no-repeat/     # Prevent duplicate tool calls
 │   ├── copy-paste/    # Clipboard operations
 │   ├── notify/        # Desktop notifications
@@ -36,17 +35,17 @@ agentic/pi/
 │   └── _question_protocol/ # Library
 ├── prompts/           # Slash-command flow definitions
 ├── skills/            # Symlinked to ~/.pi/agent/skills/ (shared skill library)
-└── bin/               # Local binaries (e.g. memory-audit helper)
+└── bin/               # Local binaries
 ```
 
 ## Key agents
 
-| Agent      | Role                                                             | Worktree | Tools                                                                             |
-| ---------- | ---------------------------------------------------------------- | -------- | --------------------------------------------------------------------------------- |
-| `planner`  | Turns requests into ordered, parallel-friendly plans. Read-only. | No       | `read`, `memory_*`, `question`                                                    |
-| `builder`  | Implements one scoped code change. Commits before exiting.       | **Yes**  | `search`, `read`, `write`, `edit`, `bash`, `memory_*`, `question`                 |
-| `explorer` | Read-only navigation of local codebase and the web.              | No       | `code_tree`, `search`, `read`, `web_browse`, `web_search`, `memory_*`, `question` |
-| `reviewer` | Audits recent commits, produces verdict.                         | No       | `read`, `search`, `bash`, `memory_*`, `question`                                  |
+| Agent      | Role                                                             | Worktree | Tools                                                             |
+| ---------- | ---------------------------------------------------------------- | -------- | ---------------------------------------------------------------- |
+| `planner`  | Turns requests into ordered, parallel-friendly plans. Read-only. | No       | `read`, `question`                                               |
+| `builder`  | Implements one scoped code change. Commits before exiting.       | **Yes**  | `search`, `read`, `write`, `edit`, `bash`, `question`            |
+| `explorer` | Read-only navigation of local codebase and the web.              | No       | `code_tree`, `search`, `read`, `web_browse`, `web_search`, `question` |
+| `reviewer` | Audits recent commits, produces verdict.                         | No       | `read`, `search`, `bash`, `question`                             |
 
 Only the **orchestrator** (you) may call `subagent`. Subagents may not delegate further.
 
@@ -88,8 +87,6 @@ discoverable; empty array = none.
   builders are safe as long as scopes are disjoint.
 - **No pagination on `read`.** Use `symbol=` or `search` to locate content in large
   files.
-- **`memory-audit`** (in `bin/`) runs background audits. Watch for crashes when
-  `CLEANUP_MEM_DIR` points to empty/nonexistent dirs.
 
 ## Flow
 

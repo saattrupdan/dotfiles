@@ -34,7 +34,5 @@ description:
    - Create PR: `gh pr create --base <base-branch> --title "<title>" --body "<body>"`
      (or use `--fill` to auto-fill from commit messages)
    - Return PR URL to the user.
-9. **Save to memory.** Call `memory_save` for anything worth remembering: tool errors,
-   user preferences, project gotchas, repeated requests, or feedback.
 
-Use only the `subagent`, `question`, `bash`, and `memory_save` tools.
+Use only the `subagent`, `question`, and `bash` tools.

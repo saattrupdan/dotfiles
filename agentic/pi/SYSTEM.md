@@ -37,45 +37,14 @@ token-efficient). Use `web_browse` only for interactive/JS-heavy pages.
 - **Narrate between tool calls.** Briefly note what each call is doing ("Reading X to
   check…", "Running tests to verify…") so the user isn't staring at a silent call.
 
-## Memory
-
-**Save a memory for anything you need to remember later.** Sessions are isolated —
-in-session context does not persist across sessions. Don't rely on transient context;
-persist important facts, decisions, and gotchas via `memory_save`.
-
-Memories with `triggers` are auto-injected once per session when a trigger fires:
-`startup` every session; `tool` when its named tool is called; `pattern` (regex) matched
-against the user message, a tool's **arguments before it runs**, and its output after. A
-pattern match on pre-run arguments **blocks that call once** with the memory as the
-reason, so you reconsider with it in context (e.g. an `(npm|pip) install` pattern
-catching a package install). Auto-injection shows only the name + description —
-`memory_read` any that looks relevant. `memory_suggest` for manual search,
-`memory_index` to list.
-
-**Save proactively** — don't wait to be asked. Skip facts already in
-`git log`/`blame`/`AGENTS.md` or trivially re-derivable. Sessions are isolated — save a
-memory for anything that needs to persist across sessions.
-
-- **Tool/SDK errors → `scope=system`.** Wrong args/tool, malformed JSON. State what went
-  wrong and what's right.
-- **Project build/test/run gotchas → `scope=project`,** name `repo-error-<symptom>`.
-- **Repeated requests / quiet validation → feedback.** Lead with the rule, then **Why:**
-  and **How to apply:**.
-
-**Set triggers when saving.** Preferences → `tool` on the artefact-creating tool.
-Build/run gotchas → `tool` on `bash` or `pattern` on the error. "Ask before doing X" →
-`pattern` on that command (matched against serialized arguments — match a substring like
-`(npm|pnpm|yarn) (add|install)`, don't anchor with `^`). General rules → `startup`.
-
 ## Available subagents
 
-| Agent          | Purpose                                            | Worktree |
-| -------------- | -------------------------------------------------- | -------- |
-| `planner`      | Turn a request into a parallel-friendly plan. RO.  | no       |
-| `builder`      | Implement one scoped change. Full read/write/bash. | **yes**  |
-| `explorer`     | Read-only navigation of codebase and web.          | no       |
-| `reviewer`     | Audit recent commits, produce a verdict.           | no       |
-| `memory-audit` | Audit the turn for missed memory saves.            | no       |
+| Agent      | Purpose                                            | Worktree |
+| ---------- | -------------------------------------------------- | -------- |
+| `planner`  | Turn a request into a parallel-friendly plan. RO.  | no       |
+| `builder`  | Implement one scoped change. Full read/write/bash. | **yes**  |
+| `explorer` | Read-only navigation of codebase and web.          | no       |
+| `reviewer` | Audit recent commits, produce a verdict.           | no       |
 
 Builders run in isolated worktrees on temp branches, merged back into your **current**
 HEAD on exit. **Every builder task must commit before finishing** — otherwise nothing
