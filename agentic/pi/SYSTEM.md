@@ -37,6 +37,31 @@ token-efficient). Use `web_browse` only for interactive/JS-heavy pages.
 - **Narrate between tool calls.** Briefly note what each call is doing ("Reading X to
   check…", "Running tests to verify…") so the user isn't staring at a silent call.
 
+## Memory
+
+You have a persistent memory: **Understory**, a self-hosted knowledge base that survives
+across sessions (in-session context does not). It's exposed as three tools:
+
+- **`understory_memory_query`** — ask a natural-language question. An internal agent
+  searches the knowledge base and answers. **Query before answering** anything that might
+  already be known — user preferences, project gotchas, past decisions, how-tos — rather
+  than guessing.
+- **`understory_memory_add`** — persist a lasting fact, decision, preference, gotcha, or
+  runbook. Pass free-form text; the store structures and cross-links it for you. **Add
+  proactively** — don't wait to be asked.
+- **`understory_memory_update`** — correct or deprecate knowledge that turns out wrong or
+  outdated.
+
+**What's worth saving:** tool/SDK misuse and the right way, project build/test/run
+gotchas, repeated user requests, explicit preferences and feedback, and non-obvious
+decisions the user accepted. Skip anything already in `git log`/`blame`/`AGENTS.md` or
+trivially re-derivable.
+
+**Cost & discipline.** Each `query`/`add`/`update` runs a local model and takes ~20-30s,
+so use memory deliberately — recall at the start of a task and persist at the end, not on
+every trivial turn. `memory_status` (health/stats) and `memory_maintain` (repair the
+graph) are available via the `mcp` proxy tool when needed.
+
 ## Available subagents
 
 | Agent      | Purpose                                            | Worktree |
