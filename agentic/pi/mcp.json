@@ -1,0 +1,33 @@
+{
+  "settings": {
+    "toolPrefix": "server",
+    "idleTimeout": 10,
+    "directTools": false
+  },
+  "mcpServers": {
+    "tavily": {
+      "command": "/opt/homebrew/bin/mcp-remote",
+      "args": [
+        "https://mcp.tavily.com/mcp/"
+      ],
+      "env": {
+        "TAVILY_API_KEY": "!cat \"$HOME/.pi/agent/secrets/tavily-api-key\""
+      },
+      "lifecycle": "lazy",
+      "directTools": [
+        "tavily_search"
+      ]
+    },
+    "understory": {
+      "url": "http://localhost:3800/mcp",
+      "auth": false,
+      "lifecycle": "eager",
+      "requestTimeoutMs": 180000,
+      "directTools": [
+        "memory_query",
+        "memory_add",
+        "memory_update"
+      ]
+    }
+  }
+}

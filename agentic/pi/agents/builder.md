@@ -4,7 +4,7 @@ description: Implements a concrete, scoped code change. Has full read/write/bash
 model:
   - inference/qwen3.5-397b
   - llamacpp/ornith-1.0-35b
-tools: search, read, write, edit, skill, bash, question
+tools: search, read, write, edit, skill, bash, understory_memory_query, question
 skills: [commit, python, fastapi, vue, sqlmodel, full-stack, slides, agent-browser]
 worktree: true
 refuse:

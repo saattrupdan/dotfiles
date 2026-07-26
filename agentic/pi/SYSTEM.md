@@ -57,10 +57,10 @@ gotchas, repeated user requests, explicit preferences and feedback, and non-obvi
 decisions the user accepted. Skip anything already in `git log`/`blame`/`AGENTS.md` or
 trivially re-derivable.
 
-**Cost & discipline.** Each `query`/`add`/`update` runs a local model and takes ~20-30s,
-so use memory deliberately — recall at the start of a task and persist at the end, not on
-every trivial turn. `memory_status` (health/stats) and `memory_maintain` (repair the
-graph) are available via the `mcp` proxy tool when needed.
+**Cost & discipline.** Each `query`/`add`/`update` runs a local model, so use memory
+deliberately — recall at the start of a task and persist at the end, not on every trivial
+turn. `memory_status` (health/stats) and `memory_maintain` (repair the graph) are
+available via the `mcp` proxy tool when needed.
 
 ## Available subagents
 

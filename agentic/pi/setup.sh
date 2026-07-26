@@ -16,6 +16,7 @@
 #   ~/.pi/agent/keybindings.json-> agentic/pi/keybindings.json
 #   ~/.pi/agent/SYSTEM.md       -> agentic/pi/SYSTEM.md
 #   ~/.pi/agent/AGENTS.md       -> agentic/pi/AGENTS.md
+#   ~/.pi/agent/mcp.json        -> agentic/pi/mcp.json
 #   ~/.pi/agent/skills          -> agentic/skills
 #   ~/.pi/agent/themes          -> agentic/pi/themes
 #
@@ -102,6 +103,7 @@ link settings.json    "$SCRIPT_DIR/settings.json"
 link keybindings.json "$SCRIPT_DIR/keybindings.json"
 link SYSTEM.md        "$SCRIPT_DIR/SYSTEM.md"
 link AGENTS.md        "$SCRIPT_DIR/AGENTS.md"
+link mcp.json         "$SCRIPT_DIR/mcp.json"
 link skills           "$REPO_AGENTIC/skills"
 link themes           "$SCRIPT_DIR/themes"
 echo
@@ -156,6 +158,32 @@ else
 
   echo "--- models.json created at $PI_HOME/models.json"
   echo
+fi
+
+echo
+
+# --- 2b. MCP secrets --------------------------------------------------------
+# mcp.json is committed, so per-server secrets are kept out of git and read at
+# launch via `!cat` command markers. Provision the referenced secret files here.
+# This dir is outside the repo (never committed).
+
+echo "=== Setting up MCP secrets ==="
+SECRETS_DIR="$PI_HOME/secrets"
+mkdir -p "$SECRETS_DIR"
+chmod 700 "$SECRETS_DIR"
+
+tavily_secret="$SECRETS_DIR/tavily-api-key"
+if [ -s "$tavily_secret" ]; then
+  echo "tavily-api-key already present — skipping"
+else
+  read -rp "Tavily API key (blank to skip; tavily search stays unconfigured): " tavily_key
+  if [ -n "$tavily_key" ]; then
+    printf '%s' "$tavily_key" > "$tavily_secret"
+    chmod 600 "$tavily_secret"
+    echo "--- wrote $tavily_secret"
+  else
+    echo "skipped — tavily will fail to start until $tavily_secret exists"
+  fi
 fi
 
 echo

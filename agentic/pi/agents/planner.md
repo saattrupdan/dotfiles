@@ -5,7 +5,7 @@ model:
   - openai-codex/gpt-5.5
   - claude-code/claude-opus-4-8
   - inference/qwen3.5-397b
-tools: read, skill, question
+tools: read, skill, understory_memory_query, question
 skills: []
 worktree: false
 refuse:
