@@ -6,7 +6,7 @@ model:
   - openai-codex/gpt-5.5
   - claude-code/claude-opus-4-8
   - inference/qwen3.5-397b
-tools: read, search, skill, bash, understory_memory_query, question
+tools: read, search, skill, bash, memory_query, question
 skills: [commit, python, fastapi, vue, sqlmodel, full-stack, slides, agent-browser]
 worktree: false
 refuse:

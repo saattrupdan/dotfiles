@@ -1,6 +1,6 @@
 {
   "settings": {
-    "toolPrefix": "server",
+    "toolPrefix": "none",
     "idleTimeout": 10,
     "directTools": false
   },

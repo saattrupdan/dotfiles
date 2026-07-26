@@ -42,14 +42,14 @@ agentic/pi/
 
 | Agent      | Role                                                             | Worktree | Tools                                                                              |
 | ---------- | ---------------------------------------------------------------- | -------- | --------------------------------------------------------------------------------- |
-| `planner`  | Turns requests into ordered, parallel-friendly plans. Read-only. | No       | `read`, `understory_memory_query`, `question`                                     |
-| `builder`  | Implements one scoped code change. Commits before exiting.       | **Yes**  | `search`, `read`, `write`, `edit`, `bash`, `understory_memory_query`, `question`  |
-| `explorer` | Read-only navigation of local codebase and the web.              | No       | `code_tree`, `search`, `read`, `web_browse`, `web_search`, `understory_memory_query`, `question` |
-| `reviewer` | Audits recent commits, produces verdict.                         | No       | `read`, `search`, `bash`, `understory_memory_query`, `question`                   |
+| `planner`  | Turns requests into ordered, parallel-friendly plans. Read-only. | No       | `read`, `memory_query`, `question`                                     |
+| `builder`  | Implements one scoped code change. Commits before exiting.       | **Yes**  | `search`, `read`, `write`, `edit`, `bash`, `memory_query`, `question`  |
+| `explorer` | Read-only navigation of local codebase and the web.              | No       | `code_tree`, `search`, `read`, `web_browse`, `web_search`, `memory_query`, `question` |
+| `reviewer` | Audits recent commits, produces verdict.                         | No       | `read`, `search`, `bash`, `memory_query`, `question`                   |
 
 Only the **orchestrator** (you) may call `subagent`. Subagents may not delegate further.
-Subagents can **query** memory (`understory_memory_query`) but cannot write it — only the
-orchestrator has `understory_memory_add` / `_update`.
+Subagents can **query** memory (`memory_query`) but cannot write it — only the
+orchestrator has `memory_add` / `_update`.
 
 ## Extensions (tools)
 
