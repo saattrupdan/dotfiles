@@ -127,6 +127,68 @@ let splashDismissed = true;
 let splashSessionKey: string | undefined;
 let splashScreenCleared = false;
 let splashReapplyTimer: ReturnType<typeof setTimeout> | undefined;
+// The TUI instance, captured from a factory callback. It's an app-lifetime singleton
+// (pi creates it once and reuses it across reloads), so once captured it stays valid.
+let splashTui: TUI | undefined;
+
+// pi's /reload handler appends a dim "Reloaded keybindings, extensions, skills, prompts,
+// themes" status straight into its internal chat container (interactive-mode showStatus).
+// That bypasses every extension-facing UI hook, so we can't intercept the call. On the
+// splash the chat area is otherwise empty, so we instead walk the TUI component tree
+// (reachable via the `tui` handed to our factories) and delete that one status line.
+// Best-effort and fully guarded — if pi's internals change, the try/catch leaves the UI
+// untouched and the line simply stays.
+const RELOADED_STATUS = /Reloaded keybindings, extensions, skills, prompts, themes/;
+const ANSI_RE = /\x1b\[[0-9;]*m/g;
+
+// Returns true once the status line has been found and removed.
+function removeReloadedStatus(): boolean {
+	if (!splashActive || splashDismissed || !splashTui) return false;
+	let removed = false;
+	try {
+		const remove = (container: { removeChild(c: unknown): void }, node: unknown): void =>
+			container.removeChild(node);
+		const visit = (container: { children?: unknown[] }): void => {
+			const kids = container.children;
+			if (!Array.isArray(kids)) return;
+			for (let i = kids.length - 1; i >= 0; i--) {
+				const node = kids[i] as { children?: unknown[]; text?: unknown };
+				if (node && Array.isArray(node.children)) {
+					visit(node);
+					continue;
+				}
+				const raw = node && typeof node.text === "string" ? node.text.replace(ANSI_RE, "") : "";
+				if (RELOADED_STATUS.test(raw)) {
+					remove(container as { removeChild(c: unknown): void }, node);
+					// showStatus prepends a Spacer to the Text; drop it too so no blank gap remains.
+					const prev = kids[i - 1] as { text?: unknown; setLines?: unknown } | undefined;
+					if (prev && typeof prev.setLines === "function" && typeof prev.text !== "string") {
+						remove(container as { removeChild(c: unknown): void }, prev);
+					}
+					removed = true;
+				}
+			}
+		};
+		visit(splashTui as unknown as { children?: unknown[] });
+		if (removed) splashTui.requestRender();
+	} catch {
+		// pi internals changed — never let this break the splash.
+	}
+	return removed;
+}
+
+// showStatus fires synchronously at the end of /reload, but the reload work itself takes
+// a variable amount of time, so poll briefly until the line appears and is removed (or the
+// splash is dismissed). Stops on the first removal — the status is only ever added once.
+function scheduleReloadStatusCleanup(): void {
+	let attempts = 0;
+	const tick = (): void => {
+		if (!splashActive || splashDismissed) return;
+		if (removeReloadedStatus()) return;
+		if (++attempts < 24) setTimeout(tick, 50);
+	};
+	setTimeout(tick, 0);
+}
 
 function sessionKey(ctx: ExtensionContext): string {
 	return ctx.sessionManager.getSessionFile() ?? ctx.sessionManager.getSessionId();
@@ -142,6 +204,7 @@ function sessionHasMessages(ctx: ExtensionContext): boolean {
 
 function createSplashEditorFactory(): SplashEditorFactory {
 	return (tui, editorTheme, keybindings) => {
+		splashTui = tui;
 		const inner = new PttEditor(tui, editorTheme, keybindings);
 		const innerRender = inner.render.bind(inner);
 		// Horizontal padding inside the box, matching the visual breathing
@@ -377,6 +440,10 @@ export default function (pi: ExtensionAPI) {
 		// clearScreen=false so we don't wipe the screen (and scrollback) a second
 		// time — the synchronous install above already did it.
 		scheduleSplashReapply(pi, ctx, false);
+
+		// Strip pi's "Reloaded …" status line that /reload appends into the chat
+		// container after this handler returns (see removeReloadedStatus).
+		scheduleReloadStatusCleanup();
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
