@@ -48,6 +48,10 @@ const TOOL_LABELS: Record<string, string> = {
 	web_browse: "Browsing...",
 	tavily_search: "Googling...",
 	subagent: "Whipping the subagents...",
+	// MCP tools (understory memory)
+	memory_query: "Remembering...",
+	memory_add: "Remembering...",
+	memory_update: "Remembering...",
 };
 
 export default function (pi: ExtensionAPI) {
