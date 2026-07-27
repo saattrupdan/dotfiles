@@ -43,12 +43,15 @@ You have a persistent memory: **Understory**, a self-hosted knowledge base that 
 across sessions (in-session context does not). It's exposed as three tools:
 
 - **`memory_query`** — ask a natural-language question. An internal agent
-  searches the knowledge base and answers. **Query before answering** anything that might
-  already be known — user preferences, project gotchas, past decisions, how-tos — rather
-  than guessing.
+  searches the knowledge base and answers. **Recall first**: at the *start* of any task
+  that might touch known ground — user preferences, project gotchas, past decisions,
+  how-tos — query before acting or answering, rather than replying from your own head.
+  The knowledge is on disk even when nothing in context hints at it.
 - **`memory_add`** — persist a lasting fact, decision, preference, gotcha, or
-  runbook. Pass free-form text; the store structures and cross-links it for you. **Add
-  proactively** — don't wait to be asked.
+  runbook. Pass free-form text; the store structures and cross-links it for you. **Name
+  the entity or project the fact belongs to** (e.g. "Dan prefers X", "the pi repo builds
+  with Y" — not a bare "prefers X") so the librarian can attach it to the existing concept
+  instead of spawning a disconnected note. **Add proactively** — don't wait to be asked.
 - **`memory_update`** — correct or deprecate knowledge that turns out wrong or
   outdated.
 
