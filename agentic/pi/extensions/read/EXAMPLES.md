@@ -388,11 +388,14 @@ readme = "README.md"
 
 ```
 
-## Documents (PDF / DOCX / XLSX / PPTX)
+## Documents (PDF / DOCX / XLSX / PPTX / ODT / ODS / ODP)
 
 Documents are converted to Markdown via `docling` (cached on disk by content
 hash), then rendered like any Markdown file. A large report shows an outline;
 `symbol="<heading>"` returns just that section.
+
+Supported formats: PDF, Microsoft Office (DOCX, XLSX, PPTX), and OpenDocument
+(ODT, ODS, ODP).
 
 ```
 > read reports/annual.docx
@@ -403,6 +406,16 @@ hash), then rendered like any Markdown file. A large report shows an outline;
    65    ## Expenses
   130    ## Outlook
 # read again with symbol="<name>" to see a function/class body, symbol="__preamble__" for imports/constants, or use `search` to locate something specific.
+```
+
+```
+> read documents/report.odt
+# report.odt — ODT converted to Markdown via docling
+# outline of report.odt (183 lines)
+    1  # Quarterly Report
+    3    ## Summary
+   42    ## Analysis
+  120    ## Recommendations
 ```
 
 ```
