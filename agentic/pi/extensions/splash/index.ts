@@ -363,10 +363,20 @@ export default function (pi: ExtensionAPI) {
 		splashSessionKey = sessionKey(ctx);
 		splashScreenCleared = false;
 
-		// Defer splash installation to avoid race conditions when /reload and /new
-		// are called in quick succession. Pi's UI rebinding needs time to settle
-		// before we calculate editor width and terminal dimensions.
-		scheduleSplashReapply(pi, ctx, true);
+		// Install the splash synchronously so the default header/footer/editor
+		// (the "conversation" chrome) is replaced before pi paints its first
+		// post-reload frame. Deferring this is what makes the conversation view
+		// flash on screen for a beat during /reload before the splash takes over.
+		// Widget geometry (logo padding, editor width) is read lazily at render
+		// time, so nothing here needs the terminal dimensions to have settled.
+		installSplash(pi, ctx, true);
+
+		// Re-apply once more after pi's UI rebinding settles, as a safety net for
+		// the rare /reload + /new in quick succession case (two session_start
+		// events) where pi may clobber our slots right after we set them. Pass
+		// clearScreen=false so we don't wipe the screen (and scrollback) a second
+		// time — the synchronous install above already did it.
+		scheduleSplashReapply(pi, ctx, false);
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
