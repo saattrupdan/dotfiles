@@ -20,15 +20,15 @@
  *
  * Because we install the adapter ourselves, "npm:pi-mcp-adapter" MUST be removed from
  * settings.json `packages` — otherwise it loads a second time and every tool name
- * conflicts ("Tool \"…\" conflicts with …"). The package stays installed under
- * <agentDir>/npm/node_modules and we import it by absolute path.
+ * conflicts ("Tool \"…\" conflicts with …"). Instead, pi-mcp-adapter is a declared
+ * dependency of this extensions bundle (see ../package.json), so it is version-locked and
+ * reinstalled alongside the other extension deps, and we import it by bare specifier.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import mcpAdapter from "pi-mcp-adapter";
 
 // Minimal shapes for the pieces of the render API we touch (the full types live in pi-tui).
 interface Theme {
@@ -51,6 +51,13 @@ interface ToolResult {
 
 const MAX_SUMMARY_CHARS = 80;
 const MCP_DIRECT_TOOL_LABEL = "MCP: ";
+// Tools whose payload isn't worth surfacing get a fixed collapsed summary instead of a
+// snippet of their (often long) result text.
+const FIXED_RESULT_SUMMARY: Record<string, string> = {
+	memory_query: "Remembered a thing",
+	memory_add: "Stored a memory",
+	memory_update: "Updated a memory",
+};
 // The copy-paste extension prepends a standalone `[toolCallId: <id>]` text block to every
 // tool result so the model can reference it. It is noise in the display, so we drop it
 // before summarizing or pretty-printing.
@@ -116,7 +123,7 @@ function makeRenderCall(name: string) {
 }
 
 /** renderResult: one-line "✓ summary" when collapsed; full output when expanded or on error. */
-function makeRenderResult() {
+function makeRenderResult(name: string) {
 	return (result: ToolResult, options: ResultOptions, theme: Theme, ctx: RenderContext): Component => {
 		if (options.isPartial) {
 			return new Text(theme.fg("warning", "…"), 0, 0);
@@ -127,23 +134,12 @@ function makeRenderResult() {
 			const lines = prettyText(text).split("\n").map((line) => theme.fg("toolOutput", line));
 			return new Text(lines.join("\n"), 0, 0);
 		}
-		return new Text(theme.fg("toolOutput", `✓ ${summarize(text)}`), 0, 0);
+		const summary = FIXED_RESULT_SUMMARY[name] ?? summarize(text);
+		return new Text(theme.fg("toolOutput", `✓ ${summary}`), 0, 0);
 	};
 }
 
-/** Mirror pi-mcp-adapter's agent-dir.ts so we can locate the installed package. */
-function agentDir(): string {
-	const configured = process.env.PI_CODING_AGENT_DIR?.trim();
-	if (!configured) return join(homedir(), ".pi", "agent");
-	if (configured === "~") return homedir();
-	if (configured.startsWith("~/")) return resolve(homedir(), configured.slice(2));
-	return resolve(configured);
-}
-
-export default async function (pi: ExtensionAPI) {
-	const adapterPath = join(agentDir(), "npm", "node_modules", "pi-mcp-adapter", "index.ts");
-	const mod = (await import(adapterPath)) as { default: (pi: ExtensionAPI) => void };
-
+export default function (pi: ExtensionAPI) {
 	// Install the adapter against a Proxy that injects our renderers into every MCP direct
 	// tool as it is registered. Everything else passes straight through to the real API.
 	const wrapped = new Proxy(pi, {
@@ -152,7 +148,7 @@ export default async function (pi: ExtensionAPI) {
 				return (tool: { name: string; label?: string; renderCall?: unknown; renderResult?: unknown }) => {
 					if (typeof tool.label === "string" && tool.label.startsWith(MCP_DIRECT_TOOL_LABEL)) {
 						tool.renderCall = makeRenderCall(tool.name);
-						tool.renderResult = makeRenderResult();
+						tool.renderResult = makeRenderResult(tool.name);
 					}
 					return (target.registerTool as (t: unknown) => unknown)(tool);
 				};
@@ -162,5 +158,5 @@ export default async function (pi: ExtensionAPI) {
 		},
 	});
 
-	mod.default(wrapped);
+	mcpAdapter(wrapped);
 }

@@ -16,6 +16,7 @@
     "@typescript-eslint/parser": "^8.60.0",
     "@typescript-eslint/utils": "^8.60.0",
     "eslint": "^10.4.0",
+    "pi-mcp-adapter": "^2.15.0",
     "typescript-eslint": "^8.60.0"
   }
 }
