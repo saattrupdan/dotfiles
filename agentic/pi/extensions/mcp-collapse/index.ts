@@ -164,6 +164,16 @@ function makeRenderCall(name: string) {
 }
 
 /** renderResult: one-line "✓ summary" when collapsed; full output when expanded or on error. */
+function colourPrefix(line: string, theme: Theme): string {
+	if (line.startsWith("✓")) {
+		return theme.fg("success", line);
+	}
+	if (line.startsWith("✗")) {
+		return theme.fg("error", line);
+	}
+	return theme.fg("toolOutput", line);
+}
+
 function makeRenderResult(name: string) {
 	return (result: ToolResult, options: ResultOptions, theme: Theme, ctx: RenderContext): Component => {
 		if (options.isPartial) {
@@ -172,11 +182,11 @@ function makeRenderResult(name: string) {
 		const text = resultText(result);
 		const isError = ctx.isError || Boolean(result.details?.error);
 		if (options.expanded || isError) {
-			const lines = prettyText(text).split("\n").map((line) => theme.fg("toolOutput", line));
+			const lines = prettyText(text).split("\n").map((line) => colourPrefix(line, theme));
 			return new Text(lines.join("\n"), 0, 0);
 		}
 		const summary = FIXED_RESULT_SUMMARY[name] ?? summarize(text);
-		return new Text(theme.fg("toolOutput", `✓ ${summary}`), 0, 0);
+		return new Text(colourPrefix(`✓ ${summary}`, theme), 0, 0);
 	};
 }
 
