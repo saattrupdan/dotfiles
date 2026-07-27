@@ -79,6 +79,8 @@ discoverable; empty array = none.
 
 ## Important notes
 
+- You **cannot** edit `node_modules/` files directly (including the Pi agent framework
+  itself), you have to make an extension instead.
 - **`auth.json`** contains OAuth tokens. Never commit, paste, or screenshot it.
 - **Most files are symlinks** into `~/gitsky/dotfiles/agentic/`. Edit via the symlink —
   the dotfiles repo is the source of truth. Commit changes there.
