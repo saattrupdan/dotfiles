@@ -18,6 +18,17 @@
  * content in a `tool_result` / `tool_execution_end` handler, which would lie to the model
  * and make the full output unrecoverable.
  *
+ * ONE deliberate exception: for the three Understory `memory_*` tools we also wrap
+ * `execute` to neutralize the internal source paths the librarian cites (e.g.
+ * `[/users/dan-smart.md](/users/dan-smart.md)`). A weak local client reads those as real
+ * files, prepends a guessed knowledge-base root, and tries to `read`/`bash` them — bypassing
+ * the MCP entirely and 404ing (observed in the wild). We rewrite each internal `/…․md` path
+ * into an inert backticked concept label (`users/dan-smart`, no link, no leading slash, no
+ * extension) so it no longer reads as an openable filesystem path. This DOES mutate the
+ * model-facing content, but only cosmetically and only for the memory tools — the answer
+ * text is untouched, and only the path *affordance* is removed. The transformed result also
+ * feeds the display, so the expanded (Ctrl+O) view shows the same neutralized labels.
+ *
  * Because we install the adapter ourselves, "npm:pi-mcp-adapter" MUST be removed from
  * settings.json `packages` — otherwise it loads a second time and every tool name
  * conflicts ("Tool \"…\" conflicts with …"). Instead, pi-mcp-adapter is a declared
@@ -51,6 +62,9 @@ interface ToolResult {
 
 const MAX_SUMMARY_CHARS = 80;
 const MCP_DIRECT_TOOL_LABEL = "MCP: ";
+// Understory memory tools whose results cite the librarian's internal virtual paths. We
+// neutralize those paths in their execute() output (see file header for the why).
+const MEMORY_TOOLS = new Set(["memory_query", "memory_add", "memory_update"]);
 // Tools whose payload isn't worth surfacing get a fixed collapsed summary instead of a
 // snippet of their (often long) result text.
 const FIXED_RESULT_SUMMARY: Record<string, string> = {
@@ -111,6 +125,33 @@ function prettyText(text: string): string {
 	}
 }
 
+/** `/users/dan-smart.md` → `users/dan-smart` (drop leading slash + `.md` extension). */
+function pathToConcept(path: string): string {
+	return path.replace(/^\//, "").replace(/\.md$/i, "");
+}
+
+/**
+ * Rewrite Understory's internal source paths so they no longer read as openable files.
+ * Handles both markdown links (`[…](/users/dan-smart.md)`) and any bare `/…․md` paths that
+ * aren't part of a URL (guarded by a lookbehind for `:`/word-char/backtick), turning each
+ * into an inert backticked concept label. External http(s) links and the prose answer are
+ * left untouched.
+ */
+function neutralizeMemoryPaths(text: string): string {
+	const linked = text.replace(/\[[^\]]*\]\((\/[^)\s]+?\.md)\)/g, (_m, target: string) => `\`${pathToConcept(target)}\``);
+	return linked.replace(/(?<![:\w`(/])\/(?:[\w.-]+\/)*[\w.-]+\.md\b/g, (match) => `\`${pathToConcept(match)}\``);
+}
+
+function neutralizeMemoryResult(result: ToolResult): ToolResult {
+	if (!result || !Array.isArray(result.content)) return result;
+	return {
+		...result,
+		content: result.content.map((block) =>
+			block.type === "text" ? { ...block, text: neutralizeMemoryPaths(block.text) } : block,
+		),
+	};
+}
+
 /** renderCall: just the tool title. Raw arguments appear only when expanded (Ctrl+O). */
 function makeRenderCall(name: string) {
 	return (args: Record<string, unknown>, theme: Theme, ctx: RenderContext): Component => {
@@ -145,10 +186,22 @@ export default function (pi: ExtensionAPI) {
 	const wrapped = new Proxy(pi, {
 		get(target, prop) {
 			if (prop === "registerTool") {
-				return (tool: { name: string; label?: string; renderCall?: unknown; renderResult?: unknown }) => {
+				return (tool: {
+					name: string;
+					label?: string;
+					renderCall?: unknown;
+					renderResult?: unknown;
+					execute?: (...args: unknown[]) => Promise<ToolResult>;
+				}) => {
 					if (typeof tool.label === "string" && tool.label.startsWith(MCP_DIRECT_TOOL_LABEL)) {
 						tool.renderCall = makeRenderCall(tool.name);
 						tool.renderResult = makeRenderResult(tool.name);
+						// For memory tools, strip the internal source-path affordance from the
+						// model-facing result (see file header). Everything else is display-only.
+						if (MEMORY_TOOLS.has(tool.name) && typeof tool.execute === "function") {
+							const original = tool.execute;
+							tool.execute = async (...args: unknown[]) => neutralizeMemoryResult(await original(...args));
+						}
 					}
 					return (target.registerTool as (t: unknown) => unknown)(tool);
 				};
