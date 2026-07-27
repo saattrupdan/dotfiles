@@ -14,7 +14,7 @@
  * every call, so edits are picked up without a full rebuild.
  *
  * Beyond plain-text source, `read` also handles:
- *   • Documents (PDF, DOCX, XLSX, PPTX) → converted to Markdown via the
+ *   • Documents (PDF, DOCX, XLSX, PPTX, ODT, ODS, ODP) → converted to Markdown via the
  *     `docling` CLI, then rendered through the same outline/symbol pipeline.
  *   • URLs (http/https) → downloaded and converted to Markdown via docling,
  *     so a single tool reads local files, documents, and web pages alike.
@@ -280,6 +280,8 @@ function sha256String(s: string): string {
 // ---------------------------------------------------------------------------
 
 const DOCUMENT_EXTENSIONS = new Set([".pdf", ".docx", ".xlsx", ".pptx"]);
+const OPENDOCUMENT_EXTENSIONS = new Set([".odt", ".ods", ".odp"]);
+const ALL_DOCUMENT_EXTENSIONS = new Set([...DOCUMENT_EXTENSIONS, ...OPENDOCUMENT_EXTENSIONS]);
 // Note: LaTeX files (.tex, .latex, etc.) are NOT special-cased here — they
 // have outline support in _outliner (sections, preamble) and follow the
 // standard outline/verbatim flow like other source files.
@@ -295,6 +297,20 @@ function docCachePath(key: string): string {
 function runDocling(outputDir: string, source: string, signal?: AbortSignal): Promise<{ status: number; stderr: string }> {
 	return new Promise((resolve, reject) => {
 		const proc = spawn("docling", ["--to", "md", "--device", "auto", "--output", outputDir, source], {
+			stdio: ["ignore", "ignore", "pipe"],
+		});
+		const err: Buffer[] = [];
+		proc.stderr.on("data", (d: Buffer) => err.push(d));
+		proc.on("close", (code) => resolve({ status: code ?? 1, stderr: Buffer.concat(err).toString() }));
+		proc.on("error", (e) => reject(e));
+		if (signal) signal.addEventListener("abort", () => proc.kill());
+	});
+}
+
+function runPandoc(outputDir: string, source: string, signal?: AbortSignal): Promise<{ status: number; stderr: string }> {
+	return new Promise((resolve, reject) => {
+		const outputFile = path.join(outputDir, "output.md");
+		const proc = spawn("pandoc", [source, "-t", "markdown", "-o", outputFile], {
 			stdio: ["ignore", "ignore", "pipe"],
 		});
 		const err: Buffer[] = [];
@@ -338,16 +354,27 @@ async function convertToMarkdown(source: string, cacheKey: string, signal?: Abor
 
 	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "docling-"));
 	try {
-		const { status, stderr } = await runDocling(tmpDir, source, signal);
+		// Use pandoc for OpenDocument formats, docling for everything else
+		const sourceLower = source.toLowerCase();
+		const isOpendocument = 
+			sourceLower.endsWith(".odt") || 
+			sourceLower.endsWith(".ods") || 
+			sourceLower.endsWith(".odp");
+		
+		const { status, stderr } = isOpendocument
+			? await runPandoc(tmpDir, source, signal)
+			: await runDocling(tmpDir, source, signal);
+		
 		const mdFile = findMarkdown(tmpDir);
 		const body = mdFile ? fs.readFileSync(mdFile, "utf-8") : "";
 		if (!body) {
-			throw new Error(`docling produced no output (exit ${status})${stderr ? `: ${stderr.trim().slice(0, 300)}` : ""}`);
+			const converter = isOpendocument ? "pandoc" : "docling";
+			throw new Error(`${converter} produced no output (exit ${status})${stderr ? `: ${stderr.trim().slice(0, 300)}` : ""}`);
 		}
 
 		// For DOCX files, extract and inject inline comments
 		let result = body;
-		if (source.toLowerCase().endsWith(".docx")) {
+		if (sourceLower.endsWith(".docx")) {
 			const comments = await extractDocxComments(source);
 			if (comments.length > 0) {
 				const anchorMap = await extractDocxCommentAnchors(source, comments);
@@ -443,7 +470,7 @@ export default async function (pi: ExtensionAPI) {
 		description:
 			"Read a file, document, web page, or list a directory. The `path` may be a local path or an http(s) URL.\n" +
 			"  • Path is a directory → truncated listing of entries (dirs first, then files).\n" +
-			"  • Document (PDF, DOCX, XLSX, PPTX) or URL → converted to Markdown via docling, then rendered exactly like any Markdown file (outline for large ones; read a section with symbol=\"<heading>\"). Conversions are cached, so re-reading the same document/URL is cheap.\n" +
+			"  • Document (PDF, DOCX, XLSX, PPTX, ODT, ODS, ODP) or URL → converted to Markdown via docling, then rendered exactly like any Markdown file (outline for large ones; read a section with symbol=\"<heading>\"). Conversions are cached, so re-reading the same document/URL is cheap.\n" +
 			"  • No symbol, small file → verbatim contents.\n" +
 			"  • No symbol, large file → outline (module doc, classes/functions with signatures, type hints, and doc-first-line). Use the outline to pick a symbol.\n" +
 			"  • symbol set → body of that symbol only (supports 'Class.method').\n" +
@@ -546,18 +573,21 @@ export default async function (pi: ExtensionAPI) {
 				};
 			}
 
-			// 3b. Documents (PDF/DOCX/XLSX/PPTX) → convert to Markdown via docling
-			// (cached by content sha), then render like any other Markdown file.
+			// 3b. Documents (PDF/DOCX/XLSX/PPTX/ODT/ODS/ODP) → convert to Markdown
+			// via docling (Microsoft Office/PDF) or pandoc (OpenDocument), cached by
+			// content sha, then render like any other Markdown file.
 			const ext = path.extname(absolutePath).toLowerCase();
-			if (DOCUMENT_EXTENSIONS.has(ext)) {
+			if (ALL_DOCUMENT_EXTENSIONS.has(ext)) {
 				let markdown: string;
 				try {
 					markdown = await convertToMarkdown(absolutePath, sha, signal);
 				} catch (err) {
-					return { content: [{ type: "text", text: `Could not convert ${path.basename(absolutePath)} via docling: ${(err as Error).message}` }] };
+					const converter = OPENDOCUMENT_EXTENSIONS.has(ext) ? "pandoc" : "docling";
+					return { content: [{ type: "text", text: `Could not convert ${path.basename(absolutePath)} via ${converter}: ${(err as Error).message}` }] };
 				}
 				const displayPath = path.basename(absolutePath);
-				const banner = `# ${displayPath} — ${ext.slice(1).toUpperCase()} converted to Markdown via docling`;
+				const converter = OPENDOCUMENT_EXTENSIONS.has(ext) ? "pandoc" : "docling";
+				const banner = `# ${displayPath} — ${ext.slice(1).toUpperCase()} converted to Markdown via ${converter}`;
 				const rendered = withBanner(renderContent(displayPath, `${displayPath}.md`, markdown, symbol, outline, collapsedView, key, sha), banner);
 				const callIdx = ++callIndex.current;
 				dedupeCache.set(key, { sha, callIndex: callIdx, text: rendered.content[0].text });

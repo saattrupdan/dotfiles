@@ -390,12 +390,13 @@ readme = "README.md"
 
 ## Documents (PDF / DOCX / XLSX / PPTX / ODT / ODS / ODP)
 
-Documents are converted to Markdown via `docling` (cached on disk by content
-hash), then rendered like any Markdown file. A large report shows an outline;
+Documents are converted to Markdown (cached on disk by content hash), then
+rendered like any Markdown file. A large report shows an outline;
 `symbol="<heading>"` returns just that section.
 
-Supported formats: PDF, Microsoft Office (DOCX, XLSX, PPTX), and OpenDocument
-(ODT, ODS, ODP).
+Supported formats and converters:
+- **PDF, Microsoft Office (DOCX, XLSX, PPTX):** `docling`
+- **OpenDocument (ODT, ODS, ODP):** `pandoc`
 
 ```
 > read reports/annual.docx
@@ -410,7 +411,7 @@ Supported formats: PDF, Microsoft Office (DOCX, XLSX, PPTX), and OpenDocument
 
 ```
 > read documents/report.odt
-# report.odt — ODT converted to Markdown via docling
+# report.odt — ODT converted to Markdown via pandoc
 # outline of report.odt (183 lines)
     1  # Quarterly Report
     3    ## Summary
