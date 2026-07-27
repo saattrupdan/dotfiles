@@ -196,8 +196,21 @@ function makeRenderResult(name: string) {
 	};
 }
 
-// Wrap a UI object so the startup banner notification is swallowed; every other call
-// (and every other property) passes straight through with its original binding intact.
+// Condense the verbose footer status. The adapter sets the "mcp" status slot to
+// `🔌 MCP: N servers enabled (M connected)` (init.ts updateStatusBar); we replace it with
+// one 🔌 per connected server (2 connected → "🔌🔌"), keeping the adapter's accent colour.
+// Non-"connected" states (e.g. "connecting to N servers…") fall back to a single plug so
+// the slot still signals activity. `undefined` (slot cleared) passes straight through.
+function condenseMcpStatus(value: unknown, theme: { fg?(name: string, text: string): string } | undefined): unknown {
+	if (typeof value !== "string") return value;
+	const connected = value.match(/\((\d+)\s+connected\)/);
+	const count = connected ? Number(connected[1]) : 1;
+	const plugs = "🔌".repeat(Math.max(count, 1));
+	return theme?.fg ? theme.fg("accent", plugs) : plugs;
+}
+
+// Wrap a UI object so the startup banner notification is swallowed and the footer status is
+// condensed; every other call (and property) passes through with its original binding intact.
 function filterUi(ui: unknown): unknown {
 	if (!ui || typeof (ui as { notify?: unknown }).notify !== "function") return ui;
 	return new Proxy(ui as Record<string, unknown>, {
@@ -206,6 +219,14 @@ function filterUi(ui: unknown): unknown {
 				return (message: unknown, level?: unknown) => {
 					if (typeof message === "string" && MCP_STARTUP_BANNER.test(message.trim())) return;
 					return (target.notify as (...a: unknown[]) => unknown)(message, level);
+				};
+			}
+			if (prop === "setStatus") {
+				return (key: unknown, value: unknown) => {
+					const next = key === "mcp"
+						? condenseMcpStatus(value, (target as { theme?: { fg?(name: string, text: string): string } }).theme)
+						: value;
+					return (target.setStatus as (...a: unknown[]) => unknown)(key, next);
 				};
 			}
 			return Reflect.get(target, prop, target);
