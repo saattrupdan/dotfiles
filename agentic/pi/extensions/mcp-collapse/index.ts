@@ -61,6 +61,12 @@ interface ToolResult {
 }
 
 const MAX_SUMMARY_CHARS = 80;
+// The adapter announces itself on every session start with a splash-screen notification
+// (`ui.notify("MCP: N servers connected (M tools)", "info")` in pi-mcp-adapter's init).
+// The footer already shows connection status, so this line is pure noise. We drop exactly
+// that message and nothing else — matched by a tight anchored pattern so no other MCP
+// notification (errors, "tools skipped", auth prompts) is ever suppressed.
+const MCP_STARTUP_BANNER = /^MCP: \d+(?:\/\d+)? servers connected \(\d+ tools?\)$/;
 const MCP_DIRECT_TOOL_LABEL = "MCP: ";
 // Understory memory tools whose results cite the librarian's internal virtual paths. We
 // neutralize those paths in their execute() output (see file header for the why).
@@ -190,11 +196,48 @@ function makeRenderResult(name: string) {
 	};
 }
 
+// Wrap a UI object so the startup banner notification is swallowed; every other call
+// (and every other property) passes straight through with its original binding intact.
+function filterUi(ui: unknown): unknown {
+	if (!ui || typeof (ui as { notify?: unknown }).notify !== "function") return ui;
+	return new Proxy(ui as Record<string, unknown>, {
+		get(target, prop) {
+			if (prop === "notify") {
+				return (message: unknown, level?: unknown) => {
+					if (typeof message === "string" && MCP_STARTUP_BANNER.test(message.trim())) return;
+					return (target.notify as (...a: unknown[]) => unknown)(message, level);
+				};
+			}
+			return Reflect.get(target, prop, target);
+		},
+	});
+}
+
+// Wrap the ExtensionContext (handler 2nd arg) so its `ui` is the filtered one above.
+function filterCtx(ctx: unknown): unknown {
+	if (!ctx || typeof ctx !== "object" || !("ui" in ctx) && !("hasUI" in ctx)) return ctx;
+	return new Proxy(ctx as Record<string, unknown>, {
+		get(target, prop) {
+			if (prop === "ui") return filterUi(Reflect.get(target, prop, target));
+			return Reflect.get(target, prop, target);
+		},
+	});
+}
+
 export default function (pi: ExtensionAPI) {
 	// Install the adapter against a Proxy that injects our renderers into every MCP direct
 	// tool as it is registered. Everything else passes straight through to the real API.
 	const wrapped = new Proxy(pi, {
 		get(target, prop) {
+			if (prop === "on") {
+				// Event handlers receive ctx as their 2nd arg. Substitute a ctx whose `ui.notify`
+				// filters the startup banner, so the adapter never emits it on the splash screen.
+				return (event: unknown, handler: (...args: unknown[]) => unknown) => {
+					const wrappedHandler = (evt: unknown, ctx: unknown, ...rest: unknown[]) =>
+						handler(evt, filterCtx(ctx), ...rest);
+					return (target.on as (e: unknown, h: unknown) => unknown)(event, wrappedHandler);
+				};
+			}
 			if (prop === "registerTool") {
 				return (tool: {
 					name: string;
