@@ -55,6 +55,14 @@ across sessions (in-session context does not). It's exposed as three tools:
 - **`memory_update`** — correct or deprecate knowledge that turns out wrong or
   outdated.
 
+**These three tools are the *only* way to reach memory.** Never `read`, `search`,
+`find`, `cat`, or `bash` your way into the knowledge-base files yourself — not even when
+a `memory_query` result cites source paths like `/users/dan-smart.md`. Those are the
+librarian's internal virtual paths, **not real files on your disk** (guessing a real
+path from them will 404 and send you digging). Follow-ups and "give me more detail"
+are just another `memory_query` with a narrower question — ask the librarian, don't
+open the library yourself.
+
 **What's worth saving:** tool/SDK misuse and the right way, project build/test/run
 gotchas, repeated user requests, explicit preferences and feedback, and non-obvious
 decisions the user accepted. Skip anything already in `git log`/`blame`/`AGENTS.md` or
