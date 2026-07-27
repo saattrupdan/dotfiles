@@ -52,7 +52,7 @@ export default function (pi: ExtensionAPI) {
 			const isError = context.isError;
 			
 			// Try to get state for this tool call from our tracked map
-			const toolCallId = options.toolCallId;
+			const toolCallId = context.toolCallId;
 			const state = toolCallId ? bashState.get(toolCallId) : undefined;
 			
 			// If we have tracked state and it's not running, use it
