@@ -68,6 +68,9 @@ const MAX_SUMMARY_CHARS = 80;
 // notification (errors, "tools skipped", auth prompts) is ever suppressed.
 const MCP_STARTUP_BANNER = /^MCP: \d+(?:\/\d+)? servers connected \(\d+ tools?\)$/;
 const MCP_DIRECT_TOOL_LABEL = "MCP: ";
+// After /reload the old extension ctx becomes stale. MCP init may fire a notification
+// before the stale error resolves itself — suppress this noise (it's not actionable).
+const MCP_STALE_CTX_ERROR = /MCP initialization failed:.*stale after session replacement or reload/;
 // Understory memory tools whose results cite the librarian's internal virtual paths. We
 // neutralize those paths in their execute() output (see file header for the why).
 const MEMORY_TOOLS = new Set(["memory_query", "memory_add", "memory_update"]);
@@ -217,7 +220,14 @@ function filterUi(ui: unknown): unknown {
 		get(target, prop) {
 			if (prop === "notify") {
 				return (message: unknown, level?: unknown) => {
-					if (typeof message === "string" && MCP_STARTUP_BANNER.test(message.trim())) return;
+					if (typeof message === "string") {
+						const trimmed = message.trim();
+						// Suppress the MCP startup banner
+						if (MCP_STARTUP_BANNER.test(trimmed)) return;
+						// Suppress the stale context error notification - it's a known
+						// issue after reload that resolves itself, no need to alarm the user
+						if (MCP_STALE_CTX_ERROR.test(trimmed)) return;
+					}
 					return (target.notify as (...a: unknown[]) => unknown)(message, level);
 				};
 			}
