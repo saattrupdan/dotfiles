@@ -104,7 +104,9 @@ export function discoverSkills(cwd: string): Skill[] {
 }
 
 export function readSkillContent(skill: Skill): string {
-	return fs.readFileSync(skill.filePath, "utf-8");
+	const content = fs.readFileSync(skill.filePath, "utf-8");
+	// Strip frontmatter (YAML block between --- delimiters)
+	return content.replace(FRONTMATTER_RE, "").trimStart();
 }
 
 export function discoverAutoloadSkills(cwd: string): DiscoveredSkill[] {
