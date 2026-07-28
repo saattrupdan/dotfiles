@@ -259,15 +259,6 @@ export default function (pi: ExtensionAPI) {
 					return (target.on as (e: unknown, h: unknown) => unknown)(event, wrappedHandler);
 				};
 			}
-			if (prop === "registerCommand") {
-				// Command handlers receive ctx as their 2nd arg (after args). Filter it so
-				// MCP's error notifications for stale contexts are suppressed.
-				return (name: string, handler: unknown) => {
-					const wrappedHandler = async (args: unknown, ctx: unknown, ...rest: unknown[]) =>
-						(await (handler as (a: unknown, c: unknown, ...r: unknown[]) => Promise<unknown>)(args, filterCtx(ctx), ...rest));
-					return (target.registerCommand as (n: string, h: unknown) => unknown)(name, wrappedHandler);
-				};
-			}
 			if (prop === "registerTool") {
 				return (tool: {
 					name: string;
