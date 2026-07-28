@@ -277,22 +277,6 @@ export default function (pi: ExtensionAPI) {
 							tool.execute = async (...args: unknown[]) => neutralizeMemoryResult(await original(...args));
 						}
 					}
-					// Wrap the MCP proxy tool to suppress stale context errors in its result content
-					if (tool.name === "mcp" && typeof tool.execute === "function") {
-						const original = tool.execute;
-						tool.execute = async (...args: unknown[]) => {
-							const result = await original(...args);
-							// If the result content contains the stale context error, return empty content
-							if (
-								result?.content?.[0]?.type === "text" &&
-								typeof result.content[0].text === "string" &&
-								MCP_STALE_CTX_ERROR.test(result.content[0].text)
-							) {
-								return { ...result, content: [] };
-							}
-							return result;
-						};
-					}
 					return (target.registerTool as (t: unknown) => unknown)(tool);
 				};
 			}
