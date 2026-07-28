@@ -83,6 +83,26 @@ const FIXED_RESULT_SUMMARY: Record<string, string> = {
 // before summarizing or pretty-printing.
 const TOOLCALLID_MARKER = /^\[toolCallId:[^\]]*\]$/;
 
+// Substring of pi's "stale ctx" guard message (extensions/loader.js invalidate()). After a
+// /reload — or a session replacement that races an in-flight MCP init — the adapter's
+// post-init sync (`syncToolSurface` → `pi.getAllTools()`/`setActiveTools()`) touches a
+// runtime pi has already invalidated. The throw is caught in pi-mcp-adapter and logged with
+// `console.error("MCP initialization failed: …stale after session replacement or reload…")`.
+// It is pure benign noise: a superseded init instance losing a harmless race, seconds after
+// reload. But pi runs on an alternate-screen TUI where stderr is NOT redirected, so that
+// console.error bleeds raw onto the splash, landing in/near the input box.
+//
+// This is why the earlier ui.notify / command-ctx / tool_result filters never caught it:
+// the line is a direct stderr write, not a notification (which would carry an "Error:" /
+// "Extension … error:" prefix and flow through the ctx.ui we already proxy). console is the
+// only interception point. See suppressStaleCtxConsoleNoise below.
+const STALE_CTX_SENTINEL = "stale after session replacement or reload";
+// Process-global marker so the wrapper is installed exactly once. Our module is re-imported
+// fresh on every /reload (jiti moduleCache:false), but `console` is a process singleton, so
+// a wrapper from a previous load is still live — without this guard each reload would stack
+// another wrapper.
+const STALE_CONSOLE_PATCHED = Symbol.for("mcp-collapse.stale-console-patched");
+
 function oneLine(text: string): string {
 	const collapsed = text.replace(/\s+/g, " ").trim();
 	return collapsed.length > MAX_SUMMARY_CHARS ? `${collapsed.slice(0, MAX_SUMMARY_CHARS - 1)}…` : collapsed;
@@ -245,7 +265,38 @@ function filterCtx(ctx: unknown): unknown {
 	});
 }
 
+// Swallow the benign "stale ctx" lines the MCP adapter writes to stderr after a reload (see
+// STALE_CTX_SENTINEL). We wrap console.error/console.warn — the only channel these lines use
+// — and drop a call only when one of its arguments carries pi's stale-ctx sentinel (checking
+// both string args and any Error's message/stack). Every other log, including genuine MCP
+// failures, passes through untouched.
+function suppressStaleCtxConsoleNoise(): void {
+	const target = console as unknown as Record<PropertyKey, unknown>;
+	if (target[STALE_CONSOLE_PATCHED]) return;
+
+	const carriesSentinel = (args: unknown[]): boolean =>
+		args.some((arg) => {
+			const text = typeof arg === "string"
+				? arg
+				: arg instanceof Error
+					? `${arg.message}\n${arg.stack ?? ""}`
+					: "";
+			return text.includes(STALE_CTX_SENTINEL);
+		});
+
+	for (const level of ["error", "warn"] as const) {
+		const original = console[level].bind(console) as (...args: unknown[]) => void;
+		console[level] = (...args: unknown[]): void => {
+			if (carriesSentinel(args)) return;
+			original(...args);
+		};
+	}
+	target[STALE_CONSOLE_PATCHED] = true;
+}
+
 export default function (pi: ExtensionAPI) {
+	suppressStaleCtxConsoleNoise();
+
 	// Install the adapter against a Proxy that injects our renderers into every MCP direct
 	// tool as it is registered. Everything else passes straight through to the real API.
 	const wrapped = new Proxy(pi, {
