@@ -88,8 +88,92 @@ const CLAUDE_CODE_DEBUG_ENABLED = process.env[CLAUDE_CODE_DEBUG_ENV] === "1";
 /** Error message for stale tool results */
 const STALE_TOOL_RESULT_ERROR = "[Error: Tool result is stale - invocation sequence mismatch]";
 
+/** Result of parsing text for tool calls: segments of text or tool calls */
+interface ParsedTextSegment {
+	type: 'text' | 'toolCall';
+	content: string | ToolCallWithReplayMetadata;
+}
+
+/**
+ * Parse text for tool call patterns and return segments (text/toolCall).
+ * Does simple string matching instead of regex to avoid statefulness issues.
+ * @param text - Text to parse
+ * @param invocationSequence - Invocation sequence for replay tracking
+ * @returns Array of segments (text or toolCall)
+ */
+function parseTextForToolCalls(
+	text: string,
+	invocationSequence: number,
+	emittedToolCallIds: string[],
+): { segments: ParsedTextSegment[]; toolCallsFound: number } {
+	const segments: ParsedTextSegment[] = [];
+	let remaining = text;
+	let toolCallsFound = 0;
+
+	while (remaining.length > 0) {
+		const startIndex = remaining.indexOf(TOOL_CALL_START_MARKER);
+
+		if (startIndex === -1) {
+			// No more tool calls - emit rest as text
+			if (remaining.trim()) {
+				segments.push({ type: 'text', content: remaining });
+			}
+			break;
+		}
+
+		// Emit text before the tool call marker
+		if (startIndex > 0) {
+			segments.push({ type: 'text', content: remaining.slice(0, startIndex) });
+		}
+
+		// Find end marker
+		const afterStart = remaining.slice(startIndex + TOOL_CALL_START_MARKER.length);
+		const endIndex = afterStart.indexOf(TOOL_CALL_END_MARKER);
+
+		if (endIndex === -1) {
+			// Unclosed tool call - emit as text
+			segments.push({ type: 'text', content: remaining.slice(startIndex) });
+			break;
+		}
+
+		// Parse the JSON
+		const jsonText = afterStart.slice(0, endIndex);
+		const parsedToolCall = tryParseToolCall(jsonText);
+
+		if (parsedToolCall) {
+			// Valid tool call - emit as toolCall segment
+			const toolCallId = uuidv4();
+			const toolCallSequence = nextToolCallSequence++;
+			emittedToolCallIds.push(toolCallId);
+			const toolCall: ToolCallWithReplayMetadata = {
+				type: 'toolCall',
+				id: toolCallId,
+				name: parsedToolCall.name,
+				arguments: parsedToolCall.arguments ?? {},
+				toolCallSequence,
+				source: 'claude',
+				invocationSequence,
+			};
+			registerToolCall(invocationSequence, toolCallId, toolCallSequence, parsedToolCall.name, 'claude', parsedToolCall.arguments ?? {}, true);
+			logClaudeCodeProvider('tool_call_registered', { invocationSequence, toolCallId, toolCallSequence, name: parsedToolCall.name, source: 'claude', argsLength: JSON.stringify(parsedToolCall.arguments ?? {}).length });
+			segments.push({ type: 'toolCall', content: toolCall });
+			toolCallsFound++;
+		} else {
+			// Invalid JSON - emit the whole marker span as text
+			const fullSpan = TOOL_CALL_START_MARKER + jsonText + TOOL_CALL_END_MARKER;
+			segments.push({ type: 'text', content: fullSpan });
+		}
+
+		// Continue after the end marker
+		remaining = afterStart.slice(endIndex + TOOL_CALL_END_MARKER.length);
+	}
+
+	return { segments, toolCallsFound };
+}
+
 /** Parse text for tool call patterns and return segments (text/toolCall)
  * Does simple string matching instead of regex to avoid statefulness issues.
+ * @deprecated Use parseTextForToolCalls instead
  */
 /**
  * Compute the longest suffix of `pending` that is a proper prefix of `marker`.
@@ -1066,13 +1150,7 @@ async function runClaudeInvocation(
 						const streamingState = textBlockStates.get(event.index);
 						if (!streamingState) return;
 
-						// After a tool call has been emitted, suppress any further visible text deltas
-						// to prevent fabricated "Result of calling tool..." text from being appended
-						if (state.toolCallEmitted) {
-							return;
-						}
-
-						// Append new text to pending
+						// Append new text to pending (process below - tool call detection may consume it)
 						streamingState.pending += event.delta.text;
 
 						// Consume pending in a loop
@@ -1241,11 +1319,8 @@ async function runClaudeInvocation(
 					if (mapping && mapping.type === "text") {
 						// Flush remaining streaming state for this text block
 						const streamingState = textBlockStates.get(event.index);
-						if (streamingState) {
-							if (streamingState.mode === 'text') {
-								// Suppress flush if tool call already emitted - prevents mixed content
-								if (state.toolCallEmitted) return;
-								// Flush any remaining pending as visible text
+						if (streamingState) {					if (streamingState.mode === 'text') {
+							// Flush any remaining pending as visible text
 								if (streamingState.pending.length > 0) {
 									if (!streamingState.textBlockOpen) {
 										const textPiIndex = output.content.length;
@@ -1266,12 +1341,9 @@ async function runClaudeInvocation(
 								if (streamingState.textBlockOpen) {
 									const textBlock = output.content[streamingState.textBlockPiIndex!] as TextContent;
 									stream.push({ type: "text_end", contentIndex: streamingState.textBlockPiIndex!, content: textBlock.text, partial: output });
-								}
-							} else {
-								// collectingJson mode with no end marker (truncated/aborted)
-								// Suppress flush if tool call already emitted - prevents mixed content
-								if (state.toolCallEmitted) return;
-								// Truncated tool calls should NOT become executable - fall back to text
+								}						} else {
+							// collectingJson mode with no end marker (truncated/aborted)
+							// Truncated tool calls should NOT become executable - fall back to text
 								// toolcall_start was never emitted (we defer until complete marker), so no orphan possible
 								const bufferedJson = streamingState.jsonAccumulator || '';
 								if (bufferedJson.length > 0 || streamingState.pending.length > 0) {
@@ -1613,11 +1685,32 @@ function streamClaudeCode(
 							stream.push({ type: "start", partial: output });
 						}
 						const text = lastAttemptResult.resultEvent.result;
-						const piIndex = output.content.length;
-						output.content.push({ type: "text", text: text });
-						stream.push({ type: "text_start", contentIndex: piIndex, partial: output });
-						stream.push({ type: "text_delta", contentIndex: piIndex, delta: text, partial: output });
-						stream.push({ type: "text_end", contentIndex: piIndex, content: text, partial: output });
+						// Parse text for tool calls
+						const { segments, toolCallsFound } = parseTextForToolCalls(text, lastAttemptResult.invocationSequence, lastAttemptResult.emittedToolCallIds);
+
+						if (toolCallsFound > 0) {
+							output.stopReason = "toolUse";
+							lastAttemptResult.toolCallEmitted = true;
+						}
+
+						// Emit segments in order
+						for (const segment of segments) {
+							const piIndex = output.content.length;
+							if (segment.type === 'text') {
+								if (segment.content.toString().trim()) {
+									output.content.push({ type: "text", text: segment.content as string });
+									stream.push({ type: "text_start", contentIndex: piIndex, partial: output });
+									stream.push({ type: "text_delta", contentIndex: piIndex, delta: segment.content as string, partial: output });
+									stream.push({ type: "text_end", contentIndex: piIndex, content: segment.content as string, partial: output });
+								}
+							} else {
+								// toolCall segment
+								output.content.push(segment.content);
+								stream.push({ type: "toolcall_start", contentIndex: piIndex, partial: output });
+								stream.push({ type: "toolcall_delta", contentIndex: piIndex, delta: JSON.stringify(segment.content.arguments), partial: output });
+								stream.push({ type: "toolcall_end", contentIndex: piIndex, toolCall: segment.content, partial: output });
+							}
+						}
 						lastAttemptResult.emittedText = true;
 					}
 
@@ -1713,11 +1806,32 @@ function streamClaudeCode(
 						stream.push({ type: "start", partial: output });
 					}
 					const text = lastAttemptResult.resultEvent.result;
-					const piIndex = output.content.length; // Index of the block we're about to push
-					output.content.push({ type: "text", text: text });
-					stream.push({ type: "text_start", contentIndex: piIndex, partial: output });
-					stream.push({ type: "text_delta", contentIndex: piIndex, delta: text, partial: output });
-					stream.push({ type: "text_end", contentIndex: piIndex, content: text, partial: output });
+					// Parse text for tool calls
+					const { segments, toolCallsFound } = parseTextForToolCalls(text, lastAttemptResult.invocationSequence, lastAttemptResult.emittedToolCallIds);
+
+					if (toolCallsFound > 0) {
+						output.stopReason = "toolUse";
+						lastAttemptResult.toolCallEmitted = true;
+					}
+
+					// Emit segments in order
+					for (const segment of segments) {
+						const piIndex = output.content.length;
+						if (segment.type === 'text') {
+							if (segment.content.toString().trim()) {
+								output.content.push({ type: "text", text: segment.content as string });
+								stream.push({ type: "text_start", contentIndex: piIndex, partial: output });
+								stream.push({ type: "text_delta", contentIndex: piIndex, delta: segment.content as string, partial: output });
+								stream.push({ type: "text_end", contentIndex: piIndex, content: segment.content as string, partial: output });
+							}
+						} else {
+							// toolCall segment
+							output.content.push(segment.content);
+							stream.push({ type: "toolcall_start", contentIndex: piIndex, partial: output });
+							stream.push({ type: "toolcall_delta", contentIndex: piIndex, delta: JSON.stringify(segment.content.arguments), partial: output });
+							stream.push({ type: "toolcall_end", contentIndex: piIndex, toolCall: segment.content, partial: output });
+						}
+					}
 					lastAttemptResult.emittedText = true; // Mark that text was now emitted
 				}
 

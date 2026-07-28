@@ -169,27 +169,256 @@ async function generateNameWithModel(
  * line, strip wrapping quotes/backticks and trailing punctuation, collapse
  * whitespace, and truncate to MAX_NAME_LENGTH.
  */
+function toTitleCase(str: string): string {
+	// Minor words that stay lowercase (unless first word)
+	const minorWords = new Set(["a", "an", "the", "and", "but", "or", "for", "nor", "on", "at", "to", "in", "of"]);
+
+	return str
+		.split(" ")
+		.map((word, idx) => {
+			if (idx === 0) {
+				// Always capitalize first word
+				return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+			}
+			if (minorWords.has(word.toLowerCase())) {
+				return word.toLowerCase();
+			}
+			return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+		})
+		.join(" ");
+}
+
+function validateAndFormatTitle(title: string): string {
+	if (!title || title.length === 0) {
+		return "";
+	}
+
+	// Strip surrounding quotes or backticks
+	title = title.replace(/^["'`]+|["'`]+$/g, "").trim();
+	// Collapse internal whitespace
+	title = title.replace(/\s+/g, " ");
+	// Drop trailing sentence punctuation
+	title = title.replace(/[.!?,;:]+$/, "").trim();
+	// Remove markdown formatting
+	title = title.replace(/\*\*(.+?)\*\*/g, "$1"); // **bold**
+	title = title.replace(/\*(.+?)\*/g, "$1"); // *italic*
+	title = title.replace(/`(.+?)`/g, "$1"); // `code`
+
+	// Reject if still contains markdown or looks like code/JSON
+	if (title.startsWith("```") || title.includes("\n") || title.startsWith("{") || title.startsWith("[")) {
+		return "";
+	}
+
+	// Enforce Title Case
+	title = toTitleCase(title);
+
+	return title;
+}
+
+/**
+ * Clean up raw model output into a single-line title.
+ * Tries to find a title-like line, then validates and formats it.
+ */
 function sanitizeTitle(raw: string): string {
 	const lines = raw
 		.split("\n")
 		.map((l) => l.trim())
 		.filter((l) => l.length > 0);
-	let title = lines.length > 0 ? lines[lines.length - 1] : "";
 
-	// Strip surrounding quotes or backticks the model sometimes adds.
-	title = title.replace(/^["'`]+|["'`]+$/g, "").trim();
-	// Collapse internal whitespace.
-	title = title.replace(/\s+/g, " ");
-	// Drop trailing sentence punctuation.
-	title = title.replace(/[.!?,;:]+$/, "").trim();
+	if (lines.length === 0) {
+		return "";
+	}
 
-	return title;
+	// Strategy 1: Look for a line that looks like a title
+	// (starts with capital or common title gerund, no markdown)
+	const titlePattern = /^(?:[A-Z0-9]|Fixing|Debugging|Implementing|Adding|Removing|Updating|Querying|Reading|Writing|Searching|Exploring|Analyzing)/;
+	for (const line of lines) {
+		if (titlePattern.test(line) && !line.startsWith("```") && !line.includes("**")) {
+			const formatted = validateAndFormatTitle(line);
+			if (formatted && formatted.length <= MAX_NAME_LENGTH) {
+				return formatted;
+			}
+		}
+	}
+
+	// Strategy 2: Fall back to the first line
+	return validateAndFormatTitle(lines[0]);
 }
 
 /**
  * Truncate a title to MAX_NAME_LENGTH, respecting word boundaries where
  * possible to avoid cutting mid-word.
  */
+/**
+ * Extract a descriptive title from the user's prompt by identifying the main action
+ * and key topic. Uses pattern matching to find the core task.
+ */
+function extractTitleFromPrompt(prompt: string): string {
+	const trimmed = prompt.trim();
+
+	// Remove URLs — they're noise in a title
+	let cleaned = trimmed.replace(/https?:\/\/\S+/g, "");
+
+	// Remove file paths (e.g., @~/Downloads/... or /path/to/file)
+	cleaned = cleaned.replace(/[@~]?\/[\w./-]+/g, "");
+
+	// Remove common filler prefixes
+	cleaned = cleaned.replace(
+		/^(can you|could you|please|I want to|I need to|I'd like to|let's|help me|show me|tell me|explain|read|look at|figure out)\s+/i,
+		"",
+	);
+
+	// Identify the main action verb (expanded list)
+	const actionMatch =
+		/\b(debug|fix|implement|add|remove|update|change|modify|refactor|optimize|test|analyze|explore|investigate|review|check|explain|understand|learn|read|write|create|build|setup|configure|install|deploy|search|find|locate|compare|convert|migrate|merge|split|parse|validate|generate|extract|format|style|document|rename|move|copy|delete|run|execute|start|stop|restart|enable|disable|uninstall|figure out|evaluate|benchmark|measure|profile|trace|diagnose)\b/i
+			.exec(cleaned);
+	let actionVerb = actionMatch?.[1] ?? "";
+
+	// Handle multi-word verbs
+	if (actionVerb.toLowerCase() === "figure out") {
+		actionVerb = "understand";
+	}
+
+	// Map common verbs to gerund form for title style
+	const verbToGerund: Record<string, string> = {
+		debug: "Debugging",
+		fix: "Fixing",
+		implement: "Implementing",
+		add: "Adding",
+		remove: "Removing",
+		update: "Updating",
+		change: "Changing",
+		modify: "Modifying",
+		refactor: "Refactoring",
+		optimize: "Optimizing",
+		test: "Testing",
+		analyze: "Analyzing",
+		explore: "Exploring",
+		investigate: "Investigating",
+		review: "Reviewing",
+		check: "Checking",
+		explain: "Explaining",
+		understand: "Understanding",
+		learn: "Learning",
+		read: "Reading",
+		write: "Writing",
+		create: "Creating",
+		build: "Building",
+		setup: "Setting Up",
+		configure: "Configuring",
+		install: "Installing",
+		deploy: "Deploying",
+		search: "Searching",
+		find: "Finding",
+		locate: "Locating",
+		compare: "Comparing",
+		convert: "Converting",
+		migrate: "Migrating",
+		merge: "Merging",
+		split: "Splitting",
+		parse: "Parsing",
+		validate: "Validating",
+		generate: "Generating",
+		extract: "Extracting",
+		format: "Formatting",
+		style: "Styling",
+		document: "Documenting",
+		rename: "Renaming",
+		move: "Moving",
+		copy: "Copying",
+		delete: "Deleting",
+		run: "Running",
+		execute: "Executing",
+		start: "Starting",
+		stop: "Stopping",
+		restart: "Restarting",
+		enable: "Enabling",
+		disable: "Disabling",
+		uninstall: "Uninstalling",
+		evaluate: "Evaluating",
+		benchmark: "Benchmarking",
+		measure: "Measuring",
+		profile: "Profiling",
+		trace: "Tracing",
+		diagnose: "Diagnosing",
+	};
+
+	const gerund = actionVerb ? verbToGerund[actionVerb.toLowerCase()] || actionVerb + "ing" : "";
+
+	// Extract technical concepts: multi-word terms, then capitalized proper nouns
+	// First, look for technical phrases (2+ word combinations that are meaningful)
+	const techPhrases = [
+		/technical term: (?:multiple choice|generative model|language model|machine learning|deep learning|neural network|attention mechanism|transformer model)/gi,
+		/multiple[- ]?choice/gi,
+		/generative[- ]?model/gi,
+		/language[- ]?model/gi,
+		/llm/gi,
+		/mcq/gi,
+		/mmlu/gi,
+		/arc[- ]?(?:easy|challenge)/gi,
+		/hellaswag/gi,
+		/common[s]?ense/gi,
+		/fastapi/gi,
+		/postgresql/gi,
+		/docker compose/gi,
+		/vue\.?js/gi,
+		/type ?script/gi,
+		/java ?script/gi,
+		/node\.?js/gi,
+		/react\.?js/gi,
+		/py ?torch/gi,
+		/tensor ?flow/gi,
+		/hugging ?face/gi,
+		/transformer/gi,
+		/tokenization/gi,
+		/embedding/gi,
+		/fine[- ]?tun(?:e|ing)/gi,
+		/zero[- ]?shot/gi,
+		/few[- ]?shot/gi,
+		/log[- ]?prob/gi,
+		/logits/gi,
+		/normaliz(?:e|ation)/gi,
+		/structured[- ]?generation/gi,
+		/constrained[- ]?decoding/gi,
+	].flatMap((pattern) => cleaned.match(pattern) || []);
+
+	// If we found technical phrases, use them
+	let keyTerm = "";
+	if (techPhrases.length > 0) {
+		// Deduplicate and join
+		const unique = Array.from(new Set(techPhrases.map((t) => t.toLowerCase())));
+		keyTerm = unique.slice(0, 2).map((t) => t.charAt(0).toUpperCase() + t.slice(1)).join(" ");
+	} else {
+		// Fallback: extract key nouns after the verb
+		const afterVerb = cleaned.substring(actionMatch?.index ?? 0).toLowerCase();
+		const nounMatch = /\b((?:[a-z]+[- ]?)+(?:evaluation|model|task|benchmark|dataset|config|api|endpoint|file|module|function))/.exec(afterVerb);
+		if (nounMatch) {
+			keyTerm = nounMatch[1].split(/[- ]+/).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+		}
+	}
+
+	// Build title: "[Gerund] [Key Topic]"
+	if (gerund && keyTerm) {
+		// Try different key term combinations, preferring ones that fit
+		const keyTermParts = keyTerm.split(" ");
+		for (let i = keyTermParts.length; i > 0; i--) {
+			const subset = keyTermParts.slice(0, i).join(" ");
+			const title = `${gerund} ${subset}`;
+			if (title.length <= MAX_NAME_LENGTH && title.length > 5) {
+				return title;
+			}
+		}
+	}
+
+	// Fallback: use first meaningful phrase
+	const firstPhrase = cleaned.split(/[,\b(?:about|for|with|in|on|at|to|from)\b]/)[0]?.trim();
+	if (firstPhrase && firstPhrase.length > 5 && firstPhrase.length <= MAX_NAME_LENGTH) {
+		return firstPhrase.charAt(0).toUpperCase() + firstPhrase.slice(1);
+	}
+
+	return "";
+}
+
 function truncateTitle(title: string): string {
 	if (title.length <= MAX_NAME_LENGTH) {
 		return title;
@@ -209,19 +438,16 @@ function truncateTitle(title: string): string {
  * sentence, strip common filler prefixes, capitalize, and truncate.
  */
 function generateConversationNameFallback(prompt: string): string {
-	const trimmed = prompt.trim();
+	// Try to extract a structured title from the prompt
+	const extracted = extractTitleFromPrompt(prompt);
+	if (extracted) {
+		const validated = validateAndFormatTitle(extracted);
+		if (validated) {
+			return truncateTitle(validated);
+		}
+	}
 
-	// Take the first sentence (stop at ., ?, !, or newline)
-	const firstSentence = trimmed.split(/[.?!\n]/)[0]?.trim() ?? trimmed;
-
-	// Remove common filler prefixes
-	let cleaned = firstSentence.replace(
-		/^(can you|could you|please|I want to|I need to|I need to|I'd like to|let's|help me to?)\s+/i,
-		"",
-	);
-
-	// Capitalize the first character
-	cleaned = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
-
-	return truncateTitle(cleaned) || "New Conversation";
+	// Last resort: use first few words
+	const words = prompt.trim().split(/\s+/).slice(0, 5).join(" ");
+	return validateAndFormatTitle(words) || "New Conversation";
 }
