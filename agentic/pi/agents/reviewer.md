@@ -4,7 +4,7 @@ description: Reviews recent changes for correctness, style, and scope. Read-only
   produces a verdict and a list of issues, never edits.
 model:
   - openai-codex/gpt-5.5
-  - claude-code/claude-opus-4-8
+  - claude-code/claude-opus-5
   - inference/qwen3.5-397b
 tools: read, search, skill, bash, memory_query, question
 skills: [commit, python, fastapi, vue, sqlmodel, full-stack, slides, agent-browser]
