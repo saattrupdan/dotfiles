@@ -26,27 +26,22 @@ source ~/znap-plugins/znap/znap.zsh  # Start Znap
 # Autocomplete plugin. This block owns the completion system while present, and is safe
 # to delete wholesale: the guarded `compinit` lower down takes over automatically if
 # it's gone, so no other edits are needed.
-#
 # PINNED. We hold this at a known-good commit rather than tracking main. Commit bbba73e
 # ("Add support for tiny terminals") hangs every new shell on zsh 5.9 — you can't open a
 # tab. The commit below loads cleanly and has the later completion-widget/fd fixes, so
 # don't move it to an older one. To bump it deliberately: cd into the repo, `git pull`,
 # test, then update this hash. The rev-parse guard re-pins if `znap pull` ever moves it.
-# DISABLED 2026-07-24: zsh-autocomplete's async workers leak pipe fds over long-lived
-# shells, eventually hitting the 256 soft maxfiles limit ("cannot duplicate fd 1: too many
-# open files"). Standard compinit (see the guard further down) takes over completion when
-# this is off. To re-enable, uncomment this block.
-# _autocomplete_commit=20f6c34f20270084b21211428afb6d2534aae8e9
-# [[ -r ~/znap-plugins/marlonrichert/zsh-autocomplete ]] ||
-#   znap clone marlonrichert/zsh-autocomplete
-# [[ $(git -C ~/znap-plugins/marlonrichert/zsh-autocomplete rev-parse HEAD 2>/dev/null) == $_autocomplete_commit ]] ||
-#   git -C ~/znap-plugins/marlonrichert/zsh-autocomplete checkout -q $_autocomplete_commit 2>/dev/null
-# unset _autocomplete_commit
-# znap source zsh-autocomplete
-# zstyle ':autocomplete:*' append-semicolon no
-# bindkey -M menuselect '\r' .accept-line
-# bindkey -a 'j' down-line-or-search
-# bindkey -a 'k' up-line-or-search
+_autocomplete_commit=20f6c34f20270084b21211428afb6d2534aae8e9
+[[ -r ~/znap-plugins/marlonrichert/zsh-autocomplete ]] ||
+  znap clone marlonrichert/zsh-autocomplete
+[[ $(git -C ~/znap-plugins/marlonrichert/zsh-autocomplete rev-parse HEAD 2>/dev/null) == $_autocomplete_commit ]] ||
+  git -C ~/znap-plugins/marlonrichert/zsh-autocomplete checkout -q $_autocomplete_commit 2>/dev/null
+unset _autocomplete_commit
+znap source zsh-autocomplete
+zstyle ':autocomplete:*' append-semicolon no
+bindkey -M menuselect '\r' .accept-line
+bindkey -a 'j' down-line-or-search
+bindkey -a 'k' up-line-or-search
 
 # Another autocomplete plugin
 [[ -r ~/znap-plugins/zsh-users/zsh-autosuggestions ]] ||
