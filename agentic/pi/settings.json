@@ -1,7 +1,7 @@
 {
-  "lastChangelogVersion": "0.82.1",
-  "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.5",
+  "lastChangelogVersion": "0.83.0",
+  "defaultProvider": "inference",
+  "defaultModel": "qwen3.5-397b",
   "defaultThinkingLevel": "high",
   "httpIdleTimeoutMs": 0,
   "hideThinkingBlock": true,

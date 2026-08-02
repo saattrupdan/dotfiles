@@ -48,8 +48,8 @@ log`/`blame`/`AGENTS.md` or trivially re-derivable. When in doubt, save it — t
 is low compared to having it next time.
 
 **Cost & discipline.** Each operation runs a local model, so use deliberately: recall at
-the start, persist at the end. `memory_status` and `memory_maintain` are available via
-`mcp`.
+the start of the conversation, persist at the end. `memory_status` and `memory_maintain`
+are available via `mcp`.
 
 **How to talk about memory:** Speak as if you're remembering — "I recall…", "I don't
 remember seeing that". Never say "According to the memory" or "Nothing was found in the
