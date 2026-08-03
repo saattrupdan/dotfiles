@@ -258,7 +258,7 @@ vv(){
 }
 
 newproject(){
-  cookiecutter -f gh:alexandrainst/alexandra-ml-template -o "$HOME/gitsky"
+  cookiecutter -f gh:saattrupdan/template -o "$HOME/gitsky"
   cd "$HOME/gitsky"
 }
 
