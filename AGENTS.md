@@ -11,7 +11,6 @@ deployed config land back in this repo).
 | `nvim/` | Neovim config, built on LazyVim. `init.lua` bootstraps `lua/config/` (options, keymaps, autocmds, lazy.nvim setup) and `lua/plugins/` (one file per plugin). |
 | `agentic/` | Configs for AI coding tools and LLM runtimes. |
 | `agentic/pi/` | The `pi` agent harness — see its own `agentic/pi/AGENTS.md`. Holds `agents/` (subagent prompts), `extensions/` (TypeScript extensions), `prompts/`, `bin/`, and JSON/Markdown settings. |
-| `agentic/opencode/` | OpenCode config: `opencode.json`, `agents/`, `commands/`. |
 | `agentic/skills/` | Skill definitions, one folder per skill (web-service helpers, language conventions, tools). |
 | `agentic/llamacpp/` | llama.cpp settings (`makefile`, `preset.ini`). |
 
