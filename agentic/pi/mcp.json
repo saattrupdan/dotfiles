@@ -22,7 +22,7 @@
       "url": "http://localhost:3800/mcp",
       "auth": false,
       "lifecycle": "eager",
-      "requestTimeoutMs": 180000,
+      "requestTimeoutMs": 600000,
       "directTools": [
         "memory_query",
         "memory_add",
