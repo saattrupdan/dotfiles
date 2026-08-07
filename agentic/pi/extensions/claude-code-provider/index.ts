@@ -194,16 +194,22 @@ function computeBoundarySafeSuffix(pending: string, marker: string): string {
  * Try to parse tool call JSON from the text between markers.
  * Returns { name, arguments } on success, null on failure.
  */
-function tryParseToolCall(jsonText: string): { name: string; arguments: Record<string, unknown> } | null {
+function tryParseToolCall(jsonText: string): { name: string; arguments: Record<string, unknown> } {
+	// Always return a tool call so the model gets the result (or an error) back.
+	// Never silently drop a marker block to plain text.
 	try {
-		const toolData = JSON.parse(jsonText.trim()) as { name: string; arguments?: Record<string, unknown> };
+		const toolData = JSON.parse(jsonText.trim()) as { name?: string; arguments?: Record<string, unknown> };
 		if (typeof toolData.name === 'string') {
 			return { name: toolData.name, arguments: toolData.arguments || {} };
 		}
 	} catch {
-		// Invalid JSON
+		// Invalid JSON - fall through to best-effort extraction
 	}
-	return null;
+	// Best-effort: recover the tool name from the malformed block, default args to {}
+	// so the tool still executes and the model sees the actual error (e.g. missing args).
+	const nameMatch = /"name"\s*:\s*"([^"]+)"/.exec(jsonText);
+	const name = nameMatch ? nameMatch[1] : "unknown";
+	return { name, arguments: {} };
 }
 
 type ProviderConfig = Parameters<ExtensionAPI["registerProvider"]>[1];
