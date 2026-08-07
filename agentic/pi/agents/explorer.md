@@ -2,7 +2,7 @@
 name: explorer
 description: Read-only locator for code and the web. Returns paths, line ranges, and tight summaries. Cannot edit or implement.
 model:
-  - inference/qwen3.5-397b
+  - melious/deepseek-v4-flash-0731
   - llamacpp/ornith-1.0-35b
 tools: code_tree, search, read, skill, web_browse, tavily_search, memory_query, question
 skills: []
