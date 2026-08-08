@@ -1,16 +1,15 @@
 ---
 name: jotta-cli
 description: >
-  Procedural skill for the Jottacloud CLI (`jotta-cli`). Use when managing
-  Jotta Cloud backups, Archive uploads, Sync folders, downloads, remote file
-  browsing, shares, trash, webhooks, logs/status triage, `jottad` pause/resume,
-  ignore rules, or multi-instance host config. Triggers include any request to
-  back up files to Jottacloud, upload to Archive, sync a local folder with
-  Jottacloud, download from Jottacloud remotely, list or browse cloud paths,
-  share files via public links, manage the remote trash, configure scan
-  intervals or rate limits, set up webhooks, tail logs, diagnose backup/sync
-  problems, or install/update `jotta-cli` itself. Also use for configuring a
-  remote machine's `jottad` over SSH by setting `--host`/`--port`. Prefer
+  Procedural skill for the Jottacloud CLI (`jotta-cli`). Use when managing Jotta Cloud
+  backups, Archive uploads, Sync folders, downloads, remote file browsing, shares,
+  trash, webhooks, logs/status triage, `jottad` pause/resume, ignore rules, or
+  multi-instance host config. Triggers include any request to back up files to
+  Jottacloud, upload to Archive, sync a local folder with Jottacloud, download from
+  Jottacloud remotely, list or browse cloud paths, share files via public links, manage
+  the remote trash, configure scan intervals or rate limits, set up webhooks, tail logs,
+  diagnose backup/sync problems, or install/update `jotta-cli` itself. Also use for
+  configuring a remote machine's `jottad` over SSH by setting `--host`/`--port`. Prefer
   `jotta-cli` over the web UI for scripted or repeatable operations.
 tagline: Jottacloud CLI — backups, archive, sync, downloads, shares, trash
 last-updated: 2026-08-08
@@ -18,20 +17,18 @@ last-updated: 2026-08-08
 
 # jotta-cli
 
-Command-line client for [Jottacloud](https://www.jottacloud.com) — manages the
-local `jottad` daemon and its remote namespaces (Backup, Archive, Sync, Photos,
-Trash). Install with Homebrew via `brew tap jotta/cli`, followed by
-`brew install jotta-cli`.
+Command-line client for [Jottacloud](https://www.jottacloud.com) — manages the local
+`jottad` daemon and its remote namespaces (Backup, Archive, Sync, Photos, Trash).
+Install with Homebrew via `brew tap jotta/cli`, followed by `brew install jotta-cli`.
 
 ## Prerequisites
 
-- `jotta-cli` installed (on Dan's Mac: `/opt/homebrew/bin/jotta-cli`, observed
-  version **0.17.159692**).
+- `jotta-cli` installed (on Dan's Mac: `/opt/homebrew/bin/jotta-cli`, observed version
+  **0.17.159692**).
 - `jottad` running on the target host (default `--host=127.0.0.1 --port=14443`).
-- Logged in via a one-time Personal Login Token from Jottacloud account
-  settings → Security tab.
-- Appdata + logfile under `~/.jottad/` (e.g.
-  `/Users/dansmart/.jottad/jottabackup.log`).
+- Logged in via a one-time Personal Login Token from Jottacloud account settings →
+  Security tab.
+- Appdata + logfile under `~/.jottad/` (e.g. `/Users/dansmart/.jottad/jottabackup.log`).
 
 ## Mental model
 
@@ -42,11 +39,11 @@ you → CLI → jotta-cli ⇄ gRPC ⇄ jottad ⇄ HTTPS ⇄ Jottacloud cloud
                           └───────────────────┘
 ```
 
-- `jotta-cli` is a thin client; **`jottad` does the real work** (scanning,
-  uploading, downloading). Folder uploads and downloads gather metadata
-  synchronously, then continue in the background via `jottad`. Commands such as
-  `status` and `ls` are synchronous; use `observe`, `list uploads/downloads`, or
-  `tail` to watch background progress.
+- `jotta-cli` is a thin client; **`jottad` does the real work** (scanning, uploading,
+  downloading). Folder uploads and downloads gather metadata synchronously, then
+  continue in the background via `jottad`. Commands such as `status` and `ls` are
+  synchronous; use `observe`, `list uploads/downloads`, or `tail` to watch background
+  progress.
 - Remote namespace roots (visible at `jotta-cli ls` with no args):
 
   | Root      | Purpose                                                        |
@@ -85,8 +82,8 @@ jotta-cli webhook list                   # configured webhooks
 
 ### Login
 
-1. Go to Jottacloud account → Security tab → generate a **Personal Login
-   Token** (single-use, short-lived).
+1. Go to Jottacloud account → Security tab → generate a **Personal Login Token**
+   (single-use, short-lived).
 2. `jotta-cli login` — paste the token when prompted, then name the device.
 
 ### Status & log triage
@@ -110,9 +107,9 @@ jotta-cli ls -l Backup/DeviceName         # one-line detail view
 jotta-cli ls --json Backup/Sync           # machine-readable listing
 ```
 
-> At root, `jotta-cli ls` lists the five namespace roots (Archive, Backup,
-> Photos, Sync, Trash). Deeper paths require the full `Namespace/Device/Folder`
-> form, e.g. `Backup/Dans-M4-laptop.local/Documents`.
+> At root, `jotta-cli ls` lists the five namespace roots (Archive, Backup, Photos, Sync,
+> Trash). Deeper paths require the full `Namespace/Device/Folder` form, e.g.
+> `Backup/Dans-M4-laptop.local/Documents`.
 
 ### Add / remove continuous backups
 
@@ -124,9 +121,9 @@ jotta-cli scan                            # trigger scan of all backup folders
 jotta-cli scan FolderName                 # best-effort match on folder name
 ```
 
-> `rem` stops _future_ backup uploads but **does not** delete the remote copy.
-> Remote backups are managed via the Jottacloud web UI. Deleted backup files go
-> to Jottacloud Trash for ~30 days before permanent removal.
+> `rem` stops _future_ backup uploads but **does not** delete the remote copy. Remote
+> backups are managed via the Jottacloud web UI. Deleted backup files go to Jottacloud
+> Trash for ~30 days before permanent removal.
 
 ### Ignore rules
 
@@ -138,9 +135,9 @@ jotta-cli ignores rem  --pattern "*.log" --backup /path/to/backup
 jotta-cli ignores test --pattern "*.log" --path "some/file.log"
 ```
 
-Patterns are relative to the backup root; leading `/` is ignored. Hardcoded
-patterns (`**.DS_Store`, `**.Thumbs.db`, `**.desktop.ini`) cannot be removed.
-Use quotes around glob patterns to avoid shell expansion.
+Patterns are relative to the backup root; leading `/` is ignored. Hardcoded patterns
+(`**.DS_Store`, `**.Thumbs.db`, `**.desktop.ini`) cannot be removed. Use quotes around
+glob patterns to avoid shell expansion.
 
 ### Archive / upload (one-shot)
 
@@ -173,9 +170,9 @@ The download ID is printed after metadata gathering completes, or via
 
 ### Sync (bidirectional folder sync)
 
-> **Gotcha:** On Dan's observed account `sync` was not set up — `status`
-> reports "Sync is not enabled". If setup fails silently, verify with
-> `jotta-cli status` and `jotta-cli sync log`.
+> **Gotcha:** On Dan's observed account `sync` was not set up — `status` reports "Sync
+> is not enabled". If setup fails silently, verify with `jotta-cli status` and
+> `jotta-cli sync log`.
 
 ```bash
 jotta-cli sync setup --root /local/path  # local root must already exist
@@ -216,8 +213,7 @@ jotta-cli config logtransfers true       # log uploads/downloads to logfile
 jotta-cli config proxy user:pass@host:port
 ```
 
-Units: rates use `k/KB/kb` = 1000 bytes, `m/MB/mb` = 1000 KB; time uses `10m`,
-`5h30m`.
+Units: rates use `k/KB/kb` = 1000 bytes, `m/MB/mb` = 1000 KB; time uses `10m`, `5h30m`.
 
 ### Webhooks
 
@@ -228,16 +224,20 @@ jotta-cli webhook rem http://host:port/hook
 jotta-cli config set webhookstatusinterval 6h
 ```
 
-Event notifications fire on jottad start/stop and critical errors; the status
-interval posts a full status dump at the configured cadence.
+Event notifications fire on jottad start/stop and critical errors; the status interval
+posts a full status dump at the configured cadence.
 
 ### Trash
 
 ```bash
 jotta-cli trash list                     # contents of remote trashcan
 jotta-cli trash restore /Trash/path      # restore one item
-jotta-cli trash purge /Trash/path        # permanently delete one item (⚠️)
-jotta-cli trash purge --force            # Nuke the entire trashcan (⚠️)
+jotta-cli trash purge /Trash/path        # permanently purge one path (⚠️)
+jotta-cli trash purge                    # permanently purge entire trashcan (⚠️)
+
+# --force only bypasses the CLI confirmation prompt; still confirm explicitly
+jotta-cli trash purge /Trash/path --force
+jotta-cli trash purge --force            # entire trashcan
 ```
 
 ### Remote host management
@@ -250,8 +250,7 @@ ssh -L 14443:127.0.0.1:14443 remote-host
 jotta-cli --host 127.0.0.1 --port 14443 status
 ```
 
-Multiple instances on one host use different ports (configure in the `jottad`
-INI file).
+Multiple instances on one host use different ports (configure in the `jottad` INI file).
 
 ## macOS install / update
 
@@ -263,9 +262,9 @@ brew upgrade jotta-cli                   # update
 brew services restart jotta-cli           # restart after an upgrade
 ```
 
-Prefer Homebrew service management for running and restarting `jottad`. If the
-local formula or service name is documented differently, verify it with
-`brew services list` and `brew info jotta-cli` rather than bypassing Homebrew.
+Prefer Homebrew service management for running and restarting `jottad`. If the local
+formula or service name is documented differently, verify it with `brew services list`
+and `brew info jotta-cli` rather than bypassing Homebrew.
 
 ## Safety — confirm before running
 
@@ -273,21 +272,22 @@ Do **not** run these without explicit user confirmation:
 
 - `jotta-cli logout` — Resets credentials; must re-add all backups after.
 - `jotta-cli rem /path` — Stops future backup (doesn't delete remote).
-- `jotta-cli trash purge [path]` — Permanently destroys the selected path;
-  even purging a single path is destructive and requires explicit user confirmation.
-- `jotta-cli trash purge --force` — Permanently destroys the entire remote
-  trashcan and requires confirmation.
+- `jotta-cli trash purge [path]` — Permanently purges a single trash path and requires
+  explicit user confirmation.
+- `jotta-cli trash purge` with no path — Permanently purges the entire trashcan and
+  requires even stronger explicit confirmation.
+- `--force` only bypasses the CLI confirmation prompt for either scope; never use it
+  without explicit user confirmation.
 - `jotta-cli sync reset` — Erases local sync state; requires full re-setup.
-- `jotta-cli download --clear=all` — Clears download history (doesn't delete
-  downloaded files, but is lossy).
+- `jotta-cli download --clear=all` — Clears download history (doesn't delete downloaded
+  files, but is lossy).
 - `jotta-cli archive --clear=all` — Clears upload history.
-- `jotta-cli share --disable` — Revokes a previously generated public share
-  link.
+- `jotta-cli share --disable` — Revokes a previously generated public share link.
 - `jotta-cli webhook rem <url>` — Removes a configured webhook endpoint.
 
-Note: removing a backup folder with `rem` does **not** delete the remote copy.
-Remote backup deletion happens on the Jottacloud website. Deleted items from
-Backup go to Jottacloud Trash for ~30 days before permanent purge.
+Note: removing a backup folder with `rem` does **not** delete the remote copy. Remote
+backup deletion happens on the Jottacloud website. Deleted items from Backup go to
+Jottacloud Trash for ~30 days before permanent purge.
 
 ## Long-running commands
 
@@ -295,27 +295,28 @@ The following stream until interrupted — expect Ctrl-C to stop them:
 
 - `jotta-cli observe` / `jotta-cli tail` — live streams
 - `jotta-cli sync log --watch` — watch sync changes as they occur
-- Folder uploads/downloads continue in the background via `jottad` after
-  metadata gathering; use `list uploads` / `list downloads` to check progress.
+- Folder uploads/downloads return after metadata gathering/queueing, before transfer
+  completion, and may continue in the background via `jottad`; use `list uploads` /
+  `list downloads` to check progress.
 
 ## Gotchas & quirks
 
-- **Installed help is source of truth.** Official docs sometimes mention
-  commands that don't exist on the installed version (e.g. `list
-downloadinformation` / `list downloadinfo`). The installed CLI exposes
-  `list downloaderrors` and `list uploaderrors` instead — always prefer
-  `jotta-cli <cmd> --help` output over web docs for flag names.
-- **`jotta-cli ls` at root lists namespaces only.** To browse deeper you need
-  the full path: `Backup/Dans-M4-laptop.local/SomeFolder`.
-- **Sync may not be set up.** On Dan's observed account, `status` reported
-  "Sync is not enabled" — verify before assuming sync commands will work.
-- **Login token is single-use.** If login fails, generate a fresh token from
-  the Jottacloud website; the old one is already consumed.
-- **Folder uploads continue asynchronously after metadata gathering.** After
-  `jotta-cli archive folder`, use `list uploads` or `observe` to track progress —
-  the CLI returns immediately.
-- **Patterns ignore leading `/`.** All ignore patterns are relative to the
-  backup root regardless of whether you prefix with `/`.
+- **Installed help is source of truth.** Official docs sometimes mention commands that
+  don't exist on the installed version (e.g. `list downloadinformation` /
+  `list downloadinfo`). The installed CLI exposes `list downloaderrors` and
+  `list uploaderrors` instead — always prefer `jotta-cli <cmd> --help` output over web
+  docs for flag names.
+- **`jotta-cli ls` at root lists namespaces only.** To browse deeper you need the full
+  path: `Backup/Dans-M4-laptop.local/SomeFolder`.
+- **Sync may not be set up.** On Dan's observed account, `status` reported "Sync is not
+  enabled" — verify before assuming sync commands will work.
+- **Login token is single-use.** If login fails, generate a fresh token from the
+  Jottacloud website; the old one is already consumed.
+- **Folder transfers are asynchronous.** Folder uploads/downloads return after metadata
+  gathering/queueing, before transfer completion. They may continue in the background
+  via `jottad`; use `list uploads`, `list downloads`, or `observe` to track progress.
+- **Patterns ignore leading `/`.** All ignore patterns are relative to the backup root
+  regardless of whether you prefix with `/`.
 
 ## Official docs
 
