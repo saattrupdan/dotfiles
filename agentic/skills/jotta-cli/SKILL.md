@@ -20,7 +20,8 @@ last-updated: 2026-08-08
 
 Command-line client for [Jottacloud](https://www.jottacloud.com) — manages the
 local `jottad` daemon and its remote namespaces (Backup, Archive, Sync, Photos,
-Trash). Install: `brew install jotta-cli`.
+Trash). Install with Homebrew via `brew tap jotta/cli`, followed by
+`brew install jotta-cli`.
 
 ## Prerequisites
 
@@ -42,8 +43,10 @@ you → CLI → jotta-cli ⇄ gRPC ⇄ jottad ⇄ HTTPS ⇄ Jottacloud cloud
 ```
 
 - `jotta-cli` is a thin client; **`jottad` does the real work** (scanning,
-  uploading, downloading). Commands that touch the network run asynchronously —
-  use `observe`, `list uploads/downloads`, or `tail` to watch progress.
+  uploading, downloading). Folder uploads and downloads gather metadata
+  synchronously, then continue in the background via `jottad`. Commands such as
+  `status` and `ls` are synchronous; use `observe`, `list uploads/downloads`, or
+  `tail` to watch background progress.
 - Remote namespace roots (visible at `jotta-cli ls` with no args):
 
   | Root      | Purpose                                                        |
@@ -180,7 +183,7 @@ jotta-cli sync start                     # begin automatic syncing
 jotta-cli sync stop                      # pause syncing
 jotta-cli sync trigger                   # one-shot sync in triggered mode
 jotta-cli sync selective add FolderName  # exclude a top-level folder
-jotta-cli sync selective remove FolderName
+jotta-cli sync selective rem FolderName
 jotta-cli sync log -n 20                 # last 20 changes
 jotta-cli sync log --watch               # stream changes until Ctrl-C
 jotta-cli sync configure --help          # tune sync settings
@@ -233,7 +236,7 @@ interval posts a full status dump at the configured cadence.
 ```bash
 jotta-cli trash list                     # contents of remote trashcan
 jotta-cli trash restore /Trash/path      # restore one item
-jotta-cli trash purge /Trash/path        # permanently delete one item
+jotta-cli trash purge /Trash/path        # permanently delete one item (⚠️)
 jotta-cli trash purge --force            # Nuke the entire trashcan (⚠️)
 ```
 
@@ -253,12 +256,16 @@ INI file).
 ## macOS install / update
 
 ```bash
+brew tap jotta/cli
 brew install jotta-cli                   # first install
+brew services start jotta-cli             # start the daemon
 brew upgrade jotta-cli                   # update
-/opt/homebrew/opt/jotta-cli/bin/jottad   # daemon path
-# Restart daemon after upgrade if needed:
-killall jottad 2>/dev/null; sleep 1; /opt/homebrew/opt/jotta-cli/bin/jottad &
+brew services restart jotta-cli           # restart after an upgrade
 ```
+
+Prefer Homebrew service management for running and restarting `jottad`. If the
+local formula or service name is documented differently, verify it with
+`brew services list` and `brew info jotta-cli` rather than bypassing Homebrew.
 
 ## Safety — confirm before running
 
@@ -266,8 +273,10 @@ Do **not** run these without explicit user confirmation:
 
 - `jotta-cli logout` — Resets credentials; must re-add all backups after.
 - `jotta-cli rem /path` — Stops future backup (doesn't delete remote).
-- `jotta-cli trash purge --force` — Permanently destroys the entire
-  remote trashcan.
+- `jotta-cli trash purge [path]` — Permanently destroys the selected path;
+  even purging a single path is destructive and requires explicit user confirmation.
+- `jotta-cli trash purge --force` — Permanently destroys the entire remote
+  trashcan and requires confirmation.
 - `jotta-cli sync reset` — Erases local sync state; requires full re-setup.
 - `jotta-cli download --clear=all` — Clears download history (doesn't delete
   downloaded files, but is lossy).
@@ -286,8 +295,8 @@ The following stream until interrupted — expect Ctrl-C to stop them:
 
 - `jotta-cli observe` / `jotta-cli tail` — live streams
 - `jotta-cli sync log --watch` — watch sync changes as they occur
-- Uploading/downloading folders runs in the background via `jottad`; use
-  `list uploads` / `list downloads` to check progress after launching.
+- Folder uploads/downloads continue in the background via `jottad` after
+  metadata gathering; use `list uploads` / `list downloads` to check progress.
 
 ## Gotchas & quirks
 
@@ -302,8 +311,9 @@ downloadinformation` / `list downloadinfo`). The installed CLI exposes
   "Sync is not enabled" — verify before assuming sync commands will work.
 - **Login token is single-use.** If login fails, generate a fresh token from
   the Jottacloud website; the old one is already consumed.
-- **Folder uploads are asynchronous.** After `jotta-cli archive folder`, use
-  `list uploads` or `observe` to track progress — the CLI returns immediately.
+- **Folder uploads continue asynchronously after metadata gathering.** After
+  `jotta-cli archive folder`, use `list uploads` or `observe` to track progress —
+  the CLI returns immediately.
 - **Patterns ignore leading `/`.** All ignore patterns are relative to the
   backup root regardless of whether you prefix with `/`.
 
