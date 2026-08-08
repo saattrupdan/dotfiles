@@ -31,7 +31,7 @@ source ~/znap-plugins/znap/znap.zsh  # Start Znap
 # tab. The commit below loads cleanly and has the later completion-widget/fd fixes, so
 # don't move it to an older one. To bump it deliberately: cd into the repo, `git pull`,
 # test, then update this hash. The rev-parse guard re-pins if `znap pull` ever moves it.
-_autocomplete_commit=20f6c34f20270084b21211428afb6d2534aae8e9
+_autocomplete_commit=027cdab14451e98c9d36d72b1f79d9488ac88e46
 [[ -r ~/znap-plugins/marlonrichert/zsh-autocomplete ]] ||
   znap clone marlonrichert/zsh-autocomplete
 [[ $(git -C ~/znap-plugins/marlonrichert/zsh-autocomplete rev-parse HEAD 2>/dev/null) == $_autocomplete_commit ]] ||
