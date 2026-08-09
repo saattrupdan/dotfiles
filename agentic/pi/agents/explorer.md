@@ -2,9 +2,9 @@
 name: explorer
 description: Read-only locator for code and the web. Returns paths, line ranges, and tight summaries. Cannot edit or implement.
 model:
+  - sparkie/kat-coder-v2.5-dev
   - openai-codex/gpt-5.6-luna
   - claude-code/claude-haiku-4-5-20251001
-  - llamacpp/ornith-1.0-35b
 tools: code_tree, search, read, skill, web_browse, tavily_search, memory_query, question
 skills: []
 worktree: false

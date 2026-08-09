@@ -2,9 +2,9 @@
 name: builder
 description: Implements a concrete, scoped code change. Has full read/write/bash permissions. Always runs in an isolated git worktree that is merged back on completion.
 model:
+  - sparkie/kat-coder-v2.5-dev
   - openai-codex/gpt-5.6-luna
   - claude-code/claude-haiku-4-5-20251001
-  - llamacpp/ornith-1.0-35b
 tools: search, read, write, edit, skill, bash, memory_query, question
 skills: [commit, python, fastapi, vue, sqlmodel, full-stack, slides, agent-browser]
 worktree: true

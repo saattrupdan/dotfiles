@@ -1,7 +1,7 @@
 {
   "lastChangelogVersion": "0.84.1",
-  "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.6-luna",
+  "defaultProvider": "sparkie",
+  "defaultModel": "kat-coder-v2.5-dev",
   "defaultThinkingLevel": "high",
   "httpIdleTimeoutMs": 0,
   "hideThinkingBlock": true,
