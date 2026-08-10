@@ -55,6 +55,17 @@ are available via `mcp`.
 remember seeing that". Never say "According to the memory" or "Nothing was found in the
 memory".
 
+**Memory lifecycle for substantive tasks.** Every substantive task follows this cycle:
+
+1. **Recall first.** Call `memory_query` before planning, exploration, delegation, or
+   implementation. Only call `question` first if you need clarification from the user.
+2. **Work.** Execute the task using the knowledge you recalled.
+3. **Checkpoint before responding.** Before your final answer, decide whether durable
+   new knowledge or a correction emerged from the work. If yes, call `memory_add` for
+   new facts or `memory_update` for corrections. If nothing durable emerged, skip the
+   write. The final response is gated on completing this checkpoint and any required
+   write.
+
 ## Available subagents
 
 | Agent      | Purpose                                            | Worktree |
