@@ -45,6 +45,11 @@
   // the cover affiliation).
   const colourScheme = "alexandra-institute";
 
+  // Content typography — "mixed" keeps sans-serif body/UI text with serif
+  // display text; "serif" uses the deck's serif family for all slide content
+  // except code and preformatted text.
+  const contentTypography = "mixed";
+
   // Logos shown fixed in the top-left of every slide. Set both to empty
   // strings to hide them. `darkLogo` is the dark-coloured logo (used on
   // light slides); `whiteLogo` is the light-coloured logo (used on dark
@@ -463,30 +468,123 @@
       <div class="eyebrow">Pipeline</div>
       <h2>Flow row <span class="dim">A linear process, step by step</span></h2>
       <div class="flow-row">
-        <div class="flow-node" data-reveal>
+        <div class="flow-node">
           <div class="flow-node-title">Ingest</div>
           <div class="flow-node-desc">Raw events</div>
         </div>
-        <div class="flow-arrow" data-reveal></div>
-        <div class="flow-node" data-reveal>
-          <div class="flow-node-title">Normalize</div>
-          <div class="flow-node-desc">Clean and dedupe</div>
+        <div class="flow-step" data-reveal>
+          <div class="flow-arrow"></div>
+          <div class="flow-node">
+            <div class="flow-node-title">Normalize</div>
+            <div class="flow-node-desc">Clean and dedupe</div>
+          </div>
         </div>
-        <div class="flow-arrow" data-reveal></div>
-        <div class="flow-node" data-reveal>
-          <div class="flow-node-title">Score</div>
-          <div class="flow-node-desc">Apply model</div>
+        <div class="flow-step" data-reveal>
+          <div class="flow-arrow"></div>
+          <div class="flow-node">
+            <div class="flow-node-title">Score</div>
+            <div class="flow-node-desc">Apply model</div>
+          </div>
         </div>
-        <div class="flow-arrow" data-reveal></div>
-        <div class="flow-node accent" data-reveal>
-          <div class="flow-node-title">Publish</div>
-          <div class="flow-node-desc">Downstream</div>
+        <div class="flow-step" data-reveal>
+          <div class="flow-arrow"></div>
+          <div class="flow-node accent">
+            <div class="flow-node-title">Publish</div>
+            <div class="flow-node-desc">Downstream</div>
+          </div>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- ===== Slide 12: DIAGRAM (branching) ===== -->
+  <!-- ===== Slide 13: STAGE RIBBON ===== -->
+  <section class="slide">
+    <div class="slide-inner">
+      <div class="eyebrow">Process walkthrough</div>
+      <h2>Stage ribbon <span class="dim">Keep the whole process visible</span></h2>
+      <div class="stage-ribbon" data-reveal>
+        <div class="stage-cell">Discover</div>
+        <div class="stage-cell">Define</div>
+        <div class="stage-cell active">Build</div>
+        <div class="stage-cell">Validate</div>
+        <div class="stage-cell">Release</div>
+      </div>
+      <div class="stage-focus" data-reveal>
+        <div class="stage-focus-label">Active stage</div>
+        <h3>Build</h3>
+        <p>Explain one stage while preserving the audience's place in the complete process.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Slide 14: PROBABILITY BARS ===== -->
+  <section class="slide">
+    <div class="slide-inner">
+      <div class="eyebrow">Distribution</div>
+      <h2>Probability bars <span class="dim">Show labelled categorical mass</span></h2>
+      <div class="prob-chart" data-reveal>
+        <div class="prob-row">
+          <div class="prob-label"><strong>A</strong><span>Option alpha</span></div>
+          <div class="prob-track"><div class="prob-fill" style="--p: 10%"></div></div>
+          <div class="prob-value">10%</div>
+        </div>
+        <div class="prob-row">
+          <div class="prob-label"><strong>B</strong><span>Option beta</span></div>
+          <div class="prob-track"><div class="prob-fill" style="--p: 20%"></div></div>
+          <div class="prob-value">20%</div>
+        </div>
+        <div class="prob-row target">
+          <div class="prob-label"><strong>C</strong><span>Option gamma</span><em>target</em></div>
+          <div class="prob-track"><div class="prob-fill" style="--p: 60%"></div></div>
+          <div class="prob-value">60%</div>
+        </div>
+        <div class="prob-row">
+          <div class="prob-label"><strong>D</strong><span>Option delta</span></div>
+          <div class="prob-track"><div class="prob-fill" style="--p: 10%"></div></div>
+          <div class="prob-value">10%</div>
+        </div>
+      </div>
+      <div class="prob-note">Values sum to 100%. Mark illustrative data explicitly.</div>
+    </div>
+  </section>
+
+  <!-- ===== Slide 15: DOT-AND-WHISKER PLOT ===== -->
+  <section class="slide">
+    <div class="slide-inner">
+      <div class="eyebrow">Estimates</div>
+      <h2>Dot-and-whisker plot <span class="dim">Retain uncertainty without a table</span></h2>
+      <div class="whisker-plot" data-reveal>
+        <div class="whisker-axis"><span>0</span><span>50</span><span>100</span></div>
+        <div class="whisker-row">
+          <div class="whisker-label">Model A</div>
+          <div class="whisker-track">
+            <div class="whisker-range" style="--low: 24%; --span: 42%"></div>
+            <div class="whisker-dot" style="--mean: 45%"></div>
+          </div>
+          <div class="whisker-value">45 ± 21</div>
+        </div>
+        <div class="whisker-row">
+          <div class="whisker-label">Model B</div>
+          <div class="whisker-track">
+            <div class="whisker-range" style="--low: 17%; --span: 24%"></div>
+            <div class="whisker-dot" style="--mean: 29%"></div>
+          </div>
+          <div class="whisker-value">29 ± 12</div>
+        </div>
+        <div class="whisker-row hero">
+          <div class="whisker-label">Model C</div>
+          <div class="whisker-track">
+            <div class="whisker-range" style="--low: 43%; --span: 30%"></div>
+            <div class="whisker-dot" style="--mean: 58%"></div>
+          </div>
+          <div class="whisker-value">58 ± 15</div>
+        </div>
+      </div>
+      <div class="whisker-note">State what the whiskers represent. Do not infer the uncertainty type.</div>
+    </div>
+  </section>
+
+  <!-- ===== Slide 16: DIAGRAM (branching) ===== -->
   <section class="slide">
     <div class="slide-inner">
       <div class="eyebrow">Architecture</div>
@@ -925,6 +1023,17 @@
     background: var(--bg);
     color: var(--text);
     -webkit-font-smoothing: antialiased;
+  }
+
+  body.serif-content .slide,
+  body.serif-content .slide * {
+    font-family: var(--serif) !important;
+  }
+
+  body.serif-content .slide code,
+  body.serif-content .slide pre,
+  body.serif-content .slide code * {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
   }
 
   .deck {
@@ -2044,7 +2153,7 @@
     padding-left: 0.35rem;
   }
 
-  /* --- 27b. Bar chart (horizontal) --- */
+  /* --- 26b. Bar chart (horizontal) --- */
   .hbar-chart {
     display: flex;
     flex-direction: column;
@@ -2108,7 +2217,7 @@
 
   .hbar-row:has(.hbar-fill.hero) .hbar-value { color: var(--accent); }
 
-  /* --- 28. Flow row (linear process) --- */
+  /* --- 27. Flow row (linear process) --- */
   .flow-row {
     display: flex;
     align-items: stretch;
@@ -2116,6 +2225,16 @@
     margin-top: 1.75rem;
     flex-wrap: wrap;
   }
+
+  .flow-step {
+    display: flex;
+    flex: 1.2;
+    align-items: stretch;
+    gap: 0.5rem;
+    min-width: 175px;
+  }
+
+  .flow-step .flow-node { flex: 1; min-width: 130px; }
 
   .flow-node {
     flex: 1;
@@ -2334,7 +2453,185 @@
     font-style: italic;
   }
 
-  /* --- 30. Diagram (free-form, SVG arrows) --- */
+  /* --- 30. Stage ribbon (process walkthrough) --- */
+  .stage-ribbon {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 0.55rem;
+    margin-top: 1.5rem;
+  }
+
+  .stage-cell {
+    padding: 0.7rem 0.45rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-card);
+    color: var(--text-muted);
+    text-align: center;
+    font-size: 0.78rem;
+    font-weight: 500;
+  }
+
+  .stage-cell.active {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: #fff;
+    box-shadow: 0 4px 14px var(--accent-glow);
+  }
+
+  .stage-focus {
+    max-width: 720px;
+    margin: 1.25rem auto 0;
+    padding: 1.25rem 1.4rem;
+    border-left: 5px solid var(--accent);
+    border-radius: 4px var(--radius) var(--radius) 4px;
+    background: var(--bg-card);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .stage-focus-label {
+    color: var(--accent);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .stage-focus h3 { margin-top: 0.35rem; }
+  .stage-focus p { margin-top: 0.35rem; color: var(--text-muted); }
+
+  /* --- 31. Probability bars --- */
+  .prob-chart {
+    display: grid;
+    gap: 0.75rem;
+    margin-top: 1.5rem;
+    padding: 1.25rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-card);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .prob-row {
+    display: grid;
+    grid-template-columns: 210px minmax(0, 1fr) 56px;
+    gap: 0.85rem;
+    align-items: center;
+  }
+
+  .prob-label {
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+    gap: 0.45rem;
+    align-items: center;
+    font-size: 0.85rem;
+  }
+
+  .prob-label strong { color: var(--accent); font-family: var(--serif); }
+  .prob-label em {
+    padding: 0.18rem 0.4rem;
+    border-radius: 999px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.6rem;
+    font-style: normal;
+  }
+
+  .prob-track {
+    height: 1.15rem;
+    overflow: hidden;
+    border-radius: 999px;
+    background: var(--bg-card-warm);
+  }
+
+  .prob-fill {
+    width: var(--p, 0%);
+    height: 100%;
+    border-radius: inherit;
+    background: var(--text-muted);
+    transition: width 0.9s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  [data-reveal]:not(.revealed) .prob-fill { width: 0; }
+  .prob-row.target .prob-fill { background: var(--accent); }
+  .prob-value { text-align: right; font-family: var(--serif); font-size: 1rem; }
+  .prob-note { margin-top: 0.65rem; color: var(--text-muted); text-align: center; font-size: 0.75rem; }
+
+  /* --- 32. Dot-and-whisker plot --- */
+  .whisker-plot {
+    display: grid;
+    gap: 0.8rem;
+    margin-top: 1.5rem;
+    padding: 1.25rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-card);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .whisker-axis {
+    display: flex;
+    justify-content: space-between;
+    margin: 0 88px 0 140px;
+    color: var(--text-muted);
+    font-size: 0.65rem;
+  }
+
+  .whisker-row {
+    display: grid;
+    grid-template-columns: 125px minmax(0, 1fr) 76px;
+    gap: 0.9rem;
+    align-items: center;
+  }
+
+  .whisker-label { font-size: 0.82rem; font-weight: 500; }
+  .whisker-value { text-align: right; font-family: var(--serif); font-size: 0.9rem; }
+  .whisker-track {
+    position: relative;
+    height: 10px;
+    border-radius: 999px;
+    background: var(--bg-card-warm);
+  }
+
+  .whisker-range {
+    position: absolute;
+    left: var(--low);
+    top: 50%;
+    width: var(--span);
+    height: 3px;
+    transform: translateY(-50%);
+    background: var(--text-muted);
+  }
+
+  .whisker-range::before,
+  .whisker-range::after {
+    content: '';
+    position: absolute;
+    top: -3px;
+    width: 1px;
+    height: 9px;
+    background: var(--text-muted);
+  }
+
+  .whisker-range::before { left: 0; }
+  .whisker-range::after { right: 0; }
+
+  .whisker-dot {
+    position: absolute;
+    left: var(--mean);
+    top: 50%;
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    background: var(--text);
+    box-shadow: 0 0 0 3px var(--bg-card);
+  }
+
+  .whisker-row.hero .whisker-dot { background: var(--accent); }
+  .whisker-note { margin-top: 0.65rem; color: var(--text-muted); text-align: center; font-size: 0.75rem; }
+
+  /* --- 28. Diagram (free-form, SVG arrows) --- */
   .diagram {
     position: relative;
     width: 100%;
@@ -2813,6 +3110,9 @@
 
   // Apply colour scheme. Add more `else if` branches here when new schemes ship.
   if (colourScheme === 'alexandra-institute') document.body.classList.add('alexandra');
+
+  // Apply the optional all-serif slide-content mode.
+  if (contentTypography === 'serif') document.body.classList.add('serif-content');
 
   // Reveal the logo if both URLs are provided; otherwise leave it hidden.
   const hasLogo = Boolean(darkLogo && whiteLogo);
