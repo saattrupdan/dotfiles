@@ -10,3 +10,4 @@ export function restoreSnapshotFromCache(
 	paths: { cacheFile: string; snapshotFile: string },
 	cache: Cache | null,
 ): boolean;
+export function runOnce(options?: { paths?: { cacheFile: string; snapshotFile: string }; now?: number; testFetchImpl?: (...args: unknown[]) => Promise<unknown> }): Promise<{ refreshed: boolean; cache: Cache | null; error?: unknown }>;

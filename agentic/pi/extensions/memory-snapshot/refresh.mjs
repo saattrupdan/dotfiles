@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* global AbortController, Buffer, TextDecoder, clearTimeout, console, process, setTimeout */
+/* global AbortController, Buffer, TextDecoder, clearTimeout, process, setTimeout */
 /**
  * Deterministic Understory memory snapshot refresh.
  *
@@ -10,11 +10,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
-
 export const UNDERSTORY_URL = "http://localhost:3800/api/tree";
-export const CACHE_TTL_MS = 15 * 60 * 1000;
-export const CHECK_INTERVAL_MS = 5 * 60 * 1000;
 export const REQUEST_TIMEOUT_MS = 10 * 1000;
 export const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 
@@ -287,10 +283,6 @@ export async function refreshCache({
 	testFetchImpl,
 } = {}) {
 	const disk = readCache(paths.cacheFile);
-	if (disk && now - disk.updatedAt <= CACHE_TTL_MS) {
-		restoreSnapshotFromCache(paths, disk);
-		return { refreshed: false, cache: disk };
-	}
 	try {
 		const tree = testFetchImpl ? await fetchTreeForTest({ fetchImpl: testFetchImpl }) : await fetchTree();
 		const snapshot = renderSnapshot(tree);
@@ -312,21 +304,4 @@ export async function refreshCache({
 
 export async function runOnce(options = {}) {
 	return refreshCache(options);
-}
-
-export async function runDaemon(options = {}) {
-	await refreshCache(options);
-	while (true) {
-		await new Promise((resolve) => setTimeout(resolve, CHECK_INTERVAL_MS));
-		await refreshCache(options);
-	}
-}
-
-const scriptPath = fileURLToPath(import.meta.url);
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(scriptPath)) {
-	const command = process.argv.includes("--daemon") ? runDaemon : runOnce;
-	command().catch((error) => {
-		console.error(error instanceof Error ? error.message : error);
-		process.exitCode = 1;
-	});
 }

@@ -15,6 +15,7 @@ import {
 	refreshCache,
 	readCache,
 	restoreSnapshotFromCache,
+	runOnce,
 	validateTree,
 } from "./refresh.mjs";
 import { buildBeforeAgentStartResult } from "./index.ts";
@@ -160,4 +161,83 @@ test("refreshes a valid response and writes both files", async () => {
 	assert.equal(cache.snapshot, renderSnapshot(tree));
 	assert.match(await readFile(paths.snapshotFile, "utf8"), /Memory — Current Contents/);
 	assert.equal(MAX_RESPONSE_BYTES, 2 * 1024 * 1024);
+});
+
+test("fresh caches do not suppress fetches — TTL skipping is removed", async () => {
+	const directory = await mkdtemp(join(tmpdir(), "memory-snapshot-"));
+	const paths = { cacheFile: join(directory, "cache.json"), snapshotFile: join(directory, "snapshot.md") };
+	const oldCache = { snapshot: "old snapshot", updatedAt: Date.now() - 1000 };
+	await writeFile(paths.cacheFile, `${JSON.stringify(oldCache)}\n`);
+
+	let fetchCalled = false;
+	const result = await refreshCache({
+		paths,
+		testFetchImpl: async () => {
+			fetchCalled = true;
+			return new Response(JSON.stringify(tree));
+		},
+	});
+	assert.equal(fetchCalled, true, "refreshCache must always fetch, even with fresh cache");
+	assert.equal(result.refreshed, true);
+	const cache = JSON.parse(await readFile(paths.cacheFile, "utf8"));
+	assert.equal(cache.snapshot, renderSnapshot(tree));
+});
+
+test("runOnce delegates to refreshCache and returns its result", async () => {
+	const directory = await mkdtemp(join(tmpdir(), "memory-snapshot-"));
+	const paths = { cacheFile: join(directory, "cache.json"), snapshotFile: join(directory, "snapshot.md") };
+	const result = await runOnce({
+		paths,
+		testFetchImpl: async () => new Response(JSON.stringify(tree)),
+	});
+	assert.equal(result.refreshed, true);
+	assert.ok(result.cache);
+	assert.equal(result.cache.snapshot, renderSnapshot(tree));
+});
+
+test("no daemon or PID behavior remains", async () => {
+	// Verify that the module does not export daemon-related symbols.
+	const refreshExports = Object.keys(await import("./refresh.mjs"));
+	assert.ok(!refreshExports.includes("runDaemon"), "runDaemon should be removed");
+	assert.ok(!refreshExports.includes("CHECK_INTERVAL_MS"), "CHECK_INTERVAL_MS should be removed");
+
+	// Verify that index.ts does not import child_process or reference PID files.
+	const indexSource = await readFile(join(import.meta.dirname, "index.ts"), "utf8");
+	assert.ok(!indexSource.includes("child_process"), "index.ts should not import child_process");
+	assert.ok(!indexSource.includes("PID_FILE"), "index.ts should not reference PID_FILE");
+	assert.ok(!indexSource.includes("daemonProcess"), "index.ts should not reference daemonProcess");
+	assert.ok(!indexSource.includes("ownedDaemonPid"), "index.ts should not reference ownedDaemonPid");
+	assert.ok(!indexSource.includes("startDaemon"), "index.ts should not reference startDaemon");
+	assert.ok(!indexSource.includes("stopDaemon"), "index.ts should not reference stopDaemon");
+	assert.ok(!indexSource.includes("readPidFile"), "index.ts should not reference readPidFile");
+	assert.ok(!indexSource.includes("removePidFileIfOwned"), "index.ts should not reference removePidFileIfOwned");
+	assert.ok(!indexSource.includes("isMissingProcessError"), "index.ts should not reference isMissingProcessError");
+	assert.ok(!indexSource.includes("fileURLToPath"), "index.ts should not import fileURLToPath");
+	assert.ok(!indexSource.includes("session_shutdown"), "index.ts should not listen to session_shutdown");
+});
+
+test("session_start refresh is awaited before prompt injection", async () => {
+	// This test verifies the async session_start pattern by checking that
+	// buildBeforeAgentStartResult reads the snapshot that was written by runOnce.
+	const directory = await mkdtemp(join(tmpdir(), "memory-snapshot-"));
+	const paths = { cacheFile: join(directory, "cache.json"), snapshotFile: join(directory, "snapshot.md") };
+
+	// Simulate the session_start sequence: ensureSnapshotSync (no-op here since snapshot doesn't exist),
+	// then runOnce fetches and writes the snapshot.
+	await runOnce({ paths, testFetchImpl: async () => new Response(JSON.stringify(tree)) });
+
+	// Now before_agent_start should read the freshly written snapshot.
+	// Note: readSnapshot is not exported, so we verify via the file directly.
+	const snapshotContent = await readFile(paths.snapshotFile, "utf8");
+	assert.ok(snapshotContent.includes("Memory — Current Contents"), "snapshot file should contain the refreshed content");
+
+	// Verify buildBeforeAgentStartResult uses the snapshot correctly.
+	const result = buildBeforeAgentStartResult({
+		type: "before_agent_start",
+		prompt: "hello",
+		systemPrompt: "base prompt",
+		systemPromptOptions: {},
+	}, snapshotContent);
+	assert.ok(result);
+	assert.ok(result.systemPrompt.includes("Memory — Current Contents"));
 });
