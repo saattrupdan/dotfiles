@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* global AbortController, Buffer, TextDecoder, clearTimeout, console, globalThis, process, setTimeout */
+/* global AbortController, Buffer, TextDecoder, clearTimeout, console, process, setTimeout */
 /**
  * Deterministic Understory memory snapshot refresh.
  *

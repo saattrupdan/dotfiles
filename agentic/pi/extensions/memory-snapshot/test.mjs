@@ -1,4 +1,4 @@
-/* global Response, globalThis */
+/* global Response */
 
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
