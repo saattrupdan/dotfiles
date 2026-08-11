@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* global AbortController, Buffer, TextDecoder, clearTimeout, console, globalThis, process, setTimeout */
 /**
  * Deterministic Understory memory snapshot refresh.
  *
@@ -43,11 +44,13 @@ function isString(value) {
  */
 export function validateTree(value) {
 	if (!isRecord(value)) throw new Error("Tree response must be an object");
-	validateNode(value, "$");
+	if (value.kind !== "directory") throw new Error("Tree root must be a directory");
+	validateNode(value, "$", true);
+	if (flattenConcepts(value).length === 0) throw new Error("Tree contains no concepts");
 	return value;
 }
 
-function validateNode(value, location) {
+function validateNode(value, location, isRoot = false) {
 	if (!isRecord(value)) throw new Error(`${location} must be an object`);
 	for (const field of ["name", "path", "kind"]) {
 		if (!isString(value[field]) || value[field].length === 0) {
@@ -56,6 +59,16 @@ function validateNode(value, location) {
 	}
 	if (!["directory", "concept", "reserved"].includes(value.kind)) {
 		throw new Error(`${location}.kind is invalid`);
+	}
+	if (isRoot && value.path !== "/") throw new Error("Tree root path must be /");
+	if (value.kind === "directory") {
+		if (!Array.isArray(value.children)) throw new Error(`${location}.children must be an array`);
+		if (value.children.length === 0) throw new Error(`${location}.children must not be empty`);
+		value.children.forEach((child, index) => validateNode(child, `${location}.children[${index}]`));
+		return;
+	}
+	if (Object.hasOwn(value, "children")) {
+		throw new Error(`${location}.children is not allowed on ${value.kind} nodes`);
 	}
 	if (value.kind === "concept") {
 		if (!isString(value.type) || value.type.length === 0) {
@@ -67,10 +80,6 @@ function validateNode(value, location) {
 		if (value.title !== undefined && !isString(value.title)) {
 			throw new Error(`${location}.title must be a string`);
 		}
-	}
-	if (value.children !== undefined) {
-		if (!Array.isArray(value.children)) throw new Error(`${location}.children must be an array`);
-		value.children.forEach((child, index) => validateNode(child, `${location}.children[${index}]`));
 	}
 }
 
@@ -136,12 +145,20 @@ export function formatRelativeTime(timestamp, now = Date.now()) {
 	return "just now";
 }
 
-function readCache(cacheFile) {
+export function isValidCache(value) {
+	return isRecord(value)
+		&& typeof value.snapshot === "string"
+		&& value.snapshot.length > 0
+		&& Number.isSafeInteger(value.updatedAt)
+		&& value.updatedAt >= 0;
+}
+
+export function readCache(cacheFile) {
 	try {
 		const cache = JSON.parse(fs.readFileSync(cacheFile, "utf8"));
-		if (!isRecord(cache) || typeof cache.snapshot !== "string" || typeof cache.updatedAt !== "number") return null;
-		return cache;
+		return isValidCache(cache) ? cache : null;
 	} catch {
+		// Missing, truncated, or invalid JSON is not a cache.
 		return null;
 	}
 }
@@ -174,9 +191,7 @@ async function readResponseBody(response, maxBytes) {
 	return new TextDecoder().decode(Buffer.concat(chunks));
 }
 
-export async function fetchTree({
-	fetchImpl = globalThis.fetch,
-	url = UNDERSTORY_URL,
+async function fetchTreeWith(fetchImpl, {
 	timeoutMs = REQUEST_TIMEOUT_MS,
 	maxBytes = MAX_RESPONSE_BYTES,
 } = {}) {
@@ -184,7 +199,11 @@ export async function fetchTree({
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), timeoutMs);
 	try {
-		const response = await fetchImpl(url, { method: "GET", signal: controller.signal });
+		const response = await fetchImpl(UNDERSTORY_URL, {
+			method: "GET",
+			redirect: "error",
+			signal: controller.signal,
+		});
 		if (!response.ok) throw new Error(`HTTP ${response.status}`);
 		const body = await readResponseBody(response, maxBytes);
 		let tree;
@@ -199,13 +218,26 @@ export async function fetchTree({
 	}
 }
 
+export async function fetchTree(options = {}) {
+	return fetchTreeWith(globalThis.fetch, options);
+}
+
+/** Test-only transport seam; production always uses globalThis.fetch. */
+export async function fetchTreeForTest({ fetchImpl, ...options }) {
+	return fetchTreeWith(fetchImpl, options);
+}
+
 function writeAtomic(file, content) {
 	const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
 	try {
 		fs.writeFileSync(temporary, content, "utf8");
 		fs.renameSync(temporary, file);
 	} finally {
-		try { fs.unlinkSync(temporary); } catch {}
+		try {
+			fs.unlinkSync(temporary);
+		} catch {
+			// The rename normally removed the temporary file already.
+		}
 	}
 }
 
@@ -214,7 +246,11 @@ function writeFilesAtomically({ cacheFile, snapshotFile }, snapshot, updatedAt) 
 	const snapshotText = buildSnapshotSection(snapshot, updatedAt);
 	const previous = new Map();
 	for (const file of [cacheFile, snapshotFile]) {
-		try { previous.set(file, fs.readFileSync(file, "utf8")); } catch {}
+		try {
+			previous.set(file, fs.readFileSync(file, "utf8"));
+		} catch {
+			// A missing file is a valid first-refresh state.
+		}
 	}
 	fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
 	fs.mkdirSync(path.dirname(snapshotFile), { recursive: true });
@@ -224,23 +260,31 @@ function writeFilesAtomically({ cacheFile, snapshotFile }, snapshot, updatedAt) 
 	} catch (error) {
 		// Revert the first rename if the second file cannot be replaced.
 		for (const file of [cacheFile, snapshotFile]) {
-			if (previous.has(file)) writeAtomic(file, previous.get(file));
-			else try { fs.unlinkSync(file); } catch {}
+			if (previous.has(file)) {
+				writeAtomic(file, previous.get(file));
+			} else {
+				try {
+					fs.unlinkSync(file);
+				} catch {
+					// The failed write may not have created a target file.
+				}
+			}
 		}
 		throw error;
 	}
 }
 
-function restoreSnapshotFromCache(paths, cache) {
-	if (cache && !fs.existsSync(paths.snapshotFile)) {
-		writeAtomic(paths.snapshotFile, buildSnapshotSection(cache.snapshot, cache.updatedAt));
-	}
+export function restoreSnapshotFromCache(paths, cache) {
+	if (!isValidCache(cache) || fs.existsSync(paths.snapshotFile)) return false;
+	fs.mkdirSync(path.dirname(paths.snapshotFile), { recursive: true });
+	writeAtomic(paths.snapshotFile, buildSnapshotSection(cache.snapshot, cache.updatedAt));
+	return true;
 }
 
 export async function refreshCache({
 	paths = DEFAULT_PATHS,
 	now = Date.now(),
-	fetchOptions,
+	testFetchImpl,
 } = {}) {
 	const disk = readCache(paths.cacheFile);
 	if (disk && now - disk.updatedAt <= CACHE_TTL_MS) {
@@ -248,7 +292,7 @@ export async function refreshCache({
 		return { refreshed: false, cache: disk };
 	}
 	try {
-		const tree = await fetchTree(fetchOptions);
+		const tree = testFetchImpl ? await fetchTreeForTest({ fetchImpl: testFetchImpl }) : await fetchTree();
 		const snapshot = renderSnapshot(tree);
 		const updatedAt = now;
 		writeFilesAtomically(paths, snapshot, updatedAt);
@@ -257,7 +301,11 @@ export async function refreshCache({
 		// A failed request must not replace either last-known-good file. Startup's
 		// existing cache repair behavior is retained only when the snapshot is
 		// missing altogether.
-		restoreSnapshotFromCache(paths, disk);
+		try {
+			restoreSnapshotFromCache(paths, disk);
+		} catch {
+			// Keep the last-known-good cache and snapshot untouched on restore failure.
+		}
 		return { refreshed: false, cache: disk, error };
 	}
 }
