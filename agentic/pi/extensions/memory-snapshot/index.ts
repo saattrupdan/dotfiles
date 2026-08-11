@@ -3,13 +3,15 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 const SNAPSHOT_FILE = path.join(os.homedir(), ".pi", "agent", "memory-snapshot.md");
 const CACHE_FILE = path.join(os.homedir(), ".pi", "agent", "memory-snapshot.json");
 const PID_FILE = path.join(os.homedir(), ".pi", "agent", "memory-snapshot.pid");
-const DAEMON_SCRIPT = path.join(os.homedir(), ".pi", "agent", "bin", "memory-snapshot-refresh");
+const DAEMON_SCRIPT = fileURLToPath(new URL("./refresh.mjs", import.meta.url));
 
-let daemonProcess: any = null;
+let daemonProcess: ChildProcess | null = null;
 
 export default function api(pi: ExtensionAPI) {
 	function readSnapshot(): string | null {

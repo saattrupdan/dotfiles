@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "type": "module",
   "main": "index.ts",
+  "scripts": {
+    "test": "node --test test.mjs"
+  },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*"
