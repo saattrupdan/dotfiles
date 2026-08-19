@@ -1,6 +1,6 @@
 ---
 name: ptr-ms-analysis
-description:
+description: >
   Analyse PTR-MS / PTR-TOF data from IONICON IoniTOF HDF5 (.h5) files — an open-source
   replacement for the proprietary PTR-MS Viewer. Use when the user has IONICON PTR-MS
   .h5 output and wants product-ion peaks extracted, transmission-corrected, converted to
