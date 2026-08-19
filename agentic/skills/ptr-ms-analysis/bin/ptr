@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Self-contained launcher for the ptr-ms-analysis CLI.
+#
+# Manages its own Python environment (h5py + numpy) in a cache dir, so callers
+# NEVER have to install anything or create a venv. Idempotent: the first run sets
+# up the environment (~30 s), every later run is instant. Setup chatter goes to
+# stderr, so stdout stays clean JSON/CSV.
+#
+# Usage:  ptr <inspect|peaks|segments|analyze|viz|calibrate|compare|rates> ...
+set -euo pipefail
+
+SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CLI="$SKILL_DIR/scripts/analyze.py"
+CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/ptr-ms-analysis"
+VENV="$CACHE/venv"
+STAMP="$VENV/.deps-ok"
+PY="$VENV/bin/python"
+
+ensure_env() {
+  if [ -f "$STAMP" ] && [ -x "$PY" ]; then return; fi
+  echo "ptr: first run — setting up Python environment (h5py, numpy)…" >&2
+  mkdir -p "$CACHE"
+  if command -v uv >/dev/null 2>&1; then
+    uv venv "$VENV" >&2
+    VIRTUAL_ENV="$VENV" uv pip install h5py numpy >&2
+  else
+    python3 -m venv "$VENV" >&2
+    "$VENV/bin/pip" install --quiet --upgrade pip >&2 || true
+    "$VENV/bin/pip" install --quiet h5py numpy >&2
+  fi
+  "$PY" -c "import h5py, numpy" && touch "$STAMP"
+  echo "ptr: environment ready." >&2
+}
+
+ensure_env
+exec "$PY" "$CLI" "$@"

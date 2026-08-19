@@ -1,0 +1,3688 @@
+{
+ "_source": "PTR Library (Pagonis, Sekimoto & de Gouw, J. Am. Soc. Mass Spectrom. 2019, doi.org/10.1007/s13361-019-02209-3; tinyurl.com/PTRLibrary). One entry per neutral formula; k in 1e-9 cm3/s (measured median, else Su-Chesnavich kcap flagged k_estimated). Regenerate with scripts/gen_rate_constants.py.",
+ "compounds": [
+  {
+   "name": "ammonia",
+   "formula": "H3N",
+   "mz": 18.0338,
+   "k": 2.4,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 853.6,
+   "cas": "7664-41-7",
+   "class": "amine",
+   "isomers": [
+    "ammonia"
+   ]
+  },
+  {
+   "name": "ethyne",
+   "formula": "C2H2",
+   "mz": 27.0229,
+   "k": 1.34,
+   "k_estimated": true,
+   "k_source": "kcap",
+   "flags": [
+    "humid",
+    "frag"
+   ],
+   "pa": 641.4,
+   "cas": "74-86-2",
+   "class": "alkyne",
+   "isomers": [
+    "ethyne"
+   ]
+  },
+  {
+   "name": "hydrogen cyanide",
+   "formula": "CHN",
+   "mz": 28.0182,
+   "k": 3.33,
+   "k_estimated": true,
+   "k_source": "kcap",
+   "flags": [
+    "humid"
+   ],
+   "pa": 712.9,
+   "cas": "74-90-8",
+   "class": "nitrile",
+   "isomers": [
+    "hydrogen cyanide"
+   ]
+  },
+  {
+   "name": "ethene",
+   "formula": "C2H4",
+   "mz": 29.0386,
+   "k": 1.44,
+   "k_estimated": true,
+   "k_source": "kcap",
+   "flags": [
+    "humid"
+   ],
+   "pa": 680.5,
+   "cas": "74-85-1",
+   "class": "alkene",
+   "isomers": [
+    "ethene"
+   ]
+  },
+  {
+   "name": "methanimine",
+   "formula": "CH3N",
+   "mz": 30.0338,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": 852.9,
+   "cas": "2053-29-4",
+   "class": "imine",
+   "isomers": [
+    "methanimine"
+   ]
+  },
+  {
+   "name": "formaldehyde",
+   "formula": "CH2O",
+   "mz": 31.0178,
+   "k": 3.2,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "humid"
+   ],
+   "pa": 712.9,
+   "cas": "50-00-0",
+   "class": "aldehyde",
+   "isomers": [
+    "formaldehyde"
+   ]
+  },
+  {
+   "name": "methanol",
+   "formula": "CH4O",
+   "mz": 33.0335,
+   "k": 2.2,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 754.3,
+   "cas": "67-56-1",
+   "class": "alcohol",
+   "isomers": [
+    "methanol"
+   ]
+  },
+  {
+   "name": "hydrogen sulfide",
+   "formula": "H2S",
+   "mz": 34.995,
+   "k": 1.4,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "humid"
+   ],
+   "pa": 705.0,
+   "cas": "7783-06-4",
+   "class": "sulfide",
+   "isomers": [
+    "hydrogen sulfide"
+   ]
+  },
+  {
+   "name": "propyne",
+   "formula": "C3H4",
+   "mz": 41.0386,
+   "k": 1.75,
+   "k_estimated": true,
+   "k_source": "kcap",
+   "flags": [
+    "humid"
+   ],
+   "pa": 748.0,
+   "cas": "74-99-7",
+   "class": "alkyne",
+   "isomers": [
+    "propyne",
+    "1,2-propadiene"
+   ]
+  },
+  {
+   "name": "acetonitrile",
+   "formula": "C2H3N",
+   "mz": 42.0338,
+   "k": 4.7,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 779.2,
+   "cas": "75-05-8",
+   "class": "nitrile",
+   "isomers": [
+    "acetonitrile"
+   ]
+  },
+  {
+   "name": "propene",
+   "formula": "C3H6",
+   "mz": 43.0542,
+   "k": 1.5,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 751.6,
+   "cas": "115-07-1",
+   "class": "alkene",
+   "isomers": [
+    "propene",
+    "cyclopropane"
+   ]
+  },
+  {
+   "name": "isocyanic acid",
+   "formula": "CHNO",
+   "mz": 44.0131,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": 753.0,
+   "cas": "75-13-8",
+   "class": "nitrile",
+   "isomers": [
+    "isocyanic acid"
+   ]
+  },
+  {
+   "name": "ethenamine",
+   "formula": "C2H5N",
+   "mz": 44.0495,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": 898.9,
+   "cas": "593-67-9",
+   "class": "amine",
+   "isomers": [
+    "ethenamine"
+   ]
+  },
+  {
+   "name": "acetaldehyde",
+   "formula": "C2H4O",
+   "mz": 45.0335,
+   "k": 3.6,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 768.5,
+   "cas": "75-07-0",
+   "class": "aldehyde",
+   "isomers": [
+    "acetaldehyde"
+   ]
+  },
+  {
+   "name": "formamide",
+   "formula": "CH3NO",
+   "mz": 46.0287,
+   "k": 3.73,
+   "k_estimated": true,
+   "k_source": "kcap",
+   "flags": [],
+   "pa": 822.2,
+   "cas": "75-12-7",
+   "class": "amide",
+   "isomers": [
+    "formamide"
+   ]
+  },
+  {
+   "name": "dimethylamine",
+   "formula": "C2H7N",
+   "mz": 46.0651,
+   "k": 2.1,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 929.5,
+   "cas": "124-40-3",
+   "class": "amine",
+   "isomers": [
+    "dimethylamine",
+    "ethylamine"
+   ]
+  },
+  {
+   "name": "formic acid",
+   "formula": "CH2O2",
+   "mz": 47.0128,
+   "k": 2.45,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "humid"
+   ],
+   "pa": 742.0,
+   "cas": "64-18-6",
+   "class": "acid",
+   "isomers": [
+    "formic acid"
+   ]
+  },
+  {
+   "name": "ethanol",
+   "formula": "C2H6O",
+   "mz": 47.0491,
+   "k": 2.7,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 776.4,
+   "cas": "64-17-5",
+   "class": "alcohol",
+   "isomers": [
+    "ethanol"
+   ]
+  },
+  {
+   "name": "nitrous acid",
+   "formula": "HNO2",
+   "mz": 48.008,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "7782-77-6",
+   "class": "HONO",
+   "isomers": [
+    "nitrous acid"
+   ]
+  },
+  {
+   "name": "methane thiol",
+   "formula": "CH4S",
+   "mz": 49.0106,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": 773.4,
+   "cas": "74-93-1",
+   "class": "sulfide",
+   "isomers": [
+    "methane thiol"
+   ]
+  },
+  {
+   "name": "methane diol",
+   "formula": "CH4O2",
+   "mz": 49.0284,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "463-57-0",
+   "class": "diol",
+   "isomers": [
+    "methane diol"
+   ]
+  },
+  {
+   "name": "methyl chloride",
+   "formula": "CH3Cl",
+   "mz": 50.9996,
+   "k": 0.04,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "humid",
+    "frag"
+   ],
+   "pa": 647.3,
+   "cas": "74-87-3",
+   "class": "halocarbon",
+   "isomers": [
+    "methyl chloride"
+   ]
+  },
+  {
+   "name": "propyne nitrile",
+   "formula": "C3HN",
+   "mz": 52.0182,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": 751.2,
+   "cas": "NA",
+   "class": "nitrile",
+   "isomers": [
+    "propyne nitrile"
+   ]
+  },
+  {
+   "name": "1-buten-3-yne",
+   "formula": "C4H4",
+   "mz": 53.0386,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "689-97-4",
+   "class": "alkene",
+   "isomers": [
+    "1-buten-3-yne"
+   ]
+  },
+  {
+   "name": "acrylonitrile",
+   "formula": "C3H3N",
+   "mz": 54.0338,
+   "k": 4.16,
+   "k_estimated": true,
+   "k_source": "kcap",
+   "flags": [],
+   "pa": 784.7,
+   "cas": "107-13-1",
+   "class": "nitrile",
+   "isomers": [
+    "acrylonitrile"
+   ]
+  },
+  {
+   "name": "2-propynal",
+   "formula": "C3H2O",
+   "mz": 55.0178,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "624-67-9",
+   "class": "aldehyde",
+   "isomers": [
+    "2-propynal"
+   ]
+  },
+  {
+   "name": "1,2-butadiene",
+   "formula": "C4H6",
+   "mz": 55.0542,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": 778.9,
+   "cas": "590-19-2",
+   "class": "diene",
+   "isomers": [
+    "1,2-butadiene",
+    "1,3-butadiene"
+   ]
+  },
+  {
+   "name": "propane nitrile",
+   "formula": "C3H5N",
+   "mz": 56.0495,
+   "k": 4.08,
+   "k_estimated": true,
+   "k_source": "kcap",
+   "flags": [],
+   "pa": 794.1,
+   "cas": "NA",
+   "class": "nitrile",
+   "isomers": [
+    "propane nitrile"
+   ]
+  },
+  {
+   "name": "acrolein",
+   "formula": "C3H4O",
+   "mz": 57.0335,
+   "k": 4.2,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 797.0,
+   "cas": "107-02-8",
+   "class": "alkenal",
+   "isomers": [
+    "acrolein"
+   ]
+  },
+  {
+   "name": "1-butene",
+   "formula": "C4H8",
+   "mz": 57.0699,
+   "k": 1.78,
+   "k_estimated": true,
+   "k_source": "kcap",
+   "flags": [
+    "humid"
+   ],
+   "pa": 747.0,
+   "cas": "106-98-9",
+   "class": "alkene",
+   "isomers": [
+    "1-butene",
+    "cis-2-butene",
+    "butene",
+    "trans-2-butene"
+   ]
+  },
+  {
+   "name": "hydroxy acetonitrile",
+   "formula": "C2H3NO",
+   "mz": 58.0287,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": 764.4,
+   "cas": "107-16-4",
+   "class": "nitrile",
+   "isomers": [
+    "hydroxy acetonitrile",
+    "methyl isocyanate"
+   ]
+  },
+  {
+   "name": "propenamine",
+   "formula": "C3H7N",
+   "mz": 58.0651,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": 909.5,
+   "cas": "107-11-9",
+   "class": "amine",
+   "isomers": [
+    "propenamine"
+   ]
+  },
+  {
+   "name": "glyoxal",
+   "formula": "C2H2O2",
+   "mz": 59.0128,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "107-22-2",
+   "class": "aldehyde",
+   "isomers": [
+    "glyoxal"
+   ]
+  },
+  {
+   "name": "acetone",
+   "formula": "C3H6O",
+   "mz": 59.0491,
+   "k": 3.9,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 812.0,
+   "cas": "67-64-1",
+   "class": "acetone",
+   "isomers": [
+    "acetone",
+    "propanal"
+   ]
+  },
+  {
+   "name": "acetamide",
+   "formula": "C2H5NO",
+   "mz": 60.0444,
+   "k": 3.7,
+   "k_estimated": true,
+   "k_source": "kcap",
+   "flags": [],
+   "pa": 863.6,
+   "cas": "60-35-5",
+   "class": "amide",
+   "isomers": [
+    "acetamide"
+   ]
+  },
+  {
+   "name": "trimethylamine",
+   "formula": "C3H9N",
+   "mz": 60.0808,
+   "k": 2.35,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": 948.9,
+   "cas": "75-50-3",
+   "class": "amine",
+   "isomers": [
+    "trimethylamine",
+    "1-propylamine",
+    "isopropylamine",
+    "methylethylamine"
+   ]
+  },
+  {
+   "name": "acetic acid",
+   "formula": "C2H4O2",
+   "mz": 61.0284,
+   "k": 2.9,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": 783.7,
+   "cas": "64-19-7",
+   "class": "acid",
+   "isomers": [
+    "acetic acid",
+    "glycolaldehyde",
+    "methyl formate"
+   ]
+  },
+  {
+   "name": "1-propanol",
+   "formula": "C3H8O",
+   "mz": 61.0648,
+   "k": 2.7,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": 786.5,
+   "cas": "71-23-8",
+   "class": "alcohol",
+   "isomers": [
+    "1-propanol",
+    "2-propanol",
+    "propanol"
+   ]
+  },
+  {
+   "name": "nitromethane",
+   "formula": "CH3NO2",
+   "mz": 62.0237,
+   "k": 4.6,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 754.6,
+   "cas": "75-52-5",
+   "class": "nitroalkane",
+   "isomers": [
+    "nitromethane"
+   ]
+  },
+  {
+   "name": "dimethyl sulfide",
+   "formula": "C2H6S",
+   "mz": 63.0263,
+   "k": 2.5,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 830.9,
+   "cas": "75-18-3",
+   "class": "sulfide",
+   "isomers": [
+    "dimethyl sulfide",
+    "ethanethiol"
+   ]
+  },
+  {
+   "name": "1,2-ethanediol",
+   "formula": "C2H6O2",
+   "mz": 63.0441,
+   "k": 3.2,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": 815.9,
+   "cas": "107-21-1",
+   "class": "diol",
+   "isomers": [
+    "1,2-ethanediol"
+   ]
+  },
+  {
+   "name": "ethyl chloride",
+   "formula": "C2H5Cl",
+   "mz": 65.0153,
+   "k": 1.6,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "humid",
+    "frag"
+   ],
+   "pa": 693.4,
+   "cas": "75-00-3",
+   "class": "halocarbon",
+   "isomers": [
+    "ethyl chloride"
+   ]
+  },
+  {
+   "name": "cyanoallene",
+   "formula": "C4H3N",
+   "mz": 66.0338,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "1001-56-5",
+   "class": "nitrile",
+   "isomers": [
+    "cyanoallene"
+   ]
+  },
+  {
+   "name": "1,3-cyclopentadiene",
+   "formula": "C5H6",
+   "mz": 67.0542,
+   "k": 1.81,
+   "k_estimated": true,
+   "k_source": "kcap",
+   "flags": [],
+   "pa": 821.6,
+   "cas": "542-92-7",
+   "class": "cycloalkene",
+   "isomers": [
+    "1,3-cyclopentadiene"
+   ]
+  },
+  {
+   "name": "pyrrole",
+   "formula": "C4H5N",
+   "mz": 68.0495,
+   "k": 3.0,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 875.4,
+   "cas": "109-97-7",
+   "class": "N-heterocycle",
+   "isomers": [
+    "pyrrole",
+    "butene nitrile"
+   ]
+  },
+  {
+   "name": "carbon suboxide",
+   "formula": "C3O2",
+   "mz": 68.9971,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "504-64-3",
+   "class": "ketone",
+   "isomers": [
+    "carbon suboxide"
+   ]
+  },
+  {
+   "name": "furan",
+   "formula": "C4H4O",
+   "mz": 69.0335,
+   "k": 2.0,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 803.4,
+   "cas": "110-00-9",
+   "class": "furan",
+   "isomers": [
+    "furan"
+   ]
+  },
+  {
+   "name": "cyclopentene",
+   "formula": "C5H8",
+   "mz": 69.0699,
+   "k": 2.0,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 766.3,
+   "cas": "142-29-0",
+   "class": "cycloalkene",
+   "isomers": [
+    "cyclopentene",
+    "isoprene"
+   ]
+  },
+  {
+   "name": "dihydropyrrole",
+   "formula": "C4H7N",
+   "mz": 70.0651,
+   "k": 3.91,
+   "k_estimated": true,
+   "k_source": "kcap",
+   "flags": [],
+   "pa": 798.4,
+   "cas": "28350-87-0",
+   "class": "N-heterocycle",
+   "isomers": [
+    "dihydropyrrole",
+    "butane nitrile"
+   ]
+  },
+  {
+   "name": "propiolic acid",
+   "formula": "C3H2O2",
+   "mz": 71.0128,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "471-25-0",
+   "class": "acid",
+   "isomers": [
+    "propiolic acid"
+   ]
+  },
+  {
+   "name": "methacrolein",
+   "formula": "C4H6O",
+   "mz": 71.0491,
+   "k": 4.8,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 808.7,
+   "cas": "78-85-3",
+   "class": "aldehyde",
+   "isomers": [
+    "methacrolein",
+    "2-butenal",
+    "methyl vinyl ketone"
+   ]
+  },
+  {
+   "name": "1-pentene",
+   "formula": "C5H10",
+   "mz": 71.0855,
+   "k": 1.9,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": 808.8,
+   "cas": "109-67-1",
+   "class": "alkene",
+   "isomers": [
+    "1-pentene",
+    "trans-2-pentene",
+    "2-methyl-1-butene",
+    "2-methyl-2-butene",
+    "methyl butene",
+    "pentene",
+    "3-methyl-1-butene",
+    "cis-2-pentene",
+    "cyclopentane"
+   ]
+  },
+  {
+   "name": "butenamine",
+   "formula": "C4H9N",
+   "mz": 72.0808,
+   "k": 3.4,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": 948.3,
+   "cas": "NA",
+   "class": "amine",
+   "isomers": [
+    "butenamine",
+    "pyrrolidine"
+   ]
+  },
+  {
+   "name": "acrylic acid",
+   "formula": "C3H4O2",
+   "mz": 73.0284,
+   "k": 2.7,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": null,
+   "cas": "79-10-7",
+   "class": "acid",
+   "isomers": [
+    "acrylic acid",
+    "methyl glyoxal"
+   ]
+  },
+  {
+   "name": "butanal",
+   "formula": "C4H8O",
+   "mz": 73.0648,
+   "k": 3.8,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 792.7,
+   "cas": "123-72-8",
+   "class": "aldehyde",
+   "isomers": [
+    "butanal",
+    "2-methylpropanal",
+    "n-butanal",
+    "2-butanone",
+    "tetrahydrofuran"
+   ]
+  },
+  {
+   "name": "nitroethene",
+   "formula": "C2H3NO2",
+   "mz": 74.0237,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "3638-64-0",
+   "class": "nitroalkane",
+   "isomers": [
+    "nitroethene"
+   ]
+  },
+  {
+   "name": "butylamine",
+   "formula": "C4H11N",
+   "mz": 74.0964,
+   "k": 2.5,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": 921.5,
+   "cas": "109-73-9",
+   "class": "amine",
+   "isomers": [
+    "butylamine",
+    "diethylamine"
+   ]
+  },
+  {
+   "name": "propanoic acid",
+   "formula": "C3H6O2",
+   "mz": 75.0441,
+   "k": 2.8,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 797.2,
+   "cas": "79-09-4",
+   "class": "acid",
+   "isomers": [
+    "propanoic acid",
+    "methyl acetate",
+    "ethyl formate",
+    "hydroxyacetone"
+   ]
+  },
+  {
+   "name": "1-butanol",
+   "formula": "C4H10O",
+   "mz": 75.0804,
+   "k": 2.7,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": 789.2,
+   "cas": "71-36-3",
+   "class": "alcohol",
+   "isomers": [
+    "1-butanol",
+    "2-butanol",
+    "2-methyl-2-propanol",
+    "2-methyl-1-propanol",
+    "diethyl ether"
+   ]
+  },
+  {
+   "name": "nitroethane",
+   "formula": "C2H5NO2",
+   "mz": 76.0393,
+   "k": 4.8,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 765.7,
+   "cas": "79-24-3",
+   "class": "nitroalkane",
+   "isomers": [
+    "nitroethane"
+   ]
+  },
+  {
+   "name": "carbon disulfide",
+   "formula": "CS2",
+   "mz": 76.9514,
+   "k": 0.25,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "humid"
+   ],
+   "pa": 681.9,
+   "cas": "75-15-0",
+   "class": "sulfide",
+   "isomers": [
+    "carbon disulfide"
+   ]
+  },
+  {
+   "name": "thioacetic acid",
+   "formula": "C2H4OS",
+   "mz": 77.0056,
+   "k": 2.8,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "507-09-5",
+   "class": "sulfide",
+   "isomers": [
+    "thioacetic acid"
+   ]
+  },
+  {
+   "name": "peracetic acid",
+   "formula": "C2H4O3",
+   "mz": 77.0233,
+   "k": 3.2,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "79-21-0",
+   "class": "peracid",
+   "isomers": [
+    "peracetic acid"
+   ]
+  },
+  {
+   "name": "1,2-propanediol",
+   "formula": "C3H8O2",
+   "mz": 77.0597,
+   "k": 3.5,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": 876.2,
+   "cas": "57-55-6",
+   "class": "diol",
+   "isomers": [
+    "1,2-propanediol",
+    "1,3-propanediol"
+   ]
+  },
+  {
+   "name": "n-sulfinyl methanamine",
+   "formula": "CH3NOS",
+   "mz": 78.0008,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "NA",
+   "class": "sulfoxide",
+   "isomers": [
+    "n-sulfinyl methanamine"
+   ]
+  },
+  {
+   "name": "2-thioethanol",
+   "formula": "C2H6OS",
+   "mz": 79.0212,
+   "k": 3.2,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "60-24-2",
+   "class": "alcohol",
+   "isomers": [
+    "2-thioethanol"
+   ]
+  },
+  {
+   "name": "benzene",
+   "formula": "C6H6",
+   "mz": 79.0542,
+   "k": 1.9,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 750.4,
+   "cas": "71-43-2",
+   "class": "aromatic",
+   "isomers": [
+    "benzene"
+   ]
+  },
+  {
+   "name": "pyridine",
+   "formula": "C5H5N",
+   "mz": 80.0495,
+   "k": 3.3,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 930.0,
+   "cas": "110-86-1",
+   "class": "N-heterocycle",
+   "isomers": [
+    "pyridine",
+    "pentadienenitriles"
+   ]
+  },
+  {
+   "name": "2,4-cyclopentadiene-1-one",
+   "formula": "C5H4O",
+   "mz": 81.0335,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "13177-38-3",
+   "class": "ketone",
+   "isomers": [
+    "2,4-cyclopentadiene-1-one"
+   ]
+  },
+  {
+   "name": "methyl pyrrole isomers",
+   "formula": "C5H7N",
+   "mz": 82.0651,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "96-54-8",
+   "class": "N-heterocycle",
+   "isomers": [
+    "methyl pyrrole isomers",
+    "pentene nitrile"
+   ]
+  },
+  {
+   "name": "2-methyl furan",
+   "formula": "C5H6O",
+   "mz": 83.0491,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": 865.9,
+   "cas": "534-22-5",
+   "class": "furan",
+   "isomers": [
+    "2-methyl furan",
+    "3-methyl furan",
+    "methyl furan"
+   ]
+  },
+  {
+   "name": "cyclohexene",
+   "formula": "C6H10",
+   "mz": 83.0855,
+   "k": 1.96,
+   "k_estimated": true,
+   "k_source": "kcap",
+   "flags": [],
+   "pa": 832.4,
+   "cas": "110-83-8",
+   "class": "cycloalkene",
+   "isomers": [
+    "cyclohexene",
+    "1,3-hexadiene"
+   ]
+  },
+  {
+   "name": "pentanenitrile",
+   "formula": "C5H9N",
+   "mz": 84.0808,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": 802.4,
+   "cas": "110-59-8",
+   "class": "nitrile",
+   "isomers": [
+    "pentanenitrile"
+   ]
+  },
+  {
+   "name": "thiophene",
+   "formula": "C4H4S",
+   "mz": 85.0106,
+   "k": 1.88,
+   "k_estimated": true,
+   "k_source": "kcap",
+   "flags": [],
+   "pa": 815.0,
+   "cas": "110-02-1",
+   "class": "S-heterocycle",
+   "isomers": [
+    "thiophene"
+   ]
+  },
+  {
+   "name": "2-(3H)furanone",
+   "formula": "C4H4O2",
+   "mz": 85.0284,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "20825-71-2",
+   "class": "ester",
+   "isomers": [
+    "2-(3H)furanone"
+   ]
+  },
+  {
+   "name": "trans-2-methyl-2-butenal",
+   "formula": "C5H8O",
+   "mz": 85.0648,
+   "k": 4.6,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 839.0,
+   "cas": "497-03-0",
+   "class": "alkenal",
+   "isomers": [
+    "trans-2-methyl-2-butenal",
+    "trans-2-pentenal",
+    "cyclopentanone",
+    "3-methyl-3-buten-2-one"
+   ]
+  },
+  {
+   "name": "1-hexene",
+   "formula": "C6H12",
+   "mz": 85.1012,
+   "k": 2.05,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": 805.2,
+   "cas": "592-41-6",
+   "class": "alkene",
+   "isomers": [
+    "1-hexene",
+    "trans-2-hexene",
+    "2-methyl-2-pentene",
+    "trans-4-methyl-2-pentene",
+    "cyclohexane",
+    "methylcyclopentane",
+    "methyl cyclopentane"
+   ]
+  },
+  {
+   "name": "2-pyrrolidinone",
+   "formula": "C4H7NO",
+   "mz": 86.06,
+   "k": 4.5,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": null,
+   "cas": "616-45-5",
+   "class": "N-heterocycle",
+   "isomers": [
+    "2-pyrrolidinone"
+   ]
+  },
+  {
+   "name": "1-methylpyrrolidine",
+   "formula": "C5H11N",
+   "mz": 86.0964,
+   "k": 3.4,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": 965.6,
+   "cas": "120-94-5",
+   "class": "N-heterocycle",
+   "isomers": [
+    "1-methylpyrrolidine",
+    "piperidine"
+   ]
+  },
+  {
+   "name": "cyclopropanecarboxylic acid",
+   "formula": "C4H6O2",
+   "mz": 87.0441,
+   "k": 3.0,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 821.4,
+   "cas": "1759-53-1",
+   "class": "acid",
+   "isomers": [
+    "cyclopropanecarboxylic acid",
+    "2,3-butanedione",
+    "methyl acrylate",
+    "y-butyrolactone"
+   ]
+  },
+  {
+   "name": "2-methyl-3-buten-1-ol",
+   "formula": "C5H10O",
+   "mz": 87.0804,
+   "k": 3.75,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 796.6,
+   "cas": "4516-90-9",
+   "class": "alcohol",
+   "isomers": [
+    "2-methyl-3-buten-1-ol",
+    "pentanal",
+    "methylbutanal",
+    "3-methylbutanal",
+    "allyl ethyl ether",
+    "2-pentanone",
+    "3-methyl-2-butanone",
+    "3-pentanone"
+   ]
+  },
+  {
+   "name": "n-hexane",
+   "formula": "C6H14",
+   "mz": 87.1168,
+   "k": 0.1,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "110-54-3",
+   "class": "alkane",
+   "isomers": [
+    "n-hexane"
+   ]
+  },
+  {
+   "name": "1-pentylamine",
+   "formula": "C5H13N",
+   "mz": 88.1121,
+   "k": 2.7,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": 923.5,
+   "cas": "110-58-7",
+   "class": "amine",
+   "isomers": [
+    "1-pentylamine",
+    "2-methyl-2-butylamine",
+    "2-methylbutylamine",
+    "2-pentylamine",
+    "3-methyl-2-butylamine",
+    "3-methylbutylamine",
+    "3-pentylamine",
+    "N-ethyl-2-propanamine",
+    "N-methylbutylamine",
+    "N,N-diethylmethylamine",
+    "N,N-dimethyl-2-propanamine"
+   ]
+  },
+  {
+   "name": "pyruvic acid",
+   "formula": "C3H4O3",
+   "mz": 89.0233,
+   "k": 3.2,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "127-17-3",
+   "class": "acid",
+   "isomers": [
+    "pyruvic acid"
+   ]
+  },
+  {
+   "name": "butanoic acid",
+   "formula": "C4H8O2",
+   "mz": 89.0597,
+   "k": 2.9,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": 830.2,
+   "cas": "107-92-6",
+   "class": "acid",
+   "isomers": [
+    "butanoic acid",
+    "isobutanoic acid",
+    "methyl propanoate",
+    "ethyl acetate",
+    "3-hydroxybutanone",
+    "1,4-dioxane"
+   ]
+  },
+  {
+   "name": "1-pentanol",
+   "formula": "C5H12O",
+   "mz": 89.0961,
+   "k": 2.8,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": 820.3,
+   "cas": "71-41-0",
+   "class": "alcohol",
+   "isomers": [
+    "1-pentanol",
+    "2-pentanol",
+    "3-methyl-1-butanol",
+    "2-methyl-2-butanol",
+    "3-pentanol",
+    "butyl methyl ether",
+    "MTBE"
+   ]
+  },
+  {
+   "name": "1-nitropropane",
+   "formula": "C3H7NO2",
+   "mz": 90.055,
+   "k": 4.65,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "108-03-2",
+   "class": "nitroalkane",
+   "isomers": [
+    "1-nitropropane",
+    "2-nitropropane"
+   ]
+  },
+  {
+   "name": "lactic acid",
+   "formula": "C3H6O3",
+   "mz": 91.039,
+   "k": 3.0,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "50-21-5",
+   "class": "acid",
+   "isomers": [
+    "lactic acid"
+   ]
+  },
+  {
+   "name": "ethylene glycol dimethyl ether",
+   "formula": "C4H10O2",
+   "mz": 91.0754,
+   "k": 3.7,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": 858.0,
+   "cas": "110-71-4",
+   "class": "diether",
+   "isomers": [
+    "ethylene glycol dimethyl ether",
+    "1,2-butanediol",
+    "1,3-butanediol",
+    "1,4-butanediol"
+   ]
+  },
+  {
+   "name": "ethynylpyrrole",
+   "formula": "C6H5N",
+   "mz": 92.0495,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "67237-51-8",
+   "class": "N-heterocycle",
+   "isomers": [
+    "ethynylpyrrole"
+   ]
+  },
+  {
+   "name": "chloroacetone",
+   "formula": "C3H5ClO",
+   "mz": 93.0102,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "78-95-5",
+   "class": "haloketone",
+   "isomers": [
+    "chloroacetone"
+   ]
+  },
+  {
+   "name": "toluene",
+   "formula": "C7H8",
+   "mz": 93.0699,
+   "k": 2.2,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 784.0,
+   "cas": "108-88-3",
+   "class": "aromatic",
+   "isomers": [
+    "toluene"
+   ]
+  },
+  {
+   "name": "2-furonitrile",
+   "formula": "C5H3NO",
+   "mz": 94.0287,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "617-90-3",
+   "class": "furan",
+   "isomers": [
+    "2-furonitrile",
+    "3-furonitrile"
+   ]
+  },
+  {
+   "name": "aniline",
+   "formula": "C6H7N",
+   "mz": 94.0651,
+   "k": 2.8,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 882.5,
+   "cas": "62-53-3",
+   "class": "amine",
+   "isomers": [
+    "aniline",
+    "2-methylpyridine",
+    "3-methylpyridine"
+   ]
+  },
+  {
+   "name": "methyl bromide",
+   "formula": "CH3Br",
+   "mz": 94.9491,
+   "k": 0.2,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "humid",
+    "frag"
+   ],
+   "pa": 664.2,
+   "cas": "74-83-9",
+   "class": "halocarbon",
+   "isomers": [
+    "methyl bromide"
+   ]
+  },
+  {
+   "name": "dimethyl disulfide",
+   "formula": "C2H6S2",
+   "mz": 94.9984,
+   "k": 2.6,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 815.3,
+   "cas": "624-92-0",
+   "class": "sulfide",
+   "isomers": [
+    "dimethyl disulfide",
+    "dimethyl disulphide"
+   ]
+  },
+  {
+   "name": "phenol",
+   "formula": "C6H6O",
+   "mz": 95.0491,
+   "k": 2.7,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 817.3,
+   "cas": "108-95-2",
+   "class": "aromatic",
+   "isomers": [
+    "phenol"
+   ]
+  },
+  {
+   "name": "4-pyridinol",
+   "formula": "C5H5NO",
+   "mz": 96.0444,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "626-64-2",
+   "class": "N-heterocycle",
+   "isomers": [
+    "4-pyridinol"
+   ]
+  },
+  {
+   "name": "1-ethylpyrrole",
+   "formula": "C6H9N",
+   "mz": 96.0808,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": 918.7,
+   "cas": "617-92-5",
+   "class": "N-heterocycle",
+   "isomers": [
+    "1-ethylpyrrole",
+    "2,5-dimethylpyrrole"
+   ]
+  },
+  {
+   "name": "2-furfural",
+   "formula": "C5H4O2",
+   "mz": 97.0284,
+   "k": 3.9,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": null,
+   "cas": "98-01-1",
+   "class": "furan",
+   "isomers": [
+    "2-furfural",
+    "3-furfural",
+    "furancarboxaldehyde"
+   ]
+  },
+  {
+   "name": "fluorobenzene",
+   "formula": "C6H5F",
+   "mz": 97.0448,
+   "k": 2.7,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 755.9,
+   "cas": "462-06-6",
+   "class": "halocarbon",
+   "isomers": [
+    "fluorobenzene"
+   ]
+  },
+  {
+   "name": "2-ethylfuran",
+   "formula": "C6H8O",
+   "mz": 97.0648,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": 865.9,
+   "cas": "3208-16-0",
+   "class": "furan",
+   "isomers": [
+    "2-ethylfuran",
+    "2,5-dimethylfuran"
+   ]
+  },
+  {
+   "name": "4-methylpentanenitrile",
+   "formula": "C6H11N",
+   "mz": 98.0964,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "542-54-1",
+   "class": "nitrile",
+   "isomers": [
+    "4-methylpentanenitrile"
+   ]
+  },
+  {
+   "name": "methylthiophene",
+   "formula": "C5H6S",
+   "mz": 99.0263,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": 859.0,
+   "cas": "554-14-3",
+   "class": "S-heterocycle",
+   "isomers": [
+    "methylthiophene"
+   ]
+  },
+  {
+   "name": "furfuryl alcohol",
+   "formula": "C5H6O2",
+   "mz": 99.0441,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "98-00-0",
+   "class": "furan",
+   "isomers": [
+    "furfuryl alcohol"
+   ]
+  },
+  {
+   "name": "cis-3-hexenal",
+   "formula": "C6H10O",
+   "mz": 99.0804,
+   "k": 4.0,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 841.0,
+   "cas": "6789-80-6",
+   "class": "alkenal",
+   "isomers": [
+    "cis-3-hexenal",
+    "trans-2-hexenal",
+    "cyclohexanone",
+    "methyl cyclopentanone"
+   ]
+  },
+  {
+   "name": "methylcyclohexane",
+   "formula": "C7H14",
+   "mz": 99.1168,
+   "k": 2.2,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "108-87-2",
+   "class": "alkane",
+   "isomers": [
+    "methylcyclohexane",
+    "1-heptene",
+    "trans-2-heptene",
+    "methyl cyclohexane"
+   ]
+  },
+  {
+   "name": "1-methyl-2-pyrrolidinone",
+   "formula": "C5H9NO",
+   "mz": 100.0757,
+   "k": 4.6,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 923.5,
+   "cas": "872-50-4",
+   "class": "N-heterocycle",
+   "isomers": [
+    "1-methyl-2-pyrrolidinone",
+    "2-piperidinone"
+   ]
+  },
+  {
+   "name": "succinic anhydride",
+   "formula": "C4H4O3",
+   "mz": 101.0233,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "108-30-5",
+   "class": "anhydride",
+   "isomers": [
+    "succinic anhydride"
+   ]
+  },
+  {
+   "name": "1,5-pentanedial",
+   "formula": "C5H8O2",
+   "mz": 101.0597,
+   "k": 3.3,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 831.4,
+   "cas": "111-30-8",
+   "class": "dialdehyde",
+   "isomers": [
+    "1,5-pentanedial",
+    "methyl methacrylate",
+    "y-valerolactone"
+   ]
+  },
+  {
+   "name": "hexanal",
+   "formula": "C6H12O",
+   "mz": 101.0961,
+   "k": 4.0,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 843.2,
+   "cas": "66-25-1",
+   "class": "aldehyde",
+   "isomers": [
+    "hexanal",
+    "cis-3-hexen-1-ol",
+    "2-hexanone",
+    "hexanone",
+    "3-hexanone"
+   ]
+  },
+  {
+   "name": "triethylamine",
+   "formula": "C6H15N",
+   "mz": 102.1277,
+   "k": 2.5,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": 981.8,
+   "cas": "121-44-8",
+   "class": "amine",
+   "isomers": [
+    "triethylamine"
+   ]
+  },
+  {
+   "name": "acetic anhydride",
+   "formula": "C4H6O3",
+   "mz": 103.039,
+   "k": 3.15,
+   "k_estimated": true,
+   "k_source": "kcap",
+   "flags": [],
+   "pa": null,
+   "cas": "108-24-7",
+   "class": "anhydride",
+   "isomers": [
+    "acetic anhydride"
+   ]
+  },
+  {
+   "name": "phenylacetylene",
+   "formula": "C8H6",
+   "mz": 103.0542,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": 832.0,
+   "cas": "536-74-3",
+   "class": "aromatic",
+   "isomers": [
+    "phenylacetylene"
+   ]
+  },
+  {
+   "name": "pentanoic acid",
+   "formula": "C5H10O2",
+   "mz": 103.0754,
+   "k": 2.9,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": 806.0,
+   "cas": "109-52-4",
+   "class": "acid",
+   "isomers": [
+    "pentanoic acid",
+    "trimethylacetic acid",
+    "1,2-cyclopentanediol",
+    "butyl formate",
+    "isopropyl acetate",
+    "methyl butanoate",
+    "ethyl propionate",
+    "methyl butyrate",
+    "propyl acetate",
+    "ethyl proanoate"
+   ]
+  },
+  {
+   "name": "1-hexanol",
+   "formula": "C6H14O",
+   "mz": 103.1117,
+   "k": 2.85,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": 855.5,
+   "cas": "111-27-3",
+   "class": "alcohol",
+   "isomers": [
+    "1-hexanol",
+    "2-hexanol",
+    "2-ethyl-1-butanol",
+    "3-hexanol",
+    "3-methyl-3-pentanol",
+    "4-methyl-1-pentanol",
+    "4-methyl-2-pentanol",
+    "butyl ethyl ether",
+    "diisopropyl ether",
+    "dipropyl ether",
+    "tert-pentyl methyl ether"
+   ]
+  },
+  {
+   "name": "benzonitrile",
+   "formula": "C7H5N",
+   "mz": 104.0495,
+   "k": 5.3,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 811.5,
+   "cas": "100-47-0",
+   "class": "nitrile",
+   "isomers": [
+    "benzonitrile"
+   ]
+  },
+  {
+   "name": "1-nitrobutane",
+   "formula": "C4H9NO2",
+   "mz": 104.0706,
+   "k": 4.65,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "627-05-4",
+   "class": "nitroalkane",
+   "isomers": [
+    "1-nitrobutane",
+    "2-methyl-2-nitropropane"
+   ]
+  },
+  {
+   "name": "styrene",
+   "formula": "C8H8",
+   "mz": 105.0699,
+   "k": 2.24,
+   "k_estimated": true,
+   "k_source": "kcap",
+   "flags": [],
+   "pa": 839.5,
+   "cas": "100-42-5",
+   "class": "aromatic",
+   "isomers": [
+    "styrene"
+   ]
+  },
+  {
+   "name": "1,5-pentanediol",
+   "formula": "C5H12O2",
+   "mz": 105.091,
+   "k": 3.9,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "111-29-5",
+   "class": "diol",
+   "isomers": [
+    "1,5-pentanediol"
+   ]
+  },
+  {
+   "name": "vinylpyridine",
+   "formula": "C7H7N",
+   "mz": 106.0651,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "100-69-6",
+   "class": "N-heterocycle",
+   "isomers": [
+    "vinylpyridine"
+   ]
+  },
+  {
+   "name": "benzaldehyde",
+   "formula": "C7H6O",
+   "mz": 107.0491,
+   "k": 3.7,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 834.0,
+   "cas": "100-52-7",
+   "class": "aromatic",
+   "isomers": [
+    "benzaldehyde"
+   ]
+  },
+  {
+   "name": "m-xylene",
+   "formula": "C8H10",
+   "mz": 107.0855,
+   "k": 2.35,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 812.1,
+   "cas": "108-38-3",
+   "class": "aromatic",
+   "isomers": [
+    "m-xylene",
+    "p-xylene",
+    "xylene",
+    "ethyl benzene",
+    "o-xylene",
+    "(m+p)-xylene",
+    "ethylbenzene"
+   ]
+  },
+  {
+   "name": "methyl furonitrile",
+   "formula": "C6H5NO",
+   "mz": 108.0444,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": 854.3,
+   "cas": "NA",
+   "class": "furan",
+   "isomers": [
+    "methyl furonitrile",
+    "pyridine aldehyde",
+    "nitrosobenzene"
+   ]
+  },
+  {
+   "name": "dimethylpyridine",
+   "formula": "C7H9N",
+   "mz": 108.0808,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": 958.9,
+   "cas": "583-61-9",
+   "class": "N-heterocycle",
+   "isomers": [
+    "dimethylpyridine",
+    "ethylpyridine"
+   ]
+  },
+  {
+   "name": "ethyl bromide",
+   "formula": "C2H5Br",
+   "mz": 108.9647,
+   "k": 1.7,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "humid",
+    "frag"
+   ],
+   "pa": 696.2,
+   "cas": "74-96-4",
+   "class": "halocarbon",
+   "isomers": [
+    "ethyl bromide"
+   ]
+  },
+  {
+   "name": "p-benzoquinone",
+   "formula": "C6H4O2",
+   "mz": 109.0284,
+   "k": 2.2,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 799.1,
+   "cas": "106-51-4",
+   "class": "aromatic",
+   "isomers": [
+    "p-benzoquinone"
+   ]
+  },
+  {
+   "name": "2-methylphenol",
+   "formula": "C7H8O",
+   "mz": 109.0648,
+   "k": 2.8,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 778.3,
+   "cas": "95-48-7",
+   "class": "alcohol",
+   "isomers": [
+    "2-methylphenol",
+    "3-methylphenol",
+    "4-methylphenol",
+    "phenylmethanol",
+    "anisole"
+   ]
+  },
+  {
+   "name": "benzenediol",
+   "formula": "C6H6O2",
+   "mz": 111.0441,
+   "k": 3.3,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": null,
+   "cas": "120-80-9",
+   "class": "alcohol",
+   "isomers": [
+    "benzenediol",
+    "2-hydroxyphenol",
+    "5-methyl furfural",
+    "5-methyl-2-furancarboxaldehyde"
+   ]
+  },
+  {
+   "name": "2-fluorotoluene",
+   "formula": "C7H7F",
+   "mz": 111.0605,
+   "k": 2.95,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 773.3,
+   "cas": "95-52-3",
+   "class": "halocarbon",
+   "isomers": [
+    "2-fluorotoluene",
+    "4-fluorotoluene"
+   ]
+  },
+  {
+   "name": "dihydroxy pyridine",
+   "formula": "C5H5NO2",
+   "mz": 112.0393,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "16867-04-2",
+   "class": "N-heterocycle",
+   "isomers": [
+    "dihydroxy pyridine",
+    "methyl maleimide"
+   ]
+  },
+  {
+   "name": "chlorobenzene",
+   "formula": "C6H5Cl",
+   "mz": 113.0153,
+   "k": 2.9,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 753.1,
+   "cas": "108-90-7",
+   "class": "halocarbon",
+   "isomers": [
+    "chlorobenzene"
+   ]
+  },
+  {
+   "name": "2-hydroxy-3-methyl-2-cyclopenten-1-one",
+   "formula": "C6H8O2",
+   "mz": 113.0597,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "80-71-7",
+   "class": "cycloketone",
+   "isomers": [
+    "2-hydroxy-3-methyl-2-cyclopenten-1-one"
+   ]
+  },
+  {
+   "name": "trans-2-heptenal",
+   "formula": "C7H12O",
+   "mz": 113.0961,
+   "k": 4.7,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": null,
+   "cas": "18829-55-5",
+   "class": "alkenal",
+   "isomers": [
+    "trans-2-heptenal",
+    "ethylcyclopentanone"
+   ]
+  },
+  {
+   "name": "1-octene",
+   "formula": "C8H16",
+   "mz": 113.1325,
+   "k": 2.35,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "111-66-0",
+   "class": "alkene",
+   "isomers": [
+    "1-octene",
+    "trans-2-octene",
+    "1,2-dimethylcyclohexane",
+    "1,3-dimethylcyclohexane",
+    "1,4-dimethylcyclohexane"
+   ]
+  },
+  {
+   "name": "nitrofuran",
+   "formula": "C4H3NO3",
+   "mz": 114.0186,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "609-39-2",
+   "class": "furan",
+   "isomers": [
+    "nitrofuran"
+   ]
+  },
+  {
+   "name": "5-hydroxymethyl-2-furanone",
+   "formula": "C5H6O3",
+   "mz": 115.039,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "NA",
+   "class": "ester",
+   "isomers": [
+    "5-hydroxymethyl-2-furanone"
+   ]
+  },
+  {
+   "name": "diallyl sulfide",
+   "formula": "C6H10S",
+   "mz": 115.0576,
+   "k": 2.9,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": null,
+   "cas": "592-88-1",
+   "class": "sulfide",
+   "isomers": [
+    "diallyl sulfide"
+   ]
+  },
+  {
+   "name": "heptanal",
+   "formula": "C7H14O",
+   "mz": 115.1117,
+   "k": 3.85,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 845.0,
+   "cas": "111-71-7",
+   "class": "aldehyde",
+   "isomers": [
+    "heptanal",
+    "2-heptanone",
+    "3-heptanone",
+    "4-heptanone",
+    "2,4-dimethyl-3-pentanone",
+    "heptanone"
+   ]
+  },
+  {
+   "name": "2-methylheptane",
+   "formula": "C8H18",
+   "mz": 115.1481,
+   "k": 0.9,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "592-27-8",
+   "class": "alkane",
+   "isomers": [
+    "2-methylheptane",
+    "n-octane"
+   ]
+  },
+  {
+   "name": "indene",
+   "formula": "C9H8",
+   "mz": 117.0699,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": 848.8,
+   "cas": "95-13-6",
+   "class": "aromatic",
+   "isomers": [
+    "indene"
+   ]
+  },
+  {
+   "name": "ethyl butanoate",
+   "formula": "C6H12O2",
+   "mz": 117.091,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "105-54-4",
+   "class": "ester",
+   "isomers": [
+    "ethyl butanoate",
+    "ethyl isobutanoate",
+    "methyl 2-methylbutanoate",
+    "propyl propanoate",
+    "butyl acetate"
+   ]
+  },
+  {
+   "name": "butene nitrate",
+   "formula": "C4H7NO3",
+   "mz": 118.0499,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "NA",
+   "class": "nitrate",
+   "isomers": [
+    "butene nitrate"
+   ]
+  },
+  {
+   "name": "benzeneacetonitrile",
+   "formula": "C8H7N",
+   "mz": 118.0651,
+   "k": 3.3,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 805.5,
+   "cas": "140-29-4",
+   "class": "aromatic",
+   "isomers": [
+    "benzeneacetonitrile",
+    "indole"
+   ]
+  },
+  {
+   "name": "benzofuran",
+   "formula": "C8H6O",
+   "mz": 119.0491,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "271-89-6",
+   "class": "furan",
+   "isomers": [
+    "benzofuran"
+   ]
+  },
+  {
+   "name": "indane",
+   "formula": "C9H10",
+   "mz": 119.0855,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "496-11-7",
+   "class": "aromatic",
+   "isomers": [
+    "indane",
+    "methyl styrene"
+   ]
+  },
+  {
+   "name": "dihydropyridine",
+   "formula": "C8H9N",
+   "mz": 120.0808,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "NA",
+   "class": "N-heterocycle",
+   "isomers": [
+    "dihydropyridine"
+   ]
+  },
+  {
+   "name": "1,3-dithiane",
+   "formula": "C4H8S2",
+   "mz": 121.014,
+   "k": 2.9,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": null,
+   "cas": "505-23-7",
+   "class": "sulfide",
+   "isomers": [
+    "1,3-dithiane"
+   ]
+  },
+  {
+   "name": "tolualdehyde",
+   "formula": "C8H8O",
+   "mz": 121.0648,
+   "k": 4.3,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 861.1,
+   "cas": "NA",
+   "class": "aromatic",
+   "isomers": [
+    "tolualdehyde",
+    "acetophenone"
+   ]
+  },
+  {
+   "name": "trimethylbenzene",
+   "formula": "C9H12",
+   "mz": 121.1012,
+   "k": 2.45,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 836.2,
+   "cas": "526-73-8",
+   "class": "aromatic",
+   "isomers": [
+    "trimethylbenzene",
+    "1,2,3-trimethyl benzene",
+    "1,2,4-trimethyl benzene",
+    "1,3,5-trimethylbenzene",
+    "n-propyl benzene",
+    "2-ethyl toluene",
+    "3-ethyl toluene",
+    "4-ethyl toluene",
+    "iso-propyl benzene",
+    "1,2,4-trimethylbenzene",
+    "1,2,3-trimethylbenzene",
+    "2-ethyltoluene",
+    "3-ethyltoluene",
+    "4-ethyltoluene",
+    "propylbenzene"
+   ]
+  },
+  {
+   "name": "2-hydroxybenzaldehyde",
+   "formula": "C7H6O2",
+   "mz": 123.0441,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "90-02-8",
+   "class": "aromatic",
+   "isomers": [
+    "2-hydroxybenzaldehyde"
+   ]
+  },
+  {
+   "name": "1-phenylethanol",
+   "formula": "C8H10O",
+   "mz": 123.0804,
+   "k": 2.9,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "98-85-1",
+   "class": "alcohol",
+   "isomers": [
+    "1-phenylethanol",
+    "2-phenylethanol",
+    "4-ethylphenol",
+    "methyl anisol"
+   ]
+  },
+  {
+   "name": "nitrobenzene",
+   "formula": "C6H5NO2",
+   "mz": 124.0393,
+   "k": 4.36,
+   "k_estimated": true,
+   "k_source": "kcap",
+   "flags": [],
+   "pa": 800.3,
+   "cas": "98-95-3",
+   "class": "aromatic",
+   "isomers": [
+    "nitrobenzene"
+   ]
+  },
+  {
+   "name": "hydroxy benzoquinone",
+   "formula": "C6H4O3",
+   "mz": 125.0233,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "NA",
+   "class": "aromatic",
+   "isomers": [
+    "hydroxy benzoquinone"
+   ]
+  },
+  {
+   "name": "guaiacol (=2-methoxyphenol)",
+   "formula": "C7H8O2",
+   "mz": 125.0597,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "90-05-1",
+   "class": "aromatic",
+   "isomers": [
+    "guaiacol (=2-methoxyphenol)"
+   ]
+  },
+  {
+   "name": "3,3,5-trimethylcyclohexene",
+   "formula": "C9H16",
+   "mz": 125.1325,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "503-45-7",
+   "class": "cycloalkene",
+   "isomers": [
+    "3,3,5-trimethylcyclohexene"
+   ]
+  },
+  {
+   "name": "dimethyl trisulfide",
+   "formula": "C2H6S3",
+   "mz": 126.9704,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "3658-80-8",
+   "class": "sulfide",
+   "isomers": [
+    "dimethyl trisulfide"
+   ]
+  },
+  {
+   "name": "2-chlorotoluene",
+   "formula": "C7H7Cl",
+   "mz": 127.0309,
+   "k": 3.2,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 790.5,
+   "cas": "95-49-8",
+   "class": "halocarbon",
+   "isomers": [
+    "2-chlorotoluene",
+    "4-chlorotoluene",
+    "benzylchloride"
+   ]
+  },
+  {
+   "name": "5-(hydroxymethyl)-2-furfural",
+   "formula": "C6H6O3",
+   "mz": 127.039,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "67-47-0",
+   "class": "furan",
+   "isomers": [
+    "5-(hydroxymethyl)-2-furfural"
+   ]
+  },
+  {
+   "name": "trans-2-octenal",
+   "formula": "C8H14O",
+   "mz": 127.1117,
+   "k": 4.8,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": null,
+   "cas": "2548-87-0",
+   "class": "alkenal",
+   "isomers": [
+    "trans-2-octenal"
+   ]
+  },
+  {
+   "name": "1-nonene",
+   "formula": "C9H18",
+   "mz": 127.1481,
+   "k": 2.45,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "124-11-8",
+   "class": "alkene",
+   "isomers": [
+    "1-nonene",
+    "trans-2-nonene",
+    "1,1,3-trimethylcyclohexane",
+    "1,3,5-trimethylcyclohexane"
+   ]
+  },
+  {
+   "name": "methyl hydroxy dihydrofurfural",
+   "formula": "C6H8O3",
+   "mz": 129.0546,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "NA",
+   "class": "aldehyde",
+   "isomers": [
+    "methyl hydroxy dihydrofurfural",
+    "2,5-di(hydroxymethyl)furan"
+   ]
+  },
+  {
+   "name": "naphthalene",
+   "formula": "C10H8",
+   "mz": 129.0699,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": 802.9,
+   "cas": "91-20-3",
+   "class": "aromatic",
+   "isomers": [
+    "naphthalene"
+   ]
+  },
+  {
+   "name": "octanal",
+   "formula": "C8H16O",
+   "mz": 129.1274,
+   "k": 3.95,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "124-13-0",
+   "class": "aldehyde",
+   "isomers": [
+    "octanal",
+    "1-octen-3-ol",
+    "2-octanone",
+    "3-octanone"
+   ]
+  },
+  {
+   "name": "2,2-dimethylheptane",
+   "formula": "C9H20",
+   "mz": 129.1638,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "1071-26-7",
+   "class": "alkane",
+   "isomers": [
+    "2,2-dimethylheptane",
+    "3-methyloctane"
+   ]
+  },
+  {
+   "name": "dihydronaphthalene",
+   "formula": "C10H10",
+   "mz": 131.0855,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "447-53-0",
+   "class": "aromatic",
+   "isomers": [
+    "dihydronaphthalene"
+   ]
+  },
+  {
+   "name": "butyl propanoate",
+   "formula": "C7H14O2",
+   "mz": 131.1067,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "590-01-2",
+   "class": "ester",
+   "isomers": [
+    "butyl propanoate",
+    "ethyl 2-methylbutanoate",
+    "ethyl isovalerate",
+    "methyl hexanoate",
+    "ethyl pentanoate",
+    "propyl butyrate"
+   ]
+  },
+  {
+   "name": "1-octanol",
+   "formula": "C8H18O",
+   "mz": 131.143,
+   "k": 3.1,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "111-87-5",
+   "class": "alcohol",
+   "isomers": [
+    "1-octanol",
+    "2-octanol",
+    "3-octanol"
+   ]
+  },
+  {
+   "name": "methyl benzeneacetonitrile",
+   "formula": "C9H9N",
+   "mz": 132.0808,
+   "k": 3.3,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": null,
+   "cas": "NA",
+   "class": "aromatic",
+   "isomers": [
+    "methyl benzeneacetonitrile",
+    "3-methylindole"
+   ]
+  },
+  {
+   "name": "methyl benzofuran",
+   "formula": "C9H8O",
+   "mz": 133.0648,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": 859.6,
+   "cas": "4265-25-2",
+   "class": "furan",
+   "isomers": [
+    "methyl benzofuran"
+   ]
+  },
+  {
+   "name": "1,2,3,4-tetrahydronaphthalene",
+   "formula": "C10H12",
+   "mz": 133.1012,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": 809.7,
+   "cas": "119-64-2",
+   "class": "aromatic",
+   "isomers": [
+    "1,2,3,4-tetrahydronaphthalene",
+    "ethyl styrene",
+    "methyl propenyl benzene"
+   ]
+  },
+  {
+   "name": "3-methylacetophenone",
+   "formula": "C9H10O",
+   "mz": 135.0804,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": 868.2,
+   "cas": "585-74-0",
+   "class": "aromatic",
+   "isomers": [
+    "3-methylacetophenone"
+   ]
+  },
+  {
+   "name": "1,2-diethyl benzene",
+   "formula": "C10H14",
+   "mz": 135.1168,
+   "k": 2.45,
+   "k_estimated": true,
+   "k_source": "kcap",
+   "flags": [
+    "frag"
+   ],
+   "pa": 791.9,
+   "cas": "135-01-3",
+   "class": "aromatic",
+   "isomers": [
+    "1,2-diethyl benzene",
+    "1,2,4,5-tetramethylbenzene",
+    "1,3-diethylbenzene",
+    "1,4-diethylbenzene",
+    "n-butyl benzene",
+    "sec-butyl benzene",
+    "tert-butylbenzene",
+    "m-cymene",
+    "sec-butylbenzene"
+   ]
+  },
+  {
+   "name": "2-aminoacetophenone",
+   "formula": "C8H9NO",
+   "mz": 136.0757,
+   "k": 2.8,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": null,
+   "cas": "613-89-8",
+   "class": "ketone",
+   "isomers": [
+    "2-aminoacetophenone"
+   ]
+  },
+  {
+   "name": "bromoacetone",
+   "formula": "C3H5BrO",
+   "mz": 136.9597,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "598-31-2",
+   "class": "haloketone",
+   "isomers": [
+    "bromoacetone"
+   ]
+  },
+  {
+   "name": "methyl benzoic acid",
+   "formula": "C8H8O2",
+   "mz": 137.0597,
+   "k": 3.2,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": 838.8,
+   "cas": "118-90-1",
+   "class": "aromatic",
+   "isomers": [
+    "methyl benzoic acid",
+    "methyl benzoate"
+   ]
+  },
+  {
+   "name": "a-pinene",
+   "formula": "C10H16",
+   "mz": 137.1325,
+   "k": 2.6,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "80-56-8",
+   "class": "monoterpene",
+   "isomers": [
+    "a-pinene",
+    "2-carene",
+    "3-carene",
+    "a-terpinene",
+    "b-pinene",
+    "camphene",
+    "myrcene",
+    "ocimene",
+    "R-limonene",
+    "S-limonene",
+    "y-terpinene",
+    "a-limonene"
+   ]
+  },
+  {
+   "name": "nitrotoluene",
+   "formula": "C7H7NO2",
+   "mz": 138.055,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "88-72-2",
+   "class": "aromatic",
+   "isomers": [
+    "nitrotoluene"
+   ]
+  },
+  {
+   "name": "2-methoxy-4-methylphenol (= creosol)",
+   "formula": "C8H10O2",
+   "mz": 139.0754,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "93-51-6",
+   "class": "aromatic",
+   "isomers": [
+    "2-methoxy-4-methylphenol (= creosol)"
+   ]
+  },
+  {
+   "name": "decahydronaphthalene",
+   "formula": "C10H18",
+   "mz": 139.1481,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "493-01-6",
+   "class": "cycloalkane",
+   "isomers": [
+    "decahydronaphthalene"
+   ]
+  },
+  {
+   "name": "trans-2-nonenal",
+   "formula": "C9H16O",
+   "mz": 141.1274,
+   "k": 4.8,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": null,
+   "cas": "18829-56-6",
+   "class": "alkenal",
+   "isomers": [
+    "trans-2-nonenal"
+   ]
+  },
+  {
+   "name": "1-decene",
+   "formula": "C10H20",
+   "mz": 141.1638,
+   "k": 2.6,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "872-05-9",
+   "class": "alkene",
+   "isomers": [
+    "1-decene"
+   ]
+  },
+  {
+   "name": "methyl naphthalene",
+   "formula": "C11H10",
+   "mz": 143.0855,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": 834.8,
+   "cas": "90-12-0",
+   "class": "aromatic",
+   "isomers": [
+    "methyl naphthalene",
+    "1-methylnaphthalene"
+   ]
+  },
+  {
+   "name": "nonanal",
+   "formula": "C9H18O",
+   "mz": 143.143,
+   "k": 4.2,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": null,
+   "cas": "124-19-6",
+   "class": "aldehyde",
+   "isomers": [
+    "nonanal",
+    "2-nonanone"
+   ]
+  },
+  {
+   "name": "2-methylnonane",
+   "formula": "C10H22",
+   "mz": 143.1794,
+   "k": 1.6,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "871-83-0",
+   "class": "alkane",
+   "isomers": [
+    "2-methylnonane",
+    "2,2-dimethyloctane",
+    "2,3-dimethyloctane",
+    "3-methylnonane",
+    "3,5-dimethyloctane",
+    "4-methylnonane",
+    "n-decane"
+   ]
+  },
+  {
+   "name": "2-ethenyl benzofuran",
+   "formula": "C10H8O",
+   "mz": 145.0648,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "NA",
+   "class": "furan",
+   "isomers": [
+    "2-ethenyl benzofuran"
+   ]
+  },
+  {
+   "name": "ethylindene",
+   "formula": "C11H12",
+   "mz": 145.1012,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "6953-66-8",
+   "class": "aromatic",
+   "isomers": [
+    "ethylindene"
+   ]
+  },
+  {
+   "name": "ethyl hexanoate",
+   "formula": "C8H16O2",
+   "mz": 145.1223,
+   "k": 3.2,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "123-66-0",
+   "class": "ester",
+   "isomers": [
+    "ethyl hexanoate",
+    "butyl butyrate",
+    "butyl isobutyrate",
+    "hexyl acetate",
+    "isobutyl butyrate",
+    "isobutyl isobutyrate"
+   ]
+  },
+  {
+   "name": "2-nonanol",
+   "formula": "C9H20O",
+   "mz": 145.1587,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "628-99-9",
+   "class": "alcohol",
+   "isomers": [
+    "2-nonanol"
+   ]
+  },
+  {
+   "name": "diallyl disulfide",
+   "formula": "C6H10S2",
+   "mz": 147.0297,
+   "k": 3.0,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": null,
+   "cas": "2179-57-9",
+   "class": "sulfide",
+   "isomers": [
+    "diallyl disulfide"
+   ]
+  },
+  {
+   "name": "dimethylbenzofuran",
+   "formula": "C10H10O",
+   "mz": 147.0804,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "NA",
+   "class": "furan",
+   "isomers": [
+    "dimethylbenzofuran"
+   ]
+  },
+  {
+   "name": "methyl chavicol (estragole)",
+   "formula": "C10H12O",
+   "mz": 149.0961,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "140-67-0",
+   "class": "aromatic",
+   "isomers": [
+    "methyl chavicol (estragole)"
+   ]
+  },
+  {
+   "name": "neopentylbenzene",
+   "formula": "C11H16",
+   "mz": 149.1325,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "1007-26-7",
+   "class": "aromatic",
+   "isomers": [
+    "neopentylbenzene"
+   ]
+  },
+  {
+   "name": "vinyl guaiacol",
+   "formula": "C9H10O2",
+   "mz": 151.0754,
+   "k": 2.4,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "7786-61-0",
+   "class": "aromatic",
+   "isomers": [
+    "vinyl guaiacol",
+    "benzyl acetate"
+   ]
+  },
+  {
+   "name": "methyl anthranilate",
+   "formula": "C8H9NO2",
+   "mz": 152.0706,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "134-20-3",
+   "class": "ester",
+   "isomers": [
+    "methyl anthranilate"
+   ]
+  },
+  {
+   "name": "vanillin",
+   "formula": "C8H8O3",
+   "mz": 153.0546,
+   "k": 3.8,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": null,
+   "cas": "121-33-5",
+   "class": "aromatic",
+   "isomers": [
+    "vanillin",
+    "methyl salicylate"
+   ]
+  },
+  {
+   "name": "acenaphthylene",
+   "formula": "C12H8",
+   "mz": 153.0699,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "208-96-8",
+   "class": "aromatic",
+   "isomers": [
+    "acenaphthylene"
+   ]
+  },
+  {
+   "name": "trans-2,4-decadienal",
+   "formula": "C10H16O",
+   "mz": 153.1274,
+   "k": 4.9,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 859.2,
+   "cas": "25152-84-5",
+   "class": "alkenal",
+   "isomers": [
+    "trans-2,4-decadienal",
+    "camphor"
+   ]
+  },
+  {
+   "name": "syringol",
+   "formula": "C8H10O3",
+   "mz": 155.0703,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "91-10-1",
+   "class": "aromatic",
+   "isomers": [
+    "syringol"
+   ]
+  },
+  {
+   "name": "acenaphthene",
+   "formula": "C12H10",
+   "mz": 155.0855,
+   "k": 2.63,
+   "k_estimated": true,
+   "k_source": "kcap",
+   "flags": [],
+   "pa": 851.7,
+   "cas": "83-32-9",
+   "class": "aromatic",
+   "isomers": [
+    "acenaphthene",
+    "biphenyl"
+   ]
+  },
+  {
+   "name": "menthone",
+   "formula": "C10H18O",
+   "mz": 155.143,
+   "k": 3.4,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": null,
+   "cas": "14073-97-3",
+   "class": "ketone",
+   "isomers": [
+    "menthone",
+    "cineole"
+   ]
+  },
+  {
+   "name": "bromobenzene",
+   "formula": "C6H5Br",
+   "mz": 156.9647,
+   "k": 3.0,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 763.0,
+   "cas": "108-86-1",
+   "class": "halocarbon",
+   "isomers": [
+    "bromobenzene"
+   ]
+  },
+  {
+   "name": "1,4-dimethylnaphthalene",
+   "formula": "C12H12",
+   "mz": 157.1012,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [],
+   "pa": null,
+   "cas": "571-58-4",
+   "class": "aromatic",
+   "isomers": [
+    "1,4-dimethylnaphthalene",
+    "1,3-dimethylnaphthalene"
+   ]
+  },
+  {
+   "name": "menthol",
+   "formula": "C10H20O",
+   "mz": 157.1587,
+   "k": 3.5,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "1490-04-6",
+   "class": "alcohol",
+   "isomers": [
+    "menthol",
+    "decanal",
+    "2-decanone"
+   ]
+  },
+  {
+   "name": "2-methyldecane",
+   "formula": "C11H24",
+   "mz": 157.1951,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "6975-98-0",
+   "class": "alkane",
+   "isomers": [
+    "2-methyldecane"
+   ]
+  },
+  {
+   "name": "methyl octanoate",
+   "formula": "C9H18O2",
+   "mz": 159.138,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "111-11-5",
+   "class": "ester",
+   "isomers": [
+    "methyl octanoate"
+   ]
+  },
+  {
+   "name": "nicotine",
+   "formula": "C10H14N2",
+   "mz": 163.123,
+   "k": 4.2,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 963.4,
+   "cas": "54-11-5",
+   "class": "N-heterocycle",
+   "isomers": [
+    "nicotine"
+   ]
+  },
+  {
+   "name": "1,3-diisopropylbenzene",
+   "formula": "C12H18",
+   "mz": 163.1481,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "99-62-7",
+   "class": "aromatic",
+   "isomers": [
+    "1,3-diisopropylbenzene",
+    "1,3,5-triethylbenzene"
+   ]
+  },
+  {
+   "name": "phenethyl acetate",
+   "formula": "C10H12O2",
+   "mz": 165.091,
+   "k": 3.5,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "103-45-7",
+   "class": "ester",
+   "isomers": [
+    "phenethyl acetate"
+   ]
+  },
+  {
+   "name": "ethyl anthranilate",
+   "formula": "C9H11NO2",
+   "mz": 166.0863,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "87-25-2",
+   "class": "ester",
+   "isomers": [
+    "ethyl anthranilate"
+   ]
+  },
+  {
+   "name": "2-bromotoluene",
+   "formula": "C7H7Br",
+   "mz": 170.9804,
+   "k": 3.2,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": 775.3,
+   "cas": "95-46-5",
+   "class": "halocarbon",
+   "isomers": [
+    "2-bromotoluene",
+    "4-bromotoluene",
+    "benzylbromide"
+   ]
+  },
+  {
+   "name": "2-undecanone",
+   "formula": "C11H22O",
+   "mz": 171.1743,
+   "k": 4.3,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [],
+   "pa": null,
+   "cas": "112-12-9",
+   "class": "ketone",
+   "isomers": [
+    "2-undecanone"
+   ]
+  },
+  {
+   "name": "2-methylundecane",
+   "formula": "C12H26",
+   "mz": 171.2107,
+   "k": 2.8,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "7045-71-8",
+   "class": "alkane",
+   "isomers": [
+    "2-methylundecane",
+    "n-dodecane"
+   ]
+  },
+  {
+   "name": "ethyl octanoate",
+   "formula": "C10H20O2",
+   "mz": 173.1536,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "106-32-1",
+   "class": "ester",
+   "isomers": [
+    "ethyl octanoate",
+    "octyl acetate"
+   ]
+  },
+  {
+   "name": "methyl decanoate",
+   "formula": "C11H22O2",
+   "mz": 187.1693,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "110-42-9",
+   "class": "ester",
+   "isomers": [
+    "methyl decanoate"
+   ]
+  },
+  {
+   "name": "ethyl decanoate",
+   "formula": "C12H24O2",
+   "mz": 201.1849,
+   "k": null,
+   "k_estimated": true,
+   "k_source": "none",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "110-38-3",
+   "class": "ester",
+   "isomers": [
+    "ethyl decanoate"
+   ]
+  },
+  {
+   "name": "sesquiterpenes",
+   "formula": "C15H24",
+   "k": 2.3,
+   "k_estimated": false,
+   "k_source": "Kim2009",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": null,
+   "class": "terpene",
+   "isomers": [
+    "beta-caryophyllene",
+    "sesquiterpenes"
+   ],
+   "mz": 205.1951
+  },
+  {
+   "name": "benzyl benzoate",
+   "formula": "C14H12O2",
+   "mz": 213.091,
+   "k": 3.7,
+   "k_estimated": false,
+   "k_source": "measured",
+   "flags": [
+    "frag"
+   ],
+   "pa": null,
+   "cas": "120-51-4",
+   "class": "ester",
+   "isomers": [
+    "benzyl benzoate"
+   ]
+  }
+ ]
+}
