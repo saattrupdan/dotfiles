@@ -1,0 +1,6 @@
+{
+  "name": "dotfiles-skills",
+  "version": "1.0.0",
+  "description": "Reusable agent skills from the dotfiles repository.",
+  "skills": "./agentic/skills"
+}
