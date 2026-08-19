@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """PTR-MS analysis CLI — open-source reprocessor for IONICON IoniTOF HDF5 files.
 
-Designed to be driven by an agent, not a human. Run it through the `bin/ptr`
-launcher, which manages its own Python environment — do not install anything or
+Designed to be driven by an agent, not a human. Install once with
+`pipx install --editable <SKILL_DIR>` and invoke as `ptr <subcommand>` — do not
 read this source; every operation is a subcommand and every value is in its JSON
 output.
 
 Commands (all discovery output is JSON on stdout):
   inspect    File metadata, calibration, transmission, concentration-K, molar volume.
-  peaks      Peak detection -> {mz, height, neutral_mass, candidates, [likely_artifact]}.
+  peaks      Peak detection -> {mz, height, neutral_mass, suggested_label,
+             top_candidate, [likely_artifact]} (compact; --full for all candidates).
   segments   Time-segment detection -> stable plateaus (samples vs background).
   analyze    Full pipeline (from a config) -> PTR-MS-Viewer-style results CSV.
   viz        Review app for an existing peak list + ranges (live-save to a config
@@ -222,8 +223,47 @@ def annotate_peaks(peaks, avgspec=None, a=None, b=None, R=1200.0, elements=None)
                 break
         if flags:
             e["likely_artifact"] = flags
+        # A ready-to-use label so you don't hand-format one (and so `unknown`
+        # labels carry a clean 3-dp m/z, not a full-precision float). Override it
+        # when your chemistry judgment differs — it's a default, not a verdict.
+        reagent = next((fl.split(": ", 1)[1] for fl in flags
+                        if fl.startswith("reagent/cluster: ")), None)
+        top = cands[0] if cands else None
+        if reagent:
+            e["suggested_label"] = reagent
+        elif top and top.get("name") and e.get("id_confidence", 0) >= 0.6:
+            e["suggested_label"] = top["name"]
+        else:
+            e["suggested_label"] = "unknown m/z %.3f" % mz
         out.append(e)
     return drift, out
+
+
+def _compact_peak(e):
+    """Trim a fully-annotated peak to the fields needed for curation: the top
+    candidate summary + flags, dropping the per-candidate isotope arrays and the
+    long tail of low-probability formulas. `ptr peaks --full` keeps everything."""
+    cands = e.get("candidates") or []
+    top = cands[0] if cands else None
+    out = {"mz": e["mz"], "height": e.get("height"),
+           "rel_height": e.get("rel_height"),
+           "neutral_mass": e.get("neutral_mass"),
+           "suggested_label": e.get("suggested_label")}
+    if top:
+        out["top_candidate"] = {"formula": top.get("formula"), "name": top.get("name"),
+                                "delta_mDa": top.get("delta_mDa"), "k": top.get("k"),
+                                "k_estimated": top.get("k_estimated")}
+    if "id_confidence" in e:
+        out["id_confidence"] = e["id_confidence"]
+    if "id_ambiguous" in e:
+        out["id_ambiguous"] = e["id_ambiguous"]
+    if "overlap" in e:                            # keep the facts, drop the prose
+        o = e["overlap"]                          # (explained once in the header note)
+        out["overlap"] = {"neighbor": o.get("neighbor"), "sep_mDa": o.get("sep_mDa"),
+                          "level": o.get("level")}
+    if "likely_artifact" in e:
+        out["likely_artifact"] = e["likely_artifact"]
+    return out
 
 
 def cmd_peaks(args):
@@ -234,20 +274,33 @@ def cmd_peaks(args):
     drift, peaks = annotate_peaks(peaks, avgspec=avg, a=a, b=b)
     n_amb = sum(1 for p in peaks if p.get("id_ambiguous"))
     n_ovl = sum(1 for p in peaks if p.get("overlap"))
+    full = getattr(args, "full", False)
+    if full:
+        note = ("Each peak lists candidate FORMULAS ranked by `probability` "
+                "(combining exact-mass error, the measured vs predicted "
+                "13C(M+1)/heteroatom(M+2) isotope ratios, and plausibility) — "
+                "use this, not nearest-mass, to resolve isobars. `id_confidence` "
+                "is the top candidate's probability; `id_ambiguous` lists the "
+                "close rivals when the call is not clear-cut; `overlap` flags a "
+                "neighbouring peak whose spectral overlap adds quantification "
+                "uncertainty (unresolved = worse than deconvolved). `name`/`k` are "
+                "filled when the formula is in the rate table (else k_estimated). "
+                "`iso_pred` vs `iso_obs` = predicted vs observed (M+1,M+2)/M. "
+                "`suggested_label` is a ready-to-use default label. "
+                "Skip likely_artifact peaks. neutral_mass = mz − proton.")
+        out_peaks = peaks
+    else:
+        note = ("Compact view (default). Each peak: `suggested_label` (a ready-to-use "
+                "label — drop it into your config's peaks, or override it), "
+                "`top_candidate` (best formula/name/mass-error, chosen by isotope "
+                "pattern + plausibility, NOT nearest-mass), `id_confidence`, and, when "
+                "relevant, `id_ambiguous` (close rivals), `overlap` (quantification "
+                "uncertainty), and `likely_artifact` (skip these). neutral_mass = mz − "
+                "proton. Pass `--full` for every candidate + the isotope arrays.")
+        out_peaks = [_compact_peak(p) for p in peaks]
     _emit({"n_peaks": len(peaks), "mass_drift": round(drift, 6),
            "n_ambiguous": n_amb, "n_overlapping": n_ovl,
-           "note": "Each peak lists candidate FORMULAS ranked by `probability` "
-                   "(combining exact-mass error, the measured vs predicted "
-                   "13C(M+1)/heteroatom(M+2) isotope ratios, and plausibility) — "
-                   "use this, not nearest-mass, to resolve isobars. `id_confidence` "
-                   "is the top candidate's probability; `id_ambiguous` lists the "
-                   "close rivals when the call is not clear-cut; `overlap` flags a "
-                   "neighbouring peak whose spectral overlap adds quantification "
-                   "uncertainty (unresolved = worse than deconvolved). `name`/`k` are "
-                   "filled when the formula is in the rate table (else k_estimated). "
-                   "`iso_pred` vs `iso_obs` = predicted vs observed (M+1,M+2)/M. "
-                   "Skip likely_artifact peaks. neutral_mass = mz − proton.",
-           "peaks": peaks}, args.raw)
+           "note": note, "peaks": out_peaks}, args.raw)
 
 
 def cmd_segments(args):
@@ -270,7 +323,7 @@ def _load_peaks(args, f):
     if args.peaks_json:
         return json.loads(args.peaks_json)
     if args.config:
-        cfg = json.load(open(args.config))
+        cfg = json.load(open(args.config, encoding="utf-8"))
         if cfg.get("peaks"):
             return cfg["peaks"]
     if getattr(args, "auto_peaks", False):
@@ -282,7 +335,7 @@ def _load_ranges(args, f):
     if args.ranges_json:
         return json.loads(args.ranges_json)
     if args.config:
-        cfg = json.load(open(args.config))
+        cfg = json.load(open(args.config, encoding="utf-8"))
         if cfg.get("ranges"):
             return cfg["ranges"]
     if getattr(args, "auto_segments", False):
@@ -314,7 +367,7 @@ def _load_checklist(args):
     if not path or not os.path.exists(path):
         return []
     try:
-        cfg = json.load(open(path))
+        cfg = json.load(open(path, encoding="utf-8"))
     except Exception:
         return []
     cl = cfg.get("checklist")
@@ -529,6 +582,12 @@ def cmd_viz(args):
                      "`ptr segments`, then curate into the config.")
         R = args.R if args.R is not None else 1200.0
         R_phys = args.R_phys if args.R_phys is not None else 2400.0
+        # Large files take ~30-90 s to load and pre-compute traces BEFORE the server
+        # starts. Announce it so a watching agent waits for "review app running at …"
+        # (below) rather than polling the port — which refuses until this finishes.
+        print("ptr: preparing the review (loading the file + computing traces; large "
+              "files take ~30-90 s) — the URL is printed when it's ready…",
+              file=sys.stderr, flush=True)
         data = viz.build_viz_data(
             f, peaks, ranges_cfg, R=R, R_phys=R_phys, primary_mz=args.primary_mz,
             K=args.K, molar_volume=args.molar_volume,
@@ -551,7 +610,7 @@ def cmd_viz(args):
                                              timeout=args.timeout,
                                              open_browser=not args.no_open,
                                              run_analysis=run, spectrum_fn=spec_fn)
-        cfg = final if final is not None else json.load(open(cfg_path))
+        cfg = final if final is not None else json.load(open(cfg_path, encoding="utf-8"))
         if summary is None:
             summary = run(cfg)
         summary.update({
@@ -803,6 +862,9 @@ def main():
 
     pp = sub.add_parser("peaks", parents=[common], help="Detect peaks (JSON) for chemistry assignment")
     pp.add_argument("h5")
+    pp.add_argument("--full", action="store_true",
+                    help="Emit every candidate formula + isotope arrays per peak "
+                         "(default is a compact top-candidate view)")
     pp.add_argument("--min-height", type=float, default=1e-3,
                     help="Threshold as fraction of tallest peak (default 1e-3)")
     pp.add_argument("--max-peaks", type=int, default=300)

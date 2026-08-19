@@ -37,7 +37,7 @@ def load_rate_constants(path=None):
             except Exception:
                 path = inplace
     try:
-        with open(path) as fh:
+        with open(path, encoding="utf-8") as fh:
             return json.load(fh)
     except Exception:
         return None

@@ -46,13 +46,39 @@ offer a standards calibration; do not suggest the Viewer as the answer.
 
 ## How to run it — read this first
 
-- **Everything is one CLI:** `bin/ptr <subcommand> …`. Set `PTR=<SKILL_DIR>/bin/ptr`
-  (`<SKILL_DIR>` = the directory of this file).
-- **No setup — you (the agent) always use the launcher.** `bin/ptr` manages its own Python
-  environment; the first call installs h5py+numpy into a cache (~30 s, logged to stderr),
-  later calls are instant. **Do NOT** create a venv, pip-install anything, or test for h5py
-  yourself. (A human who wants the command on their PATH can install it — see *Installation*
-  below — but the agent never needs that; the launcher always works.)
+- **Everything is one CLI: `ptr <subcommand> …`.** Install it once (below); then call plain
+  `ptr` from any directory — no path prefix, no env var.
+- **Install once, first thing.** If `ptr` is not already on PATH (`command -v ptr`; on
+  Windows PowerShell `Get-Command ptr`), run:
+
+  ```bash
+  pipx install --editable <SKILL_DIR>     # <SKILL_DIR> = the directory of this file
+  ```
+
+  `--editable` means `ptr` tracks the skill's live code — you never reinstall when it's
+  updated. `pipx` gives it an isolated env (h5py+numpy) so its flat module names can't
+  collide. First install ~20-30 s; then it's instant. **Do NOT** hand-build a venv or write
+  your own HDF5 code — the install is the only setup.
+
+- **If `pipx` itself is missing** (`command -v pipx` fails), install it first — then re-run
+  the command above:
+
+  ```bash
+  # macOS (Homebrew):
+  brew install pipx && pipx ensurepath
+  # any OS with Python (Linux / macOS without brew):
+  python3 -m pip install --user pipx && python3 -m pipx ensurepath
+  # Windows (PowerShell; python may be `py` or `python`):
+  py -m pip install --user pipx;  py -m pipx ensurepath
+  ```
+
+  `pipx ensurepath` adds pipx's bin dir to PATH — **open a new shell afterwards** so `ptr`
+  resolves. No-pipx alternatives that need no bootstrap: `uv tool install --editable
+  <SKILL_DIR>` (if `uv` is present), or `pip install --editable <SKILL_DIR>` into a venv.
+
+- **Cross-platform:** identical on macOS, Linux, and **Windows** — pipx creates a real
+  `ptr.exe` on PATH. Everything after install is the same `ptr <cmd>` on every OS (in
+  PowerShell use `where ptr` / `Get-Command ptr` instead of `command -v ptr`).
 - **Never read `scripts/*.py`, and never write your own HDF5/parsing/quantification
   code.** Every operation is a subcommand and every value you need is in its JSON output
   — `peaks` already returns candidate compound assignments, the run's mass-drift, and
@@ -68,27 +94,27 @@ mechanical top-candidate guess. **`viz` is the default final step** for "analyse
 file": launch it once you have a config unless the user has said they don't want a review.
 
 ```bash
-PTR=<SKILL_DIR>/bin/ptr
+# (one-time) pipx install --editable <SKILL_DIR>   # then `ptr` is on PATH everywhere
 
 # 1. Detect (deterministic; gives you candidates + flags to reason over):
-$PTR inspect  FILE.h5                   # confirm IoniTOF; calibration, transmission, K, Vm
-$PTR peaks    FILE.h5                   # peaks + candidate compounds + artifact flags
-$PTR segments FILE.h5                   # stable plateaus to label
+ptr inspect  FILE.h5                   # confirm IoniTOF; calibration, transmission, K, Vm
+ptr peaks    FILE.h5                   # peaks + candidate compounds + artifact flags
+ptr segments FILE.h5                   # stable plateaus to label
 
 # 2. YOU write analysis-config.json: curated peaks (assignments picked from `candidates`,
 #    honest `unknown` where unsure, artifacts judged) + ranges (sample_/background_ labels).
 
 # 3. DEFAULT: browser review of YOUR config -> Done -> analyze -> CSV. BLOCKS on the
 #    browser, so run it backgrounded and give the user the URL:
-$PTR viz FILE.h5 --config analysis-config.json --out results.csv   # localhost app; waits for 'Done'
+ptr viz FILE.h5 --config analysis-config.json --out results.csv   # localhost app; waits for 'Done'
 
 # 3-alt. No review — ONLY when the user explicitly wants headless/no-browser output, or a
 #        portable file to hand off. Same curated config, straight to CSV:
-$PTR analyze FILE.h5 --config analysis-config.json --include-cycle-rows --out results.csv
+ptr analyze FILE.h5 --config analysis-config.json --include-cycle-rows --out results.csv
 
 # Quick deterministic fallback (no curation, no browser — detect + quantify only; peaks
 # left as bare m/z, not assigned). Only for a rough look, never a final labelled export:
-$PTR analyze FILE.h5 --auto-peaks --auto-segments --include-cycle-rows --out results.csv
+ptr analyze FILE.h5 --auto-peaks --auto-segments --include-cycle-rows --out results.csv
 ```
 
 **`viz` is long-running and interactive** (it waits for a human to click *Done* in the
@@ -96,30 +122,35 @@ browser). Run it as a background command and tell the user to open the URL it pr
 CSV is written when they finish. Do not wait for it to return before responding — hand
 over the URL and let the user drive.
 
-## Installation (optional — for a human who wants `ptr` on their PATH)
+**Startup takes ~30-90 s on a large file** — `viz` loads the whole file and pre-computes
+traces *before* the server accepts connections. It prints `ptr: preparing the review …` to
+stderr immediately, then `ptr: review app running at http://127.0.0.1:PORT/` once it is
+ready. **Wait for that second line** (poll the backgrounded command's stderr/log for
+`review app running`); do not curl/poll the port to test readiness — it refuses the
+connection until loading finishes, which looks like a failure but isn't.
 
-The agent never needs this: `bin/ptr` is a self-contained launcher that bootstraps its own
-environment. But the project is a proper installable package (`pyproject.toml`), so a human
-can put the `ptr` command on their PATH. **Recommended: `pipx`** (isolated env — the CLI's
-flat module names can't collide with anything else):
+## Installation
+
+The CLI is a proper installable package (`pyproject.toml`) that ships its own dependencies
+(h5py+numpy) and reference data. Install it **once** and `ptr` is on PATH everywhere:
 
 ```bash
-pipx install <SKILL_DIR>            # -> `ptr` on PATH; `pipx upgrade ptr-ms-analysis` later
-# or, into an existing environment:
-pip install <SKILL_DIR>            # (ideally a venv; installs h5py+numpy)
+pipx install --editable <SKILL_DIR>     # <SKILL_DIR> = this skill's directory
 ```
 
-Then `ptr inspect FILE.h5`, `ptr peaks FILE.h5`, etc. work from anywhere. It is not yet on
-PyPI, so install from this directory (a git checkout works too). If `ptr` is not found on
-PATH, it simply isn't installed — fall back to the launcher `<SKILL_DIR>/bin/ptr`, which
-needs no installation.
+Use **`--editable`** so `ptr` runs the skill's live code — when the skill is updated you do
+**not** reinstall. `pipx` isolates it (the flat module names can't collide with anything
+else). Alternatives: `uv tool install --editable <SKILL_DIR>`; or `pip install --editable
+<SKILL_DIR>` into a venv. If `pipx` itself is missing: `brew install pipx` or `python3 -m
+pip install --user pipx` (then `pipx ensurepath`). Not yet on PyPI — install from this
+directory (a git checkout works too). Verify with `command -v ptr && ptr rates water`.
 
 ## Workflow
 
 ### 1. Inspect
 
 ```bash
-$PTR inspect FILE.h5
+ptr inspect FILE.h5
 ```
 
 Confirms it is an IoniTOF file and returns cycle count, duration, cycle length, mass
@@ -146,16 +177,22 @@ common-VOC table is an assignment aid, not a whitelist.
 ### 3. Detect peaks, preserve breadth, then assign chemistry
 
 ```bash
-$PTR peaks FILE.h5 --min-height 0.001
+ptr peaks FILE.h5 --min-height 0.001
 ```
 
-Each peak comes annotated: `{mz, height, rel_height, neutral_mass, candidates, [likely_artifact]}`.
-`candidates` lists the nearest table compounds (sorted by `|delta_mDa|` after removing
-the reported `mass_drift`), so **pick the assignment from there** — you do not need to
-query `TraceInfo` or compute mass offsets yourself. `likely_artifact` flags reagent
-ions, water clusters, and ringing. Keep uncertain product-ion peaks labelled honestly
-(e.g. `unknown m/z 75.046`) rather than inventing a compound; `reference/ptr-ms-chemistry.md`
-adds context. Investigate every `apex_warning` from `analyze`.
+Each peak comes annotated (compact by default):
+`{mz, height, rel_height, neutral_mass, suggested_label, top_candidate, id_confidence,
+[id_ambiguous], [overlap], [likely_artifact]}`. **`suggested_label` is a ready-to-use
+label** — drop it straight into your config's peaks (it is the confident compound name, a
+reagent/cluster name, or an honest `unknown m/z 75.046` with a clean 3-dp m/z), so you do
+**not** hand-format labels or round floats yourself. Override it when your chemistry
+judgment differs. `top_candidate` is the best formula/name chosen by isotope pattern +
+plausibility (**not** nearest-mass); `id_ambiguous` lists close rivals when the call is
+not clear-cut. You do not need to query `TraceInfo` or compute mass offsets yourself.
+`likely_artifact` flags reagent ions, water clusters, and ringing. Pass **`--full`** only
+when you need every candidate formula and the isotope arrays for a deep isobar call — the
+default view is much smaller and is all you need to curate. Investigate every
+`apex_warning` from `analyze`.
 
 **Then check behaviour, not just mass.** A peak's identity is not settled by its m/z
 alone — its time profile tells you whether it is a breath analyte or instrument
@@ -178,7 +215,7 @@ project, so exact project reproduction is impossible without that metadata.
 ### 4. Detect, merge, and curate time ranges
 
 ```bash
-$PTR segments FILE.h5 --merge-high-gap 30
+ptr segments FILE.h5 --merge-high-gap 30
 ```
 
 The command returns stable plateaus as
@@ -231,7 +268,7 @@ item is a plain string, or `{ "text": ..., "detail": ... }` for a one-line elabo
 The viz app renders these as a tickable checklist (see 5b); it is ignored by `analyze`.
 
 ```bash
-$PTR analyze FILE.h5 \
+ptr analyze FILE.h5 \
   --config analysis-config.json \
   --include-cycle-rows \
   --out results.csv
@@ -272,7 +309,7 @@ guess, the human would be doing curation you should have done. So the order is: 
 review — a headless/automated run, or a portable file to hand off.
 
 ```bash
-$PTR viz FILE.h5 --config analysis-config.json --out results.csv    # serve; Done -> writes results.csv
+ptr viz FILE.h5 --config analysis-config.json --out results.csv    # serve; Done -> writes results.csv
 ```
 
 By default `viz` runs a localhost server, opens the browser, and **writes every change
@@ -310,8 +347,8 @@ export or a colleague's) or a known standard, pin K to it — never ask them to 
 one in PTR-MS Viewer:
 
 ```bash
-$PTR calibrate FILE.h5 reference.csv
-$PTR analyze FILE.h5 --config analysis-config.json --K 16.26 \
+ptr calibrate FILE.h5 reference.csv
+ptr analyze FILE.h5 --config analysis-config.json --K 16.26 \
   --include-cycle-rows --out results.csv
 ```
 
@@ -323,7 +360,7 @@ they want tighter absolute numbers, offer a standards calibration — not the Vi
 ### 7. Compare when a reference exists
 
 ```bash
-$PTR compare results.csv viewer.csv --per-mass
+ptr compare results.csv viewer.csv --per-mass
 ```
 
 Comparison requires matching mass and range labels. First align the target panel and

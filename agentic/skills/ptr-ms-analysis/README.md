@@ -12,45 +12,45 @@ CLI. See `SKILL.md` for the agent workflow.
 
 ## Install / run
 
-Two ways to run it:
-
-**Zero-install launcher** — nothing to install by hand. The `bin/ptr` launcher creates and
-caches its own Python environment (h5py + numpy) on first use — via `uv` if present, else
-`python3 -m venv`. First call ~30 s (logged to stderr); later calls are instant.
+It's a proper package (`pyproject.toml`) that ships its own dependencies (h5py + numpy)
+and reference data. Install it **once** and `ptr` is on PATH everywhere. Recommended via
+`pipx` (isolated env — the CLI's flat module names can't collide with anything else):
 
 ```bash
-bin/ptr inspect FILE.h5
-```
-
-**As an installed CLI** — it's a proper package (`pyproject.toml`), so you can put `ptr` on
-your PATH. Recommended via `pipx` (isolated env):
-
-```bash
-pipx install .          # from this directory -> `ptr` command on PATH
-# or:  pip install .    # into a venv
+pipx install --editable .     # from this directory -> `ptr` on PATH
 ptr inspect FILE.h5
 ```
 
-Not yet on PyPI — install from a checkout of this directory. Requires Python ≥ 3.9;
-`h5py`/`numpy` are pulled in automatically.
+Use `--editable` so `ptr` runs the checkout's live code — no reinstall when it's updated.
+
+**If `pipx` isn't installed yet**, install it first, then re-run the command above:
+
+```bash
+brew install pipx && pipx ensurepath                          # macOS (Homebrew)
+python3 -m pip install --user pipx && python3 -m pipx ensurepath   # Linux / macOS (no brew)
+py -m pip install --user pipx;  py -m pipx ensurepath         # Windows (PowerShell)
+```
+
+`pipx ensurepath` puts pipx's bin dir on PATH — open a new shell afterwards. Alternatives
+that skip pipx entirely: `uv tool install --editable .`, or `pip install --editable .` into
+a venv. Works identically on macOS, Linux, and Windows (pipx makes a real `ptr.exe`). Not
+yet on PyPI — install from a checkout of this directory. Requires Python ≥ 3.9.
 
 ## Commands (all discovery output is JSON)
 
 ```bash
-PTR=bin/ptr        # the launcher; manages its own env, run from any directory
-
-$PTR inspect  FILE.h5                       # metadata, calibration, concentration-K, Vm
-$PTR peaks    FILE.h5                       # peaks + scored formula candidates (isotope-disambiguated)
-$PTR segments FILE.h5                       # stable plateaus (high=sample / low=bg)
+ptr inspect  FILE.h5                       # metadata, calibration, concentration-K, Vm
+ptr peaks    FILE.h5                       # peaks + a ready-to-use suggested_label + top formula (--full for all candidates)
+ptr segments FILE.h5                       # stable plateaus (high=sample / low=bg)
 # agent curates peaks + ranges into cfg.json, then:
-$PTR viz      FILE.h5 --config cfg.json --out results.csv   # serve review; 'Done' -> writes CSV
-$PTR viz      FILE.h5 --config cfg.json --html review.html   # portable standalone HTML instead
-$PTR analyze  FILE.h5 \                     # no review: curated config -> Viewer-style CSV
-     --config cfg.json --include-cycle-rows --out results.csv
-$PTR analyze  FILE.h5 --auto-peaks --auto-segments --out results.csv   # quick detect-only fallback
-$PTR calibrate FILE.h5 viewer.csv          # fit concentration constant K -> pass via --K
-$PTR compare   results.csv viewer.csv --per-mass   # accuracy vs a Viewer export
-$PTR rates     benzaldehyde                # browse proton-transfer rate constants (k)
+ptr viz      FILE.h5 --config cfg.json --out results.csv   # serve review; 'Done' -> writes CSV
+ptr viz      FILE.h5 --config cfg.json --html review.html   # portable standalone HTML instead
+ptr analyze  FILE.h5 \                     # no review: curated config -> Viewer-style CSV
+    --config cfg.json --include-cycle-rows --out results.csv
+ptr analyze  FILE.h5 --auto-peaks --auto-segments --out results.csv   # quick detect-only fallback
+ptr calibrate FILE.h5 viewer.csv          # fit concentration constant K -> pass via --K
+ptr compare   results.csv viewer.csv --per-mass   # accuracy vs a Viewer export
+ptr rates     benzaldehyde                # browse proton-transfer rate constants (k)
 ```
 
 `viz` opens a browser review app for an existing peak list + ranges so an expert can
