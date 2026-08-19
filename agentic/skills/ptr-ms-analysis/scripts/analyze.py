@@ -590,6 +590,7 @@ def cmd_analyze(args):
                                        "bg_trend_last_over_first": round(trend, 2) if trend else None}
         background_report = {
             "metric": "mean Raw over sample_* vs background_* ranges (S/B); "
+                      "channels with S/B < 0.9 are flagged below; "
                       "bg_trend = last/first background range (>1 = rising across run)",
             "n_samples": len(samp_labels), "n_backgrounds": len(bg_labels),
             "background_like": flagged,
@@ -958,7 +959,9 @@ def main():
     pa.add_argument("--include-cycle-rows", action="store_true",
                     help="Append Viewer-style Cycle rows with each range's boundaries")
     pa.add_argument("--out", default="-", help="Output CSV path (default stdout)")
-    pa.add_argument("--sep", default=";", help="Delimiter (default ';' with comma decimals)")
+    pa.add_argument("--sep", default=";", help="Delimiter (default ';' + comma decimals = "
+                    "PTR-MS Viewer format; pass ',' for a standard ','-delimited, "
+                    "dot-decimal CSV for other tools)")
     pa.add_argument("--min-height", type=float, default=1e-3)
     pa.add_argument("--max-peaks", type=int, default=300)
     pa.add_argument("--mz-min", type=float, default=15.0)
