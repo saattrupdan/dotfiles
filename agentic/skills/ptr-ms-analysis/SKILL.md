@@ -112,8 +112,11 @@ ptr viz FILE.h5 --config analysis-config.json --out results.csv   # localhost ap
 #        portable file to hand off. Same curated config, straight to CSV:
 ptr analyze FILE.h5 --config analysis-config.json --include-cycle-rows --out results.csv
 
-# Quick deterministic fallback (no curation, no browser — detect + quantify only; peaks
-# left as bare m/z, not assigned). Only for a rough look, never a final labelled export:
+# Fully-automatic fallback (no hand-curation). --auto-peaks now annotates, DROPS noise
+# artifacts (ringing/low-prominence combs) and applies confident labels; --auto-segments
+# consolidates fragmented backgrounds. Use when you won't curate — a clean labelled panel,
+# but curating a --config still gives better chemistry + segment judgment. Do NOT run
+# `peaks`/`segments` and then also pass --auto-* (that recomputes and discards your curation):
 ptr analyze FILE.h5 --auto-peaks --auto-segments --include-cycle-rows --out results.csv
 ```
 
@@ -287,9 +290,13 @@ ptr analyze FILE.h5 \
 Viewer-style rows recording each range's boundaries and makes later
 comparison/reproduction possible. Keep `analysis-config.json` beside the CSV.
 
-`--auto-peaks` and `--auto-segments` are exploratory fallbacks, **not final-output
-defaults**. If a quick generic pass is explicitly requested, combine
-`--auto-segments --merge-high-gap N`; otherwise curate and label the config.
+`--auto-peaks`/`--auto-segments` are the zero-curation path: `--auto-peaks` annotates,
+drops noise artifacts, and applies confident labels (leaving unknowns as bare `m/z`);
+`--auto-segments` consolidates fragmented backgrounds. The result is clean but a hand-
+curated `--config` still gives better chemistry and segment judgment, so prefer it for a
+considered final export. Add `--merge-high-gap N` to also join samples split by a brief
+dip. Never run `peaks`/`segments` to curate and *then* fall back to `--auto-*` — that
+throws the curation away.
 
 Before delivery, verify:
 

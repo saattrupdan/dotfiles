@@ -47,7 +47,7 @@ ptr viz      FILE.h5 --config cfg.json --out results.csv   # serve review; 'Done
 ptr viz      FILE.h5 --config cfg.json --html review.html   # portable standalone HTML instead
 ptr analyze  FILE.h5 \                     # no review: curated config -> Viewer-style CSV
     --config cfg.json --include-cycle-rows --out results.csv
-ptr analyze  FILE.h5 --auto-peaks --auto-segments --out results.csv   # quick detect-only fallback
+ptr analyze  FILE.h5 --auto-peaks --auto-segments --out results.csv   # zero-curation fallback (auto-labels, drops noise)
 ptr calibrate FILE.h5 viewer.csv          # fit concentration constant K -> pass via --K
 ptr compare   results.csv viewer.csv --per-mass   # accuracy vs a Viewer export
 ptr rates     benzaldehyde                # browse proton-transfer rate constants (k)
@@ -77,8 +77,10 @@ only each row's numbers reflect its interval's real peak. Pass `--no-per-interva
 whole-run window per compound. Absent-compound intervals and hand-placed/clustered windows
 keep the whole-run placement.
 
-Add `--pretty` to any command for indented JSON. `analyze` fallbacks: `--auto-peaks`,
-`--auto-segments` (generic labels), or `--config file.json`. `--K` / `--molar-volume`
+Add `--pretty` to any command for indented JSON. `analyze` peak/segment sources:
+`--config file.json` (curated, preferred), or `--auto-peaks`/`--auto-segments`
+(zero-curation — auto-labels confident IDs, drops noise artifacts, consolidates
+backgrounds). `--K` / `--molar-volume`
 override the file-derived calibration to match a specific Viewer project. `--kinetic`
 applies per-compound rate-constant (k) sensitivities (from
 `reference/rate_constants.json`, 218 compounds from the PTR Library) for physically resolved absolute

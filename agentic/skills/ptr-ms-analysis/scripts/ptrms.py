@@ -524,15 +524,20 @@ def detect_segments(f, discriminator=None, min_duration=30, trim=8,
     return segs
 
 
-def merge_adjacent_high_segments(segments, max_gap_cycles=60):
-    """Merge consecutive high plateaus separated only by a short transition.
+def merge_adjacent_segments(segments, high_gap=60, low_gap=200):
+    """Merge consecutive same-class plateaus separated only by a short transition.
 
-    Plateau detection can split one physical sample when its signal briefly changes
-    level.  Merge only adjacent entries that are both classified ``high`` and whose
-    unclassified gap is no longer than ``max_gap_cycles``.  A detected low plateau
-    therefore always remains a boundary.
-    """
-    if max_gap_cycles <= 0:
+    Plateau detection splits one physical period into several entries whenever the
+    signal briefly wobbles — a sample that momentarily dips, or (very commonly) a
+    long background/setup phase broken by transients into a run of small pieces plus
+    slivers. Merge adjacent entries of the SAME class whose unclassified gap is within
+    the class-specific limit; an opposite-class plateau between them is always a hard
+    boundary (samples never merge across a background and vice-versa). ``high_gap`` /
+    ``low_gap`` are the max gaps (cycles) for high / low runs; 0 disables that class.
+    Backgrounds get a generous default so a fragmented baseline collapses to one
+    reference interval, while samples stay conservative (only merged when asked)."""
+    limits = {"high": max(0, high_gap), "low": max(0, low_gap)}
+    if not any(limits.values()):
         return [dict(segment) for segment in segments]
 
     merged = []
@@ -543,10 +548,10 @@ def merge_adjacent_high_segments(segments, max_gap_cycles=60):
         if merged:
             previous = merged[-1]
             gap = current["start_cycle"] - previous["end_cycle"] - 1
+            cls = current.get("class")
             if (
-                previous.get("class") == "high"
-                and current.get("class") == "high"
-                and 0 <= gap <= max_gap_cycles
+                previous.get("class") == cls
+                and 0 <= gap <= limits.get(cls, 0)
             ):
                 previous_cycles = previous["n_cycles"]
                 current_cycles = current["n_cycles"]
@@ -570,6 +575,11 @@ def merge_adjacent_high_segments(segments, max_gap_cycles=60):
                 continue
         merged.append(current)
     return merged
+
+
+def merge_adjacent_high_segments(segments, max_gap_cycles=60):
+    """Back-compat: merge only high plateaus (see merge_adjacent_segments)."""
+    return merge_adjacent_segments(segments, high_gap=max_gap_cycles, low_gap=0)
 
 
 def spec_duration_s(f):

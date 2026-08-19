@@ -341,8 +341,9 @@ def cmd_segments(args):
         segs = ptrms.detect_segments(
             f, min_duration=args.min_duration, grad_thr=args.grad_thr,
             high_ratio=args.high_ratio)
-        if args.merge_high_gap:
-            segs = ptrms.merge_adjacent_high_segments(segs, args.merge_high_gap)
+        # always consolidate fragmented backgrounds; merge samples only if asked
+        segs = ptrms.merge_adjacent_segments(
+            segs, high_gap=args.merge_high_gap or 0, low_gap=200)
     _emit({"n_segments": len(segs),
            "note": "class 'high' = elevated signal (likely a sample); 'low' = "
                    "background or pre-run setup. Final outputs use chronological "
@@ -350,6 +351,31 @@ def cmd_segments(args):
                    "merged_segments > 1 marks high plateaus joined across a short "
                    "unclassified transition.",
            "segments": segs}, args.raw)
+
+
+def _auto_peaks(f, args):
+    """Peaks for the --auto-peaks fallback: detect, annotate, DROP instrument-noise
+    artifacts (ringing combs / low-prominence ripples), and carry each peak's
+    `suggested_label` so a headless one-shot `analyze` yields a clean, labelled panel
+    instead of the raw local-maxima list. Reagent/cluster ions are kept (labelled) —
+    they are real ions, and an untargeted export usually wants them. Hand-curating a
+    config still gives finer chemistry and segment judgment; this is a safe default,
+    not a substitute for it."""
+    peaks = detect_peaks(f, args.min_height, args.max_peaks, args.mz_min, args.mz_max)
+    a, b = ptrms.load_mass_cal(f)
+    avg = f["SPECdata/AverageSpec"][:]
+    _, peaks = annotate_peaks(peaks, avgspec=avg, a=a, b=b)
+    out = []
+    for p in peaks:
+        arts = p.get("likely_artifact") or []
+        if any(("ringing" in x) or ("low prominence" in x) for x in arts):
+            continue                              # instrument noise, not an analyte
+        sl = p.get("suggested_label", "") or ""
+        # a real name -> label the channel; an "unknown m/z X" -> leave blank so the
+        # CSV shows a clean `m<mz>` (the mass is already the variable name)
+        lbl = "" if sl.startswith("unknown m/z") else sl
+        out.append({"mz": p["mz"], "label": lbl})
+    return out
 
 
 def _load_peaks(args, f):
@@ -360,7 +386,7 @@ def _load_peaks(args, f):
         if cfg.get("peaks"):
             return cfg["peaks"]
     if getattr(args, "auto_peaks", False):
-        return detect_peaks(f, args.min_height, args.max_peaks, args.mz_min, args.mz_max)
+        return _auto_peaks(f, args)
     return None
 
 
@@ -373,9 +399,9 @@ def _load_ranges(args, f):
             return cfg["ranges"]
     if getattr(args, "auto_segments", False):
         segs = ptrms.detect_segments(f)
-        merge_gap = getattr(args, "merge_high_gap", 0)
-        if merge_gap:
-            segs = ptrms.merge_adjacent_high_segments(segs, merge_gap)
+        # always consolidate fragmented backgrounds; merge samples only if asked
+        segs = ptrms.merge_adjacent_segments(
+            segs, high_gap=getattr(args, "merge_high_gap", 0) or 0, low_gap=200)
         out = []
         counts = {"high": 0, "low": 0}
         for s in segs:
