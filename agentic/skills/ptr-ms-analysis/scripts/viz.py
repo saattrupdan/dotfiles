@@ -853,11 +853,13 @@ let TH={};
 function computeTH(){ TH = resolvedDark() ? {
     grid:"#202834",gridln:"#161d27",axis:"#6b7684",disc:"#39424e",
     insetBg:"rgba(9,13,19,.92)",insetStroke:"#2b3644",insetLine:"#4a5a6d",insetText:"#7c8794",
-    labelDim:"#93a2b3",labelHi:"#f7b955",spec:"#60a5fa",trace:"#3b82f6"
+    labelDim:"#93a2b3",labelHi:"#f7b955",spec:"#60a5fa",trace:"#3b82f6",
+    cross:"rgba(148,163,184,.5)",crossBg:"rgba(9,13,19,.9)",crossText:"#c4cdd8"
   } : {
     grid:"#c3ccd8",gridln:"#e7ecf2",axis:"#5c6775",disc:"#c2ccd8",
     insetBg:"rgba(255,255,255,.94)",insetStroke:"#cdd6e1",insetLine:"#9aa7b6",insetText:"#5c6775",
-    labelDim:"#5c6775",labelHi:"#b45309",spec:"#2563eb",trace:"#2563eb"
+    labelDim:"#5c6775",labelHi:"#b45309",spec:"#2563eb",trace:"#2563eb",
+    cross:"rgba(100,116,139,.55)",crossBg:"rgba(255,255,255,.93)",crossText:"#3c4756"
   }; }
 function applyTheme(draw){ const m=themePref();
   if(m==="system") document.documentElement.removeAttribute("data-theme");
@@ -950,6 +952,22 @@ function fit(c){ const w=c.clientWidth, h=+c.dataset.h; c.style.height=h+"px";
 function grid(x,w,h,padL,padB){ x.strokeStyle=TH.grid; x.lineWidth=1; x.strokeRect(padL,8,w-padL-10,h-8-padB);
   x.strokeStyle=TH.gridln; for(let i=1;i<4;i++){ const yy=8+(h-8-padB)*i/4;
     x.beginPath(); x.moveTo(padL,yy); x.lineTo(w-10,yy); x.stroke(); } }
+// faded horizontal+vertical guide lines to the axes at the cursor, plus a "(x, y)"
+// readout. Called at the end of each plot with that plot's axis inverse-maps.
+function crosshair(x,w,h,padL,top,plotH,xStr,yStr){
+  if(!cursor) return; const cx=cursor.x, cy=cursor.y;
+  if(cx<padL||cx>w-10||cy<top||cy>top+plotH) return;
+  x.save();
+  x.strokeStyle=TH.cross; x.lineWidth=1; x.setLineDash([3,3]);
+  x.beginPath(); x.moveTo(cx,top); x.lineTo(cx,top+plotH);
+  x.moveTo(padL,cy); x.lineTo(w-10,cy); x.stroke(); x.setLineDash([]);
+  const lbl="("+xStr+", "+yStr+")"; x.font="10px sans-serif";
+  const tw=x.measureText(lbl).width+8;
+  let bx=cx+9, by=cy-18; if(bx+tw>w-6) bx=cx-9-tw; if(by<top) by=cy+6;
+  x.fillStyle=TH.crossBg; x.fillRect(bx,by,tw,15);
+  x.strokeStyle=TH.cross; x.strokeRect(bx,by,tw,15);
+  x.fillStyle=TH.crossText; x.fillText(lbl,bx+4,by+11);
+  x.restore(); }
 
 // ---- overview data (precomputed, decimated) ----
 const INSET=(()=>{ const lo=Math.max(0,Math.floor(m2tb(5))), hi=NBIN-1, N=520;
@@ -969,6 +987,7 @@ let tab="trace";                        // "spec" | "trace" — intervals review
 let vSpec={lo:0,hi:1};                   // domain in m/z
 let vTrace={lo:1,hi:NCYC};               // domain in cycles
 let insetBox=null;                       // {x,y,w,h,d0,d1} set each draw for hit-testing
+let cursor=null;                         // {x,y} in CSS px for the hover crosshair (null = off-plot)
 let anim=null;                           // active view animation
 function view(){ return tab==="spec"?vSpec:vTrace; }
 function fullDomain(){ return tab==="spec"?[Math.max(1,INSET.lo),INSET.hi]:[1,NCYC]; }
@@ -1110,6 +1129,8 @@ function drawSpec(){
   x.fillText(lo.toFixed(hi-lo<5?3:1),padL,h-6); x.fillText(hi.toFixed(hi-lo<5?3:1),w-46,h-6);
   x.fillText("m/z",(padL+w)/2,h-6); x.fillText(vmax.toPrecision(3),6,16); x.fillText("cps",6,top+plotH);
   drawInset(x,w,h,INSET,INSET.lo,INSET.hi,vSpec.lo,vSpec.hi);
+  if(cursor){ const mz=lo+(cursor.x-padL)/plotW*(hi-lo), cps=(top+plotH-cursor.y)/plotH*vmax;
+    crosshair(x,w,h,padL,top,plotH, mz.toFixed(hi-lo<5?4:3), Math.max(0,cps).toPrecision(3)); }
 }
 
 // peaks a click/hover falls on in the spectrum — the peak analogue of "which interval
@@ -1162,10 +1183,11 @@ function drawTrace(){
   // ⌘/Ctrl-drag preview of a new segment
   if(drag && drag.mode==="newseg" && drag.c1!=null){ const s=Math.min(drag.c0,drag.c1), en=Math.max(drag.c0,drag.c1);
     x.fillStyle="rgba(245,158,11,.22)"; x.fillRect(X(s),top,X(en)-X(s),plotH); }
-  const tr=p?currentTr():null;
+  const tr=p?currentTr():null; let yLo=null,yHi=null;
   if(tr){ const arr=tr[quant]; plotC._arr=arr;
     let vmax=-Infinity,vmin=Infinity; for(const v of arr) if(isFinite(v)){ if(v>vmax)vmax=v; if(v<vmin)vmin=v; }
     if(!isFinite(vmax)){vmax=1;vmin=0;} if(vmax===vmin)vmax=vmin+1;
+    yLo=vmin; yHi=vmax;
     const Y=v=>(top+plotH)-((v-vmin)/(vmax-vmin))*plotH;
     x.strokeStyle=TH.trace; x.lineWidth=1.7; x.beginPath(); let st=false;
     for(let i=c0-1;i<c1;i+=step){ let m=-Infinity,any=false; const e=Math.min(i+step,c1);
@@ -1186,6 +1208,9 @@ function drawTrace(){
   x.fillStyle=TH.axis; x.font="10px sans-serif";
   x.fillText(""+Math.round(vTrace.lo),46,h-6); x.fillText(""+Math.round(vTrace.hi),w-40,h-6);
   x.fillText("cycle",(padL+w)/2,h-6);
+  if(cursor){ const plotW=w-padL-10, cyc=Math.round(vTrace.lo+(cursor.x-padL)/plotW*(vTrace.hi-vTrace.lo));
+    const yStr=(yLo!=null)?(yLo+(top+plotH-cursor.y)/plotH*(yHi-yLo)).toPrecision(3):"—";
+    crosshair(x,w,h,padL,top,plotH, ""+cyc, yStr); }
   insetBox=null;   // no overview inset on the trace plot (it obscured the signal)
 }
 
@@ -1218,6 +1243,7 @@ plotC.addEventListener("mousedown",e=>{ anim=null; const x=e.offsetX, y=e.offset
   // otherwise pan, but a click (no move) selects + zooms to the nearest peak
   drag={mode:'pan',spec:true,moved:false,x,lo:vSpec.lo,hi:vSpec.hi}; setCur("grabbing"); });
 plotC.addEventListener("mousemove",e=>{ const x=e.offsetX, y=e.offsetY;
+  cursor={x,y}; scheduleDraw();   // move the hover crosshair (coalesced to one repaint/frame)
   if(drag){
     if(drag.mode==="inset"){ insetPanTo(x); return; }
     if(drag.mode==="edge"){ if(!drag.moved && Math.abs(x-drag.x)>3){ pushUndo(); drag.moved=true; }
@@ -1239,9 +1265,11 @@ plotC.addEventListener("mousemove",e=>{ const x=e.offsetX, y=e.offsetY;
   } else { const hit=peakHitsAt(x)[0], hid=hit?hit.id:null;
     if(hid!==hoverPeakId){ hoverPeakId=hid; drawMain(); }
     setCur(nearEdge(x)?"ew-resize":(hid!=null?"pointer":"grab")); } });
-plotC.addEventListener("mouseleave",()=>{ if(!drag){ setCur("grab");
-  if(tab==="trace"){ if(hoverRange!=null){ hoverRange=null; drawMain(); } }
-  else if(hoverPeakId!=null){ hoverPeakId=null; drawMain(); } } });
+plotC.addEventListener("mouseleave",()=>{ cursor=null;   // hide the crosshair off-plot
+  if(!drag){ setCur("grab");
+    if(tab==="trace"){ hoverRange=null; }
+    else hoverPeakId=null; }
+  drawMain(); });
 window.addEventListener("mouseup",e=>{ if(!drag) return; setCur("grab");
   const d=drag; drag=null;
   if(d.mode==="pan" && d.spec && !d.moved){          // click a peak's window -> select (+zoom); click empty -> deselect

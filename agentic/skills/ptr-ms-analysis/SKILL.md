@@ -164,7 +164,10 @@ Use one of these explicit modes:
 - **Comprehensive Viewer-style export (default for "analyse this file" or "final
   CSV")**: retain every credible analyte, fragment, isotope, reagent-ion, and
   water-cluster channel. Label ambiguous channels honestly; do not discard them merely
-  because they are not familiar VOCs.
+  because they are not familiar VOCs. **Comprehensive means every real channel, not
+  every detected maximum** — instrument noise is not a channel. Drop `likely_artifact`
+  peaks (see step 3): keeping a comb of ~20 cps ringing satellites is a worse export
+  than a focused one, not a more thorough one.
 - **Targeted chemistry panel**: use only when the user asks for named compounds or a
   small biomarker panel.
 - **Reference/project reproduction**: use the exact configured masses and cycle windows
@@ -181,18 +184,24 @@ ptr peaks FILE.h5 --min-height 0.001
 ```
 
 Each peak comes annotated (compact by default):
-`{mz, height, rel_height, neutral_mass, suggested_label, top_candidate, id_confidence,
-[id_ambiguous], [overlap], [likely_artifact]}`. **`suggested_label` is a ready-to-use
+`{mz, height, rel_height, prominence, neutral_mass, suggested_label, top_candidate,
+id_confidence, [id_ambiguous], [overlap], [likely_artifact]}`. **`suggested_label` is a ready-to-use
 label** — drop it straight into your config's peaks (it is the confident compound name, a
 reagent/cluster name, or an honest `unknown m/z 75.046` with a clean 3-dp m/z), so you do
 **not** hand-format labels or round floats yourself. Override it when your chemistry
 judgment differs. `top_candidate` is the best formula/name chosen by isotope pattern +
 plausibility (**not** nearest-mass); `id_ambiguous` lists close rivals when the call is
 not clear-cut. You do not need to query `TraceInfo` or compute mass offsets yourself.
-`likely_artifact` flags reagent ions, water clusters, and ringing. Pass **`--full`** only
-when you need every candidate formula and the isotope arrays for a deep isobar call — the
-default view is much smaller and is all you need to curate. Investigate every
-`apex_warning` from `analyze`.
+`likely_artifact` flags reagent ions, water clusters, tail/ringing, and low-prominence
+noise — **drop every `likely_artifact` peak from an analyte panel** (keep reagent/cluster
+diagnostic ions only if you deliberately want them). `prominence` is the apex's rise above
+its local baseline in cps: a real peak's ≈ its height, while a noise ripple or the shoulder
+of a taller peak sits near 0. **A dense run of near-equal small peaks (e.g. a dozen ~20 cps
+maxima spaced a few mDa apart around an intense ion) is instrument ringing, not a dozen
+analytes** — the tool now flags these `likely_artifact` (low prominence); do not re-add
+them. Pass **`--full`** only when you need every candidate formula and the isotope arrays
+for a deep isobar call — the default view is much smaller and is all you need to curate.
+Investigate every `apex_warning` from `analyze`.
 
 **Then check behaviour, not just mass.** A peak's identity is not settled by its m/z
 alone — its time profile tells you whether it is a breath analyte or instrument
@@ -286,6 +295,9 @@ Before delivery, verify:
 
 - the requested scope is comprehensive or explicitly targeted;
 - no credible channel was dropped solely because its chemistry was uncertain;
+- every `likely_artifact` peak was dropped (reagent/cluster ions kept only if wanted), and
+  no low-prominence noise comb (many near-equal small peaks bunched around an intense ion)
+  survived into the panel;
 - adjacent high plateaus were reviewed for physical-sample merging;
 - warm-up and transition cycles are excluded;
 - sample/background labels and counts are correct;

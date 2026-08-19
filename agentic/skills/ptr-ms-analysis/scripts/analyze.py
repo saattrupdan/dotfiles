@@ -58,11 +58,17 @@ def detect_peaks(f, min_rel_height=1e-3, max_peaks=300, mz_min=15.0, mz_max=None
     """Untargeted peak detection on the average spectrum.
 
     Local maxima above a relative-height threshold, then merged if closer than one
-    peak half-width (so a flat-topped peak flagged on adjacent timebins collapses
-    to a single entry, keeping the tallest)."""
+    instrument linewidth (FWHM = m/R_phys), keeping the tallest — two maxima closer
+    than the resolution are one peak (ripples on a shared apex), never two. Each kept
+    peak also gets a `prominence`: how far its apex rises above the local baseline
+    within ~1 linewidth each side. A real peak rises from near-zero baseline, so its
+    prominence ≈ its height; a ripple or shoulder riding a taller peak's flank barely
+    dips, so its prominence is tiny — this lets `annotate_peaks` flag noise combs
+    (dozens of ~20 cps satellites around an intense ion) without deleting anything."""
     a, b = ptrms.load_mass_cal(f)
     avg = f["SPECdata/AverageSpec"][:]
-    thr = avg.max() * min_rel_height
+    amax = float(avg.max())
+    thr = amax * min_rel_height
     hi = (avg[1:-1] > avg[:-2]) & (avg[1:-1] >= avg[2:]) & (avg[1:-1] > thr)
     idx = np.where(hi)[0] + 1
     mz = ptrms.tb_to_m(idx, a, b)
@@ -70,21 +76,31 @@ def detect_peaks(f, min_rel_height=1e-3, max_peaks=300, mz_min=15.0, mz_max=None
     if mz_max:
         keep &= mz <= mz_max
     idx, mz = idx[keep], mz[keep]
-    # merge maxima within one half-width (m/(2*R_phys)), keeping the tallest
+    # merge maxima within one FWHM (m/R_phys), keeping the tallest
     order_m = np.argsort(mz)
     idx, mz = idx[order_m], mz[order_m]
-    merged = []  # (mz, height)
+    merged = []  # (mz, height, bin)
     for k in range(len(mz)):
         h = float(avg[idx[k]])
-        if merged and mz[k] - merged[-1][0] < mz[k] / (2 * R_phys):
+        if merged and mz[k] - merged[-1][0] < mz[k] / R_phys:
             if h > merged[-1][1]:
-                merged[-1] = (float(mz[k]), h)
+                merged[-1] = (float(mz[k]), h, int(idx[k]))
         else:
-            merged.append((float(mz[k]), h))
+            merged.append((float(mz[k]), h, int(idx[k])))
     merged.sort(key=lambda t: t[1], reverse=True)
     merged = merged[:max_peaks]
+
+    def prominence(i):
+        # half-window ≈ 1 FWHM in timebins: d(bin)/d(mz)=a/(2√mz), FWHM_mz=mz/R_phys
+        m = ptrms.tb_to_m(i, a, b)
+        w = max(2, int(round(a * np.sqrt(m) / (2 * R_phys))))
+        lo, hiw = max(0, i - w), min(len(avg), i + w + 1)
+        base = max(float(avg[lo:i + 1].min()), float(avg[i:hiw].min()))
+        return float(avg[i]) - base
+
     peaks = [{"mz": round(m, 4), "height": round(h, 1),
-              "rel_height": round(h / float(avg.max()), 5)} for m, h in merged]
+              "rel_height": round(h / amax, 5),
+              "prominence": round(prominence(ib), 1)} for m, h, ib in merged]
     peaks.sort(key=lambda p: p["mz"])
     return peaks
 
@@ -221,6 +237,16 @@ def annotate_peaks(peaks, avgspec=None, a=None, b=None, R=1200.0, elements=None)
             if 0.008 < mz - q["mz"] < 0.4 and q.get("height", 0) > 20 * max(h, 1):
                 flags.append(f"possible tail/ringing of taller m/z {q['mz']:.3f}")
                 break
+        # low-prominence noise: an apex that barely rises above its local baseline
+        # is a ripple/shoulder on a taller peak's flank, not a resolved peak. Catches
+        # the dense combs of ~20 cps satellites around intense ions (e.g. TOF
+        # ringing) that the tail/ringing test misses when the tall parent is >0.4 Da
+        # away. Requires BOTH a small absolute rise and a small fraction of its own
+        # height, so a genuinely isolated small peak (which rises from ~0) is kept.
+        prom = p.get("prominence")
+        if prom is not None and prom < 10.0 and prom < 0.2 * max(h, 1):
+            flags.append("low prominence (%.1f cps above local baseline) — likely a "
+                         "noise ripple / shoulder of a nearby taller peak" % prom)
         if flags:
             e["likely_artifact"] = flags
         # A ready-to-use label so you don't hand-format one (and so `unknown`
@@ -247,6 +273,7 @@ def _compact_peak(e):
     top = cands[0] if cands else None
     out = {"mz": e["mz"], "height": e.get("height"),
            "rel_height": e.get("rel_height"),
+           "prominence": e.get("prominence"),
            "neutral_mass": e.get("neutral_mass"),
            "suggested_label": e.get("suggested_label")}
     if top:
@@ -286,8 +313,10 @@ def cmd_peaks(args):
                 "uncertainty (unresolved = worse than deconvolved). `name`/`k` are "
                 "filled when the formula is in the rate table (else k_estimated). "
                 "`iso_pred` vs `iso_obs` = predicted vs observed (M+1,M+2)/M. "
-                "`suggested_label` is a ready-to-use default label. "
-                "Skip likely_artifact peaks. neutral_mass = mz − proton.")
+                "`suggested_label` is a ready-to-use default label. `prominence` is the "
+                "apex's rise above local baseline in cps (real peak ≈ height; noise "
+                "ripple ≈ 0). DROP likely_artifact peaks (reagent/cluster, tail/"
+                "ringing, low-prominence noise). neutral_mass = mz − proton.")
         out_peaks = peaks
     else:
         note = ("Compact view (default). Each peak: `suggested_label` (a ready-to-use "
@@ -295,8 +324,12 @@ def cmd_peaks(args):
                 "`top_candidate` (best formula/name/mass-error, chosen by isotope "
                 "pattern + plausibility, NOT nearest-mass), `id_confidence`, and, when "
                 "relevant, `id_ambiguous` (close rivals), `overlap` (quantification "
-                "uncertainty), and `likely_artifact` (skip these). neutral_mass = mz − "
-                "proton. Pass `--full` for every candidate + the isotope arrays.")
+                "uncertainty), and `likely_artifact` (DROP these — includes reagent/"
+                "cluster ions, tail/ringing, and low-prominence noise ripples). "
+                "`prominence` is the apex's rise above its local baseline in cps: a "
+                "real peak's ≈ its height, a noise ripple/shoulder's is near 0. "
+                "neutral_mass = mz − proton. Pass `--full` for every candidate + the "
+                "isotope arrays.")
         out_peaks = [_compact_peak(p) for p in peaks]
     _emit({"n_peaks": len(peaks), "mass_drift": round(drift, 6),
            "n_ambiguous": n_amb, "n_overlapping": n_ovl,
