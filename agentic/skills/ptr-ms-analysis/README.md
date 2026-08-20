@@ -54,13 +54,16 @@ ptr rates     benzaldehyde                # browse proton-transfer rate constant
 ```
 
 `viz` opens a browser review app for an existing peak list + ranges so an expert can
-visually check and tweak peaks / segments / calibration with Raw/Corrected/Conc
-recomputing live. **It is the default final step** for analysing a file: the agent curates
-a config from `peaks`/`segments` first, then opens `viz` on that best solution — ideally
-nothing needs changing and *Done* is a one-click confirmation. By default it serves a
-localhost app that live-saves every edit into the `--config` file and, when the expert
-clicks *Done*, runs the full-precision analysis and writes the `--out` CSV; `--html
-review.html` writes a portable offline file instead (edits exported via a Download button).
+visually check and tweak peaks / segments / calibration. K, molar volume, kinetic and
+humidity controls, R windowing, and peak/interval edits recompute from embedded preview
+data; primary m/z, R_phys, and whole-run window mode require raw HDF5 re-extraction and
+are prominently marked stale until Done. **It is the default final step** for analysing
+a file: the agent curates a config from `peaks`/`segments` first, then opens `viz` on that
+best solution — ideally nothing needs changing and *Done* is a one-click confirmation.
+By default it serves a localhost app that live-saves every edit into the `--config` file
+and, when the expert clicks *Done*, runs the full-precision analysis and writes the
+`--out` CSV; `--html review.html` writes a portable offline file instead (edits exported
+via a Download button).
 A first-time user gets an automatic guided tour of the interface (skippable, remembered in
 the browser). The agent can also add a `"checklist"` array to the config — short points for
 the reviewer to confirm (an ambiguous segment, a relabelled background channel, a
@@ -86,8 +89,9 @@ interval); only each row's numbers reflect its interval's real peak. Set
 `whole_run_windows: true` or pass `--no-per-interval` for one whole-run window per
 compound. Manual peak windows remain manual. The Methods card reports these effective
 values, their provenance, and whether the transmission curve and concentration are
-available. Browser numbers are preview values; **Done** performs the authoritative
-full-precision `analyze` rerun.
+available. Browser numbers are preview values: R windowing and other embedded-data
+controls update live, while primary m/z, R_phys, and whole-run window mode are marked
+stale and are applied only by the authoritative **Done**/`analyze` re-extraction.
 
 Add `--pretty` to any command for indented JSON. `analyze` peak/segment sources:
 `--config file.json` (curated, preferred), or `--auto-peaks`/`--auto-segments`

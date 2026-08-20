@@ -491,7 +491,10 @@ def cmd_peaks(args):
                            "fabricate an analyte list from the noise.",
                    "peaks": []}, args.raw)
             return
-        peaks = detect_peaks(f, args.min_height, args.max_peaks, args.mz_min, args.mz_max)
+        R_phys = getattr(args, "R_phys", None) or 2400.0
+        peaks = detect_peaks(
+            f, args.min_height, args.max_peaks, args.mz_min, args.mz_max,
+            R_phys=R_phys)
     drift, peaks = annotate_peaks(
         peaks, avgspec=avg, a=a, b=b,
         R_phys=(getattr(args, "R_phys", None) or 2400.0))
@@ -1062,11 +1065,15 @@ def cmd_calibrate(args):
         if len(ranges) == 1 and "All" in ranges:
             # derive ranges from the reference's own labels via its Cycle rows
             ranges = _ranges_from_reference(args.reference)
-        R = args.R if args.R is not None else 1200.0
-        traces, _ = ptrms.extract_traces(f, masses, R=R)
-        K, resid, n = ptrms.calibrate_K(f, traces, ref_conc, ranges,
-                                        primary_mz=args.primary_mz, R_used=R)
-        K_file = ptrms.derive_K(f, ptrms.extract_primary(f, args.primary_mz, R))
+        R = settings["R"]
+        R_phys = settings["R_phys"]
+        primary_mz = settings["primary_mz"]
+        traces, _ = ptrms.extract_traces(
+            f, masses, R=R, R_phys=R_phys)
+        K, resid, n = ptrms.calibrate_K(
+            f, traces, ref_conc, ranges, primary_mz=primary_mz, R_used=R)
+        K_file = ptrms.derive_K(
+            f, ptrms.extract_primary(f, primary_mz, R))
     _emit({"K_calibrated": K, "K_from_file": K_file,
            "calibration_points": n, "residual_median_pct": resid,
            "usage": f"pass --K {K} to analyze to match this reference"}, args.raw)
@@ -1288,6 +1295,8 @@ def main():
     pp.add_argument("--max-peaks", type=int, default=300)
     pp.add_argument("--mz-min", type=float, default=15.0)
     pp.add_argument("--mz-max", type=float, default=None)
+    pp.add_argument("--R-phys", dest="R_phys", type=float, default=None,
+                    help="Physical peak resolution for detection and merging (default 2400)")
     pp.set_defaults(func=cmd_peaks)
 
     ps = sub.add_parser("segments", parents=[common], help="Detect time segments (JSON) for labelling")
@@ -1331,7 +1340,7 @@ def main():
     pa.add_argument("--per-interval", dest="no_per_interval", action="store_false",
                      help="Explicitly use isolated per-interval windows")
     pa.add_argument("--R", type=float, default=None, help="Integration-window resolution (default 1200)")
-    pa.add_argument("--R-phys", dest="R_phys", type=float,
+    pa.add_argument("--R-phys", dest="R_phys", type=float, default=None,
                     help="Physical peak resolution for deconvolution (default 2400)")
     pa.add_argument("--K", type=float,
                     help="Concentration constant (Conc=Corrected*K/primary). "
@@ -1414,8 +1423,12 @@ def main():
     pk.add_argument("--max-peaks", type=int, default=300)
     pk.add_argument("--mz-min", type=float, default=15.0)
     pk.add_argument("--mz-max", type=float, default=None)
-    pk.add_argument("--primary-mz", type=float, default=21.022)
-    pk.add_argument("--R", type=float)
+    pk.add_argument("--primary-mz", type=float, default=None,
+                     help="Primary-ion m/z for normalisation (default 21.022, H3(18O)+)")
+    pk.add_argument("--R", type=float, default=None,
+                    help="Integration-window resolution (default 1200)")
+    pk.add_argument("--R-phys", dest="R_phys", type=float, default=None,
+                    help="Physical peak resolution for deconvolution (default 2400)")
     pk.set_defaults(func=cmd_calibrate)
 
     pc = sub.add_parser("compare", parents=[common], help="Compare results CSV vs reference Viewer CSV")
