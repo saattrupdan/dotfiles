@@ -50,9 +50,11 @@ about 1 GB, and a full analysis commonly takes about a minute.
 ## Validation
 
 There is currently no automated test, lint, or type-check suite. At minimum, run these
-smoke checks after a change:
+smoke checks after a change (the deterministic `viz` UI assertion is especially relevant
+when changing identification display):
 
 ```bash
+python3 scripts/smoke_viz.py
 uvx --from . ptr --help
 uvx --from . ptr inspect --help
 uvx --from . ptr peaks --help

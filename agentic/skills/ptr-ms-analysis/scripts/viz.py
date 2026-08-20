@@ -494,6 +494,11 @@ _TEMPLATE = r"""<!DOCTYPE html>
   .cand .p{min-width:38px;text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
   .cand .ev{color:var(--mut);font-size:11px;min-width:172px;text-align:right;font-variant-numeric:tabular-nums}
   .cand .ok{color:var(--ok)} .cand .bad{color:#f87171}
+  .idnote{padding:7px 9px;margin-bottom:8px;border:1px solid var(--line2);border-radius:8px;
+          color:var(--mut);font-size:11px;line-height:1.45}
+  .idnote b{color:var(--fg)}
+  .pill.assigned{color:var(--ok);border-color:var(--ok)}
+  .pill.unassigned{color:var(--hi);border-color:#78491a}
   code{background:var(--code);border:1px solid var(--line);border-radius:5px;padding:1px 5px;
        font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--codefg);word-break:break-all}
   /* Done overlay */
@@ -712,7 +717,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
   <div class="card" id="idcard">
     <h2>Identification <span class="sub">— candidate formulas for the selected peak (click to assign)</span>
       <span class="grow"></span><span class="mut" id="idconf"></span></h2>
-    <div class="pad" id="idpanel"><div class="mut">Select a peak to see candidate formulas, ranked by mass + isotope pattern + plausibility.</div></div>
+    <div class="pad" id="idpanel"><div class="mut">Select a peak to see candidate formulas, ranked by measured exact mass, isotope evidence, and chemistry plausibility.</div></div>
   </div>
 
   <!-- context card: intervals (signal-over-time tab); positions set by dragging in the plot -->
@@ -786,7 +791,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
   <p>The instrument stores a 2-point calibration in <code>CALdata/Mapping</code> giving <b>timebin = a·√(m/z) + b</b>. Over a long run the true masses drift slightly, so we estimate one global scale factor (the median of measured-apex ÷ theoretical-mass across all peaks, ≈1.0008 here) and remove it. Each isolated peak then gets a tight local apex search to snap onto its exact centre; overlapping peaks use the scale-corrected theoretical position so they don't jump onto a neighbour.</p>
 
   <h3>2 · Peak detection &amp; identification</h3>
-  <p>Peaks are local maxima of the average spectrum above a relative-height threshold. For each, candidate <b>molecular formulas</b> are enumerated offline (all plausible CHNOPS+halogen formulas within ~12 mDa) and ranked by three independent lines of evidence: exact-mass error, the measured-vs-predicted <b>¹³C (M+1) and heteroatom (M+2, e.g. S/Cl) isotope pattern</b>, and plausibility (integer ring+double-bond equivalents, the nitrogen rule, element ratios). Near-isobars are told apart by composition, not "nearest mass". Names &amp; proton-transfer rate constants are attached from the PTR Library (Pagonis, Sekimoto &amp; de Gouw 2019) when the formula is known.</p>
+  <p>Peaks are local maxima of the average spectrum above a relative-height threshold. For each, candidate <b>molecular formulas</b> are enumerated offline (all plausible CHNOPS+halogen formulas within ~12 mDa) and ranked by three independent lines of evidence: exact-mass error, the measured-vs-predicted <b>¹³C (M+1) and heteroatom (M+2, e.g. S/Cl) isotope pattern</b>, and plausibility (integer ring+double-bond equivalents, the nitrogen rule, element ratios). Near-isobars are told apart by composition, not "nearest mass". Names and isomer labels come from the bundled PTR Library mapping when the formula is known; formula ranking cannot determine structural isomers.</p>
 
   <h3>3 · Integration (Raw)</h3>
   <p><b>Isolated peaks:</b> Raw is a plain <b>window-sum</b> of the measured intensities across the peak's m/z window — no peak shape assumed, so asymmetric or flat-topped peaks are handled as-is. You set that window by dragging the dashed handles (left and right independently).</p>
@@ -814,7 +819,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
     <li><b>No fragmentation correction</b> — each peak is treated as a parent ion. Compounds that fragment (flagged where known) spread signal across masses that this tool does not recombine.</li>
     <li><b>Humidity dependence</b> is an optional, empirical normalisation, not a full ion-chemistry model; leave it off unless you have reason to apply it.</li>
     <li><b>Transmission and mass calibration</b> come from the file — if the instrument's stored values are off, so are the derived numbers.</li>
-    <li><b>Identification is a ranking, not proof</b>: candidates with low confidence or unresolved overlaps are flagged; the expert makes the final call.</li>
+    <li><b>Identification is a ranking, not proof</b>: candidate percentages are relative score/share, not calibrated identification confidence; unresolved overlaps are flagged and the expert makes the final call.</li>
   </ul>
 
   <h3>Live preview vs. the delivered CSV</h3>
@@ -1330,7 +1335,7 @@ function peakPills(p){
   const dup=dupPeak(p);
   return (p.flags||[]).map(fl=>`<span class="pill ${fl}" title="${fl==='humid'?'proton affinity near water — a fixed k is humidity/temperature dependent':(fl==='frag'?'fragments off the parent ion':'')}">${fl==='humid'?'humid-sensitive':fl}</span>`).join(' ')+
     (dup?`<span class="pill ovl" title="same compound also assigned to m/z ${dup.mz.toFixed(3)}">⚠ duplicate</span>`:'')+
-    (p.id_ambiguous?`<span class="pill hi" title="ambiguous identification">? ${Math.round((p.id_confidence||0)*100)}%</span>`:'')+
+    (p.id_ambiguous?`<span class="pill hi" title="ambiguous identification; top candidate relative score/share">? ${Math.round((p.id_confidence||0)*100)}% share</span>`:'')+
     (p.overlap&&p.overlap.level==='unresolved'?'<span class="pill hi" title="unresolved overlap">⚠ overlap</span>':
       (p.clustered?'<span class="pill clus">overlap</span>':''))+
     (!p.trace?'<span class="pill">re-run</span>':'')+
@@ -1391,35 +1396,44 @@ function evText(c){ if(!c.iso_obs) return '<span class="mut">no isotope data</sp
   return `M+1 <span class="${cls(c.iso_obs[0],c.iso_pred[0])}">${pct(c.iso_obs[0])}</span>/${pct(c.iso_pred[0])} · `+
          `M+2 <span class="${cls(c.iso_obs[1],c.iso_pred[1])}">${pct(c.iso_obs[1])}</span>/${pct(c.iso_pred[1])}`; }
 function renderId(){ const el=document.getElementById("idpanel"), conf=document.getElementById("idconf"), p=selPeak();
+  const esc=s=>(s||'').replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]));
+  const assigned=!!(p&&p.formula);
+  const status=assigned
+    ? `<span class="pill assigned">assigned</span> ${esc(p.formula)}`
+    : '<span class="pill unassigned">not assigned</span>';
+  const provenance='<div class="idnote"><b>Evidence:</b> candidates are inferred from measured exact mass, isotope evidence, and chemistry plausibility. Names and isomer labels come from the bundled PTR Library mapping; formula ranking cannot determine structural isomers.</div>';
   if(!el) return;
-  if(!p){ el.innerHTML='<div class="mut">Select a peak to see candidate formulas, ranked by mass + isotope pattern + plausibility.</div>';
+  if(!p){ el.innerHTML='<div class="mut">Select a peak to see candidate formulas, ranked by measured exact mass, isotope evidence, and chemistry plausibility.</div>';
     if(conf) conf.textContent=""; return; }
   if(!p.candidates||!p.candidates.length){
+    if(conf) conf.innerHTML=status+' <span class="mut">· no generated formula candidates</span>';
     const esc=s=>(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
     // no enumerated candidate (a reagent/inorganic ion, a manually-added peak, or a
     // mass outside the organic window) — still surface the current assignment rather
     // than a bare "nothing here", so every peak shows its identity.
     if(p.formula||p.label){
-      el.innerHTML='<div class="cand chosen"><span class="f">'+esc(p.formula||p.label)+'</span>'+
+      el.innerHTML=provenance+'<div class="cand chosen"><span class="f">'+esc(p.formula||p.label)+'</span>'+
         ((p.formula&&p.label&&p.label!==p.formula)?'<span class="cname">'+esc(p.label)+'</span>':'')+
-        '<span class="meta">current assignment</span></div>'+
-        '<div class="idnote" style="margin-top:8px">No enumerated formula candidates for this m/z — it looks like a reagent/inorganic ion, a manually-added peak, or a mass outside the organic window. The assignment above is kept as-is.</div>';
+        '<span class="meta">'+(assigned?'current formula assignment':'label only; not formula-assigned')+'</span></div>'+
+        '<div class="idnote" style="margin-top:8px">No enumerated formula candidates for this m/z — it looks like a reagent/inorganic ion, a manually-added peak, or a mass outside the organic window. The existing '+(assigned?'formula assignment':'label')+' is kept as-is.</div>';
     } else {
-      el.innerHTML='<div class="mut">No candidate formulas for this peak (a reagent/inorganic ion, added manually, or outside the mass window).</div>';
+      el.innerHTML=provenance+'<div class="mut">No candidate formulas for this peak (a reagent/inorganic ion, added manually, or outside the mass window).</div>';
     }
-    if(conf) conf.textContent=""; return; }
-  if(conf) conf.innerHTML=(p.id_ambiguous?'<span class="pill hi">ambiguous</span> ':'')+
-    'top confidence '+Math.round((p.id_confidence||0)*100)+'%';
-  el.innerHTML="";
+    return; }
+  if(conf) conf.innerHTML=status+` <span class="mut">· ${p.candidates.length===1
+    ? 'only generated formula candidate — not a confidence estimate'
+    : 'relative candidate score/share (not identification confidence)'}</span>`+
+    (p.id_ambiguous?' <span class="pill hi">ambiguous</span>':'');
+  el.innerHTML=provenance+'<div class="idnote"><b>Assignment:</b> '+(assigned?'formula assigned — click another candidate to replace it.':'not assigned — click a candidate row to assign its formula.')+'</div>';
   p.candidates.forEach(c=>{ const row=document.createElement("div");
-    const chosen=(p.formula&&c.formula===p.formula)||(!p.formula&&c.name&&c.name===p.label);
+    const chosen=!!(p.formula&&c.formula===p.formula);
     row.className="cand"+(chosen?" chosen":"");
     const kb=c.k?(" · k="+(+c.k).toFixed(1)+(c.k_estimated?"~":"")):"";
     row.innerHTML=`<span class="f">${c.formula}</span>`+
       (c.name?`<span class="cname" title="compound name">${c.name}</span>`:``)+
       `<span class="meta">Δ${c.delta_mDa>=0?'+':''}${c.delta_mDa} mDa · DBE ${c.dbe}${kb}</span>`+
-      `<span class="bar"><span style="width:${Math.round(c.probability*100)}%"></span></span>`+
-      `<span class="p">${Math.round(c.probability*100)}%</span>`+
+      (p.candidates.length===1?'':`<span class="bar"><span style="width:${Math.round(c.probability*100)}%"></span></span>`)+
+      `<span class="p">${p.candidates.length===1?'only candidate':Math.round(c.probability*100)+'% share'}</span>`+
       `<span class="ev">${evText(c)}</span>`;
     row.onclick=()=>assignCandidate(p,c); el.appendChild(row); });
   if(p.overlap){ const n=document.createElement("div"); n.className="idnote warn"; n.style.marginTop="8px";
