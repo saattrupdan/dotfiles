@@ -454,6 +454,101 @@ def _standalone_browser_pass(data: dict[str, Any]) -> None:
             _browser(session, "close")
 
 
+def _provenance_browser_pass() -> None:
+    """Regress effective file sources and explicit reset provenance."""
+    session = f"{SESSION}-provenance-{threading.get_ident()}"
+    with tempfile.TemporaryDirectory(prefix="ptr-ms-viz-provenance-") as directory:
+        directory_path = Path(directory)
+        omitted = _synthetic_data()
+        omitted_meta = omitted["meta"]
+        omitted_meta["sources"]["K"] = "legacy default"
+        omitted_meta["sources"]["molar_volume"] = "legacy default"
+        omitted_meta["K_default"] = omitted_meta["K_file"]
+        omitted_meta["K_source"] = omitted_meta["K_file_source"]
+        omitted_meta["molar_volume"] = 24.465
+        omitted_meta["molar_volume_file"] = 24.465
+        omitted_meta["molar_volume_source"] = (
+            "25 °C fallback (drift metadata unavailable)"
+        )
+        omitted_meta["molar_volume_file_source"] = omitted_meta["molar_volume_source"]
+        omitted_path = directory_path / "omitted-calibration.html"
+        omitted_path.write_text(viz.render_html(omitted), encoding="utf-8")
+
+        equal = _synthetic_data()
+        equal_meta = equal["meta"]
+        equal_meta["K_file"] = equal_meta["K_default"]
+        equal_meta["molar_volume_file"] = equal_meta["molar_volume"]
+        equal_path = directory_path / "equal-calibration.html"
+        equal_path.write_text(viz.render_html(equal), encoding="utf-8")
+
+        try:
+            _browser(session, "open", omitted_path.as_uri())
+            _browser(session, "wait", "--load", "networkidle")
+            _browser(session, "eval", "localStorage.setItem('ptrms-onboarded', '1')")
+            _browser(session, "reload")
+            _browser(session, "wait", "--load", "networkidle")
+            _browser(session, "eval", "document.querySelector('#methodBtn').click()")
+            omitted_state = _eval(
+                session,
+                "({text:document.querySelector('#methodlive').innerText, "
+                "config:buildConfig()})",
+            )
+            _assert(
+                "K: 0.800 (file acquisition calibration)" in omitted_state["text"],
+                "omitted K reported the resolver default instead of the file source",
+            )
+            _assert(
+                "molar volume: 24.46 L/mol (25 °C fallback "
+                "(drift metadata unavailable))" in omitted_state["text"],
+                "omitted molar volume reported the resolver default instead of its file source",
+            )
+            _assert_config_round_trip(omitted_state["config"])
+
+            _browser(session, "open", equal_path.as_uri())
+            _browser(session, "wait", "--load", "networkidle")
+            _browser(session, "eval", "document.querySelector('#methodBtn').click()")
+            initial = _eval(
+                session,
+                "({text:document.querySelector('#methodlive').innerText, "
+                "config:buildConfig()})",
+            )
+            _assert(
+                "K: 1.00 (curated config)" in initial["text"]
+                and "molar volume: 24.50 L/mol (curated config)" in initial["text"],
+                "equal configured/file values lost their initial config provenance",
+            )
+            _assert_config_round_trip(initial["config"])
+            _browser(
+                session,
+                "eval",
+                "(() => { const set=(id,v)=>{const e=document.querySelector('#'+id);"
+                "e.value=v; e.dispatchEvent(new Event('change',{bubbles:true}));}; "
+                "set('K','2.5'); set('Vm','25.5'); })()",
+            )
+            _browser(session, "wait", "700")
+            edited = _eval(session, "({text:document.querySelector('#methodlive').innerText})")
+            _assert(
+                "K: 2.50 (browser edit)" in edited["text"]
+                and "molar volume: 25.50 L/mol (browser edit)" in edited["text"],
+                "equal configured/file values did not retain browser edit provenance",
+            )
+            _browser(session, "eval", "document.querySelector('#resetK').click()")
+            _browser(session, "wait", "700")
+            reset = _eval(
+                session,
+                "({text:document.querySelector('#methodlive').innerText, "
+                "config:buildConfig()})",
+            )
+            _assert(
+                "K: 1.00 (file acquisition calibration)" in reset["text"]
+                and "molar volume: 24.50 L/mol (file drift temperature)" in reset["text"],
+                "reset-to-file provenance was hidden by equal initial values",
+            )
+            _assert_config_round_trip(reset["config"])
+        finally:
+            _browser(session, "close")
+
+
 def _interval_spectrum() -> list[int]:
     """Return an interval spectrum whose shared maximum exposes re-centring bugs."""
     spectrum = [1] * 13000
@@ -772,6 +867,7 @@ def main() -> int:
         _assert(done_posts and all(body == posted["config"] for body in done_posts),
                 "Done body differs from the browser's complete buildConfig()")
         _standalone_browser_pass(data)
+        _provenance_browser_pass()
         print("viz browser identification/configuration regression: OK")
         return 0
     finally:

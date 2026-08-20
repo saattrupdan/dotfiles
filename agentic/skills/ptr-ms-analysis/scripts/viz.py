@@ -1764,22 +1764,22 @@ function updateMethods(){
   const stale=staleSettings(); updateStaleness();
   const source=v=>v==="config.analyze"?"curated config":v==="cli"?"CLI override":v||"legacy default";
   const src=M.sources||{};
-  const settingSource=(key,value,configured,fallback)=>{
-    if(Object.is(value,INITIAL_CFG[key])) return source(configured||fallback);
-    if(Object.is(value,resetValues[key])) return resetSources[key];
+  const settingSource=(key,value,initialSource)=>{
+    if(Object.hasOwn(resetValues,key) && Object.is(value,resetValues[key])) return resetSources[key];
+    if(Object.is(value,INITIAL_CFG[key])) return source(initialSource);
     return "browser edit";
   };
   const rSource=settingSource("R",cfg.R,src.R);
   const rPhysSource=settingSource("Rphys",cfg.Rphys,src.R_phys);
   const primarySource=settingSource("primarymz",cfg.primarymz,src.primary_mz);
   const windowSource=settingSource("wholewindows",cfg.wholewindows,src.whole_run_windows);
-  const effectiveKSource=settingSource("K",cfg.K,src.K,kSource);
-  const effectiveVmSource=settingSource("Vm",cfg.Vm,src.molar_volume,vmSource);
+  const effectiveKSource=settingSource("K",cfg.K,kSource);
+  const effectiveVmSource=settingSource("Vm",cfg.Vm,vmSource);
   const kineticSource=settingSource("kinetic",cfg.kinetic,src.kinetic);
   const anchorSource=settingSource("kanchor",cfg.kanchor,src.k_anchor);
   const humiditySource=settingSource("humid",cfg.humid,src.humidity_correct);
   const humidityPSource=settingSource("hump",cfg.hump,src.humidity_p);
-  const hrefSource=settingSource("href",cfg.href,M.humidity_ref_source||src.humidity_ref,"run median");
+  const hrefSource=settingSource("href",cfg.href,M.humidity_ref_source||src.humidity_ref||"run median");
   const trans=M.transmission_available?"the file's available transmission curve":"unit fallback (no transmission curve in the file)";
   const concentrationAvailable=!!(M.primary_available !== false && PC.primary && cfg.K!=null);
   M.concentration_available=concentrationAvailable;
