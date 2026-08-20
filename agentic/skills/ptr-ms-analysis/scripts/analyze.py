@@ -663,7 +663,8 @@ def _load_peaks(args, f, settings=None):
     if args.peaks_json:
         return json.loads(args.peaks_json)
     if args.config:
-        cfg = json.load(open(args.config, encoding="utf-8"))
+        with open(args.config, encoding="utf-8") as fh:
+            cfg = json.load(fh)
         if cfg.get("peaks"):
             return cfg["peaks"]
     if getattr(args, "auto_peaks", False):

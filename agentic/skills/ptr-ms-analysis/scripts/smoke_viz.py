@@ -16,7 +16,9 @@ import shutil
 import socketserver
 import subprocess
 import sys
+import tempfile
 import threading
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import viz
@@ -66,6 +68,9 @@ def _synthetic_data() -> Dict[str, Any]:
                 "R": "config.analyze", "R_phys": "config.analyze",
                 "primary_mz": "config.analyze", "whole_run_windows": "config.analyze",
                 "K": "config.analyze", "molar_volume": "config.analyze",
+                "kinetic": "config.analyze", "k_anchor": "config.analyze",
+                "humidity_correct": "config.analyze", "humidity_p": "config.analyze",
+                "humidity_ref": "config.analyze",
             },
             "K_source": "config.analyze",
             "K_file": 0.8,
@@ -263,7 +268,7 @@ class _ReviewHandler(http.server.BaseHTTPRequestHandler):
 def _browser(session: str, *args: str, stdin: Optional[str] = None) -> str:
     """Run one agent-browser command and return its stdout."""
     completed = subprocess.run(
-        ["agent-browser", "--session", session, *args],
+        ["agent-browser", "--allow-file-access", "--session", session, *args],
         input=stdin,
         capture_output=True,
         text=True,
@@ -293,16 +298,16 @@ def _assert(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
-def _assert_complete_posts(expected: Dict[str, Any], path: str, start: int) -> int:
+def _assert_complete_posts(expected: dict[str, Any], path: str, start: int) -> int:
     """Require every new request body to equal the browser's full config snapshot."""
     recent = [body for posted_path, body in _ReviewHandler.posts[start:] if posted_path == path]
-    _assert(recent, "browser did not POST %s after the edit" % path)
+    _assert(recent, f"browser did not POST {path} after the edit")
     _assert(all(body == expected for body in recent),
-            "%s body differs from the browser's complete buildConfig()" % path)
+            f"{path} body differs from the browser's complete buildConfig()")
     return len(_ReviewHandler.posts)
 
 
-def _assert_config_round_trip(config: Dict[str, Any]) -> None:
+def _assert_config_round_trip(config: dict[str, Any]) -> None:
     """Check fields whose loss would make a saved review non-reproducible."""
     _assert(config["unknown_top_level"]["keep"], "unknown top-level field was dropped")
     _assert(config["analyze"]["unknown_setting"] == "keep",
@@ -315,6 +320,138 @@ def _assert_config_round_trip(config: Dict[str, Any]) -> None:
             == [("sample_01", 1, 2), ("sample_02", 3, 4)],
             "ranges did not round-trip")
     _assert(config["checklist"] == [], "checklist did not round-trip")
+
+
+def _standalone_browser_pass(data: dict[str, Any]) -> None:
+    """Exercise the offline app through a real ``file:`` browser URL."""
+    session = f"{SESSION}-file-{threading.get_ident()}"
+    with tempfile.TemporaryDirectory(prefix="ptr-ms-viz-") as directory:
+        html_path = Path(directory) / "review.html"
+        html_path.write_text(viz.render_html(data), encoding="utf-8")
+        download_path = Path(directory) / "downloaded-config.json"
+        try:
+            _browser(session, "open", html_path.as_uri())
+            _browser(session, "wait", "--load", "networkidle")
+            _browser(session, "eval", "localStorage.setItem('ptrms-onboarded', '1')")
+            _browser(session, "reload")
+            _browser(session, "wait", "--load", "networkidle")
+            _browser(session, "eval", "document.querySelector('#methodBtn').click()")
+            initial = _eval(
+                session,
+                "({body:document.body.innerText, text:document.querySelector('#methodlive').innerText, "
+                "buttons:Array.from(document.querySelectorAll('button')).map(b=>b.innerText), "
+                "served:SERVED, protocol:location.protocol})",
+            )
+            _assert(not initial["served"] and initial["protocol"] == "file:",
+                    "standalone smoke did not open through file:")
+            _assert("Download config" in initial["body"] and "Done" not in initial["body"],
+                    "standalone controls still use served-mode wording")
+            _assert("Download config" in initial["text"] and "Done" not in initial["text"],
+                    "standalone Methods still use served-mode wording")
+            _assert("Download config" in initial["buttons"] and "Done" not in initial["buttons"],
+                    "standalone export control is wrong")
+
+            _browser(
+                session,
+                "eval",
+                "(() => { const set=(id,v)=>{const e=document.querySelector('#'+id);"
+                "e.value=v; e.dispatchEvent(new Event('change',{bubbles:true}));}; "
+                "set('R','1700'); set('Rphys','3300'); set('primarymz','20.022'); "
+                "set('K','2.5'); set('Vm','25.5'); set('kanchor','2.2'); "
+                "set('hump','0.8'); set('href','1.7'); "
+                "document.querySelector('#kinetic').click(); document.querySelector('#humid').click(); "
+                "document.querySelector('#wholewindows').click(); })()",
+            )
+            _browser(session, "wait", "800")
+            edited = _eval(
+                session,
+                "({text:document.querySelector('#methodlive').innerText, "
+                "banner:document.querySelector('#stalebanner').innerText, "
+                "config:buildConfig(), stale:staleSettings()})",
+            )
+            _assert("R = 1700 (browser edit)" in edited["text"],
+                    "standalone Methods did not mark R as edited")
+            _assert("K: 2.50 (browser edit)" in edited["text"]
+                    and "molar volume: 25.50 L/mol (browser edit)" in edited["text"],
+                    "standalone Methods did not mark calibration edits")
+            _assert("Kinetic correction: off (browser edit)" in edited["text"],
+                    "standalone Methods did not mark kinetic edits")
+            _assert("Humidity correction: off (browser edit)" in edited["text"],
+                    "standalone Methods did not mark humidity edits")
+            _assert("k_anchor = 2.2" in edited["text"] and "(browser edit)" in edited["text"],
+                    "standalone Methods did not mark k_anchor as edited")
+            _assert("p = 0.8 (browser edit)" in edited["text"],
+                    "standalone Methods did not mark humidity p as edited")
+            _assert("reference = 1.7 (browser edit)" in edited["text"],
+                    "standalone Methods did not mark humidity reference as edited")
+            _assert("export and re-extraction" in edited["text"]
+                    and "Download config" in edited["text"]
+                    and "Done" not in edited["text"],
+                    "standalone stale Methods wording is inaccurate")
+            _assert("export and re-extraction" in edited["banner"]
+                    and "Download config" in edited["banner"]
+                    and "Done" not in edited["banner"],
+                    "standalone stale banner wording is inaccurate")
+            _assert_config_round_trip(edited["config"])
+
+            _browser(
+                session,
+                "eval",
+                "(() => { const set=(id,v)=>{const e=document.querySelector('#'+id);"
+                "e.value=v; e.dispatchEvent(new Event('change',{bubbles:true}));}; "
+                "set('R','1500'); set('Rphys','3100'); set('primarymz','19.022'); "
+                "set('K','1.0'); set('Vm','24.5'); set('kanchor','1.7'); set('hump','0.6'); "
+                "set('href','1.3'); document.querySelector('#kinetic').click(); "
+                "document.querySelector('#humid').click(); document.querySelector('#wholewindows').click(); })()",
+            )
+            _browser(session, "wait", "800")
+            reverted = _eval(
+                session,
+                "({text:document.querySelector('#methodlive').innerText, "
+                "banner:document.querySelector('#stalebanner').innerText, stale:staleSettings()})",
+            )
+            _assert(reverted["stale"] == {"primary": False, "Rphys": False, "windows": False},
+                    "standalone revert left stale state behind")
+            _assert(not reverted["banner"] and "PREVIEW STALE" not in reverted["text"],
+                    "standalone revert left a stale warning behind")
+            _assert("browser edit" not in reverted["text"],
+                    "standalone revert did not restore initial provenance")
+
+            _browser(
+                session,
+                "eval",
+                "document.querySelector('#R').value='1750'; "
+                "document.querySelector('#R').dispatchEvent(new Event('change',{bubbles:true}))",
+            )
+            _browser(session, "wait", "700")
+            payload = _eval(session, "({config:buildConfig()})")["config"]
+            _assert_config_round_trip(payload)
+            _browser(
+                session,
+                "eval",
+                "window.__downloadSnapshot=null; "
+                "document.querySelector('#exportrow button').addEventListener("
+                "'click',()=>window.__downloadSnapshot=buildConfig(),{once:true})",
+            )
+            try:
+                _browser(session, "download", "#exportrow button", str(download_path))
+            except AssertionError as error:
+                # Chromium's download event is unavailable for file: pages in some
+                # agent-browser daemon versions. Verify the real button handler still
+                # built the complete payload before accepting that limitation.
+                detail = str(error).lower()
+                _assert("resource temporarily unavailable" in detail
+                        or "allow-file-access ignored" in detail,
+                        f"standalone download failed unexpectedly: {error}")
+                _browser(session, "eval", "document.querySelector('#exportrow button').click()")
+                _assert(_eval(session, "({config:window.__downloadSnapshot})")["config"] == payload,
+                        "standalone download handler did not use buildConfig()")
+            else:
+                _assert(download_path.exists(), "standalone Download config did not create a file")
+                _assert(json.loads(download_path.read_text(encoding="utf-8")) == payload,
+                        "downloaded config differs from buildConfig()")
+        finally:
+            _browser(session, "close")
 
 
 def _interval_spectrum() -> list[int]:
@@ -634,6 +771,7 @@ def main() -> int:
                       if path == "/done"]
         _assert(done_posts and all(body == posted["config"] for body in done_posts),
                 "Done body differs from the browser's complete buildConfig()")
+        _standalone_browser_pass(data)
         print("viz browser identification/configuration regression: OK")
         return 0
     finally:
