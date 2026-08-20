@@ -94,8 +94,16 @@ discoverable; empty array = none.
   content.
 - **Builders run in isolated git worktrees.** They must commit before exiting. Parallel
   builders are safe as long as scopes are disjoint.
-- **No pagination on `read`.** Use `symbol=` or `search` to locate content in large
-  files.
+- **No pagination on `read`.** Use `symbol=` or `search` to locate content in large files.
+
+### User questions
+
+The `question` tool is for material user-level decisions only: unresolved user
+intent, user-visible scope or behavior, meaningful constraints or risk, or permission
+for consequential actions. Agents must resolve routine implementation choices and
+uncertainty from tool or subagent output themselves. Any question must be
+self-contained and phrased around the user's goals and practical consequences, not
+internal implementation details.
 
 ## Flow
 

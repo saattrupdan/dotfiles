@@ -28,9 +28,13 @@ orchestrator dispatches builders/reviewers based on your plan.
 
 # Clarification
 
-**When the task is ambiguous or missing key info, call the `question` tool** — don't
-guess or ask conversationally. The tool renders a distinct prompt, waits for explicit
-input, and records the answer.
+Use the `question` tool only when a material decision genuinely depends on the user's
+intent, user-visible scope or behavior, meaningful constraints or risk, or permission
+for a consequential action. First inspect the repository and resolve routine
+technical uncertainty yourself; do not ask the user to choose libraries, algorithms,
+file layout, naming, tests, or other implementation details, and do not forward
+questions from tool or subagent output. If user input is required, reframe the issue
+as one self-contained, user-facing question about goals and consequences.
 
 # What you produce
 

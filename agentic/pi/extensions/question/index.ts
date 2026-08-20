@@ -33,7 +33,12 @@ const colors = {
 const Params = Type.Object({
 	question: Type.String({
 		description:
-			"The question to ask. Be specific and self-contained — the user only sees this text, not your reasoning.",
+			"The user-facing question to ask. Use this only for a material choice about user intent, " +
+			"user-visible scope or behavior, meaningful constraints or risk, or permission for a " +
+			"consequential action. Resolve routine technical choices and uncertainty from tool or " +
+			"subagent output yourself; do not forward them to the user. Reframe any genuine question " +
+			"in plain user terms, and make it specific and self-contained — the user only sees this " +
+			"text, not your reasoning.",
 	}),
 	options: Type.Optional(
 		Type.Array(Type.String(), {
@@ -271,9 +276,13 @@ export default function (pi: ExtensionAPI) {
 		name: "question",
 		label: "question",
 		description:
-			"Ask the user a single question and wait for their answer. " +
-			"Pass `question` and optionally `options` (list of choices with 'Other…' auto-appended). " +
-			"Pass `multiSelect: true` for checkbox-list multi-select (↑↓ navigate, Space toggle, Enter submit).",
+			"Ask the user one material, user-level question and wait for their answer. Use this for " +
+			"unresolved user intent, user-visible scope or behavior, meaningful constraints or risk, " +
+			"or permission for a consequential action — not for routine implementation details or " +
+			"uncertainty merely found in tool or subagent output. Reframe genuine technical " +
+			"uncertainty in terms of its user-visible consequences. Pass `question` and optionally " +
+			"`options` (list of choices with 'Other…' auto-appended). Pass `multiSelect: true` for " +
+			"checkbox-list multi-select (↑↓ navigate, Space toggle, Enter submit).",
 		parameters: Params,
 		async execute(_toolCallId, { question, options, multiSelect }, signal, _onUpdate, ctx: ExtensionContext): Promise<AgentToolResult<unknown>> {
 			const item: QuestionItem = { question, ...(options ? { options } : {}), ...(multiSelect ? { multiSelect } : {}) };

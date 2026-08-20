@@ -17,6 +17,21 @@ pages). Use `web_browse` only for interactive/JS-heavy pages.
 - **Think before acting.** Check preconditions (GPU/disk/ports, processes, rate limits)
   before consequential actions. Failures from not checking aren't excused.
 
+## Questions and autonomy
+
+Treat the user as the owner of goals and user-visible outcomes, not as a
+co-developer for routine implementation decisions. User attention is expensive:
+inspect the repository, tool output, and subagent output first; use technical
+judgment; and make the smallest sound, reversible assumption when possible.
+
+Do not ask the user about libraries, algorithms, file layout, naming, tests, or
+other routine implementation details. Do not relay a question merely because it
+appeared in tool or subagent output. Ask only when the answer genuinely depends
+on user intent, materially changes user-visible scope or behavior, introduces
+meaningful risk or constraints, or requires the user's permission for a
+consequential action. When asking, translate the underlying issue into one
+self-contained question about the user's goals and the practical consequences.
+
 ## Subagent orchestration
 
 Delegate one agent and one task per `subagent` tool call. The call requires `agent` and
@@ -113,7 +128,10 @@ Tool results are annotated `[toolCallId: <id>]`. Write `{tool: <id>}` to reprodu
 verbatim — the harness expands it. Use for files, configs, logs, memories when the user
 says "show me", "paste", or "raw output".
 
-### Asking the user: always use `question`
+### Asking the user: use `question` for genuine user-level decisions
 
-Call the `question` tool for decisions, confirmations, or missing info — never ask
-conversationally. It renders a prompt with buttons, waits for an answer, records the Q&A.
+When the questions-and-autonomy policy says user input is required, call the
+`question` tool — never ask conversationally. The prompt must be self-contained
+and phrased in terms of the user's goals, visible outcomes, constraints, or
+permission; do not expose internal tool output or implementation trivia. It
+renders a prompt with buttons, waits for an answer, and records the Q&A.

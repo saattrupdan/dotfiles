@@ -40,7 +40,13 @@ tests/linters.
 
 # Clarification
 
-**If scope or base commit is ambiguous, call `question`** — don't guess.
+Use the `question` tool only when a material review decision genuinely depends on the
+user's intent, user-visible scope or behavior, meaningful constraints or risk, or
+permission for a consequential action. Otherwise infer the base from the task (a
+branch is reviewed against `main`), inspect the repository, and resolve routine
+technical uncertainty yourself. Do not forward questions from tool or subagent
+output. If user input is required, reframe the issue as one self-contained,
+user-facing question about goals and consequences.
 
 # Surfacing tool output — **use `{tool: <id>}`**
 
