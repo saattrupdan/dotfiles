@@ -80,21 +80,57 @@ def resolve_k(peaks, rate_table, mz_tol=0.03):
 
 # ---------- calibration read from file ----------
 def load_mass_cal(f):
-    (m1, tb1), (m2, tb2) = f["CALdata/Mapping"][:]
-    a = (tb2 - tb1) / (np.sqrt(m2) - np.sqrt(m1))
-    b = tb1 - a * np.sqrt(m1)
-    return float(a), float(b)
+    """Mass calibration coefficients for timebin = a*sqrt(m) + b.
+
+    Preferred source is CALdata/Mapping (two (m, timebin) reference points), used
+    by the validated standard-file path. Raw-acquisition exports omit Mapping but
+    store the per-cycle [a, b] coefficients directly in CALdata/Spectrum; fall
+    back to their median across cycles (robust to drift and zero/blank rows)."""
+    if "CALdata/Mapping" in f:
+        (m1, tb1), (m2, tb2) = f["CALdata/Mapping"][:]
+        a = (tb2 - tb1) / (np.sqrt(m2) - np.sqrt(m1))
+        b = tb1 - a * np.sqrt(m1)
+        return float(a), float(b)
+    if "CALdata/Spectrum" in f:
+        sp = np.asarray(f["CALdata/Spectrum"][:], dtype=np.float64)
+        if sp.ndim == 2 and sp.shape[1] == 2 and sp.shape[0] > 0:
+            good = np.isfinite(sp).all(axis=1) & (sp[:, 0] > 0)
+            if good.any():
+                a, b = np.median(sp[good], axis=0)
+                return float(a), float(b)
+    raise ValueError(
+        "no mass calibration in file (neither CALdata/Mapping nor a usable "
+        "CALdata/Spectrum)")
 
 def m_to_tb(m, a, b): return a * np.sqrt(m) + b
 def tb_to_m(tb, a, b): return ((tb - b) / a) ** 2
 
+def has_transmission(f):
+    """True if the file carries a real transmission curve (some raw exports omit it)."""
+    if "PTR-Transmission/Masses_Factors" not in f:
+        return False
+    try:
+        mf = f["PTR-Transmission/Masses_Factors"][:]
+        return bool((mf[0, 0, :] > 0).any())
+    except Exception:
+        return False
+
 def load_transmission(f):
-    mf = f["PTR-Transmission/Masses_Factors"][:]
-    tm, tf = mf[0, 0, :], mf[0, 1, :]
-    keep = tm > 0
-    tm, tf = tm[keep], tf[keep]
-    o = np.argsort(tm)
-    return tm[o], tf[o]
+    """Transmission curve (sorted m/z -> relative transmission).
+
+    Raw-acquisition exports may omit PTR-Transmission entirely; fall back to flat
+    unity transmission so Corrected == Raw (surfaced via has_transmission / the
+    ``transmission_available`` flag in analysis output) instead of crashing."""
+    if "PTR-Transmission/Masses_Factors" in f:
+        mf = f["PTR-Transmission/Masses_Factors"][:]
+        tm, tf = mf[0, 0, :], mf[0, 1, :]
+        keep = tm > 0
+        tm, tf = tm[keep], tf[keep]
+        if tm.size:
+            o = np.argsort(tm)
+            return tm[o], tf[o]
+    # no transmission table in file: unit transmission across the full m/z range
+    return np.array([1.0, 1000.0]), np.array([1.0, 1.0])
 
 def derive_sensitivity_percycle(f, min_corrected=1000.0):
     """Per-cycle ppb-per-corrected-cps from the file's own pre-computed traces.
@@ -306,17 +342,23 @@ def _sigma_tb(mu_m, a, R_phys):
     dtb_dm = a / (2 * np.sqrt(mu_m))     # d(timebin)/d(m)
     return sigma_m * dtb_dm
 
-def deconvolve_cluster(f, centers_m, a, b, R=1200.0, R_phys=2400.0, block=400,
-                       windows=None):
-    """Separate overlapping peaks by vectorised linear least-squares Gaussian
-    unmixing. Returns dict center_m -> raw_trace (scaled to match the window-sum
-    definition so isolated and deconvolved peaks share one Raw scale)."""
-    inten = f["SPECdata/Intensities"]
-    ncyc = inten.shape[0]
+def _cluster_design(centers_m, a, b, R=1200.0, R_phys=2400.0, windows=None,
+                    nbin=None):
+    """Precompute the Gaussian-unmixing design for one cluster of overlapping peaks.
+
+    Returns (tlo, thi, P, norm): the timebin span to read, the projection matrix P
+    (cluster amplitudes A = Y[:, tlo:thi] @ P), and per-peak normalisation to the
+    window-sum scale so deconvolved peaks share the isolated-peak Raw scale. Split
+    out from deconvolve_cluster so many clusters can be applied in a single shared
+    streaming pass (a gzip-compressed file decompresses whole rows, so a per-cluster
+    pass would re-decompress the entire dataset once per cluster)."""
     centers_tb = np.array([m_to_tb(m, a, b) for m in centers_m])
     sig_tb = np.array([_sigma_tb(m, a, R_phys) for m in centers_m])
     tlo = int(np.floor(centers_tb.min() - 6 * sig_tb.max()))
     thi = int(np.ceil(centers_tb.max() + 6 * sig_tb.max()))
+    tlo = max(0, tlo)
+    if nbin is not None:
+        thi = min(nbin, thi)
     x = np.arange(tlo, thi)
     # design matrix G (n_tb x K), unit-height Gaussians
     G = np.exp(-0.5 * ((x[:, None] - centers_tb[None, :]) / sig_tb[None, :]) ** 2)
@@ -328,11 +370,23 @@ def deconvolve_cluster(f, centers_m, a, b, R=1200.0, R_phys=2400.0, block=400,
         wl, wr = peak_window_lr(m, a, b, hwL, hwR)
         xx = np.arange(wl, wr)
         norm[k] = np.exp(-0.5 * ((xx - centers_tb[k]) / sig_tb[k]) ** 2).sum()
+    return tlo, thi, P, norm
 
+
+def deconvolve_cluster(f, centers_m, a, b, R=1200.0, R_phys=2400.0, block=400,
+                       windows=None):
+    """Separate overlapping peaks by vectorised linear least-squares Gaussian
+    unmixing. Returns dict center_m -> raw_trace (scaled to match the window-sum
+    definition so isolated and deconvolved peaks share one Raw scale)."""
+    inten = f["SPECdata/Intensities"]
+    ncyc = inten.shape[0]
+    tlo, thi, P, norm = _cluster_design(centers_m, a, b, R, R_phys, windows,
+                                        nbin=inten.shape[1])
     traces = np.empty((ncyc, len(centers_m)))
     for i in range(0, ncyc, block):
         j = min(i + block, ncyc)
-        Y = inten[i:j, tlo:thi]
+        Y = np.asarray(inten[i:j, tlo:thi], dtype=np.float64)
+        Y[~np.isfinite(Y)] = 0.0
         A = Y @ P                          # (j-i) x K amplitudes
         np.clip(A, 0, None, out=A)
         traces[i:j, :] = A * norm[None, :]
@@ -360,7 +414,8 @@ def extract_traces(f, target_masses, R=1200.0, R_phys=2400.0, block=400,
     a, b = load_mass_cal(f)
     inten = f["SPECdata/Intensities"]
     ncyc = inten.shape[0]
-    avg = f["SPECdata/AverageSpec"][:]
+    avg = np.asarray(f["SPECdata/AverageSpec"][:], dtype=np.float64)
+    avg = np.where(np.isfinite(avg), avg, 0.0)     # tolerate rare corrupt bins
     nbin = avg.shape[0]
 
     scale = estimate_mass_scale(avg, a, b, target_masses)
@@ -399,51 +454,69 @@ def extract_traces(f, target_masses, R=1200.0, R_phys=2400.0, block=400,
     rsum = {lbl: np.zeros(nbin, dtype=np.float64) for lbl in want_ranges}
     rcnt = {lbl: 0 for lbl in want_ranges}
 
-    traces = {}
-    if isolated:
-        win_tb = {m: peak_window_lr(apexes[m], a, b, *_hw_for(m, apexes[m], R, windows))
-                  for m in isolated}
-        buf = {m: np.empty(ncyc) for m in isolated}
-        for i in range(0, ncyc, block):
-            j = min(i + block, ncyc)
-            chunk = inten[i:j, :]
-            for m in isolated:
-                wl, wr = win_tb[m]
-                buf[m][i:j] = chunk[:, wl:wr].sum(axis=1)
-            for lbl, (lo, hi) in want_ranges.items():   # cycles are 1-based inclusive
-                c0, c1 = max(i, lo - 1), min(j, hi)
-                if c1 > c0:
-                    rsum[lbl] += chunk[c0 - i:c1 - i, :].sum(axis=0)
-                    rcnt[lbl] += c1 - c0
+    # ONE shared streaming pass computes every isolated window-sum, every cluster's
+    # deconvolved amplitudes, and the per-range average-spectrum accumulators. A
+    # gzip-compressed file decompresses whole rows, so reading the file once here —
+    # instead of once per cluster (deconvolve_cluster) — turns an O(n_clusters) set
+    # of full-file decompression passes into a single pass (the dominant cost on
+    # dense breath spectra: ~15 clusters was ~15x slower).
+    win_tb = {m: peak_window_lr(apexes[m], a, b, *_hw_for(m, apexes[m], R, windows))
+              for m in isolated}
+    iso_buf = {m: np.empty(ncyc) for m in isolated}
+    cluster_apex = [[apexes[m] for m in g] for g in clusters]
+    cluster_design = []
+    for g, caps in zip(clusters, cluster_apex):
+        apex_hw = {ap: _hw_for(m, ap, R, windows) for m, ap in zip(g, caps)}
+        cluster_design.append(_cluster_design(caps, a, b, R, R_phys, apex_hw, nbin=nbin))
+    cluster_buf = [np.empty((ncyc, len(g))) for g in clusters]
+
+    for i in range(0, ncyc, block):
+        j = min(i + block, ncyc)
+        chunk = np.asarray(inten[i:j, :], dtype=np.float64)
+        chunk[~np.isfinite(chunk)] = 0.0
         for m in isolated:
-            traces[m] = buf[m]
-        # second pass over ONLY each interval's cycles: re-centre each isolated
-        # peak on that interval's average spectrum and overwrite those cycles
-        for lbl, (lo, hi) in want_ranges.items():
-            if not rcnt[lbl]:
-                continue
-            avg_r = rsum[lbl] / rcnt[lbl]
-            rwin = {}
-            for m in isolated:
-                if windows and m in windows:
-                    continue                       # hand-placed window: keep it everywhere (matches viz winManual)
-                ap = refine_apex_local(avg_r, a, b, apexes[m], tol=range_refine_tol)
-                if ap is None:
-                    continue                       # no clear interval peak -> keep whole-run window
-                rwin[m] = peak_window_lr(ap, a, b, *_hw_for(m, ap, R, windows))
-            if not rwin:
-                continue
-            for i in range(lo - 1, hi, block):
-                j = min(i + block, hi)
-                chunk = inten[i:j, :]
-                for m, (wl, wr) in rwin.items():
-                    traces[m][i:j] = chunk[:, wl:wr].sum(axis=1)
-    for g in clusters:
-        apex_hw = {apexes[m]: _hw_for(m, apexes[m], R, windows) for m in g}
-        dec = deconvolve_cluster(f, [apexes[m] for m in g], a, b,
-                                 R=R, R_phys=R_phys, block=block, windows=apex_hw)
-        for m, apex_m in zip(g, [apexes[m] for m in g]):
-            traces[m] = dec[apex_m]
+            wl, wr = win_tb[m]
+            iso_buf[m][i:j] = chunk[:, wl:wr].sum(axis=1)
+        for ci, (tlo, thi, P, norm) in enumerate(cluster_design):
+            A = chunk[:, tlo:thi] @ P
+            np.clip(A, 0, None, out=A)
+            cluster_buf[ci][i:j, :] = A * norm[None, :]
+        for lbl, (lo, hi) in want_ranges.items():       # cycles are 1-based inclusive
+            c0, c1 = max(i, lo - 1), min(j, hi)
+            if c1 > c0:
+                rsum[lbl] += chunk[c0 - i:c1 - i, :].sum(axis=0)
+                rcnt[lbl] += c1 - c0
+
+    traces = {}
+    for m in isolated:
+        traces[m] = iso_buf[m]
+    for g, buf in zip(clusters, cluster_buf):
+        for k, m in enumerate(g):
+            traces[m] = buf[:, k]
+
+    # second pass over ONLY each interval's cycles: re-centre each isolated peak on
+    # that interval's average spectrum and overwrite those cycles (clustered peaks
+    # keep their whole-run deconvolved trace)
+    for lbl, (lo, hi) in want_ranges.items():
+        if not rcnt[lbl]:
+            continue
+        avg_r = rsum[lbl] / rcnt[lbl]
+        rwin = {}
+        for m in isolated:
+            if windows and m in windows:
+                continue                       # hand-placed window: keep it everywhere (matches viz winManual)
+            ap = refine_apex_local(avg_r, a, b, apexes[m], tol=range_refine_tol)
+            if ap is None:
+                continue                       # no clear interval peak -> keep whole-run window
+            rwin[m] = peak_window_lr(ap, a, b, *_hw_for(m, ap, R, windows))
+        if not rwin:
+            continue
+        for i in range(lo - 1, hi, block):
+            j = min(i + block, hi)
+            chunk = np.asarray(inten[i:j, :], dtype=np.float64)
+            chunk[~np.isfinite(chunk)] = 0.0
+            for m, (wl, wr) in rwin.items():
+                traces[m][i:j] = chunk[:, wl:wr].sum(axis=1)
 
     return {m: (traces[m], apexes[m]) for m in target_masses}, (a, b)
 
@@ -475,7 +548,9 @@ def build_discriminator(f, mz_lo=40.0, mz_hi=200.0, block=400):
     tic = np.empty(ncyc)
     for i in range(0, ncyc, block):
         j = min(i + block, ncyc)
-        tic[i:j] = inten[i:j, tlo:thi].sum(axis=1)
+        chunk = np.asarray(inten[i:j, tlo:thi], dtype=np.float64)
+        chunk[~np.isfinite(chunk)] = 0.0
+        tic[i:j] = chunk.sum(axis=1)
     base = np.median(tic[tic > 0]) or 1.0
     return tic / base
 
@@ -667,6 +742,7 @@ def quantify(traces, f, ranges, K=None, primary=None, primary_mz=21.022,
     return rows, dict(K=K, molar_volume=molar_volume, R=R_used,
                       primary_mz=primary_mz, kinetic=k_map is not None,
                       k_anchor=k_anchor, concentration_available=norm is not None,
+                      transmission_available=has_transmission(f),
                       humidity_corrected=humid_applied, humidity_ref=humidity_ref,
                       humidity_p=humidity_p if humid_applied else None)
 

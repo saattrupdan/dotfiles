@@ -364,7 +364,12 @@ def serve(html, config_path, port=8765, timeout=1800, open_browser=True,
     finished = done.wait(timeout)
     if finished:
         analysis_done.wait()      # let the background analysis complete
-        closed.wait(60)           # give the page time to poll, display, and (optionally) open the file
+        # Stay up until the page acks (user clicked 'Open results' / closed the tab).
+        # A generous cap so a user who reads the results for a few minutes before
+        # clicking 'Open' still gets the file opened — the old 60 s window meant a
+        # late click hit a dead server and nothing opened. The page acks on unload,
+        # so a normal close still shuts us down promptly.
+        closed.wait(600)
     httpd.shutdown()
     return state["config"], finished, state["summary"]
 
@@ -688,12 +693,12 @@ _TEMPLATE = r"""<!DOCTYPE html>
       <button class="ghost" id="zoomreset">reset view</button>
       <span class="legs" id="leg-spec">
         <span class="legend"><span class="swatch" style="background:#60a5fa"></span>spectrum</span>
-        <span class="legend"><span class="swatch" style="background:rgba(59,130,246,.5)"></span>integration window</span>
+        <span class="legend"><span class="swatch" style="background:rgba(96,165,250,.28)"></span>integration window</span>
         <span class="legend"><span class="swatch" style="background:var(--hi)"></span>selected peak</span>
       </span>
       <span class="legs" id="leg-trace" style="display:none">
-        <span class="legend"><span class="swatch" style="background:#3b82f6"></span><span id="tracelbl">Raw</span> of <span id="traceof" class="mut">—</span></span>
-        <span class="legend"><span class="swatch" style="background:#39424e"></span>composite VOC signal</span>
+        <span class="legend" id="leg-trace-line"><span class="swatch" style="background:#3b82f6"></span><span id="tracelbl">Raw</span> of <span id="traceof" class="mut">—</span></span>
+        <span class="legend" title="Per-cycle composite of the strong VOC traces, each normalised to its own baseline so no single ion dominates — about 1 during background and rising during a sample. The sample/background intervals are detected from this curve; it is a detector for when signal is present, not itself a concentration."><span class="swatch" style="background:#39424e"></span>composite VOC signal</span>
         <span class="legend"><span class="swatch" style="background:rgba(245,158,11,.35)"></span>sample</span>
         <span class="legend"><span class="swatch" style="background:rgba(100,116,139,.35)"></span>background</span>
       </span>
@@ -1096,7 +1101,10 @@ function drawSpec(){
   for(const p of peaks){ if(!p.use||p.mz<lo-.5||p.mz>hi+.5) continue;
     const [wl,wr]=windowTB(dispApex(p),p.winL,p.winR), mL=tb2m(wl), mR=tb2m(wr);
     const hov=p.id!==selId && p.id===hoverPeakId;
-    x.fillStyle=p.id===selId?"rgba(245,158,11,.14)":hov?"rgba(96,165,250,.24)":"rgba(59,130,246,.13)";
+    // the integration window is always a light-blue band (matches the legend); the
+    // SELECTED peak's band is a touch stronger and additionally carries the amber
+    // apex line + dashed edge handles that mark the selection.
+    x.fillStyle=p.id===selId?"rgba(96,165,250,.30)":hov?"rgba(96,165,250,.22)":"rgba(96,165,250,.14)";
     const xa=X(Math.max(mL,lo)), xb=X(Math.min(mR,hi)); x.fillRect(xa,top,Math.max(1,xb-xa),plotH); }
   // ⌘/Ctrl-drag preview of a new peak
   if(drag && drag.mode==="newpeak"){ const a2=Math.min(drag.m0,drag.m1), b2=Math.max(drag.m0,drag.m1);
@@ -1372,6 +1380,8 @@ function renderPeaks(){ const box=document.getElementById("peaksbody"); if(!box)
   box.appendChild(ul);
   const sp=selPeak(); const tof=document.getElementById("traceof");
   if(tof) tof.textContent = sp? sp.label+" (m/z "+sp.mz.toFixed(3)+")":"—";
+  // the per-compound trace legend entry only makes sense once a compound is chosen
+  const ll=document.getElementById("leg-trace-line"); if(ll) ll.style.display=sp?"":"none";
   renderId(); }
 
 // ---- identification: scored candidates + isotope evidence for the selected peak ----
@@ -1382,8 +1392,21 @@ function evText(c){ if(!c.iso_obs) return '<span class="mut">no isotope data</sp
          `M+2 <span class="${cls(c.iso_obs[1],c.iso_pred[1])}">${pct(c.iso_obs[1])}</span>/${pct(c.iso_pred[1])}`; }
 function renderId(){ const el=document.getElementById("idpanel"), conf=document.getElementById("idconf"), p=selPeak();
   if(!el) return;
-  if(!p||!p.candidates||!p.candidates.length){
-    el.innerHTML='<div class="mut">No candidate formulas for this peak (added manually or outside the mass window).</div>';
+  if(!p){ el.innerHTML='<div class="mut">Select a peak to see candidate formulas, ranked by mass + isotope pattern + plausibility.</div>';
+    if(conf) conf.textContent=""; return; }
+  if(!p.candidates||!p.candidates.length){
+    const esc=s=>(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+    // no enumerated candidate (a reagent/inorganic ion, a manually-added peak, or a
+    // mass outside the organic window) — still surface the current assignment rather
+    // than a bare "nothing here", so every peak shows its identity.
+    if(p.formula||p.label){
+      el.innerHTML='<div class="cand chosen"><span class="f">'+esc(p.formula||p.label)+'</span>'+
+        ((p.formula&&p.label&&p.label!==p.formula)?'<span class="cname">'+esc(p.label)+'</span>':'')+
+        '<span class="meta">current assignment</span></div>'+
+        '<div class="idnote" style="margin-top:8px">No enumerated formula candidates for this m/z — it looks like a reagent/inorganic ion, a manually-added peak, or a mass outside the organic window. The assignment above is kept as-is.</div>';
+    } else {
+      el.innerHTML='<div class="mut">No candidate formulas for this peak (a reagent/inorganic ion, added manually, or outside the mass window).</div>';
+    }
     if(conf) conf.textContent=""; return; }
   if(conf) conf.innerHTML=(p.id_ambiguous?'<span class="pill hi">ambiguous</span> ':'')+
     'top confidence '+Math.round((p.id_confidence||0)*100)+'%';
@@ -1476,10 +1499,17 @@ function submitDone(){
         '<p class="mut" style="font-size:12px">'+(st.out?'…or just ':'You can ')+'close this tab when you’re done.</p>');
       const ob=document.getElementById("openclose");
       if(ob) ob.onclick=()=>{ ob.disabled=true; ob.textContent="Opening…";
-        fetch("/open",{method:"POST"}).catch(()=>{}).finally(()=>{
-          setTimeout(()=>{ try{window.close()}catch(e){} },200);
-          setTimeout(()=>{ if(ob) ob.textContent="Opened — you can close this tab"; },700); }); };
-      setTimeout(ackNow,45000);   // fallback: let the server/CLI finish if the user leaves the tab open
+        // open the file first and wait for the server's confirmation; only report
+        // success once it actually launched. Browsers block window.close() on a tab
+        // they opened (not script-opened), so we don't depend on it — we tell the
+        // user they can close the tab, and try close() as a best-effort convenience.
+        fetch("/open",{method:"POST"}).then(r=>r.json()).catch(()=>({ok:false})).then(res=>{
+          if(res&&res.ok){ ob.textContent="Opened ✓ — you can close this tab";
+            setTimeout(()=>{ try{window.close()}catch(e){} },300); }
+          else { ob.disabled=false; ob.textContent="Couldn’t open automatically — open it from: ";
+            const code=document.createElement("code"); code.textContent=st.out||""; ob.after(code); } }); };
+      // if the user just closes the tab (never clicks Open), let the CLI finish.
+      window.addEventListener("pagehide",ackNow); window.addEventListener("beforeunload",ackNow);
     }
     else if(st.status==="error"){ finish('<div class="xmark">!</div><h2>Analysis failed</h2>'+
       '<p class="mut">'+(st.error||"Unknown error")+'</p>'+
@@ -1503,8 +1533,8 @@ function refreshSpecRange(){ const sel=document.getElementById("specrange"); if(
   else { const o=document.createElement("option"); o.value="_"; o.disabled=true;
     o.textContent="per-interval needs live mode"; sel.appendChild(o); }
   if([...sel.options].some(o=>o.value===prev)) sel.value=prev;
-  else { const fs=ranges.findIndex(r=>r.class==="sample");   // review peaks against a sample by default
-    sel.value=(SERVED && fs>=0)?(""+fs):"all"; } }
+  else sel.value="all";   // start on the whole-run average, then switch to an interval to check drift
+}
 // spinner shown over the plot while an interval is averaged server-side
 let _specTok=0, _spinTimer=null;
 function showSpin(on,msg){ const el=document.getElementById("specspin"); if(!el) return;
@@ -1624,6 +1654,16 @@ document.addEventListener("keydown",e=>{
   const t=e.target, typing=t&&(t.tagName==="INPUT"||t.tagName==="TEXTAREA"||t.tagName==="SELECT");
   if(e.key==="Escape"){ if(tourArr){ endTour(); return; } closePanels(); if(themeMenu) themeMenu.hidden=true; return; }
   if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="z"){ e.preventDefault(); undo(); return; }
+  // ↑/↓ move the peak selection to the previous/next compound in the sidebar
+  if(!typing && (e.key==="ArrowDown"||e.key==="ArrowUp") && peaks.length){
+    e.preventDefault();
+    const i=peaks.findIndex(p=>p.id===selId);
+    const ni = i<0 ? (e.key==="ArrowDown"?0:peaks.length-1)
+      : (e.key==="ArrowDown"?Math.min(peaks.length-1,i+1):Math.max(0,i-1));
+    const np=peaks[ni]; if(np){ selectPeak(np);
+      const box=document.getElementById("peaksbody");
+      const li=box&&box.querySelectorAll("li")[ni]; if(li) li.scrollIntoView({block:"nearest"}); }
+    return; }
   // Backspace/Del removes the SELECTED INTERVAL on the signal-over-time tab only
   // (peaks are removed via the ✕ in the peaks sidebar 'details' view, not the keyboard)
   if(!typing && (e.key==="Backspace"||e.key==="Delete") && tab==="trace" && selRange!=null){
@@ -1679,7 +1719,7 @@ function tourSteps(){ const s=[];
   s.push({sel:".sidebar .card",place:"right",tab:"spec",title:"Peaks",
     body:"Every compound we detected. Click one to select it and zoom to its mass peak; the shaded band is the m/z window that’s integrated for it."});
   s.push({sel:"#specrangewrap",place:"bottom",tab:"spec",title:"Review peaks per interval",
-    body:"“Average over” picks which interval’s spectrum you’re looking at — defaulting to your first sample. Peaks drift a little between intervals, so the apex line and window re-centre on each interval’s real peak (a spinner shows while it averages)."});
+    body:"“Average over” picks which spectrum you’re looking at — it starts on the whole run. Switch to a single interval to check for drift: peaks move a little between intervals, so the apex line and window re-centre on each interval’s real peak (a spinner shows while it averages)."});
   s.push({sel:"#idcard",place:"top",tab:"spec",title:"Identification",
     body:"Candidate formulas for the selected peak, ranked by exact mass and isotope pattern. Click one to assign it."});
   s.push({sel:"#cfgBtn",place:"bottom",title:"Settings",

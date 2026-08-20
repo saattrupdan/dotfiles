@@ -54,21 +54,31 @@ def _emit(obj, raw=True):
 
 
 def detect_peaks(f, min_rel_height=1e-3, max_peaks=300, mz_min=15.0, mz_max=None,
-                 R_phys=2400.0):
+                 R_phys=2400.0, noise_sigma=6.0):
     """Untargeted peak detection on the average spectrum.
 
-    Local maxima above a relative-height threshold, then merged if closer than one
+    Local maxima above a height threshold, then merged if closer than one
     instrument linewidth (FWHM = m/R_phys), keeping the tallest — two maxima closer
     than the resolution are one peak (ripples on a shared apex), never two. Each kept
     peak also gets a `prominence`: how far its apex rises above the local baseline
     within ~1 linewidth each side. A real peak rises from near-zero baseline, so its
     prominence ≈ its height; a ripple or shoulder riding a taller peak's flank barely
     dips, so its prominence is tiny — this lets `annotate_peaks` flag noise combs
-    (dozens of ~20 cps satellites around an intense ion) without deleting anything."""
+    (dozens of ~20 cps satellites around an intense ion) without deleting anything.
+
+    The threshold is the LARGER of a relative floor (amax*min_rel_height) and an
+    absolute noise floor (median + noise_sigma * robust_sigma). The relative floor
+    dominates on real spectra; the noise floor stops a low-count/blank file — where
+    amax itself is noise — from returning hundreds of spurious maxima. Non-finite
+    bins (rare file corruption) are treated as zero rather than poisoning amax."""
     a, b = ptrms.load_mass_cal(f)
-    avg = f["SPECdata/AverageSpec"][:]
+    avg = np.asarray(f["SPECdata/AverageSpec"][:], dtype=np.float64)
+    avg = np.where(np.isfinite(avg), avg, 0.0)
     amax = float(avg.max())
-    thr = amax * min_rel_height
+    med = float(np.median(avg))
+    mad = float(np.median(np.abs(avg - med)))
+    sigma = 1.4826 * mad if mad > 0 else (float(avg.std()) or 1e-9)
+    thr = max(amax * min_rel_height, med + noise_sigma * sigma)
     hi = (avg[1:-1] > avg[:-2]) & (avg[1:-1] >= avg[2:]) & (avg[1:-1] > thr)
     idx = np.where(hi)[0] + 1
     mz = ptrms.tb_to_m(idx, a, b)
@@ -99,10 +109,54 @@ def detect_peaks(f, min_rel_height=1e-3, max_peaks=300, mz_min=15.0, mz_max=None
         return float(avg[i]) - base
 
     peaks = [{"mz": round(m, 4), "height": round(h, 1),
-              "rel_height": round(h / amax, 5),
+              "rel_height": round(h / amax, 5) if amax > 0 else 0.0,
               "prominence": round(prominence(ib), 1)} for m, h, ib in merged]
     peaks.sort(key=lambda p: p["mz"])
     return peaks
+
+
+# reagent (primary) ions: at least one dominates every real PTR spectrum —
+# H3O+ isotope at m/z 21 (H3O+ mode), or NO+/O2+ in switched-reagent modes.
+_PRIMARY_MZ = (21.022, 30.994, 31.989, 33.994, 37.028)
+
+
+def assess_signal(f, avg=None, a=None, b=None):
+    """Judge whether a file holds real measurement signal or is a blank capture.
+
+    Every real PTR run is dominated by its reagent (primary) ion, which towers over
+    the spectral noise. A blank / no-beam / aborted acquisition has no ion beam, so
+    even the primary ion sits at the noise floor and every apparent 'peak' is just
+    Poisson noise — detecting analytes from it is meaningless. Robustly compares the
+    strongest primary-ion region against the spectrum's median + robust sigma.
+    Returns dict(signal_present, primary_snr, reason)."""
+    if avg is None:
+        avg = f["SPECdata/AverageSpec"][:]
+    avg = np.asarray(avg, dtype=np.float64)
+    finite = avg[np.isfinite(avg)]
+    if finite.size == 0:
+        return dict(signal_present=False, primary_snr=0.0,
+                    reason="average spectrum is entirely non-finite (corrupt file)")
+    med = float(np.median(finite))
+    mad = float(np.median(np.abs(finite - med)))
+    sigma = 1.4826 * mad if mad > 0 else (float(finite.std()) or 1e-9)
+    if a is None:
+        a, b = ptrms.load_mass_cal(f)
+
+    def local_max(mz):
+        tb = int(ptrms.m_to_tb(mz, a, b))
+        w = avg[max(0, tb - 30):tb + 30]
+        w = w[np.isfinite(w)]
+        return float(w.max()) if w.size else med
+
+    primary_snr = max((local_max(mz) - med) / sigma for mz in _PRIMARY_MZ)
+    present = primary_snr >= 20.0
+    reason = "" if present else (
+        "no reagent (primary) ion detectable above the spectral noise "
+        "(primary-ion S/N %.1f < 20) — this file appears to be a blank / no-beam / "
+        "aborted acquisition, not a measurement, so no analyte peaks can be "
+        "extracted from it." % primary_snr)
+    return dict(signal_present=present, primary_snr=round(primary_snr, 1),
+                reason=reason)
 
 
 # ----------------------------- commands -----------------------------
@@ -126,6 +180,7 @@ def cmd_inspect(args):
             "duration_min": round(ncyc * dur / 60, 1),
             "n_spectrum_bins": int(f["SPECdata/Intensities"].shape[1]),
             "mass_cal": {"model": "timebin = a*sqrt(mz) + b", "a": a, "b": b},
+            "transmission_available": ptrms.has_transmission(f),
             "transmission_masses": [round(x, 3) for x in tm.tolist()],
             "transmission_factors": [round(x, 4) for x in tf.tolist()],
             "concentration_K_from_file": ptrms.derive_K(
@@ -247,6 +302,16 @@ def annotate_peaks(peaks, avgspec=None, a=None, b=None, R=1200.0, elements=None)
         if prom is not None and prom < 10.0 and prom < 0.2 * max(h, 1):
             flags.append("low prominence (%.1f cps above local baseline) — likely a "
                          "noise ripple / shoulder of a nearby taller peak" % prom)
+        # H3O+ reagent saturation skirt: the primary ion at m/z ~19 saturates the
+        # detector (the run normalises on its m/z 21 isotope instead), and its
+        # ringing throws a skirt of strong, sharp satellites between the primary and
+        # that isotope. No real H3O+-chemistry analyte lives at m/z ~19.05–20.95
+        # (ammonia at 18.03 sits BELOW the primary and is untouched), so peaks there
+        # — which are high-prominence and thus escape the ripple test — are flagged
+        # as reagent-region artifacts, not analytes.
+        if 19.05 < mz < 20.95 and not any(fl.startswith("reagent/cluster") for fl in flags):
+            flags.append("H3O+ primary saturation region (m/z 19–21) — detector "
+                         "ringing of the saturated reagent ion, not an analyte")
         if flags:
             e["likely_artifact"] = flags
         # A ready-to-use label so you don't hand-format one (and so `unknown`
@@ -259,10 +324,37 @@ def annotate_peaks(peaks, avgspec=None, a=None, b=None, R=1200.0, elements=None)
             e["suggested_label"] = reagent
         elif top and top.get("name") and e.get("id_confidence", 0) >= 0.6:
             e["suggested_label"] = top["name"]
+        elif (top and top.get("formula")
+              and all(ch in "CHNO0123456789" for ch in top["formula"])
+              and top["formula"].find("C") == 0
+              and not e.get("id_ambiguous") and len(cands) >= 2
+              and e.get("id_confidence", 0) >= 0.9):
+            # A near-certain plain-CHNO composition with no library name: the FORMULA
+            # is the identity — far more useful than a bare "unknown m/z". (A peak
+            # that reads 'unknown' while its Identification card shows one formula at
+            # ~100% confidence should just carry that formula.) Guards, so this only
+            # fires for a solid call: the winner beat rivals (>=2 candidates, at very
+            # low m/z a lone candidate scores 1.0 for nothing), and it contains only
+            # the common breath elements C/H/N/O — a confident halogen/S/P formula at
+            # an off-mass is more likely a calibration artifact, so it stays 'unknown'
+            # for the human to judge (its candidate is still shown in the viz).
+            # Recorded in `suggested_formula` too, so it survives into the config.
+            e["suggested_label"] = top["formula"]
+            e["suggested_formula"] = top["formula"]
         else:
             e["suggested_label"] = "unknown m/z %.3f" % mz
         out.append(e)
     return drift, out
+
+
+def _is_noise_artifact(flags):
+    """True if a peak's likely_artifact flags mark it as instrument NOISE — a ringing
+    comb, a low-prominence ripple/shoulder, a tail, or the reagent saturation-region
+    skirt. These are never analytes and are dropped from the default `peaks` menu and
+    the --auto-peaks panel. A plain reagent/cluster diagnostic ion is NOT noise: it is
+    a real ion, kept but labelled, so it stays visible."""
+    return any(("ringing" in x) or ("low prominence" in x) or ("tail" in x)
+               or ("saturation region" in x) for x in (flags or []))
 
 
 def _compact_peak(e):
@@ -276,6 +368,8 @@ def _compact_peak(e):
            "prominence": e.get("prominence"),
            "neutral_mass": e.get("neutral_mass"),
            "suggested_label": e.get("suggested_label")}
+    if e.get("suggested_formula"):
+        out["suggested_formula"] = e["suggested_formula"]
     if top:
         out["top_candidate"] = {"formula": top.get("formula"), "name": top.get("name"),
                                 "delta_mDa": top.get("delta_mDa"), "k": top.get("k"),
@@ -295,12 +389,31 @@ def _compact_peak(e):
 
 def cmd_peaks(args):
     with h5py.File(args.h5, "r") as f:
-        peaks = detect_peaks(f, args.min_height, args.max_peaks, args.mz_min, args.mz_max)
         a, b = ptrms.load_mass_cal(f)
-        avg = f["SPECdata/AverageSpec"][:]
+        avg = np.where(np.isfinite(f["SPECdata/AverageSpec"][:]), f["SPECdata/AverageSpec"][:], 0.0)
+        sig = assess_signal(f, avg=avg, a=a, b=b)
+        if not sig["signal_present"]:
+            _emit({"n_peaks": 0, "signal_present": False,
+                   "primary_ion_snr": sig["primary_snr"],
+                   "note": "No significant signal. " + sig["reason"] +
+                           " Report this file as a blank/no-beam capture — do not "
+                           "fabricate an analyte list from the noise.",
+                   "peaks": []}, args.raw)
+            return
+        peaks = detect_peaks(f, args.min_height, args.max_peaks, args.mz_min, args.mz_max)
     drift, peaks = annotate_peaks(peaks, avgspec=avg, a=a, b=b)
+    # By default the menu excludes instrument-noise artifacts (ringing combs,
+    # low-prominence ripples, reagent saturation-region skirt) so that copying the
+    # list straight into a config can't ship a noise comb; reagent/cluster diagnostic
+    # ions stay (labelled). --include-artifacts shows the raw list with every flag.
+    include_art = getattr(args, "include_artifacts", False)
+    n_noise = sum(1 for p in peaks if _is_noise_artifact(p.get("likely_artifact")))
+    if not include_art:
+        peaks = [p for p in peaks if not _is_noise_artifact(p.get("likely_artifact"))]
     n_amb = sum(1 for p in peaks if p.get("id_ambiguous"))
     n_ovl = sum(1 for p in peaks if p.get("overlap"))
+    # near-duplicate 'peak intervals': windows almost on top of each other
+    dup_pairs = _window_overlap_pairs(peaks)
     full = getattr(args, "full", False)
     if full:
         note = ("Each peak lists candidate FORMULAS ranked by `probability` "
@@ -315,8 +428,7 @@ def cmd_peaks(args):
                 "`iso_pred` vs `iso_obs` = predicted vs observed (M+1,M+2)/M. "
                 "`suggested_label` is a ready-to-use default label. `prominence` is the "
                 "apex's rise above local baseline in cps (real peak ≈ height; noise "
-                "ripple ≈ 0). DROP likely_artifact peaks (reagent/cluster, tail/"
-                "ringing, low-prominence noise). neutral_mass = mz − proton.")
+                "ripple ≈ 0). neutral_mass = mz − proton.")
         out_peaks = peaks
     else:
         note = ("Compact view (default). Each peak: `suggested_label` (a ready-to-use "
@@ -324,33 +436,92 @@ def cmd_peaks(args):
                 "`top_candidate` (best formula/name/mass-error, chosen by isotope "
                 "pattern + plausibility, NOT nearest-mass), `id_confidence`, and, when "
                 "relevant, `id_ambiguous` (close rivals), `overlap` (quantification "
-                "uncertainty), and `likely_artifact` (DROP these — includes reagent/"
-                "cluster ions, tail/ringing, and low-prominence noise ripples). "
+                "uncertainty), and `likely_artifact` (reagent/cluster diagnostic ions "
+                "— real, keep or drop as you like). "
                 "`prominence` is the apex's rise above its local baseline in cps: a "
                 "real peak's ≈ its height, a noise ripple/shoulder's is near 0. "
                 "neutral_mass = mz − proton. Pass `--full` for every candidate + the "
                 "isotope arrays.")
         out_peaks = [_compact_peak(p) for p in peaks]
-    _emit({"n_peaks": len(peaks), "mass_drift": round(drift, 6),
+    note += (" This list is ALREADY cleaned: %d instrument-noise peaks (ringing "
+             "combs, low-prominence ripples, reagent saturation-region skirt) were "
+             "dropped — pass --include-artifacts to see them. Any peak here is safe "
+             "to quantify." % n_noise) if (n_noise and not include_art) else ""
+    if dup_pairs:
+        note += (" WARNING: %d pair(s) of peaks have integration windows that "
+                 "almost coincide (>60%% overlap) — e.g. %s. These double-count the "
+                 "same signal; keep only one m/z from each pair in your config." % (
+                     len(dup_pairs), ", ".join(
+                         "m/z %.4f≈%.4f" % (x["mz"], y["mz"])
+                         for x, y, _ in dup_pairs[:4])))
+    _emit({"n_peaks": len(peaks), "n_noise_dropped": (0 if include_art else n_noise),
+           "mass_drift": round(drift, 6),
            "n_ambiguous": n_amb, "n_overlapping": n_ovl,
+           "n_window_overlap_pairs": len(dup_pairs),
            "note": note, "peaks": out_peaks}, args.raw)
 
 
 def cmd_segments(args):
     with h5py.File(args.h5, "r") as f:
+        ncyc = int(f["SPECdata/Intensities"].shape[0])
+        sig = assess_signal(f)
         segs = ptrms.detect_segments(
             f, min_duration=args.min_duration, grad_thr=args.grad_thr,
             high_ratio=args.high_ratio)
         # always consolidate fragmented backgrounds; merge samples only if asked
         segs = ptrms.merge_adjacent_segments(
             segs, high_gap=args.merge_high_gap or 0, low_gap=200)
-    _emit({"n_segments": len(segs),
-           "note": "class 'high' = elevated signal (likely a sample); 'low' = "
-                   "background or pre-run setup. Final outputs use chronological "
-                   "sample_01/background_01 labels; do not ask for sample names. "
-                   "merged_segments > 1 marks high plateaus joined across a short "
-                   "unclassified transition.",
-           "segments": segs}, args.raw)
+    note = ("class 'high' = elevated signal (likely a sample); 'low' = "
+            "background or pre-run setup. Final outputs use chronological "
+            "sample_01/background_01 labels; do not ask for sample names. "
+            "merged_segments > 1 marks high plateaus joined across a short "
+            "unclassified transition.")
+    out = {"n_segments": len(segs), "note": note, "segments": segs}
+    if not sig["signal_present"]:
+        out["signal_present"] = False
+        out["warning"] = ("No significant signal — " + sig["reason"] +
+                          " Segmentation is not meaningful for a blank file.")
+    elif not segs:
+        out["warning"] = (
+            f"No stable plateaus found (file has {ncyc} cycles). If the run is very "
+            "short, analyse the whole file as one interval (omit ranges); otherwise "
+            "loosen --min-duration / --grad-thr.")
+    _emit(out, args.raw)
+
+
+def _window_overlap_pairs(peaks, R=1200.0, thresh=0.6):
+    """Pairs of peaks whose default integration windows (±mz/2R) overlap by more
+    than `thresh` of the narrower window — i.e. two 'peak intervals' that sit almost
+    on top of each other. Such near-duplicates double-count the same signal, so the
+    caller either merges them (auto path) or warns (curation)."""
+    ps = sorted(peaks, key=lambda p: p["mz"])
+    pairs = []
+    for i in range(len(ps) - 1):
+        m1, m2 = ps[i]["mz"], ps[i + 1]["mz"]
+        hw1, hw2 = m1 / (2 * R), m2 / (2 * R)
+        ov = (m1 + hw1) - (m2 - hw2)
+        if ov > 0 and ov / min(2 * hw1, 2 * hw2) > thresh:
+            pairs.append((ps[i], ps[i + 1], ov / min(2 * hw1, 2 * hw2)))
+    return pairs
+
+
+def _merge_overlapping_windows(peaks, R=1200.0, thresh=0.6):
+    """Collapse peaks whose integration windows overlap by > `thresh`, keeping the
+    taller of each pair — so an untargeted export never ships two nearly-coincident
+    'peak intervals' for what the instrument cannot resolve as two ions."""
+    ps = sorted(peaks, key=lambda p: p["mz"])
+    out = []
+    for p in ps:
+        if out:
+            q = out[-1]
+            hwq, hwp = q["mz"] / (2 * R), p["mz"] / (2 * R)
+            ov = (q["mz"] + hwq) - (p["mz"] - hwp)
+            if ov > 0 and ov / min(2 * hwq, 2 * hwp) > thresh:
+                if p.get("height", 0) > q.get("height", 0):
+                    out[-1] = p                       # keep the taller apex
+                continue
+        out.append(p)
+    return out
 
 
 def _auto_peaks(f, args):
@@ -361,20 +532,25 @@ def _auto_peaks(f, args):
     they are real ions, and an untargeted export usually wants them. Hand-curating a
     config still gives finer chemistry and segment judgment; this is a safe default,
     not a substitute for it."""
-    peaks = detect_peaks(f, args.min_height, args.max_peaks, args.mz_min, args.mz_max)
     a, b = ptrms.load_mass_cal(f)
-    avg = f["SPECdata/AverageSpec"][:]
+    avg = np.where(np.isfinite(f["SPECdata/AverageSpec"][:]), f["SPECdata/AverageSpec"][:], 0.0)
+    if not assess_signal(f, avg=avg, a=a, b=b)["signal_present"]:
+        return []                                 # blank/no-beam file: nothing to extract
+    peaks = detect_peaks(f, args.min_height, args.max_peaks, args.mz_min, args.mz_max)
     _, peaks = annotate_peaks(peaks, avgspec=avg, a=a, b=b)
+    peaks = [p for p in peaks if not _is_noise_artifact(p.get("likely_artifact"))]
+    # collapse near-duplicate peaks whose integration windows almost coincide
+    peaks = _merge_overlapping_windows(peaks)
     out = []
     for p in peaks:
-        arts = p.get("likely_artifact") or []
-        if any(("ringing" in x) or ("low prominence" in x) for x in arts):
-            continue                              # instrument noise, not an analyte
         sl = p.get("suggested_label", "") or ""
         # a real name -> label the channel; an "unknown m/z X" -> leave blank so the
         # CSV shows a clean `m<mz>` (the mass is already the variable name)
         lbl = "" if sl.startswith("unknown m/z") else sl
-        out.append({"mz": p["mz"], "label": lbl})
+        o = {"mz": p["mz"], "label": lbl}
+        if p.get("suggested_formula"):               # near-certain composition -> carry it
+            o["formula"] = p["suggested_formula"]
+        out.append(o)
     return out
 
 
@@ -455,6 +631,19 @@ def cmd_analyze(args):
     with h5py.File(args.h5, "r") as f:
         peaks = _load_peaks(args, f)
         if not peaks:
+            # distinguish a genuinely blank file from a missing peak list
+            if getattr(args, "auto_peaks", False):
+                sig = assess_signal(f)
+                if not sig["signal_present"]:
+                    _emit({"out": None, "n_rows": 0, "n_peaks": 0,
+                           "signal_present": False,
+                           "primary_ion_snr": sig["primary_snr"],
+                           "note": "No output written. " + sig["reason"] +
+                                   " Report this file as a blank/no-beam capture."},
+                          args.raw)
+                    return
+                sys.exit("No analyte peaks cleared the noise threshold (file has "
+                         "signal but no resolvable peaks). Inspect with `ptr peaks`.")
             sys.exit("No peaks. Pass --peaks-json '[{\"mz\":..}]', --config, or --auto-peaks.")
         masses = [float(p["mz"]) for p in peaks]
         labels = {float(p["mz"]): (p.get("label") or p.get("formula") or "")
@@ -537,6 +726,12 @@ def cmd_analyze(args):
                 "Run `calibrate` against a reference CSV, or pass --K, to match exactly.")
     if not params.get("concentration_available"):
         note = "No primary-ion/pre-computed data: Conc columns are NaN. Pass --K and ensure a primary-ion peak exists."
+    trans_note = None
+    if not params.get("transmission_available", True):
+        trans_note = ("This file carries no transmission curve, so unit transmission "
+                      "was assumed: Corrected == Raw. Absolute Corrected/Conc values "
+                      "are uncalibrated for mass-dependent transmission.")
+        note = (note + " " + trans_note) if note else trans_note
 
     # per-compound kinetic reporting + humidity flags
     kinetic_info = None
@@ -925,6 +1120,10 @@ def main():
     pp.add_argument("--full", action="store_true",
                     help="Emit every candidate formula + isotope arrays per peak "
                          "(default is a compact top-candidate view)")
+    pp.add_argument("--include-artifacts", action="store_true",
+                    help="Include instrument-noise peaks (ringing combs, "
+                         "low-prominence ripples, reagent saturation skirt) that the "
+                         "default view drops")
     pp.add_argument("--min-height", type=float, default=1e-3,
                     help="Threshold as fraction of tallest peak (default 1e-3)")
     pp.add_argument("--max-peaks", type=int, default=300)

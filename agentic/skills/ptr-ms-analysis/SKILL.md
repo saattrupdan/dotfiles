@@ -187,24 +187,40 @@ ptr peaks FILE.h5 --min-height 0.001
 ```
 
 Each peak comes annotated (compact by default):
-`{mz, height, rel_height, prominence, neutral_mass, suggested_label, top_candidate,
-id_confidence, [id_ambiguous], [overlap], [likely_artifact]}`. **`suggested_label` is a ready-to-use
-label** — drop it straight into your config's peaks (it is the confident compound name, a
-reagent/cluster name, or an honest `unknown m/z 75.046` with a clean 3-dp m/z), so you do
-**not** hand-format labels or round floats yourself. Override it when your chemistry
-judgment differs. `top_candidate` is the best formula/name chosen by isotope pattern +
+`{mz, height, rel_height, prominence, neutral_mass, suggested_label, [suggested_formula],
+top_candidate, id_confidence, [id_ambiguous], [overlap], [likely_artifact]}`. **`suggested_label`
+is a ready-to-use label** — drop it straight into your config's peaks (it is the confident
+compound name, a reagent/cluster name, a near-certain **formula** when the composition is
+sure but the compound is unnamed, or an honest `unknown m/z 75.046` with a clean 3-dp m/z),
+so you do **not** hand-format labels or round floats yourself. Override it when your
+chemistry judgment differs. When a peak has no library name but one plain **C/H/N/O** formula
+wins decisively (top candidate, ≥2 candidates considered, `id_confidence ≥ 0.9`, not
+ambiguous), that formula is offered as both `suggested_label` and `suggested_formula` and
+carried into `--auto-peaks` configs — a confident composition is a real identity, far better
+than a bare "unknown". (A confident halogen/S/P formula at an off-mass is treated as a likely
+calibration artifact and left `unknown m/z …` for you to judge; its candidate still shows in
+`--full` and in the viz Identification card.) **Near-duplicate peaks whose integration windows
+almost coincide (>60 % overlap) double-count one signal**: `n_window_overlap_pairs` warns of
+any in the list, and `--auto-peaks` already merges them (keeps the taller apex) — keep only
+one m/z from each such pair in a hand-built config. `top_candidate` is the best formula/name chosen by isotope pattern +
 plausibility (**not** nearest-mass); `id_ambiguous` lists close rivals when the call is
 not clear-cut. You do not need to query `TraceInfo` or compute mass offsets yourself.
-`likely_artifact` flags reagent ions, water clusters, tail/ringing, and low-prominence
-noise — **drop every `likely_artifact` peak from an analyte panel** (keep reagent/cluster
-diagnostic ions only if you deliberately want them). `prominence` is the apex's rise above
-its local baseline in cps: a real peak's ≈ its height, while a noise ripple or the shoulder
-of a taller peak sits near 0. **A dense run of near-equal small peaks (e.g. a dozen ~20 cps
-maxima spaced a few mDa apart around an intense ion) is instrument ringing, not a dozen
-analytes** — the tool now flags these `likely_artifact` (low prominence); do not re-add
-them. Pass **`--full`** only when you need every candidate formula and the isotope arrays
-for a deep isobar call — the default view is much smaller and is all you need to curate.
-Investigate every `apex_warning` from `analyze`.
+**The default `peaks` list is already cleaned of instrument noise** — ringing combs,
+low-prominence ripples, and the H₃O⁺ reagent saturation-region skirt (m/z ~19–21) are
+dropped before you see them (`n_noise_dropped` reports how many; `--include-artifacts`
+shows them). So **every peak in the list is safe to quantify**: you can copy the whole set
+into a config without shipping a comb. The only `likely_artifact` flags that remain are
+reagent/cluster **diagnostic** ions (H₃O⁺, O₂⁺, NO⁺, water clusters) — real ions you keep or
+drop as you like. `prominence` is the apex's rise above its local baseline in cps (real peak
+≈ its height; a ripple/shoulder ≈ 0). Pass **`--full`** only when you need every candidate
+formula and the isotope arrays for a deep isobar call — the default view is much smaller and
+is all you need to curate. Investigate every `apex_warning` from `analyze`.
+
+**Blank / no-beam files.** Not every file is a measurement. If `peaks` (or `analyze
+--auto-peaks`) returns `signal_present: false` with `n_peaks: 0`, the file has no reagent
+(primary) ion above the spectral noise — it is a blank / no-beam / aborted capture. Report
+it as such and stop; **do not fabricate an analyte list from the noise** or lower thresholds
+to force peaks out of it.
 
 **Then check behaviour, not just mass.** A peak's identity is not settled by its m/z
 alone — its time profile tells you whether it is a breath analyte or instrument
@@ -302,9 +318,10 @@ Before delivery, verify:
 
 - the requested scope is comprehensive or explicitly targeted;
 - no credible channel was dropped solely because its chemistry was uncertain;
-- every `likely_artifact` peak was dropped (reagent/cluster ions kept only if wanted), and
-  no low-prominence noise comb (many near-equal small peaks bunched around an intense ion)
-  survived into the panel;
+- no noise comb survived into the panel (the default `peaks` list and `--auto-peaks`
+  already drop ringing/low-prominence/saturation-skirt noise; only worry about this if you
+  used `--include-artifacts` or a raw hand-built list — reagent/cluster ions may be kept if
+  wanted);
 - adjacent high plateaus were reviewed for physical-sample merging;
 - warm-up and transition cycles are excluded;
 - sample/background labels and counts are correct;
@@ -391,10 +408,18 @@ Corrected, 3.1 % Conc, and 3.2 % Conc[µg].
 
 | Column           | Formula                                     | Constants — all read from the .h5                                                 |
 | ---------------- | ------------------------------------------- | --------------------------------------------------------------------------------- |
-| **Raw** [cps]    | Σ intensities over the peak's m/z window    | mass cal `CALdata/Mapping`                                                        |
-| **Corrected**    | Raw / Transmission(m/z)                     | `PTR-Transmission` curve                                                          |
+| **Raw** [cps]    | Σ intensities over the peak's m/z window    | mass cal `CALdata/Mapping`, or per-cycle `CALdata/Spectrum` if absent (raw exports) |
+| **Corrected**    | Raw / Transmission(m/z)                     | `PTR-Transmission` curve; if absent, unit transmission (Corrected == Raw, flagged)  |
 | **Conc** [ppb]   | Corrected × K / I_primary(t) × (k_anchor/k) | K from `TRACEdata`; primary from m/z 21; k from rate-constant table (`--kinetic`) |
 | **Conc [µg/m³]** | Conc × (mz − proton) / Vₘ                   | Vₘ from drift temperature                                                         |
+
+Files vary in what they carry. Standard processed files have `CALdata/Mapping`,
+`PTR-Transmission`, and pre-computed `TRACEdata` (full Raw→Corrected→Conc). Some raw
+acquisition exports omit these: the mass calibration then comes from the per-cycle
+`CALdata/Spectrum` coefficients, transmission defaults to unity (so **Corrected == Raw**,
+reported via `transmission_available: false`), and with no pre-computed concentration the
+**Conc columns are NaN** unless you pass `--K`. `inspect`/`analyze` surface these flags —
+report the degradation honestly rather than presenting uncalibrated Corrected/Conc as final.
 
 Concentration uses the standard **primary-ion-normalised** model: dividing by the
 per-cycle reagent-ion signal (H₃O⁺ via its m/z 21 isotope) tracks reagent-ion drift over
