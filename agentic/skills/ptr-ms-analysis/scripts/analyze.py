@@ -620,7 +620,7 @@ def _merge_overlapping_windows(peaks, R=1200.0, thresh=0.6):
     return out
 
 
-def _auto_peaks(f, args):
+def _auto_peaks(f, args, R=None, R_phys=None):
     """Peaks for the --auto-peaks fallback: detect, annotate, DROP instrument-noise
     artifacts (ringing combs / low-prominence ripples), and carry each peak's
     `suggested_label` so a headless one-shot `analyze` yields a clean, labelled panel
@@ -628,17 +628,21 @@ def _auto_peaks(f, args):
     they are real ions, and an untargeted export usually wants them. Hand-curating a
     config still gives finer chemistry and segment judgment; this is a safe default,
     not a substitute for it."""
+    R = R if R is not None else (getattr(args, "R", None) or 1200.0)
+    R_phys = (R_phys if R_phys is not None
+              else (getattr(args, "R_phys", None) or 2400.0))
     a, b = ptrms.load_mass_cal(f)
     avg = np.where(np.isfinite(f["SPECdata/AverageSpec"][:]), f["SPECdata/AverageSpec"][:], 0.0)
     if not assess_signal(f, avg=avg, a=a, b=b)["signal_present"]:
         return []                                 # blank/no-beam file: nothing to extract
-    peaks = detect_peaks(f, args.min_height, args.max_peaks, args.mz_min, args.mz_max)
+    peaks = detect_peaks(
+        f, args.min_height, args.max_peaks, args.mz_min, args.mz_max,
+        R_phys=R_phys)
     _, peaks = annotate_peaks(
-        peaks, avgspec=avg, a=a, b=b,
-        R_phys=(getattr(args, "R_phys", None) or 2400.0))
+        peaks, avgspec=avg, a=a, b=b, R=R, R_phys=R_phys)
     peaks = [p for p in peaks if not _is_noise_artifact(p.get("likely_artifact"))]
     # collapse near-duplicate peaks whose integration windows almost coincide
-    peaks = _merge_overlapping_windows(peaks)
+    peaks = _merge_overlapping_windows(peaks, R=R)
     out = []
     for p in peaks:
         sl = p.get("suggested_label", "") or ""
@@ -652,7 +656,7 @@ def _auto_peaks(f, args):
     return out
 
 
-def _load_peaks(args, f):
+def _load_peaks(args, f, settings=None):
     if args.peaks_json:
         return json.loads(args.peaks_json)
     if args.config:
@@ -660,7 +664,10 @@ def _load_peaks(args, f):
         if cfg.get("peaks"):
             return cfg["peaks"]
     if getattr(args, "auto_peaks", False):
-        return _auto_peaks(f, args)
+        if settings is None:
+            settings = resolve_analysis_settings(_load_config(args), args)
+        return _auto_peaks(
+            f, args, R=settings["R"], R_phys=settings["R_phys"])
     return None
 
 
@@ -728,12 +735,8 @@ def _resolve_ranges(f, ranges_cfg):
 def cmd_analyze(args):
     config = _load_config(args)
     settings = resolve_analysis_settings(config, args)
-    # Auto-peak annotation uses the same effective physical resolution as the
-    # subsequent analysis; the default remains unchanged when it is omitted.
-    if getattr(args, "R_phys", None) is None:
-        args.R_phys = settings["R_phys"]
     with h5py.File(args.h5, "r") as f:
-        peaks = _load_peaks(args, f)
+        peaks = _load_peaks(args, f, settings=settings)
         if not peaks:
             # distinguish a genuinely blank file from a missing peak list
             if getattr(args, "auto_peaks", False):
@@ -953,7 +956,7 @@ def cmd_viz(args):
     config = _load_config(args)
     settings = resolve_analysis_settings(config, args)
     with h5py.File(args.h5, "r") as f:
-        peaks = _load_peaks(args, f)
+        peaks = _load_peaks(args, f, settings=settings)
         ranges_cfg = _load_ranges(args, f)
         if not peaks or not ranges_cfg:
             sys.exit("viz needs an explicit peak list AND time ranges — it does not "
@@ -1044,10 +1047,12 @@ def cmd_rates(args):
 
 def cmd_calibrate(args):
     """Fit the concentration constant K against a reference Viewer CSV."""
+    config = _load_config(args)
+    settings = resolve_analysis_settings(config, args)
     ref = _parse_viewer_csv(args.reference)
     ref_conc = {k: v["con"] for k, v in ref.items()}
     with h5py.File(args.h5, "r") as f:
-        peaks = _load_peaks(args, f)
+        peaks = _load_peaks(args, f, settings=settings)
         # default: calibrate on whatever masses appear in the reference
         if not peaks:
             masses = sorted({mz for (mz, _) in ref_conc})
