@@ -69,15 +69,25 @@ app instead of a wall of chat text. `viz` does not detect peaks/segments. Skip i
 headless/no-browser run or a hand-off file. There is no one-shot command; the delivered
 CSV always comes from `analyze`, never the browser.
 
+An analysis config may include an `analyze` object with `R`, `R_phys`, `K`,
+`molar_volume`, `primary_mz`, `kinetic`, `k_anchor`, `humidity_correct`, `humidity_p`,
+`humidity_ref`, and `whole_run_windows`. Omitted CLI options do not replace these
+curated values: precedence is **CLI override > `analyze` config > legacy default**.
+The same resolver is used by `analyze`, browser initial state, live-save, and Done.
+Unknown top-level and nested config fields survive browser round trips.
+
 By default `analyze` integrates each interval with each isolated peak's apex/window
 **re-centred on that interval's own spectrum** — peaks drift between intervals (mass-cal
 drift; a compound may be absent in a background), so one whole-run window sits off-peak
 elsewhere. Clustered peaks are Gaussian/deconvolved fitted components at fixed model
 centres, so their centre is not a measured apex and may not be a visible local maximum in
 every interval. The delivered CSV is unchanged in shape (still one row per compound ×
-interval); only each row's numbers reflect its interval's real peak. Pass
-`--no-per-interval` for one whole-run window per compound. Absent-compound intervals and
-hand-placed/clustered windows keep the whole-run placement.
+interval); only each row's numbers reflect its interval's real peak. Set
+`whole_run_windows: true` or pass `--no-per-interval` for one whole-run window per
+compound. Manual peak windows remain manual. The Methods card reports these effective
+values, their provenance, and whether the transmission curve and concentration are
+available. Browser numbers are preview values; **Done** performs the authoritative
+full-precision `analyze` rerun.
 
 Add `--pretty` to any command for indented JSON. `analyze` peak/segment sources:
 `--config file.json` (curated, preferred), or `--auto-peaks`/`--auto-segments`

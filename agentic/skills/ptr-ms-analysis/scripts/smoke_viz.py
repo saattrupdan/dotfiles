@@ -52,11 +52,17 @@ def _synthetic_data() -> Dict[str, Any]:
             "dur": 1.0,
             "a": 1000.0,
             "b": 0.0,
-            "R": 1200.0,
-            "R_phys": 2400.0,
-            "primary_mz": 21.022,
+            "R": 1500.0,
+            "R_phys": 3100.0,
+            "primary_mz": 19.022,
             "proton": 1.0073,
-            "k_anchor": 1.0,
+            "k_anchor": 1.7,
+            "kinetic": True,
+            "humidity_correct": True,
+            "humidity_p": 0.6,
+            "humidity_ref": 1.3,
+            "whole_run_windows": False,
+            "sources": {"K": "config.analyze", "molar_volume": "config.analyze"},
             "K_default": 1.0,
             "molar_volume": 24.5,
             "humidity_ref_default": 1.0,
@@ -196,6 +202,8 @@ def _synthetic_data() -> Dict[str, Any]:
             },
         ],
         "ranges": [{"label": "sample_01", "start": 1, "end": 4, "class": "sample"}],
+        "config_base": {"unknown_top_level": {"keep": True},
+                        "analyze": {"unknown_setting": "keep"}},
         "checklist": [],
         "rate_constants": [],
     }
@@ -207,9 +215,21 @@ class _ReviewHandler(http.server.BaseHTTPRequestHandler):
     html = ""
     spectrum = b"[]"
     interval_spectrum = b"[]"
+    posts = []
 
     def log_message(self, *_args: Any) -> None:
         pass
+
+    def do_POST(self) -> None:  # noqa: N802 - stdlib handler API
+        length = int(self.headers.get("Content-Length", "0"))
+        body = json.loads(self.rfile.read(length) or b"{}")
+        self.posts.append((self.path, body))
+        payload = b'{"ok":true}'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
         if self.path in ("/", "/index.html"):
@@ -293,6 +313,47 @@ def main() -> int:
         _browser(session, "eval", "localStorage.setItem('ptrms-onboarded', '1')")
         _browser(session, "reload")
         _browser(session, "wait", "--load", "networkidle")
+
+        # Methods is live provenance, not static help: inspect curated non-default
+        # settings, edit the controls, and verify both save and Done payloads.
+        _browser(session, "eval", "document.querySelector('#methodBtn').click()")
+        initial_methods = _eval(
+            session,
+            "({text:document.querySelector('#methodlive').innerText, kinetic:cfg.kinetic, "
+            "R:cfg.R, Rphys:cfg.Rphys, primary:cfg.primarymz})",
+        )
+        _assert("R integration windows" in initial_methods["text"],
+                "Methods omits R: %r" % initial_methods["text"][:200])
+        _assert("Rphys" in initial_methods["text"], "Methods omits physical resolution")
+        _assert("Kinetic correction: on" in initial_methods["text"], "kinetic state is stale")
+        _assert(initial_methods["R"] == 1500 and initial_methods["primary"] == 19.022,
+                "curated Methods settings did not initialise the browser")
+        _browser(
+            session,
+            "eval",
+            "(() => { const set=(id,v)=>{const e=document.querySelector('#'+id);"
+            "e.value=v; e.dispatchEvent(new Event('change',{bubbles:true}));}; "
+            "set('R','1700'); set('Rphys','3300'); set('primarymz','20.022'); "
+            "set('K','2.5'); set('Vm','25.5'); set('kanchor','2.2'); set('hump','0.8'); "
+            "set('href','1.7'); document.querySelector('#kinetic').click(); "
+            "document.querySelector('#humid').click(); document.querySelector('#wholewindows').click(); })()",
+        )
+        _browser(session, "wait", "1000")
+        edited = _eval(
+            session,
+            "({text:document.querySelector('#methodlive').innerText, config:buildConfig()})",
+        )
+        _assert("Kinetic correction: off" in edited["text"], "Methods did not update kinetic state")
+        _assert(edited["config"]["analyze"]["R_phys"] == 3300,
+                "R_phys control was not exported")
+        _assert(edited["config"]["analyze"]["primary_mz"] == 20.022,
+                "primary m/z control was not exported")
+        _assert(edited["config"]["analyze"]["whole_run_windows"],
+                "window mode control was not exported")
+        _assert(edited["config"]["unknown_top_level"]["keep"]
+                and edited["config"]["analyze"]["unknown_setting"] == "keep",
+                "unknown config fields were dropped on round-trip")
+        _browser(session, "eval", "document.querySelector('#methodClose').click()")
         # Switch from the initial intervals view to the actual identification card.
         _browser(
             session,
@@ -436,7 +497,15 @@ def main() -> int:
             "assigned formula is not marked in the candidate card",
         )
 
-        print("viz browser identification regression: OK")
+        _browser(session, "find", "role", "button", "click", "--name", "Done")
+        _browser(session, "wait", "800")
+        posted = _eval(session, "({config:buildConfig()})")
+        _assert(any(path == "/save" for path, _ in _ReviewHandler.posts),
+                "browser did not POST /save")
+        done_posts = [body for path, body in _ReviewHandler.posts if path == "/done"]
+        _assert(done_posts and done_posts[-1]["analyze"] == posted["config"]["analyze"],
+                "Done analyze settings differ from the UI")
+        print("viz browser identification/configuration regression: OK")
         return 0
     finally:
         _browser(session, "close")

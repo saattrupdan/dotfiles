@@ -56,7 +56,7 @@ relevant when changing identification display). The browser check requires the
 to the package's normal Python dependencies:
 
 ```bash
-python3 scripts/smoke_viz.py
+uv run python scripts/smoke_viz.py
 uvx --from . ptr --help
 uvx --from . ptr inspect --help
 uvx --from . ptr peaks --help
@@ -82,7 +82,9 @@ files, generated review HTML, configs, or result CSVs.
 - Keep the CLI deterministic. Chemistry assignment and segment curation remain explicit
   agent decisions; do not add a one-shot automatic workflow.
 - Update `SKILL.md` and `README.md` when flags, output fields, workflow, or scientific
-  interpretation change.
+  interpretation change. The `analyze` object is resolved with CLI override > curated
+  config > legacy default; keep the Methods provenance and authoritative Done rerun
+  wording aligned with that implementation.
 - Use Conventional Commits, following the parent dotfiles repository.
 
 ## Gotchas

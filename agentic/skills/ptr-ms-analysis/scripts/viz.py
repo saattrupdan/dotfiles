@@ -53,13 +53,26 @@ def _normalise_checklist(items):
 
 
 def build_viz_data(f, peaks_cfg, ranges_cfg, R=1200.0, R_phys=2400.0,
-                   primary_mz=21.022, K=None, molar_volume=None, checklist=None):
+                   primary_mz=21.022, K=None, molar_volume=None, checklist=None,
+                   analysis_settings=None, config_base=None):
     """Assemble everything the HTML app needs into one JSON-able dict.
 
     peaks_cfg  : [{mz, label?, formula?, k?}]  (assigned peaks to quantify/tweak)
     ranges_cfg : [{label, start, end, unit, class?}]  (time segments)
     checklist  : [str | {text, detail?}]  (agent-authored review points to confirm)
     """
+    analysis_settings = analysis_settings or {
+        "R": R, "R_phys": R_phys, "primary_mz": primary_mz, "K": K,
+        "molar_volume": molar_volume, "kinetic": False,
+        "k_anchor": ptrms.K_ANCHOR_DEFAULT, "humidity_correct": False,
+        "humidity_p": 1.0, "humidity_ref": None, "whole_run_windows": False,
+        "sources": {},
+    }
+    R = analysis_settings["R"]
+    R_phys = analysis_settings["R_phys"]
+    primary_mz = analysis_settings["primary_mz"]
+    K = analysis_settings["K"]
+    molar_volume = analysis_settings["molar_volume"]
     a, b = ptrms.load_mass_cal(f)
     tm, tf = ptrms.load_transmission(f)
     inten = f["SPECdata/Intensities"]
@@ -72,8 +85,15 @@ def build_viz_data(f, peaks_cfg, ranges_cfg, R=1200.0, R_phys=2400.0,
     discriminator = ptrms.build_discriminator(f)
     if molar_volume is None:
         molar_volume = ptrms.derive_molar_volume(f)
+        molar_volume_source = "file drift temperature"
+    else:
+        molar_volume_source = analysis_settings["sources"].get(
+            "molar_volume", "configured")
     if K is None:
         K = ptrms.derive_K(f, primary)
+        K_source = "file acquisition calibration"
+    else:
+        K_source = analysis_settings["sources"].get("K", "configured")
 
     masses = [float(p["mz"]) for p in peaks_cfg]
     # per-peak integration-window overrides: number (symmetric full width) or
@@ -193,12 +213,25 @@ def build_viz_data(f, peaks_cfg, ranges_cfg, R=1200.0, R_phys=2400.0,
             "file": os.path.abspath(f.filename) if hasattr(f, "filename") else "",
             "ncyc": ncyc, "dur": dur, "a": a, "b": b,
             "R": R, "R_phys": R_phys, "primary_mz": primary_mz,
-            "proton": ptrms.PROTON, "k_anchor": ptrms.K_ANCHOR_DEFAULT,
+            "proton": ptrms.PROTON, "k_anchor": analysis_settings["k_anchor"],
+            "kinetic": analysis_settings["kinetic"],
+            "humidity_correct": analysis_settings["humidity_correct"],
+            "humidity_p": analysis_settings["humidity_p"],
+            "humidity_ref": analysis_settings["humidity_ref"],
+            "whole_run_windows": analysis_settings["whole_run_windows"],
             "K_default": None if K is None else round(float(K), 4),
+            "K_source": K_source,
             "molar_volume": round(float(molar_volume), 4),
+            "molar_volume_source": molar_volume_source,
             "humidity_ref_default": href_default,
+            "sources": analysis_settings["sources"],
+            "humidity_ref_source": (analysis_settings["sources"].get("humidity_ref")
+                                    if analysis_settings["humidity_ref"] is not None
+                                    else "run median"),
+            "transmission_available": ptrms.has_transmission(f),
             "concentration_available": primary is not None and K is not None,
         },
+        "config_base": config_base or {},
         "transmission": {"masses": [round(float(x), 4) for x in tm],
                          "factors": [round(float(x), 5) for x in tf]},
         "per_cycle": {
@@ -756,6 +789,11 @@ _TEMPLATE = r"""<!DOCTYPE html>
     <h3>Integration</h3>
     <div class="row">
       <label class="ctl">default window R <input type="text" inputmode="decimal" id="R" step="50"></label>
+      <label class="ctl">R<sub>phys</sub> <input type="text" inputmode="decimal" id="Rphys" step="50"></label>
+    </div>
+    <div class="row">
+      <label class="ctl">primary m/z <input type="text" inputmode="decimal" id="primarymz" step="0.001"></label>
+      <label class="ctl"><input type="checkbox" id="wholewindows"> whole-run windows</label>
     </div>
     <p class="mut" style="font-size:11px;margin:8px 0 0">Per-peak windows are set by dragging the dashed handles in the spectrum.</p>
   </div>
@@ -785,6 +823,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
 <!-- Method slide-over: what happens behind the scenes -->
 <div id="methodpanel" hidden>
   <h2>Method <span class="grow"></span><button class="hbtn" id="methodClose">✕</button></h2>
+  <div id="methodlive"></div>
   <p class="lead" style="font-size:11.5px">How this tool turns the raw IONICON <code>.h5</code> into the concentrations you review here. Everything instrument-specific is read from the file; you curate the chemistry.</p>
 
   <h3>1 · Mass calibration &amp; drift</h3>
@@ -849,10 +888,13 @@ let showDetails = false;   // peaks sidebar: labels only until 'details'
 let hoverRange = null;     // interval hovered in the trace (to show its label)
 let hoverPeakId = null;    // peak whose window is hovered in the spectrum (highlight, mirror of hoverRange)
 const QSHORT = {raw:"Raw",cor:"Corrected",con:"Conc",ug:"Conc µg"};
-// kinetic on by default, but hybrid: only compounds with a MEASURED k are scaled
-// by their own rate constant; estimated/unknown-k compounds stay on the shared K.
-const cfg = { R:M.R, K:M.K_default, Vm:M.molar_volume, kinetic:true, kanchor:M.k_anchor,
-              humid:false, hump:1.0, href:M.humidity_ref_default };
+// Effective settings were resolved by the CLI. The browser edits a preview copy;
+// Done sends the same values back for the authoritative full-precision rerun.
+const cfg = { R:M.R, Rphys:M.R_phys, primarymz:M.primary_mz, K:M.K_default,
+              Vm:M.molar_volume, kinetic:M.kinetic===true, kanchor:M.k_anchor,
+              humid:M.humidity_correct===true, hump:M.humidity_p??1.0,
+              href:M.humidity_ref??M.humidity_ref_default,
+              wholewindows:M.whole_run_windows===true };
 
 // ---- theme (light / dark / system) — persisted in localStorage, defaults to system ----
 function themePref(){ try{ return localStorage.getItem("ptrms-theme")||"system"; }catch(e){ return "system"; } }
@@ -950,7 +992,7 @@ function computeTraces(p){ const raw=rawTrace(p); if(!raw) return null;
 function nearestCompound(mz){ let best=null,bd=0.05;
   for(const c of DATA.rate_constants){ const d=Math.abs(c.mz-mz); if(d<bd){bd=d;best=c;} } return best; }
 function selPeak(){ return peaks.find(p=>p.id===selId); }
-function fmt(v){ if(!isFinite(v))return '—'; const a=Math.abs(v);
+function fmt(v){ if(v==null||!isFinite(v))return '—'; const a=Math.abs(v);
   if(a>=1000)return v.toFixed(0); if(a>=1)return v.toFixed(2); return v.toPrecision(3); }
 function clampCyc(c){ return Math.max(1,Math.min(NCYC,c)); }
 
@@ -1476,13 +1518,17 @@ function jumpToInterval(r){ const pad=Math.max(8,(r.end-r.start)*0.6);
 
 // ---- config / save ----
 function buildConfig(){ return {
+  ...DATA.config_base,
   peaks: peaks.filter(p=>p.use).map(p=>{ const o={mz:p.mz,label:p.label};
     if(p.formula)o.formula=p.formula; if(p.k){o.k=p.k; o.k_estimated=!!p.k_estimated;}
     if(p.winManual){ if(Math.abs(p.winL-p.winR)<1e-6) o.window=+(p.winL*2).toFixed(5);
       else o.window={left:+p.winL.toFixed(5),right:+p.winR.toFixed(5)}; } return o; }),
   ranges: ranges.map(r=>({label:r.label,start:r.start,end:r.end,unit:"cycle"})),
-  analyze:{ R:cfg.R,K:cfg.K,molar_volume:cfg.Vm,kinetic:cfg.kinetic,k_anchor:cfg.kanchor,
-    humidity_correct:cfg.humid,humidity_p:cfg.hump,humidity_ref:cfg.href },
+  analyze:{ ...((DATA.config_base||{}).analyze||{}), R:cfg.R, R_phys:cfg.Rphys,
+    K:cfg.K, molar_volume:cfg.Vm, primary_mz:cfg.primarymz,
+    kinetic:cfg.kinetic, k_anchor:cfg.kanchor, humidity_correct:cfg.humid,
+    humidity_p:cfg.hump, humidity_ref:cfg.href,
+    whole_run_windows:cfg.wholewindows },
   // preserve the agent-authored review checklist so live-save doesn't strip it
   ...((DATA.checklist&&DATA.checklist.length)?{checklist:DATA.checklist.map(
       it=>it.detail?{text:it.text,detail:it.detail}:it.text)}:{}) }; }
@@ -1539,7 +1585,7 @@ function submitDone(){
 }
 function download(name,text){ const bl=new Blob([text],{type:"application/json"});
   const u=URL.createObjectURL(bl), a=document.createElement("a"); a.href=u; a.download=name; a.click(); URL.revokeObjectURL(u); }
-function redraw(){ drawMain(); scheduleSave(); }
+function redraw(){ updateMethods(); drawMain(); scheduleSave(); }
 
 // ---- per-interval mass spectrum (served: fetched on demand; standalone: whole run only) ----
 const specCache={};
@@ -1605,7 +1651,9 @@ document.querySelectorAll("#maintabs button").forEach(b=>b.onclick=()=>setTab(b.
 
 // ---- controls ----
 function setv(id,v){ const el=document.getElementById(id); if(el) el.value=v??""; }
-setv("R",cfg.R); setv("K",cfg.K); setv("Vm",cfg.Vm); setv("kanchor",cfg.kanchor); setv("hump",cfg.hump); setv("href",cfg.href);
+setv("R",cfg.R); setv("Rphys",cfg.Rphys); setv("primarymz",cfg.primarymz);
+setv("K",cfg.K); setv("Vm",cfg.Vm); setv("kanchor",cfg.kanchor); setv("hump",cfg.hump); setv("href",cfg.href);
+document.getElementById("wholewindows").checked=cfg.wholewindows;
 // Strict numeric parse: null = blank, NaN = not a valid number, else the number.
 // parseFloat is too lenient ("19.0372s" -> 19.0372), so require the WHOLE string to be
 // a decimal (optional sign, digits, optional fraction, optional exponent) before Number().
@@ -1624,13 +1672,49 @@ function bind(id,key,allowEmpty){ const el=document.getElementById(id);
     if(v===null){ if(allowEmpty){ cfg[key]=null; redraw(); } else { el.value=(cfg[key]??""); } return; }
     if(Number.isNaN(v)){ el.value=(cfg[key]??""); return; }   // not a number -> discard, keep prior value
     cfg[key]=v; el.value=v; redraw(); }; }
-bind("K","K",true); bind("Vm","Vm",false);
-bind("kanchor","kanchor",false); bind("hump","hump",false); bind("href","href",true);
+bind("K","K",true); bind("Vm","Vm",false); bind("Rphys","Rphys",false);
+bind("primarymz","primarymz",false); bind("kanchor","kanchor",false);
+bind("hump","hump",false); bind("href","href",true);
 document.getElementById("kinetic").checked=cfg.kinetic;   // hybrid kinetic on by default
 document.getElementById("kinetic").onchange=e=>{cfg.kinetic=e.target.checked;redraw();};
 document.getElementById("humid").onchange=e=>{cfg.humid=e.target.checked;redraw();};
+document.getElementById("wholewindows").onchange=e=>{cfg.wholewindows=e.target.checked;redraw();};
 document.getElementById("resetK").onclick=()=>{ cfg.K=M.K_default; cfg.Vm=M.molar_volume;
   setv("K",cfg.K); setv("Vm",cfg.Vm); redraw(); };
+function updateMethods(){
+  const live=document.getElementById("methodlive"); if(!live) return;
+  Array.from(methodPanel.children).forEach(el=>{
+    if(el!==live && el.tagName!=="H2") el.hidden=true;
+  });
+  const source=v=>v==="config.analyze"?"curated config":v==="cli"?"CLI override":v||"legacy default";
+  const src=M.sources||{};
+  const rSource=source(src.R), rPhysSource=source(src.R_phys), primarySource=source(src.primary_mz);
+  const kSource=M.K_source||source(src.K);
+  const vmSource=M.molar_volume_source||source(src.molar_volume);
+  const hrefSource=M.humidity_ref!=null?(M.humidity_ref_source||source(src.humidity_ref)):"run median";
+  const trans=M.transmission_available?"the file's available transmission curve":"unit fallback (no transmission curve in the file)";
+  const conc=M.concentration_available?"available":"unavailable (primary-ion signal or K is missing)";
+  const kinetic=cfg.kinetic?"on":"off";
+  const windows=cfg.wholewindows?"one whole-run window per compound":"isolated per-interval windows";
+  live.innerHTML=`
+    <h3>Effective settings</h3>
+    <p><b>R integration windows:</b> R = ${cfg.R} (${rSource}); manual peak windows override the default.
+    <b>R<sub>phys</sub> Gaussian/deconvolution resolution:</b> ${cfg.Rphys} (${rPhysSource}).</p>
+    <p><b>K:</b> ${fmt(cfg.K)} (${kSource}); <b>molar volume:</b> ${fmt(cfg.Vm)} L/mol (${vmSource});
+    <b>primary m/z:</b> ${cfg.primarymz} (${primarySource}).</p>
+    <p><b>Kinetic correction:</b> ${kinetic}; k_anchor = ${cfg.kanchor} x 10<sup>-9</sup> cm³/s.
+    Rate priority is explicit peak k, then formula match, then a unique m/z library match;
+    estimated or unknown rates stay on shared K.</p>
+    <p><b>Humidity correction:</b> ${cfg.humid?"on":"off"}; p = ${cfg.hump};
+    water-cluster ratio is m/z 37 / m/z 21; reference =
+    ${cfg.href==null?"run median":cfg.href} (${hrefSource}).</p>
+    <p><b>Windows:</b> ${windows}; manual windows remain manual. Clustered components use fixed-centre
+    Gaussian/deconvolution models, not interval apexes. Transmission uses ${trans}.
+    Concentration is <b>${conc}</b>.</p>
+    <h3>Authoritative export</h3>
+    <p>Browser values are a preview. <b>Done</b> performs the authoritative full-precision
+    analyze rerun, including Gaussian deconvolution, and writes the CSV.</p>`;
+}
 document.querySelectorAll("#qtabs button").forEach(b=>b.onclick=()=>{ quant=b.dataset.q;
   document.querySelectorAll("#qtabs button").forEach(x=>x.classList.remove("on")); b.classList.add("on");
   document.getElementById("tracelbl").textContent=QSHORT[quant]; if(tab==="trace") drawTrace(); });
@@ -1665,6 +1749,7 @@ document.getElementById("themeBtn").onclick=e=>{ e.stopPropagation(); themeMenu.
 themeMenu.querySelectorAll("button").forEach(el=>el.onclick=()=>{ setTheme(el.dataset.theme); themeMenu.hidden=true; });
 document.addEventListener("click",e=>{ if(!themeMenu.hidden && !e.target.closest(".themewrap")) themeMenu.hidden=true; });
 scrim.onclick=closePanels;
+updateMethods();
 // undo
 const undoBtn=document.getElementById("undoBtn");
 undoBtn.onclick=()=>undo();
