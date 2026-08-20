@@ -298,6 +298,14 @@ humidity-confounded compound, a low-confidence identification, a calibration cav
 item is a plain string, or `{ "text": ..., "detail": ... }` for a one-line elaboration.
 The viz app renders these as a tickable checklist (see 5b); it is ignored by `analyze`.
 
+The optional `analyze` object is the authority for analysis settings:
+`R`, `R_phys`, `K`, `molar_volume`, `primary_mz`, `kinetic`, `k_anchor`,
+`humidity_correct`, `humidity_p`, `humidity_ref`, and `whole_run_windows`. Resolution is
+explicitly **CLI override > curated `analyze` value > legacy default**; omitted CLI flags
+are sentinels and cannot erase config values. This resolver drives headless analysis,
+viz's initial controls, live-save, and the Done rerun. Unknown config fields are retained
+by the browser. The summary `params` records effective values, window mode, and sources.
+
 ```bash
 ptr analyze FILE.h5 \
   --config analysis-config.json \
@@ -371,12 +379,15 @@ you don't configure it, but it means you don't need to explain the buttons in ch
 
 In the app the expert sees the mass spectrum, a large zoom of the selected peak with its
 integration window, and the compound's time trace with segments overlaid. They can
-re-centre / add / remove / relabel peaks, drag / add / rename segments, and change **K**,
-molar volume, the kinetic (`k`) correction, and the humidity correction — everything
-recomputes live (the live math mirrors `analyze`; re-centred or overlapping peaks are
-flagged `≈`/`overlap`, while clustered fitted components stay at fixed model centres;
-exact only after the re-run). **The delivered CSV always comes from `analyze`**, never the
-browser.
+re-centre / add / remove / relabel peaks, drag / add / rename segments, and change **R**,
+**R_phys**, primary m/z, **K**, molar volume, the kinetic (`k`) correction, humidity
+settings, and whole-run versus isolated per-interval windows. The Methods card is live:
+it states R integration windows, R_phys Gaussian/deconvolution resolution, K/Vm sources,
+primary m/z, k priority and anchor, humidity p/reference, transmission fallback,
+concentration availability, manual-window behaviour, and clustered fixed-centre behaviour.
+Browser values are preview values; **Done** performs the authoritative full-precision
+`analyze` rerun and writes the CSV. The delivered CSV always comes from `analyze`, never
+the browser.
 
 ### 6. Calibrate concentration when accurate ppb/µg matters
 

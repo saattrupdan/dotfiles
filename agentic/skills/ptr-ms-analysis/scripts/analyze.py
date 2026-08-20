@@ -48,6 +48,86 @@ import ptrms  # noqa: E402
 import formula_id  # noqa: E402
 
 
+_ANALYSIS_DEFAULTS = {
+    "R": 1200.0,
+    "R_phys": 2400.0,
+    "K": None,
+    "molar_volume": None,
+    "primary_mz": 21.022,
+    "kinetic": False,
+    "k_anchor": ptrms.K_ANCHOR_DEFAULT,
+    "humidity_correct": False,
+    "humidity_p": 1.0,
+    "humidity_ref": None,
+    "whole_run_windows": False,
+}
+
+
+def _load_config(args):
+    """Load the complete config once, retaining fields unknown to this CLI."""
+    if not getattr(args, "config", None):
+        return {}
+    with open(args.config, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def resolve_analysis_settings(config=None, args=None):
+    """Resolve analysis settings with CLI > curated config > legacy defaults.
+
+    ``None`` is the argparse sentinel for an omitted option.  Keeping this
+    distinction here prevents a parser default from silently replacing a
+    curated value when a config is used by either command.
+    """
+    config = config or {}
+    curated = config.get("analyze") or {}
+    settings = {}
+    sources = {}
+    for key, default in _ANALYSIS_DEFAULTS.items():
+        cli_value = None
+        if args is not None:
+            cli_value = getattr(args, key, None)
+            if key == "whole_run_windows":
+                no_per = getattr(args, "no_per_interval", None)
+                if no_per is not None:
+                    cli_value = bool(no_per)
+        if cli_value is not None:
+            settings[key] = cli_value
+            sources[key] = "cli"
+        elif key in curated:
+            settings[key] = curated[key]
+            sources[key] = "config.analyze"
+        else:
+            settings[key] = default
+            sources[key] = "legacy default"
+    settings["sources"] = sources
+    settings["per_interval_windows"] = not bool(settings["whole_run_windows"])
+    return settings
+
+
+def _effective_sources(settings, humidity_ref):
+    """Describe the runtime provenance of derived and configured values."""
+    sources = dict(settings["sources"])
+    if settings["K"] is None:
+        sources["K"] = "file acquisition calibration"
+    if settings["molar_volume"] is None:
+        sources["molar_volume"] = "file drift temperature"
+    if settings["humidity_ref"] is None:
+        sources["humidity_ref"] = "run median" if humidity_ref is not None else "unavailable"
+    return sources
+
+
+def _peak_windows(peaks):
+    """Return curated asymmetric half-widths for peaks that specify windows."""
+    def _winlr(peak):
+        window = peak["window"]
+        if isinstance(window, dict):
+            return float(window["left"]), float(window["right"])
+        width = float(window) / 2.0
+        return width, width
+
+    return {float(p["mz"]): _winlr(p) for p in peaks if p.get("window")}
+
+
 def _emit(obj, raw=True):
     json.dump(obj, sys.stdout, indent=None if raw else 2)
     sys.stdout.write("\n")
@@ -634,6 +714,8 @@ def _resolve_ranges(f, ranges_cfg):
 
 
 def cmd_analyze(args):
+    config = _load_config(args)
+    settings = resolve_analysis_settings(config, args)
     with h5py.File(args.h5, "r") as f:
         peaks = _load_peaks(args, f)
         if not peaks:
@@ -656,32 +738,51 @@ def cmd_analyze(args):
                   for p in peaks}
         ranges = _resolve_ranges(f, _load_ranges(args, f))
 
-        R = args.R if args.R is not None else 1200.0
-        R_phys = args.R_phys if args.R_phys is not None else 2400.0
+        R = settings["R"]
+        R_phys = settings["R_phys"]
+        primary_mz = settings["primary_mz"]
 
         # resolve rate constants once (for kinetic correction and/or humid flags)
         resolved = ptrms.resolve_k(peaks, ptrms.load_rate_constants())
-        k_map = resolved if args.kinetic else None
+        k_map = resolved if settings["kinetic"] else None
         humid_masses = {m for m, info in resolved.items() if "humid" in info.get("flags", [])}
 
         # humidity proxy (per-cycle water-cluster ratio) — always computed if any
         # humid compound is present, so it can be reported as a diagnostic
-        hum_ratio = ptrms.water_cluster_ratio(f, R=R) if humid_masses else None
+        hum_ratio = (ptrms.water_cluster_ratio(
+            f, primary_mz=primary_mz, R=R) if humid_masses else None)
 
         # per-interval windows (default on): re-centre each isolated peak's window
         # on every interval's own spectrum. Disable with --no-per-interval to get
         # one whole-run window per compound (the pre-2026-08 behaviour).
         real_ranges = not (len(ranges) == 1 and "All" in ranges)
-        per_range = ranges if (real_ranges and not getattr(args, "no_per_interval", False)) else None
-        traces, _ = ptrms.extract_traces(f, masses, R=R, R_phys=R_phys, per_range=per_range)
+        per_range = ranges if (real_ranges and settings["per_interval_windows"]) else None
+        traces, _ = ptrms.extract_traces(
+            f, masses, R=R, R_phys=R_phys, windows=_peak_windows(peaks) or None,
+            per_range=per_range)
         rows, params = ptrms.quantify(
-            traces, f, ranges, K=args.K, primary_mz=args.primary_mz,
-            molar_volume=args.molar_volume, R_used=R, k_map=k_map,
-            k_anchor=args.k_anchor,
-            humid_masses=(humid_masses if args.humidity_correct else None),
-            humidity_ratio=hum_ratio, humidity_ref=args.humidity_ref,
-            humidity_p=args.humidity_p)
+            traces, f, ranges, K=settings["K"], primary_mz=primary_mz,
+            molar_volume=settings["molar_volume"], R_used=R, k_map=k_map,
+            k_anchor=settings["k_anchor"],
+            humid_masses=(humid_masses if settings["humidity_correct"] else None),
+            humidity_ratio=hum_ratio, humidity_ref=settings["humidity_ref"],
+            humidity_p=settings["humidity_p"])
         apexes = {m: ap for m, (_, ap) in traces.items()}
+        humidity_ref = settings["humidity_ref"]
+        if humidity_ref is None and hum_ratio is not None:
+            good = np.isfinite(hum_ratio) & (hum_ratio > 0)
+            humidity_ref = float(np.median(hum_ratio[good])) if good.any() else None
+        sources = _effective_sources(settings, humidity_ref)
+        params.update({
+            "R_phys": R_phys,
+            "whole_run_windows": settings["whole_run_windows"],
+            "per_interval_windows": settings["per_interval_windows"],
+            "humidity_correct": settings["humidity_correct"],
+            "humidity_p": settings["humidity_p"],
+            "humidity_ref": humidity_ref,
+            "humidity_ref_source": sources["humidity_ref"],
+            "sources": sources,
+        })
 
         # per-range humidity proxy + cross-range spread diagnostic
         humidity_report = None
@@ -726,7 +827,7 @@ def cmd_analyze(args):
                         f"{resid * m:+.3f} Da beyond the run's mass drift "
                         f"(check assignment / possible peak overlap)")
     note = None
-    if args.K is None and params.get("concentration_available"):
+    if settings["K"] is None and params.get("concentration_available"):
         note = ("Concentration uses K derived from the file's own calibration; "
                 "absolute scale may differ from a specific PTR-MS Viewer project. "
                 "Run `calibrate` against a reference CSV, or pass --K, to match exactly.")
@@ -753,7 +854,7 @@ def cmd_analyze(args):
                 estimated.append(f"{m:.3f}" + (f" ({info['source']})" if info.get("source") else ""))
             else:
                 missing.append(f"{m:.3f}" + (f" ({info['source']})" if info.get("source") else ""))
-        kinetic_info = {"k_anchor": args.k_anchor, "resolved": used,
+        kinetic_info = {"k_anchor": settings["k_anchor"], "resolved": used,
                         "estimated_shared_K": estimated, "no_k": missing}
         if humid:
             kinetic_info["humidity_warning"] = (
@@ -809,9 +910,7 @@ def cmd_analyze(args):
            "n_quant_rows": len(rows), "n_cycle_rows": n_cycle_rows,
            "n_peaks": len(masses), "n_ranges": len(ranges),
            "measured_apexes": {f"{m:.3f}": round(apexes[m], 4) for m in masses},
-           "params": {k: params[k] for k in ("R", "K", "molar_volume", "primary_mz",
-                                              "kinetic", "concentration_available",
-                                              "humidity_corrected")},
+           "params": params,
            "kinetic": kinetic_info,
            "humidity": humidity_report,
            "background": background_report,
@@ -833,6 +932,8 @@ def cmd_viz(args):
       * --html review.html: write a standalone, portable HTML file instead (no
         server, no CSV; edits exported via the page's Download button)."""
     import viz
+    config = _load_config(args)
+    settings = resolve_analysis_settings(config, args)
     with h5py.File(args.h5, "r") as f:
         peaks = _load_peaks(args, f)
         ranges_cfg = _load_ranges(args, f)
@@ -841,8 +942,8 @@ def cmd_viz(args):
                      "detect them. Pass --config with 'peaks' and 'ranges' (or "
                      "--peaks-json/--ranges-json). Build them with `ptr peaks` and "
                      "`ptr segments`, then curate into the config.")
-        R = args.R if args.R is not None else 1200.0
-        R_phys = args.R_phys if args.R_phys is not None else 2400.0
+        R = settings["R"]
+        R_phys = settings["R_phys"]
         # Large files take ~30-90 s to load and pre-compute traces BEFORE the server
         # starts. Announce it so a watching agent waits for "review app running at …"
         # (below) rather than polling the port — which refuses until this finishes.
@@ -850,9 +951,10 @@ def cmd_viz(args):
               "files take ~30-90 s) — the URL is printed when it's ready…",
               file=sys.stderr, flush=True)
         data = viz.build_viz_data(
-            f, peaks, ranges_cfg, R=R, R_phys=R_phys, primary_mz=args.primary_mz,
-            K=args.K, molar_volume=args.molar_volume,
-            checklist=_load_checklist(args))
+            f, peaks, ranges_cfg, R=R, R_phys=R_phys,
+            primary_mz=settings["primary_mz"], K=settings["K"],
+            molar_volume=settings["molar_volume"], analysis_settings=settings,
+            config_base=config, checklist=_load_checklist(args))
 
     serve_mode = args.serve if args.serve is not None else (not args.html)
     if serve_mode:
@@ -861,8 +963,14 @@ def cmd_viz(args):
             sys.exit("serve mode needs a config path to save to: pass --config PATH "
                      "(the source) or --save-config PATH.")
         if not os.path.exists(cfg_path):
+            initial = dict(config)
+            initial.update({"peaks": peaks, "ranges": ranges_cfg})
+            initial["analyze"] = {
+                **(config.get("analyze") or {}),
+                **{key: settings[key] for key in _ANALYSIS_DEFAULTS},
+            }
             with open(cfg_path, "w", encoding="utf-8") as fh:
-                json.dump({"peaks": peaks, "ranges": ranges_cfg}, fh, indent=2)
+                json.dump(initial, fh, indent=2)
         html = viz.render_html(data, config_path=cfg_path)
         run = lambda cfg: analyze_config_to_csv(args.h5, cfg, args.out, args.sep,
                                                 args.include_cycle_rows)
@@ -1015,19 +1123,21 @@ def analyze_config_to_csv(h5_path, config, out, sep=";", include_cycle_rows=True
     Honours `config['analyze']` settings (R, K, molar_volume, kinetic, k_anchor,
     humidity_*) when present. Used by `viz` after an interactive review and as the
     shared quantify path. Returns a small JSON summary."""
-    an = config.get("analyze") or {}
+    settings = resolve_analysis_settings(config)
     peaks = config["peaks"]
     ranges_cfg = config.get("ranges") or []
     with h5py.File(h5_path, "r") as f:
         masses = [float(p["mz"]) for p in peaks]
         labels = {float(p["mz"]): (p.get("label") or p.get("formula") or "") for p in peaks}
         ranges = _resolve_ranges(f, ranges_cfg)
-        R = an.get("R") or 1200.0
+        R = settings["R"]
+        R_phys = settings["R_phys"]
+        primary_mz = settings["primary_mz"]
         resolved = ptrms.resolve_k(peaks, ptrms.load_rate_constants())
-        k_map = resolved if an.get("kinetic") else None
+        k_map = resolved if settings["kinetic"] else None
         humid_masses = {m for m, info in resolved.items() if "humid" in info.get("flags", [])}
-        hum_ratio = (ptrms.water_cluster_ratio(f, R=R)
-                     if (humid_masses and an.get("humidity_correct")) else None)
+        hum_ratio = (ptrms.water_cluster_ratio(
+            f, primary_mz=primary_mz, R=R) if humid_masses else None)
         # per-peak integration-window overrides: `window` is either a full-width
         # number (symmetric) or {"left":hwL,"right":hwR} half-widths (asymmetric)
         def _winlr(p):
@@ -1039,21 +1149,39 @@ def analyze_config_to_csv(h5_path, config, out, sep=";", include_cycle_rows=True
         # per-interval windows: each interval integrates each isolated peak with an
         # apex/window re-centred on that interval's own spectrum (peaks drift). On
         # by default when real intervals exist; matches the viz per-interval review.
-        per_range = ranges if (ranges_cfg and not an.get("whole_run_windows")) else None
-        traces, _ = ptrms.extract_traces(f, masses, R=R, windows=windows or None,
-                                         per_range=per_range)
+        per_range = ranges if (ranges_cfg and settings["per_interval_windows"]) else None
+        traces, _ = ptrms.extract_traces(
+            f, masses, R=R, R_phys=R_phys, windows=windows or None,
+            per_range=per_range)
         rows, params = ptrms.quantify(
-            traces, f, ranges, K=an.get("K"), molar_volume=an.get("molar_volume"),
-            R_used=R, k_map=k_map, k_anchor=an.get("k_anchor", ptrms.K_ANCHOR_DEFAULT),
-            humid_masses=(humid_masses if an.get("humidity_correct") else None),
-            humidity_ratio=hum_ratio, humidity_ref=an.get("humidity_ref"),
-            humidity_p=an.get("humidity_p", 1.0))
+            traces, f, ranges, K=settings["K"], primary_mz=primary_mz,
+            molar_volume=settings["molar_volume"], R_used=R, k_map=k_map,
+            k_anchor=settings["k_anchor"],
+            humid_masses=(humid_masses if settings["humidity_correct"] else None),
+            humidity_ratio=hum_ratio, humidity_ref=settings["humidity_ref"],
+            humidity_p=settings["humidity_p"])
+        humidity_ref = settings["humidity_ref"]
+        if humidity_ref is None and hum_ratio is not None:
+            good = np.isfinite(hum_ratio) & (hum_ratio > 0)
+            humidity_ref = float(np.median(hum_ratio[good])) if good.any() else None
+        sources = _effective_sources(settings, humidity_ref)
+        params.update({
+            "R_phys": R_phys,
+            "whole_run_windows": settings["whole_run_windows"],
+            "per_interval_windows": settings["per_interval_windows"],
+            "humidity_correct": settings["humidity_correct"],
+            "humidity_p": settings["humidity_p"],
+            "humidity_ref": humidity_ref,
+            "humidity_ref_source": sources["humidity_ref"],
+            "sources": sources,
+        })
     _write_csv(out, h5_path, rows, labels, sep, ranges=ranges,
                include_cycle_rows=include_cycle_rows)
     n_cycle = len(ranges) if include_cycle_rows else 0
     return {"out": out, "n_rows": len(rows) + n_cycle, "n_peaks": len(masses),
-            "n_ranges": len(ranges), "K": params.get("K"),
-            "molar_volume": params.get("molar_volume"),
+            "n_ranges": len(ranges), "params": params,
+            "K": params.get("K"), "molar_volume": params.get("molar_volume"),
+            "primary_mz": params.get("primary_mz"),
             "kinetic": params.get("kinetic"),
             "concentration_available": params.get("concentration_available")}
 
@@ -1171,33 +1299,39 @@ def main():
     pa.add_argument("--max-peaks", type=int, default=300)
     pa.add_argument("--mz-min", type=float, default=15.0)
     pa.add_argument("--mz-max", type=float, default=None)
-    pa.add_argument("--no-per-interval", action="store_true",
-                    help="Use one whole-run integration window per compound instead of "
-                         "re-centring each peak's window on every interval's own spectrum "
-                         "(per-interval is the default; peaks drift between intervals)")
-    pa.add_argument("--R", type=float, help="Integration-window resolution (default 1200)")
+    pa.add_argument("--no-per-interval", dest="no_per_interval", action="store_true",
+                     default=None, help="Use one whole-run integration window per compound instead of "
+                          "re-centring each peak's window on every interval's own spectrum "
+                          "(per-interval is the default; peaks drift between intervals)")
+    pa.add_argument("--per-interval", dest="no_per_interval", action="store_false",
+                     help="Explicitly use isolated per-interval windows")
+    pa.add_argument("--R", type=float, default=None, help="Integration-window resolution (default 1200)")
     pa.add_argument("--R-phys", dest="R_phys", type=float,
                     help="Physical peak resolution for deconvolution (default 2400)")
     pa.add_argument("--K", type=float,
                     help="Concentration constant (Conc=Corrected*K/primary). "
                          "Default: derived from file; use `calibrate` to match a Viewer project.")
-    pa.add_argument("--primary-mz", type=float, default=21.022,
-                    help="Primary-ion m/z for normalisation (default 21.022, H3(18O)+)")
-    pa.add_argument("--kinetic", action="store_true",
+    pa.add_argument("--primary-mz", type=float, default=None,
+                     help="Primary-ion m/z for normalisation (default 21.022, H3(18O)+)")
+    pa.add_argument("--kinetic", dest="kinetic", action="store_true", default=None,
                     help="Apply per-compound rate-constant (k) correction for physically "
                          "resolved sensitivities (looks up k by peak 'k'/'formula'/m/z). "
                          "Diverges from a single-k reference but is more accurate.")
-    pa.add_argument("--k-anchor", type=float, default=ptrms.K_ANCHOR_DEFAULT,
+    pa.add_argument("--no-kinetic", dest="kinetic", action="store_false",
+                     help="Disable config kinetic correction")
+    pa.add_argument("--k-anchor", type=float, default=None,
                     help="Rate constant (1e-9 cm3/s) the baseline K assumes (default 2.0)")
-    pa.add_argument("--humidity-correct", action="store_true",
+    pa.add_argument("--humidity-correct", dest="humidity_correct", action="store_true", default=None,
                     help="Humidity-correct near-thermoneutral compounds (HCN etc.) using "
                          "the per-cycle water-cluster ratio. Needs a calibrated --humidity-p.")
-    pa.add_argument("--humidity-p", type=float, default=1.0,
+    pa.add_argument("--no-humidity-correct", dest="humidity_correct", action="store_false",
+                     help="Disable config humidity correction")
+    pa.add_argument("--humidity-p", type=float, default=None,
                     help="Humidity exponent in [0,1]: 0=off, 1=equilibrium upper bound "
                          "(default 1.0). Calibrate from a standard at >=2 humidities.")
-    pa.add_argument("--humidity-ref", type=float,
-                    help="Reference water-cluster ratio to normalise to (default: run median)")
-    pa.add_argument("--molar-volume", type=float,
+    pa.add_argument("--humidity-ref", type=float, default=None,
+                     help="Reference water-cluster ratio to normalise to (default: run median)")
+    pa.add_argument("--molar-volume", type=float, default=None,
                     help="Molar volume L/mol (else from drift temperature)")
     pa.set_defaults(func=cmd_analyze)
 
@@ -1221,11 +1355,20 @@ def main():
     pv.add_argument("--port", type=int, default=8765, help="Server port (default 8765; scans upward if busy)")
     pv.add_argument("--timeout", type=int, default=1800, help="Seconds to wait for 'Done' (default 1800)")
     pv.add_argument("--no-open", action="store_true", help="Do not auto-open the browser")
-    pv.add_argument("--R", type=float)
-    pv.add_argument("--R-phys", dest="R_phys", type=float)
-    pv.add_argument("--K", type=float, help="Initial concentration constant (default from file)")
-    pv.add_argument("--primary-mz", type=float, default=21.022)
-    pv.add_argument("--molar-volume", type=float)
+    pv.add_argument("--R", type=float, default=None)
+    pv.add_argument("--R-phys", dest="R_phys", type=float, default=None)
+    pv.add_argument("--K", type=float, default=None, help="Initial concentration constant (default from file)")
+    pv.add_argument("--primary-mz", type=float, default=None)
+    pv.add_argument("--kinetic", dest="kinetic", action="store_true", default=None)
+    pv.add_argument("--no-kinetic", dest="kinetic", action="store_false")
+    pv.add_argument("--k-anchor", type=float, default=None)
+    pv.add_argument("--humidity-correct", dest="humidity_correct", action="store_true", default=None)
+    pv.add_argument("--no-humidity-correct", dest="humidity_correct", action="store_false")
+    pv.add_argument("--humidity-p", type=float, default=None)
+    pv.add_argument("--humidity-ref", type=float, default=None)
+    pv.add_argument("--no-per-interval", dest="no_per_interval", action="store_true", default=None)
+    pv.add_argument("--per-interval", dest="no_per_interval", action="store_false")
+    pv.add_argument("--molar-volume", type=float, default=None)
     pv.set_defaults(func=cmd_viz)
 
     pr = sub.add_parser("rates", parents=[common],
