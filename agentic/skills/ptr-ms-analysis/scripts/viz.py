@@ -788,14 +788,14 @@ _TEMPLATE = r"""<!DOCTYPE html>
   <p class="lead" style="font-size:11.5px">How this tool turns the raw IONICON <code>.h5</code> into the concentrations you review here. Everything instrument-specific is read from the file; you curate the chemistry.</p>
 
   <h3>1 · Mass calibration &amp; drift</h3>
-  <p>The instrument stores a 2-point calibration in <code>CALdata/Mapping</code> giving <b>timebin = a·√(m/z) + b</b>. Over a long run the true masses drift slightly, so we estimate one global scale factor (the median of measured-apex ÷ theoretical-mass across all peaks, ≈1.0008 here) and remove it. Each isolated peak then gets a tight local apex search to snap onto its exact centre; overlapping peaks use the scale-corrected theoretical position so they don't jump onto a neighbour.</p>
+  <p>The instrument stores a 2-point calibration in <code>CALdata/Mapping</code> giving <b>timebin = a·√(m/z) + b</b>. Over a long run the true masses drift slightly, so we estimate one global scale factor (the median of measured-apex ÷ theoretical-mass across all peaks, ≈1.0008 here) and remove it. Each isolated peak then gets a tight local apex search to snap onto its exact centre. Clustered peaks instead use scale-corrected theoretical model centres so they don't jump onto a neighbour.</p>
 
   <h3>2 · Peak detection &amp; identification</h3>
   <p>Peaks are local maxima of the average spectrum above a relative-height threshold. For each, candidate <b>molecular formulas</b> are enumerated offline (all plausible CHNOPS+halogen formulas within ~12 mDa) and ranked by three independent lines of evidence: exact-mass error, the measured-vs-predicted <b>¹³C (M+1) and heteroatom (M+2, e.g. S/Cl) isotope pattern</b>, and plausibility (integer ring+double-bond equivalents, the nitrogen rule, element ratios). Near-isobars are told apart by composition, not "nearest mass". Names and isomer labels come from the bundled PTR Library mapping when the formula is known; formula ranking cannot determine structural isomers.</p>
 
   <h3>3 · Integration (Raw)</h3>
   <p><b>Isolated peaks:</b> Raw is a plain <b>window-sum</b> of the measured intensities across the peak's m/z window — no peak shape assumed, so asymmetric or flat-topped peaks are handled as-is. You set that window by dragging the dashed handles (left and right independently).</p>
-  <p><b>Overlapping peaks</b> (within ~0.2 Da): separated by <b>linear Gaussian deconvolution</b> (σ from the instrument resolution), rescaled back to the window-sum scale. Peaks closer than the resolution are flagged <i>unresolved</i> — their Raw is unreliable even after deconvolution.</p>
+  <p><b>Clustered peaks</b> (within ~0.2 Da) are Gaussian/deconvolved fitted components at fixed model centres; a component may not form a visible local maximum in every selected interval, so its model centre is not a measured apex. Their amplitudes are separated by <b>linear Gaussian deconvolution</b> (σ from the instrument resolution), rescaled back to the window-sum scale. Peaks closer than the resolution are flagged <i>unresolved</i> — their Raw is unreliable even after deconvolution.</p>
 
   <h3>4 · Transmission → Corrected</h3>
   <p>Ion transmission varies with m/z; the file's transmission curve gives the factor at each apex. <b>Corrected = Raw / transmission(apex)</b>.</p>
@@ -1066,10 +1066,11 @@ function insetPanTo(px){ if(!insetBox) return; const {x:ix,w:iw,d0,d1}=insetBox;
 // ---- spectrum view ----
 let SHOWSPEC = SPEC;   // spectrum currently drawn (whole run or a chosen interval)
 // Peak positions drift between intervals (mass-cal drift; a compound may be
-// absent in a background). When an interval is shown, refine each peak's apex to
-// THAT interval's spectrum so the apex line + window sit on its real peak. This
-// is a DISPLAY overlay only — p.apex/p.winL/p.winR (saved to config, used by the
-// delivered CSV) are untouched. null = whole run, no refinement.
+// absent in a background). When an interval is shown, refine each isolated peak's
+// apex to THAT interval's spectrum so the apex line + window sit on its real peak.
+// Clustered fitted components remain at their fixed model centres. This is a DISPLAY
+// overlay only — p.apex/p.winL/p.winR (saved to config, used by the delivered CSV)
+// are untouched. null = whole run, no refinement.
 let intervalApex = null;
 function dispApex(p){ return (intervalApex && intervalApex[p.id]!=null) ? intervalApex[p.id] : p.apex; }
 function refineIntervalApexes(spec){
@@ -1077,7 +1078,7 @@ function refineIntervalApexes(spec){
   const out={};
   for(const p of peaks){
     out[p.id]=null;
-    if(p.winManual) continue;                    // respect a hand-placed window
+    if(p.winManual || p.clustered) continue;    // respect manual and fitted cluster centres
     const tol=0.035;
     const lo=Math.max(0,Math.floor(m2tb(p.apex-tol))), hi=Math.min(spec.length-1,Math.ceil(m2tb(p.apex+tol)));
     if(hi-lo<2) continue;
@@ -1337,7 +1338,7 @@ function peakPills(p){
     (dup?`<span class="pill ovl" title="same compound also assigned to m/z ${dup.mz.toFixed(3)}">⚠ duplicate</span>`:'')+
     (p.id_ambiguous?`<span class="pill hi" title="ambiguous identification; top candidate relative score/share">? ${Math.round((p.id_confidence||0)*100)}% share</span>`:'')+
     (p.overlap&&p.overlap.level==='unresolved'?'<span class="pill hi" title="unresolved overlap">⚠ overlap</span>':
-      (p.clustered?'<span class="pill clus">overlap</span>':''))+
+      (p.clustered?'<span class="pill clus" title="Gaussian/deconvolved fitted component at a fixed model centre; may not form a visible local maximum in every interval">overlap</span>':''))+
     (!p.trace?'<span class="pill">re-run</span>':'')+
     (p.trace&&moved(p)?'<span class="pill hi" title="approximate — re-run analyze for the exact value">≈</span>':'');
 }
@@ -1402,6 +1403,9 @@ function renderId(){ const el=document.getElementById("idpanel"), conf=document.
     ? `<span class="pill assigned">assigned</span> ${esc(p.formula)}`
     : '<span class="pill unassigned">not assigned</span>';
   const provenance='<div class="idnote"><b>Evidence:</b> candidates are inferred from measured exact mass, isotope evidence, and chemistry plausibility. Names and isomer labels come from the bundled PTR Library mapping; formula ranking cannot determine structural isomers.</div>';
+  const clusterNote=p&&p.clustered
+    ? '<div class="idnote warn"><b>Clustered peak:</b> Gaussian/deconvolved fitted component at a fixed model centre. It may not form a visible local maximum in every selected interval; this model centre is not a measured apex.</div>'
+    : '';
   if(!el) return;
   if(!p){ el.innerHTML='<div class="mut">Select a peak to see candidate formulas, ranked by measured exact mass, isotope evidence, and chemistry plausibility.</div>';
     if(conf) conf.textContent=""; return; }
@@ -1412,19 +1416,19 @@ function renderId(){ const el=document.getElementById("idpanel"), conf=document.
     // mass outside the organic window) — still surface the current assignment rather
     // than a bare "nothing here", so every peak shows its identity.
     if(p.formula||p.label){
-      el.innerHTML=provenance+'<div class="cand chosen"><span class="f">'+esc(p.formula||p.label)+'</span>'+
+      el.innerHTML=provenance+clusterNote+'<div class="cand chosen"><span class="f">'+esc(p.formula||p.label)+'</span>'+
         ((p.formula&&p.label&&p.label!==p.formula)?'<span class="cname">'+esc(p.label)+'</span>':'')+
         '<span class="meta">'+(assigned?'current formula assignment':'label only; not formula-assigned')+'</span></div>'+
         '<div class="idnote" style="margin-top:8px">No enumerated formula candidates for this m/z — it looks like a reagent/inorganic ion, a manually-added peak, or a mass outside the organic window. The existing '+(assigned?'formula assignment':'label')+' is kept as-is.</div>';
     } else {
-      el.innerHTML=provenance+'<div class="mut">No candidate formulas for this peak (a reagent/inorganic ion, added manually, or outside the mass window).</div>';
+      el.innerHTML=provenance+clusterNote+'<div class="mut">No candidate formulas for this peak (a reagent/inorganic ion, added manually, or outside the mass window).</div>';
     }
     return; }
   if(conf) conf.innerHTML=status+` <span class="mut">· ${p.candidates.length===1
     ? 'only generated formula candidate — not a confidence estimate'
     : 'relative candidate score/share (not identification confidence)'}</span>`+
     (p.id_ambiguous?' <span class="pill hi">ambiguous</span>':'');
-  el.innerHTML=provenance+'<div class="idnote"><b>Assignment:</b> '+(assigned?'formula assigned — click another candidate to replace it.':'not assigned — click a candidate row to assign its formula.')+'</div>';
+  el.innerHTML=provenance+clusterNote+'<div class="idnote"><b>Assignment:</b> '+(assigned?'formula assigned — click another candidate to replace it.':'not assigned — click a candidate row to assign its formula.')+'</div>';
   p.candidates.forEach(c=>{ const row=document.createElement("div");
     const chosen=!!(p.formula&&c.formula===p.formula);
     row.className="cand"+(chosen?" chosen":"");
@@ -1733,7 +1737,7 @@ function tourSteps(){ const s=[];
   s.push({sel:".sidebar .card",place:"right",tab:"spec",title:"Peaks",
     body:"Every compound we detected. Click one to select it and zoom to its mass peak; the shaded band is the m/z window that’s integrated for it."});
   s.push({sel:"#specrangewrap",place:"bottom",tab:"spec",title:"Review peaks per interval",
-    body:"“Average over” picks which spectrum you’re looking at — it starts on the whole run. Switch to a single interval to check for drift: peaks move a little between intervals, so the apex line and window re-centre on each interval’s real peak (a spinner shows while it averages)."});
+    body:"“Average over” picks which spectrum you’re looking at — it starts on the whole run. Isolated peaks can move a little between intervals, so their apex line and window re-centre on the local maximum; clustered Gaussian/deconvolved components stay at fixed model centres (not measured apexes)."});
   s.push({sel:"#idcard",place:"top",tab:"spec",title:"Identification",
     body:"Candidate formulas for the selected peak, ranked by exact mass and isotope pattern. Click one to assign it."});
   s.push({sel:"#cfgBtn",place:"bottom",title:"Settings",

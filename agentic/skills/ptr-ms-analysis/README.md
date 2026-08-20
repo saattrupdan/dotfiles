@@ -72,10 +72,12 @@ CSV always comes from `analyze`, never the browser.
 By default `analyze` integrates each interval with each isolated peak's apex/window
 **re-centred on that interval's own spectrum** — peaks drift between intervals (mass-cal
 drift; a compound may be absent in a background), so one whole-run window sits off-peak
-elsewhere. The delivered CSV is unchanged in shape (still one row per compound × interval);
-only each row's numbers reflect its interval's real peak. Pass `--no-per-interval` for one
-whole-run window per compound. Absent-compound intervals and hand-placed/clustered windows
-keep the whole-run placement.
+elsewhere. Clustered peaks are Gaussian/deconvolved fitted components at fixed model
+centres, so their centre is not a measured apex and may not be a visible local maximum in
+every interval. The delivered CSV is unchanged in shape (still one row per compound ×
+interval); only each row's numbers reflect its interval's real peak. Pass
+`--no-per-interval` for one whole-run window per compound. Absent-compound intervals and
+hand-placed/clustered windows keep the whole-run placement.
 
 Add `--pretty` to any command for indented JSON. `analyze` peak/segment sources:
 `--config file.json` (curated, preferred), or `--auto-peaks`/`--auto-segments`
