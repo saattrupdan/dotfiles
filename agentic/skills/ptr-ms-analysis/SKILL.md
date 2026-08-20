@@ -2,7 +2,7 @@
 name: ptr-ms-analysis
 description: >
   Analyse PTR-MS / PTR-TOF data from IONICON IoniTOF HDF5 (.h5) files with the
-  published ptr-ms-analysis CLI. Use when the user has IONICON PTR-MS .h5 output
+  standalone ptr-ms-analysis CLI. Use when the user has IONICON PTR-MS .h5 output
   and wants product-ion peaks extracted, transmission-corrected, converted to
   concentration (ppb and µg/m³), and summarised per time segment (breath bags,
   backgrounds, sample periods). Triggers are "PTR-MS", "PTR-TOF", "IoniTOF",
@@ -13,9 +13,10 @@ last-updated: 2026-08-22
 
 # PTR-MS analysis
 
-Use the published [`ptr-ms-analysis`](https://pypi.org/project/ptr-ms-analysis/)
-package. This skill is the agent-facing workflow and scientific guardrail; the
-HDF5 reader, quantification code, browser app, and reference data live in the
+Use the standalone [`ptr-ms-analysis`](https://github.com/saattrupdan/ptr-ms-analysis)
+repository. The package is not yet published on PyPI, so install it directly from
+that repository. This skill is the agent-facing workflow and scientific guardrail;
+the HDF5 reader, quantification code, browser app, and reference data live in the
 standalone package, not in this skill.
 
 ## Run this first
@@ -30,24 +31,19 @@ Use an isolated tool installation so the package's dependencies and flat interna
 module names cannot collide with another Python project. Prefer `pipx`:
 
 ```bash
-# First install
-pipx install ptr-ms-analysis
+# First install from the standalone repository
+pipx install git+https://github.com/saattrupdan/ptr-ms-analysis.git
 
-# Later, upgrade the published package
+# Later, upgrade from the standalone repository
 pipx upgrade ptr-ms-analysis
 ```
 
 If `uv` is already available, it is an equivalent alternative:
 
 ```bash
-uv tool install ptr-ms-analysis
+uv tool install git+https://github.com/saattrupdan/ptr-ms-analysis.git
 uv tool upgrade ptr-ms-analysis
 ```
-
-Do not install from this skill directory and do not use an editable or checkout
-installation. If an older editable `ptr-ms-analysis` installation exists, remove
-that tool first (`pipx uninstall ptr-ms-analysis` or `uv tool uninstall
-ptr-ms-analysis`) and install the published package again.
 
 If `pipx` is missing, bootstrap it and open a new shell if `ensurepath` changes
 PATH:
@@ -90,8 +86,10 @@ take about a minute. `ptr <command> --help` is the authoritative option list.
 
 ## Standard workflow
 
-There is deliberately no one-shot default. Use **detect → curate → review or
-analyse**. Curation is important: it prevents a mechanical top-candidate guess
+There is deliberately no one-shot default. Use **detect → curate → browser
+review → analyse**. Browser review is the default and required endpoint after
+curation; skip it only when the user explicitly requests a headless/no-browser
+analysis. Curation is important: it prevents a mechanical top-candidate guess
 from deciding the chemistry and sample windows.
 
 ### 1. Inspect the file
@@ -211,7 +209,7 @@ Resolution is **CLI override > config value > legacy default**. Unknown config
 fields are retained, and the output summary records effective values and their
 sources.
 
-For a headless export:
+For a headless export only when the user explicitly requests no browser review:
 
 ```bash
 ptr analyze FILE.h5 \
@@ -221,8 +219,9 @@ ptr analyze FILE.h5 \
 ```
 
 Use `--include-cycle-rows` for final Viewer-style exports. It records every
-range boundary, making later comparison and reproduction possible. The
-zero-curation fallback is:
+range boundary, making later comparison and reproduction possible. Only when the
+user explicitly requests an automated/no-browser result, the zero-curation
+fallback is:
 
 ```bash
 ptr analyze FILE.h5 --auto-peaks --auto-segments \
@@ -240,15 +239,17 @@ warm-up and transitions, cycle rows, `background` S/B results,
 numeric values. Investigate every apex warning. Never present unavailable or
 uncalibrated concentration as if it were authoritative.
 
-### 6. Review in the browser (default for a considered analysis)
+### 6. Review in the browser (required default after curation)
 
 ```bash
 ptr viz FILE.h5 --config analysis-config.json --out results.csv
 ```
 
-`viz` reviews the curated peak list and ranges; it does not replace curation. It
-runs a localhost app, normally opens a browser, saves edits to the config, and
-writes the authoritative full-precision CSV when the expert clicks **Done**.
+After curation, launch `viz` by default; do not deliver a curated analysis from
+headless `analyze` unless the user explicitly requested no browser review. `viz`
+reviews the curated peak list and ranges; it does not replace curation. It runs a
+localhost app, normally opens a browser, saves edits to the config, and writes the
+authoritative full-precision CSV when the expert clicks **Done**.
 The command waits for the browser, so run it in the background and give the user
 the printed URL. Wait for `review app running` in its stderr/log; startup can
 take 30–90 seconds on a large file and the port refuses connections while the
@@ -264,9 +265,9 @@ settings stale and shows preview versus final values. **Done** reruns `analyze`;
 the delivered CSV comes from that full-precision run, never from a browser
 approximation.
 
-For an offline hand-off, use `--html review.html`. The reviewer can edit the
-standalone page and click **Download config.json**, then another operator can run
-`ptr analyze` on the returned config.
+For an explicitly requested offline hand-off, use `--html review.html`. The
+reviewer can edit the standalone page and click **Download config.json**, then
+another operator can run `ptr analyze` on the returned config.
 
 ### 7. Calibrate and compare when references exist
 
@@ -274,6 +275,7 @@ Absolute concentration depends on one calibration constant `K`:
 
 ```bash
 ptr calibrate FILE.h5 reference.csv
+# Only for an explicitly requested headless calibrated export:
 ptr analyze FILE.h5 --config analysis-config.json --K 16.26 \
   --include-cycle-rows --out results.csv
 ```
