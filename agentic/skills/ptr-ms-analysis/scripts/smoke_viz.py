@@ -63,8 +63,15 @@ def _synthetic_data() -> Dict[str, Any]:
             "humidity_ref": 1.3,
             "whole_run_windows": False,
             "sources": {"K": "config.analyze", "molar_volume": "config.analyze"},
+            "K_source": "config.analyze",
+            "K_file": 0.8,
+            "K_file_source": "file acquisition calibration",
             "K_default": 1.0,
             "molar_volume": 24.5,
+            "molar_volume_source": "config.analyze",
+            "molar_volume_file": 24.0,
+            "molar_volume_file_source": "file drift temperature",
+            "primary_available": True,
             "humidity_ref_default": 1.0,
             "concentration_available": True,
         },
@@ -91,7 +98,7 @@ def _synthetic_data() -> Dict[str, Any]:
                 "win_l": 0.04,
                 "win_r": 0.04,
                 "win_manual": True,
-                "trace": [10.0, 10.0, 10.0, 10.0],
+                "trace": [10.0, 10.0, 20.0, 20.0],
                 "candidates": [
                     _candidate("C2H6O", "Ethanol candidate", 1.0),
                 ],
@@ -201,7 +208,10 @@ def _synthetic_data() -> Dict[str, Any]:
                 "overlap": None,
             },
         ],
-        "ranges": [{"label": "sample_01", "start": 1, "end": 4, "class": "sample"}],
+        "ranges": [
+            {"label": "sample_01", "start": 1, "end": 2, "class": "sample"},
+            {"label": "sample_02", "start": 3, "end": 4, "class": "sample"},
+        ],
         "config_base": {"unknown_top_level": {"keep": True},
                         "analyze": {"unknown_setting": "keep"}},
         "checklist": [],
@@ -320,12 +330,16 @@ def main() -> int:
         initial_methods = _eval(
             session,
             "({text:document.querySelector('#methodlive').innerText, kinetic:cfg.kinetic, "
-            "R:cfg.R, Rphys:cfg.Rphys, primary:cfg.primarymz})",
+            "R:cfg.R, Rphys:cfg.Rphys, primary:cfg.primarymz, humid:cfg.humid, "
+            "humidChecked:document.querySelector('#humid').checked})",
         )
         _assert("R integration windows" in initial_methods["text"],
                 "Methods omits R: %r" % initial_methods["text"][:200])
         _assert("Rphys" in initial_methods["text"], "Methods omits physical resolution")
         _assert("Kinetic correction: on" in initial_methods["text"], "kinetic state is stale")
+        _assert("curated config" in initial_methods["text"], "configured source is missing")
+        _assert(initial_methods["humid"] and initial_methods["humidChecked"],
+                "humidity checkbox did not initialise from the effective config")
         _assert(initial_methods["R"] == 1500 and initial_methods["primary"] == 19.022,
                 "curated Methods settings did not initialise the browser")
         _browser(
@@ -341,9 +355,14 @@ def main() -> int:
         _browser(session, "wait", "1000")
         edited = _eval(
             session,
-            "({text:document.querySelector('#methodlive').innerText, config:buildConfig()})",
+            "({text:document.querySelector('#methodlive').innerText, config:buildConfig(), "
+            "humidChecked:document.querySelector('#humid').checked})",
         )
         _assert("Kinetic correction: off" in edited["text"], "Methods did not update kinetic state")
+        _assert("browser edit" in edited["text"], "Methods did not update calibration provenance")
+        _assert("m/z 37 / m/z 20.022" in edited["text"],
+                "Methods did not update humidity denominator")
+        _assert(not edited["humidChecked"], "humidity checkbox did not update")
         _assert(edited["config"]["analyze"]["R_phys"] == 3300,
                 "R_phys control was not exported")
         _assert(edited["config"]["analyze"]["primary_mz"] == 20.022,
@@ -353,6 +372,18 @@ def main() -> int:
         _assert(edited["config"]["unknown_top_level"]["keep"]
                 and edited["config"]["analyze"]["unknown_setting"] == "keep",
                 "unknown config fields were dropped on round-trip")
+        _browser(session, "eval", "document.querySelector('#K').value=''; document.querySelector('#K').dispatchEvent(new Event('change',{bubbles:true}))")
+        _browser(session, "wait", "700")
+        unavailable = _eval(session, "({methods:document.querySelector('#methodlive').innerText, note:document.querySelector('#calnote').innerText})")
+        _assert("Concentration is unavailable" in unavailable["methods"] and "unavailable" in unavailable["note"],
+                "concentration availability did not update when K was cleared")
+        _browser(session, "eval", "document.querySelector('#K').value='2.5'; document.querySelector('#K').dispatchEvent(new Event('change',{bubbles:true}))")
+        _browser(session, "wait", "700")
+        _browser(session, "eval", "document.querySelector('#resetK').click()")
+        reset = _eval(session, "({K:cfg.K,Vm:cfg.Vm,text:document.querySelector('#methodlive').innerText,note:document.querySelector('#calnote').innerText})")
+        _assert(reset["K"] == 0.8 and reset["Vm"] == 24.0, "reset did not restore file-derived calibration")
+        _assert("file acquisition calibration" in reset["text"] and "file drift temperature" in reset["text"],
+                "reset provenance is not file-derived")
         _browser(session, "eval", "document.querySelector('#methodClose').click()")
         # Switch from the initial intervals view to the actual identification card.
         _browser(
@@ -407,6 +438,9 @@ def main() -> int:
             and "not a measured apex" in clustered["note"],
             "clustered-peak wording is missing from the identification card",
         )
+        preview = _eval(session, "({whole:M.whole_run_windows, first:rawTrace(peaks[0])})")
+        _assert(preview["whole"] is False and preview["first"]["2"] > preview["first"]["0"],
+                "per-interval preview did not preserve interval-specific trace values")
         _browser(session, "find", "nth", "0", ".plist li", "click")
 
         sole = _eval(
@@ -500,8 +534,10 @@ def main() -> int:
         _browser(session, "find", "role", "button", "click", "--name", "Done")
         _browser(session, "wait", "800")
         posted = _eval(session, "({config:buildConfig()})")
-        _assert(any(path == "/save" for path, _ in _ReviewHandler.posts),
-                "browser did not POST /save")
+        save_posts = [body for path, body in _ReviewHandler.posts if path == "/save"]
+        _assert(save_posts, "browser did not POST /save")
+        _assert(save_posts[-1]["analyze"] == posted["config"]["analyze"],
+                "save analyze settings differ from the UI")
         done_posts = [body for path, body in _ReviewHandler.posts if path == "/done"]
         _assert(done_posts and done_posts[-1]["analyze"] == posted["config"]["analyze"],
                 "Done analyze settings differ from the UI")

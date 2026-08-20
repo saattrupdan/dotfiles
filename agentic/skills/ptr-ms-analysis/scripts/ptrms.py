@@ -183,9 +183,10 @@ def water_cluster_ratio(f, cluster_mz=37.028, primary_mz=21.022, R=1200.0):
     """Per-cycle humidity proxy X(t) = I(first water cluster) / I(primary isotope).
 
     The standard PTR-MS humidity measure is I(H3O+.H2O)/I(H3O+) = m/z 37 / m/z 19,
-    but m/z 19 is usually saturated/blanked, so this uses the m/z 21 primary isotope
-    as the denominator instead (a constant isotope factor cancels once the ratio is
-    normalised to a reference). Returns a length-n_cycles array, or None."""
+    but m/z 19 is usually saturated/blanked, so this uses the configured primary m/z
+    (m/z 21.022 by default) as the denominator instead. A constant isotope factor
+    cancels once the ratio is normalised to a reference. Returns a length-n_cycles
+    array, or None."""
     def get(mz):
         if "TRACEdata/TraceRaw" in f and "TRACEdata/TraceInfo" in f:
             ti = f["TRACEdata/TraceInfo"][:]
@@ -243,17 +244,29 @@ def derive_K(f, primary, min_corrected=1000.0):
     return float(np.median(prod[good]))
 
 
-def derive_molar_volume(f):
-    """Vm [L/mol] at the drift-tube temperature (ideal-gas, 1013.25 mbar)."""
+def derive_molar_volume_info(f):
+    """Return ``(Vm, source)`` for the file's drift-temperature calibration.
+
+    A missing drift-temperature trace is deliberately distinguishable from a real
+    25 °C measurement: both values are plausible, but only the former is a fallback.
+    """
     try:
         data = f["AddTraces/PTR-Reaction/Data"]
         info = f["AddTraces/PTR-Reaction/Info"][0]
         names = [x.decode("latin-1").strip() for x in info]
         ti = names.index("T-Drift_Act")
         T_C = float(np.nanmean(data[:, ti]))
-        return 22.414 * (T_C + 273.15) / 273.15
+        if not np.isfinite(T_C):
+            raise ValueError("drift temperature is not finite")
+        return (22.414 * (T_C + 273.15) / 273.15,
+                "file drift temperature")
     except Exception:
-        return 24.465  # 25 C fallback
+        return (24.465, "25 °C fallback (drift metadata unavailable)")
+
+
+def derive_molar_volume(f):
+    """Vm [L/mol] at drift temperature, or the documented 25 °C fallback."""
+    return derive_molar_volume_info(f)[0]
 
 # ---------- peak extraction ----------
 def find_apex(avgspec, a, b, target_m, tol=0.15):
@@ -693,7 +706,9 @@ def quantify(traces, f, ranges, K=None, primary=None, primary_mz=21.022,
     if primary is None:
         primary = extract_primary(f, primary_mz=primary_mz, R=R_used)
     if molar_volume is None:
-        molar_volume = derive_molar_volume(f)
+        molar_volume, molar_volume_source = derive_molar_volume_info(f)
+    else:
+        molar_volume_source = "configured"
     if K is None:
         K = derive_K(f, primary)
 
@@ -744,7 +759,8 @@ def quantify(traces, f, ranges, K=None, primary=None, primary_mz=21.022,
                       k_anchor=k_anchor, concentration_available=norm is not None,
                       transmission_available=has_transmission(f),
                       humidity_corrected=humid_applied, humidity_ref=humidity_ref,
-                      humidity_p=humidity_p if humid_applied else None)
+                      humidity_p=humidity_p if humid_applied else None,
+                      molar_volume_source=molar_volume_source)
 
 
 def calibrate_K(f, traces, ref_rows, ranges, primary=None, primary_mz=21.022,

@@ -19,7 +19,7 @@ the most likely compound for the sample context, and say so.
 ## Reagent / instrument ions — quantify separately or skip
 
 These are not analytes; they are the chemistry of the source. Skip them as VOCs
-(but m/z 21 is the key primary-ion normaliser used internally).
+(the configured primary m/z, 21.022 by default, is the key normaliser used internally).
 
 | m/z | Ion | Note |
 |---|---|---|
@@ -90,11 +90,11 @@ Two flags in the table matter:
 ### Humidity correction for `humid` compounds
 
 Whenever a `humid` compound is present, `analyze` reports a humidity diagnostic:
-the per-range **water-cluster ratio** X = I(m/z 37) / I(m/z 21) and its
+the per-range **water-cluster ratio** X = I(m/z 37) / I(primary) and its
 cross-range spread. (The textbook proxy is m/z 37 / m/z 19, but m/z 19 is normally
-saturated/blanked, so m/z 21 — the H₃¹⁸O⁺ isotope — is used; a constant isotope
-factor cancels once X is normalised to a reference.) A large spread means the
-compound's sensitivity differed between samples, so relative comparisons are
+saturated/blanked, so the configured primary m/z (21.022 by default) is used; a
+constant isotope factor cancels once X is normalised to a reference.) A large spread
+means the compound's sensitivity differed between samples, so relative comparisons are
 confounded.
 
 `analyze --humidity-correct` multiplies each `humid` compound's per-cycle

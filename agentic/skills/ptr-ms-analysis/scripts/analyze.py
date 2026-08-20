@@ -13,7 +13,7 @@ Commands (all discovery output is JSON on stdout):
   segments   Time-segment detection -> stable plateaus (samples vs background).
   analyze    Full pipeline (from a config) -> PTR-MS-Viewer-style results CSV.
   viz        Review app for an existing peak list + ranges (live-save to a config
-             with --serve, or a standalone HTML with --out). Does NOT detect.
+             with --serve, or a standalone HTML with --html). Does NOT detect.
   calibrate  Fit the concentration constant K to a reference Viewer CSV.
   compare    Error stats of a results CSV vs a reference Viewer CSV.
   rates      Browse the bundled proton-transfer rate-constant table.
@@ -104,16 +104,21 @@ def resolve_analysis_settings(config=None, args=None):
     return settings
 
 
-def _effective_sources(settings, humidity_ref):
+def _effective_sources(settings, humidity_ref, molar_volume_source=None):
     """Describe the runtime provenance of derived and configured values."""
     sources = dict(settings["sources"])
     if settings["K"] is None:
         sources["K"] = "file acquisition calibration"
     if settings["molar_volume"] is None:
-        sources["molar_volume"] = "file drift temperature"
+        sources["molar_volume"] = molar_volume_source or "file drift temperature"
     if settings["humidity_ref"] is None:
         sources["humidity_ref"] = "run median" if humidity_ref is not None else "unavailable"
     return sources
+
+
+def _humidity_proxy_label(primary_mz):
+    """Describe the humidity ratio with the effective denominator."""
+    return f"m/z 37 / m/z {primary_mz:g} (water-cluster ratio; m/z 19 saturates)"
 
 
 def _peak_windows(peaks):
@@ -265,7 +270,8 @@ def cmd_inspect(args):
             "transmission_factors": [round(x, 4) for x in tf.tolist()],
             "concentration_K_from_file": ptrms.derive_K(
                 f, ptrms.extract_primary(f)),
-            "molar_volume_L_per_mol": round(ptrms.derive_molar_volume(f), 3),
+            "molar_volume_L_per_mol": round(ptrms.derive_molar_volume_info(f)[0], 3),
+            "molar_volume_source": ptrms.derive_molar_volume_info(f)[1],
             "has_precomputed_traces": "TRACEdata/TraceConcentration" in f,
         }, args.raw)
 
@@ -285,7 +291,8 @@ _REAGENT_MZ = {19.018: "H3O+ primary", 21.022: "H3O+ (18O) isotope",
                33.994: "O2+ (18O)", 29.997: "NO+", 30.994: "O2+/NO+ region"}
 
 
-def annotate_peaks(peaks, avgspec=None, a=None, b=None, R=1200.0, elements=None):
+def annotate_peaks(peaks, avgspec=None, a=None, b=None, R=1200.0,
+                   R_phys=2400.0, elements=None):
     """Enrich detected peaks with candidate FORMULA assignments (scored by mass +
     isotope pattern + plausibility) and artifact flags, so the agent/expert can
     pick assignments without scripting mass-matching.
@@ -356,7 +363,7 @@ def annotate_peaks(peaks, avgspec=None, a=None, b=None, R=1200.0, elements=None)
         nb = nearest_other(mz)
         if nb is not None:
             sep = abs(nb - mz)
-            if sep < mz / 2400.0 * 1.5:       # within ~1.5 physical FWHM
+            if sep < mz / R_phys * 1.5:       # within ~1.5 physical FWHM
                 e["overlap"] = {"neighbor": round(nb, 4), "sep_mDa": round(sep * 1000, 1),
                                 "level": "unresolved",
                                 "note": "closer than the instrument resolution — "
@@ -386,7 +393,8 @@ def annotate_peaks(peaks, avgspec=None, a=None, b=None, R=1200.0, elements=None)
             flags.append("low prominence (%.1f cps above local baseline) — likely a "
                          "noise ripple / shoulder of a nearby taller peak" % prom)
         # H3O+ reagent saturation skirt: the primary ion at m/z ~19 saturates the
-        # detector (the run normalises on its m/z 21 isotope instead), and its
+        # detector (the run normally normalises on its configured primary
+        # isotope), and its
         # ringing throws a skirt of strong, sharp satellites between the primary and
         # that isotope. No real H3O+-chemistry analyte lives at m/z ~19.05–20.95
         # (ammonia at 18.03 sits BELOW the primary and is untouched), so peaks there
@@ -484,7 +492,9 @@ def cmd_peaks(args):
                    "peaks": []}, args.raw)
             return
         peaks = detect_peaks(f, args.min_height, args.max_peaks, args.mz_min, args.mz_max)
-    drift, peaks = annotate_peaks(peaks, avgspec=avg, a=a, b=b)
+    drift, peaks = annotate_peaks(
+        peaks, avgspec=avg, a=a, b=b,
+        R_phys=(getattr(args, "R_phys", None) or 2400.0))
     # By default the menu excludes instrument-noise artifacts (ringing combs,
     # low-prominence ripples, reagent saturation-region skirt) so that copying the
     # list straight into a config can't ship a noise comb; reagent/cluster diagnostic
@@ -623,7 +633,9 @@ def _auto_peaks(f, args):
     if not assess_signal(f, avg=avg, a=a, b=b)["signal_present"]:
         return []                                 # blank/no-beam file: nothing to extract
     peaks = detect_peaks(f, args.min_height, args.max_peaks, args.mz_min, args.mz_max)
-    _, peaks = annotate_peaks(peaks, avgspec=avg, a=a, b=b)
+    _, peaks = annotate_peaks(
+        peaks, avgspec=avg, a=a, b=b,
+        R_phys=(getattr(args, "R_phys", None) or 2400.0))
     peaks = [p for p in peaks if not _is_noise_artifact(p.get("likely_artifact"))]
     # collapse near-duplicate peaks whose integration windows almost coincide
     peaks = _merge_overlapping_windows(peaks)
@@ -716,6 +728,10 @@ def _resolve_ranges(f, ranges_cfg):
 def cmd_analyze(args):
     config = _load_config(args)
     settings = resolve_analysis_settings(config, args)
+    # Auto-peak annotation uses the same effective physical resolution as the
+    # subsequent analysis; the default remains unchanged when it is omitted.
+    if getattr(args, "R_phys", None) is None:
+        args.R_phys = settings["R_phys"]
     with h5py.File(args.h5, "r") as f:
         peaks = _load_peaks(args, f)
         if not peaks:
@@ -772,7 +788,8 @@ def cmd_analyze(args):
         if humidity_ref is None and hum_ratio is not None:
             good = np.isfinite(hum_ratio) & (hum_ratio > 0)
             humidity_ref = float(np.median(hum_ratio[good])) if good.any() else None
-        sources = _effective_sources(settings, humidity_ref)
+        sources = _effective_sources(
+            settings, humidity_ref, params.get("molar_volume_source"))
         params.update({
             "R_phys": R_phys,
             "whole_run_windows": settings["whole_run_windows"],
@@ -781,6 +798,7 @@ def cmd_analyze(args):
             "humidity_p": settings["humidity_p"],
             "humidity_ref": humidity_ref,
             "humidity_ref_source": sources["humidity_ref"],
+            "molar_volume_source": sources["molar_volume"],
             "sources": sources,
         })
 
@@ -796,7 +814,7 @@ def cmd_analyze(args):
             spread = (max(vals) - min(vals)) / (sum(vals) / len(vals)) if vals else 0.0
             humidity_report = {
                 "humid_compounds": sorted(f"{m:.3f}" for m in humid_masses),
-                "proxy": "m/z 37 / m/z 21 (water-cluster ratio; m/z 19 saturates)",
+                "proxy": _humidity_proxy_label(primary_mz),
                 "per_range": per_range,
                 "cross_range_spread_pct": round(100 * spread, 1),
                 "corrected": params.get("humidity_corrected", False),
@@ -1164,7 +1182,8 @@ def analyze_config_to_csv(h5_path, config, out, sep=";", include_cycle_rows=True
         if humidity_ref is None and hum_ratio is not None:
             good = np.isfinite(hum_ratio) & (hum_ratio > 0)
             humidity_ref = float(np.median(hum_ratio[good])) if good.any() else None
-        sources = _effective_sources(settings, humidity_ref)
+        sources = _effective_sources(
+            settings, humidity_ref, params.get("molar_volume_source"))
         params.update({
             "R_phys": R_phys,
             "whole_run_windows": settings["whole_run_windows"],
@@ -1173,6 +1192,7 @@ def analyze_config_to_csv(h5_path, config, out, sep=";", include_cycle_rows=True
             "humidity_p": settings["humidity_p"],
             "humidity_ref": humidity_ref,
             "humidity_ref_source": sources["humidity_ref"],
+            "molar_volume_source": sources["molar_volume"],
             "sources": sources,
         })
     _write_csv(out, h5_path, rows, labels, sep, ranges=ranges,
@@ -1337,7 +1357,7 @@ def main():
 
     pv = sub.add_parser("viz", parents=[common],
                         help="Review app for an existing peak list + ranges (live-save "
-                             "to a config with --serve, or a standalone HTML with --out)")
+                             "to a config with --serve, or a standalone HTML with --html)")
     pv.add_argument("h5")
     pv.add_argument("--config", help="JSON file with 'peaks'/'ranges' (source; live-save target when serving)")
     pv.add_argument("--peaks-json", help="Inline peaks JSON (alternative to --config)")
