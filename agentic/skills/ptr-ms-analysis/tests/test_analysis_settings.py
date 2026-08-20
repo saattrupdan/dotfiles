@@ -3,12 +3,11 @@
 import sys
 import unittest
 from argparse import Namespace
-from unittest import mock
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))
 import analyze  # noqa: E402
-
 
 _KEYS = {
     "R": None,

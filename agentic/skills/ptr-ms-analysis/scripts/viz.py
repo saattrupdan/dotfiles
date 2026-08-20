@@ -796,7 +796,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
 <div id="cfgscrim" hidden></div>
 <div id="cfgpanel" hidden>
   <h2>Configuration <span class="grow"></span><button class="hbtn" id="cfgClose">✕</button></h2>
-  <p class="mut" style="font-size:11.5px;margin:2px 0 0">Values that can't be set by interacting with the plot. R, K, molar volume, and correction controls update the preview; primary m/z, R<sub>phys</sub>, and window mode are applied to the raw file on Done.</p>
+  <p class="mut" style="font-size:11.5px;margin:2px 0 0"><span id="cfghelp"></span></p>
   <div class="grp">
     <h3>Concentration calibration</h3>
     <div class="row">
@@ -883,7 +883,8 @@ _TEMPLATE = r"""<!DOCTYPE html>
   </ul>
 
   <h3>Live preview vs. the delivered CSV</h3>
-  <p>Many preview values update instantly using embedded data and window-sums, so isolated-peak edits are exact within that preview. Re-centred / re-windowed peaks show a <b>≈</b> (rescaled by the average-spectrum window ratio). Changes to primary m/z, R<sub>phys</sub>, or whole-run window mode cannot be re-extracted from the embedded data, especially in standalone HTML: the plots and Methods card mark those values <b>stale</b> and do not claim live numerical recomputation. Click <b>Done</b> (or hand the downloaded config to <code>ptr analyze</code>) to re-extract at the final settings. The resulting CSV is always authoritative.</p>
+  <p>Many preview values update instantly using embedded data and window-sums, so isolated-peak edits are exact within that preview. Re-centred / re-windowed peaks show a <b>≈</b> (rescaled by the average-spectrum window ratio). Changes to primary m/z, R<sub>phys</sub>, or whole-run window mode cannot be re-extracted from the embedded data, especially in standalone HTML: the plots and Methods card mark those values <b>stale</b> and do not claim live numerical recomputation.</p>
+  <p id="previewdelivery"></p>
 </div>
 
 <script>
@@ -921,6 +922,8 @@ const cfg = { R:M.R, Rphys:M.R_phys, primarymz:M.primary_mz, K:M.K_default,
               humid:M.humidity_correct===true, hump:M.humidity_p??1.0,
               href:M.humidity_ref??M.humidity_ref_default,
               wholewindows:M.whole_run_windows===true };
+const INITIAL_CFG=Object.freeze({...cfg});
+const resetValues={}, resetSources={};
 let kSource = M.K_source || (M.sources||{}).K || "file acquisition calibration";
 let vmSource = M.molar_volume_source || (M.sources||{}).molar_volume || "file drift temperature";
 
@@ -1612,7 +1615,9 @@ function submitDone(){
     body:JSON.stringify(buildConfig())}).catch(()=>{});
 }
 function download(name,text){ const bl=new Blob([text],{type:"application/json"});
-  const u=URL.createObjectURL(bl), a=document.createElement("a"); a.href=u; a.download=name; a.click(); URL.revokeObjectURL(u); }
+  const u=URL.createObjectURL(bl), a=document.createElement("a"); a.href=u; a.download=name;
+  document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(u); a.remove(); },1000); }
 function updateCalNote(){
   const el=document.getElementById("calnote"); if(!el) return;
   const available=!!(M.primary_available !== false && PC.primary && cfg.K!=null);
@@ -1706,11 +1711,9 @@ document.getElementById("R").onchange=e=>{ const v=parseNum(e.target.value);
 // numeric config inputs: reject non-numbers (restore the last good value). allowEmpty -> blank means null.
 function bind(id,key,allowEmpty){ const el=document.getElementById(id);
   el.onchange=()=>{ const v=parseNum(el.value);
-    if(v===null){ if(allowEmpty){ cfg[key]=null; if(key==="K") kSource="browser edit"; redraw(); } else { el.value=(cfg[key]??""); } return; }
+    if(v===null){ if(allowEmpty){ cfg[key]=null; delete resetValues[key]; delete resetSources[key]; redraw(); } else { el.value=(cfg[key]??""); } return; }
     if(Number.isNaN(v)){ el.value=(cfg[key]??""); return; }   // not a number -> discard, keep prior value
-    cfg[key]=v; el.value=v;
-    if(key==="K") kSource="browser edit";
-    if(key==="Vm") vmSource="browser edit";
+    cfg[key]=v; delete resetValues[key]; delete resetSources[key]; el.value=v;
     redraw(); }; }
 bind("K","K",true); bind("Vm","Vm",false); bind("Rphys","Rphys",false);
 bind("primarymz","primarymz",false); bind("kanchor","kanchor",false);
@@ -1721,6 +1724,8 @@ document.getElementById("wholewindows").onchange=e=>{cfg.wholewindows=e.target.c
 document.getElementById("resetK").onclick=()=>{ cfg.K=M.K_file??M.K_default; cfg.Vm=M.molar_volume_file??M.molar_volume;
   kSource=M.K_file_source||"file acquisition calibration";
   vmSource=M.molar_volume_file_source||"file drift temperature";
+  resetValues.K=cfg.K; resetValues.Vm=cfg.Vm;
+  resetSources.K=kSource; resetSources.Vm=vmSource;
   setv("K",cfg.K); setv("Vm",cfg.Vm); redraw(); };
 function staleSettings(){ return {
   primary:cfg.primarymz!==PREVIEW_INITIAL.primarymz,
@@ -1734,17 +1739,22 @@ function staleRows(stale){ const rows=[];
     const f=cfg.wholewindows?"whole-run":"per-interval";
     rows.push(`<b>window mode</b>: preview ${p} -> final ${f}`); }
   return rows; }
+function exportAction(){ return SERVED
+  ? "Click <b>Done</b> to re-extract at the final settings and write the CSV."
+  : "Click <b>Download config</b> to export the final settings, then hand the file to <code>ptr analyze</code> for re-extraction."; }
 function staleHtml(stale){ const rows=staleRows(stale); if(!rows.length) return "";
-  return `<div class="stale"><b>PREVIEW STALE — Done-only re-extraction required.</b>
+  const action=SERVED ? "The edited values apply in the authoritative Done rerun (or <code>ptr analyze</code>)."
+    : "The edited values are included when you click <b>Download config</b>; hand that file to <code>ptr analyze</code>.";
+  return `<div class="stale"><b>PREVIEW STALE — ${SERVED?"Done-only re-extraction":"export and re-extraction"} required.</b>
     Embedded plot data still represents the preview extraction. ${rows.join("; ")}.<br>
-    The edited values apply in the authoritative Done rerun (or <code>ptr analyze</code>);
-    they are not numerically recomputed in this page.</div>`; }
+    ${action} They are not numerically recomputed in this page.</div>`; }
 function updateStaleness(){ const stale=staleSettings(), rows=staleRows(stale);
   const banner=document.getElementById("stalebanner"); if(!banner) return;
   banner.hidden=!rows.length;
   banner.innerHTML=rows.length
-    ? `<b>PREVIEW STALE — authoritative Done rerun required.</b> ${rows.join("; ")}. `+
-      `Plots retain the embedded preview extraction; final values apply only after Done.`
+    ? `<b>PREVIEW STALE — ${SERVED?"authoritative Done rerun":"export and re-extraction"} required.</b> ${rows.join("; ")}. `+
+      (SERVED ? `Plots retain the embedded preview extraction; final values apply only after Done.`
+        : `Plots retain the embedded preview extraction; export with Download config, then re-run ptr analyze.`)
     : ""; }
 function updateMethods(){
   const live=document.getElementById("methodlive"); if(!live) return;
@@ -1753,14 +1763,23 @@ function updateMethods(){
   });
   const stale=staleSettings(); updateStaleness();
   const source=v=>v==="config.analyze"?"curated config":v==="cli"?"CLI override":v||"legacy default";
-  const settingSource=(key,v)=>stale[key]?"browser edit":source(v);
   const src=M.sources||{};
-  const rSource=source(src.R), rPhysSource=settingSource("Rphys",src.R_phys);
-  const primarySource=settingSource("primary",src.primary_mz);
-  const windowSource=settingSource("windows",src.whole_run_windows);
-  const effectiveKSource=source(kSource||src.K);
-  const effectiveVmSource=source(vmSource||src.molar_volume);
-  const hrefSource=M.humidity_ref!=null?(M.humidity_ref_source||source(src.humidity_ref)):"run median";
+  const settingSource=(key,value,configured,fallback)=>{
+    if(Object.is(value,INITIAL_CFG[key])) return source(configured||fallback);
+    if(Object.is(value,resetValues[key])) return resetSources[key];
+    return "browser edit";
+  };
+  const rSource=settingSource("R",cfg.R,src.R);
+  const rPhysSource=settingSource("Rphys",cfg.Rphys,src.R_phys);
+  const primarySource=settingSource("primarymz",cfg.primarymz,src.primary_mz);
+  const windowSource=settingSource("wholewindows",cfg.wholewindows,src.whole_run_windows);
+  const effectiveKSource=settingSource("K",cfg.K,src.K,kSource);
+  const effectiveVmSource=settingSource("Vm",cfg.Vm,src.molar_volume,vmSource);
+  const kineticSource=settingSource("kinetic",cfg.kinetic,src.kinetic);
+  const anchorSource=settingSource("kanchor",cfg.kanchor,src.k_anchor);
+  const humiditySource=settingSource("humid",cfg.humid,src.humidity_correct);
+  const humidityPSource=settingSource("hump",cfg.hump,src.humidity_p);
+  const hrefSource=settingSource("href",cfg.href,M.humidity_ref_source||src.humidity_ref,"run median");
   const trans=M.transmission_available?"the file's available transmission curve":"unit fallback (no transmission curve in the file)";
   const concentrationAvailable=!!(M.primary_available !== false && PC.primary && cfg.K!=null);
   M.concentration_available=concentrationAvailable;
@@ -1773,18 +1792,17 @@ function updateMethods(){
     <b>R<sub>phys</sub> Gaussian/deconvolution resolution:</b> ${cfg.Rphys} (${rPhysSource}).</p>
     <p><b>K:</b> ${fmt(cfg.K)} (${effectiveKSource}); <b>molar volume:</b> ${fmt(cfg.Vm)} L/mol (${effectiveVmSource});
     <b>primary m/z:</b> ${cfg.primarymz} (${primarySource}).</p>
-    <p><b>Kinetic correction:</b> ${kinetic}; k_anchor = ${cfg.kanchor} x 10<sup>-9</sup> cm³/s.
+    <p><b>Kinetic correction:</b> ${kinetic} (${kineticSource}); k_anchor = ${cfg.kanchor} x 10<sup>-9</sup> cm³/s (${anchorSource}).
     Rate priority is explicit peak k, then formula match, then a unique m/z library match;
     estimated or unknown rates stay on shared K.</p>
-    <p><b>Humidity correction:</b> ${cfg.humid?"on":"off"}; p = ${cfg.hump};
+    <p><b>Humidity correction:</b> ${cfg.humid?"on":"off"} (${humiditySource}); p = ${cfg.hump} (${humidityPSource});
     water-cluster ratio is m/z 37 / m/z ${cfg.primarymz}; reference =
     ${cfg.href==null?"run median":cfg.href} (${hrefSource}).</p>
     <p><b>Windows:</b> ${windows} (${windowSource}); manual windows remain manual. Clustered components use fixed-centre
     Gaussian/deconvolution models, not interval apexes. Transmission uses ${trans}.
     Concentration is <b>${conc}</b>.</p>
     <h3>Authoritative export</h3>
-    <p>Browser values are a preview. Live-safe controls update embedded data, but settings marked stale above need raw HDF5 re-extraction. <b>Done</b> performs the authoritative full-precision
-    analyze rerun, including Gaussian deconvolution, and writes the CSV.</p>`;
+    <p>Browser values are a preview. Live-safe controls update embedded data, but settings marked stale above need raw HDF5 re-extraction. ${exportAction()} The authoritative analysis includes Gaussian deconvolution.</p>`;
 }
 document.querySelectorAll("#qtabs button").forEach(b=>b.onclick=()=>{ quant=b.dataset.q;
   document.querySelectorAll("#qtabs button").forEach(x=>x.classList.remove("on")); b.classList.add("on");
@@ -1956,6 +1974,14 @@ document.getElementById("meta").textContent=
 // reflect the default quant in the trace sub-tabs + legend
 document.querySelectorAll("#qtabs button").forEach(b=>b.classList.toggle("on",b.dataset.q===quant));
 document.getElementById("tracelbl").textContent=QSHORT[quant];
+const delivery=document.getElementById("previewdelivery");
+if(delivery) delivery.innerHTML=SERVED
+  ? "Click <b>Done</b> (or hand the saved config to <code>ptr analyze</code>) to re-extract at the final settings. The resulting CSV is always authoritative."
+  : "Click <b>Download config</b> to export the final settings, then hand the file to <code>ptr analyze</code> for authoritative re-extraction. The resulting CSV is always authoritative.";
+const cfghelp=document.getElementById("cfghelp");
+if(cfghelp) cfghelp.innerHTML=SERVED
+  ? "Values that can't be set by interacting with the plot. R, K, molar volume, and correction controls update the preview; primary m/z, R<sub>phys</sub>, and window mode are applied to the raw file on Done."
+  : "Values that can't be set by interacting with the plot. R, K, molar volume, and correction controls update the preview; primary m/z, R<sub>phys</sub>, and window mode are included in Download config for raw-file re-extraction.";
 updateCalNote();
 const erow=document.getElementById("exportrow");
 if(SERVED){ const b=document.createElement("button"); b.className="primary"; b.textContent="Done";
