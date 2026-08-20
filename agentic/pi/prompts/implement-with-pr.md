@@ -7,22 +7,23 @@ description:
 2. **Switch branch.** Come up with a suitable branch name. Call `bash` to create and
    checkout that branch: `git checkout -b <branch-name>`. Confirm the branch switch
    succeeded before proceeding.
-3. **Plan.** Call the `subagent` tool in `single` mode with `agent: "planner"` and
-   `task: "$@"`. If `$@` is empty (no argument provided), STOP and ask the user to
-   call this prompt again with an argument.
-4. **Build.** Group the plan items by independence. For each group that can run in
-   parallel, call `subagent` in `parallel` mode with `tasks: [...]`, one entry per item
-   with `agent: "builder"` and `task` quoting the plan item verbatim. Include an
-   instruction to commit before finishing. For sequential dependencies, run groups one
-   after another.
-5. **Review.** Call `subagent` in `single` mode with `agent: "reviewer"` and
-   `task: "Audit the implementation of ABC in commits XYZ and return a verdict (Pass /
-   Needs changes / Block) with findings."`. Here `ABC` is the name of the implemented
-   task and `XYZ` is a list of commit hashes.
+3. **Plan.** Call the `subagent` tool with `agent: "planner"` and `task: "$@"`. If `$@`
+   is empty (no argument provided), STOP and ask the user to call this prompt again with
+   an argument.
+4. **Build.** Group the plan items by dependency. For each group of independent items,
+   issue multiple separate `subagent` tool calls together, one per item, each with
+   `agent: "builder"` and `task` quoting the plan item verbatim. Include an instruction
+   to commit before finishing. Wait for one group to finish before starting a group with
+   dependent items.
+5. **Review.** Call the `subagent` tool with `agent: "reviewer"` and
+   `task: "Audit the implementation of ABC in commits XYZ and return a verdict (Pass / Needs changes / Block) with findings."`.
+   Here `ABC` is the name of the implemented task and `XYZ` is a list of commit hashes.
 6. **Fix (if needed).** If the verdict is "Needs changes" or "Block", treat the findings
-   like a plan. Group issues by independence and call `subagent` in `parallel` mode with
-   `tasks: [...]`, one per issue with `agent: "builder"` and `task` quoting the issue
-   verbatim. Include an instruction to commit before finishing.
+   like a plan. Group issues by dependency and, for each group of independent issues,
+   issue multiple separate `subagent` tool calls together, one per issue, each with
+   `agent: "builder"` and `task` quoting the issue verbatim. Include an instruction to
+   commit before finishing. Wait for one group to finish before starting a group with
+   dependent issues.
 7. **Repeat.** Call the reviewer again (fresh audit). Repeat steps 5–6 until the
    reviewer passes or the user stops.
 8. **Push and PR.** Once the reviewer passes:
