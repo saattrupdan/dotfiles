@@ -425,7 +425,7 @@ Corrected, 3.1 % Conc, and 3.2 % Conc[µg].
 | ---------------- | ------------------------------------------- | --------------------------------------------------------------------------------- |
 | **Raw** [cps]    | Σ intensities over the peak's m/z window    | mass cal `CALdata/Mapping`, or per-cycle `CALdata/Spectrum` if absent (raw exports) |
 | **Corrected**    | Raw / Transmission(m/z)                     | `PTR-Transmission` curve; if absent, unit transmission (Corrected == Raw, flagged)  |
-| **Conc** [ppb]   | Corrected × K / I_primary(t) × (k_anchor/k) | K from `TRACEdata`; primary from m/z 21; k from rate-constant table (`--kinetic`) |
+| **Conc** [ppb]   | Corrected × K / I_primary(t) × (k_anchor/k) | K from `TRACEdata`; configured primary m/z (21.022 by default); k from rate-constant table (`--kinetic`) |
 | **Conc [µg/m³]** | Conc × (mz − proton) / Vₘ                   | Vₘ from drift temperature                                                         |
 
 Files vary in what they carry. Standard processed files have `CALdata/Mapping`,
@@ -437,8 +437,8 @@ reported via `transmission_available: false`), and with no pre-computed concentr
 report the degradation honestly rather than presenting uncalibrated Corrected/Conc as final.
 
 Concentration uses the standard **primary-ion-normalised** model: dividing by the
-per-cycle reagent-ion signal (H₃O⁺ via its m/z 21 isotope) tracks reagent-ion drift over the
-run, and **K** is a single calibration constant. Isolated peaks use apex-centred
+per-cycle reagent-ion signal (the configured primary-ion m/z, 21.022 by default) tracks
+reagent-ion drift over the run, and **K** is a single calibration constant. Isolated peaks use apex-centred
 (auto-corrected) windows; closely-spaced clustered peaks are Gaussian/deconvolved fitted
 components at fixed model centres. Full derivation: `reference/ionicon-h5-format.md`.
 
@@ -456,8 +456,9 @@ Sekimoto & de Gouw 2019; browse with the `rates` command). See
 acid and ammonia have proton affinity near water's, so proton transfer is partly
 reversible and their sensitivity depends on sample **humidity** — a fixed k or K
 misquantifies them. Whenever such a compound is in the run, `analyze` reports a
-**humidity diagnostic**: the per-range water-cluster ratio (m/z 37 / m/z 21 — m/z 19 is
-usually saturated) and the cross-range spread. If humidity varies (it swung 30 % across
+**humidity diagnostic**: the per-range water-cluster ratio (m/z 37 / the configured
+primary-ion m/z, 21.022 by default — m/z 19 is usually saturated) and the cross-range
+spread. If humidity varies (it swung 30 % across
 the almond samples and 237 % across the breath run), relative concentrations of those
 compounds are confounded and it says so. Pass `--humidity-correct` to normalise them
 per-cycle by `(ratio/ref)^p` (`--humidity-p`, 0=off … 1=equilibrium upper bound). **p

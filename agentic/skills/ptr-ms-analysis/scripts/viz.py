@@ -14,7 +14,7 @@ ranges — it does not detect anything) where an expert can:
 The two views (mass spectrum, signal over time) share one large tabbed plot with
 a draggable overview inset; the controls sit below it. With `--serve` the page
 live-saves every edit into the --config file and the CLI blocks until the expert
-clicks "Done"; with `--out` it writes a standalone, portable HTML file instead.
+clicks "Done"; with `--html` it writes a standalone, portable HTML file instead.
 All numbers are embedded, so recompute is instant and offline. Live values use a
 window-sum integration (exact for isolated peaks); overlapping peaks are flagged
 — their authoritative values come from the deconvolution in `ptr analyze` when
@@ -83,17 +83,32 @@ def build_viz_data(f, peaks_cfg, ranges_cfg, R=1200.0, R_phys=2400.0,
     primary = ptrms.extract_primary(f, primary_mz=primary_mz, R=R)
     humidity = ptrms.water_cluster_ratio(f, primary_mz=primary_mz, R=R)
     discriminator = ptrms.build_discriminator(f)
+    file_molar_volume, file_molar_volume_source = ptrms.derive_molar_volume_info(f)
     if molar_volume is None:
-        molar_volume = ptrms.derive_molar_volume(f)
-        molar_volume_source = "file drift temperature"
+        molar_volume = file_molar_volume
+        molar_volume_source = file_molar_volume_source
     else:
         molar_volume_source = analysis_settings["sources"].get(
             "molar_volume", "configured")
+    file_K = ptrms.derive_K(f, primary)
     if K is None:
-        K = ptrms.derive_K(f, primary)
+        K = file_K
         K_source = "file acquisition calibration"
     else:
         K_source = analysis_settings["sources"].get("K", "configured")
+
+    ranges = []
+    for r in (ranges_cfg or []):
+        unit = r.get("unit", "cycle")
+        if unit == "second":
+            lo = max(1, int(round(r["start"] / dur)) + 1)
+            hi = min(ncyc, int(round(r["end"] / dur)) + 1)
+        else:
+            lo, hi = max(1, int(r["start"])), min(ncyc, int(r["end"]))
+        cls = {"high": "sample", "low": "background"}.get(r.get("class"), r.get("class"))
+        if cls not in ("sample", "background"):
+            cls = "background" if str(r["label"]).lower().startswith("background") else "sample"
+        ranges.append({"label": r["label"], "start": lo, "end": hi, "class": cls})
 
     masses = [float(p["mz"]) for p in peaks_cfg]
     # per-peak integration-window overrides: number (symmetric full width) or
@@ -109,8 +124,13 @@ def build_viz_data(f, peaks_cfg, ranges_cfg, R=1200.0, R_phys=2400.0,
     # overlapping ones) and drive all live recompute.
     apexes, raw_traces = {}, {}
     if masses:
-        traces, (a, b) = ptrms.extract_traces(f, masses, R=R, R_phys=R_phys,
-                                              windows=windows or None)
+        real_ranges = not (len(ranges) == 1 and ranges[0]["label"] == "All")
+        per_range = ({r["label"]: (r["start"], r["end"]) for r in ranges}
+                     if real_ranges and not analysis_settings["whole_run_windows"]
+                     else None)
+        traces, (a, b) = ptrms.extract_traces(
+            f, masses, R=R, R_phys=R_phys, windows=windows or None,
+            per_range=per_range)
         apexes = {m: ap for m, (_, ap) in traces.items()}
         raw_traces = {m: raw for m, (raw, _) in traces.items()}
     clustered = set()
@@ -160,7 +180,7 @@ def build_viz_data(f, peaks_cfg, ranges_cfg, R=1200.0, R_phys=2400.0,
         nb = nearest_other(m)
         if nb is not None:
             sep = abs(nb - m)
-            if sep < m / 2400.0 * 1.5:
+            if sep < m / R_phys * 1.5:
                 overlap = {"neighbor": round(nb, 4), "sep_mDa": round(sep * 1000, 1), "level": "unresolved"}
             elif sep < 0.20:
                 overlap = {"neighbor": round(nb, 4), "sep_mDa": round(sep * 1000, 1), "level": "deconvolved"}
@@ -195,19 +215,6 @@ def build_viz_data(f, peaks_cfg, ranges_cfg, R=1200.0, R_phys=2400.0,
         if good.any():
             href_default = round(float(np.median(humidity[good])), 5)
 
-    ranges = []
-    for r in (ranges_cfg or []):
-        unit = r.get("unit", "cycle")
-        if unit == "second":
-            lo = max(1, int(round(r["start"] / dur)) + 1)
-            hi = min(ncyc, int(round(r["end"] / dur)) + 1)
-        else:
-            lo, hi = max(1, int(r["start"])), min(ncyc, int(r["end"]))
-        cls = {"high": "sample", "low": "background"}.get(r.get("class"), r.get("class"))
-        if cls not in ("sample", "background"):
-            cls = "background" if str(r["label"]).lower().startswith("background") else "sample"
-        ranges.append({"label": r["label"], "start": lo, "end": hi, "class": cls})
-
     return {
         "meta": {
             "file": os.path.abspath(f.filename) if hasattr(f, "filename") else "",
@@ -221,14 +228,19 @@ def build_viz_data(f, peaks_cfg, ranges_cfg, R=1200.0, R_phys=2400.0,
             "whole_run_windows": analysis_settings["whole_run_windows"],
             "K_default": None if K is None else round(float(K), 4),
             "K_source": K_source,
+            "K_file": None if file_K is None else round(float(file_K), 4),
+            "K_file_source": "file acquisition calibration",
             "molar_volume": round(float(molar_volume), 4),
             "molar_volume_source": molar_volume_source,
+            "molar_volume_file": round(float(file_molar_volume), 4),
+            "molar_volume_file_source": file_molar_volume_source,
             "humidity_ref_default": href_default,
             "sources": analysis_settings["sources"],
             "humidity_ref_source": (analysis_settings["sources"].get("humidity_ref")
                                     if analysis_settings["humidity_ref"] is not None
                                     else "run median"),
             "transmission_available": ptrms.has_transmission(f),
+            "primary_available": primary is not None,
             "concentration_available": primary is not None and K is not None,
         },
         "config_base": config_base or {},
@@ -805,7 +817,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
     <div class="row">
       <label class="ctl">k-anchor <input type="text" inputmode="decimal" id="kanchor" step="0.1"></label>
     </div>
-    <p class="mut" style="font-size:11px;margin:8px 0 0">Scales each compound by its own proton-transfer rate constant <b>k</b> for more physically accurate concentrations, instead of assuming one sensitivity for all. It runs in a hybrid mode (on by default): a compound uses its own k only when that k is <b>measured</b>; where k is estimated or unknown it stays on the shared K (the <b>~</b> mark in the Identification card flags an estimated k).</p>
+    <p class="mut" style="font-size:11px;margin:8px 0 0">Scales each compound by its own proton-transfer rate constant <b>k</b> for more physically accurate concentrations, instead of assuming one sensitivity for all. When enabled, it runs in a hybrid mode: a compound uses its own k only when that k is <b>measured</b>; where k is estimated or unknown it stays on the shared K (the <b>~</b> mark in the Identification card flags an estimated k).</p>
     <p class="mut" style="font-size:11px;margin:7px 0 0">Disabled, every compound shares the single constant K — one sensitivity for all, matching a standard reference export.</p>
   </div>
   <div class="grp">
@@ -840,10 +852,10 @@ _TEMPLATE = r"""<!DOCTYPE html>
   <p>Ion transmission varies with m/z; the file's transmission curve gives the factor at each apex. <b>Corrected = Raw / transmission(apex)</b>.</p>
 
   <h3>5 · Concentration</h3>
-  <p>Primary-ion-normalised model: <b>Conc[ppb] = Corrected · K / I<sub>primary</sub>(t)</b>, where I<sub>primary</sub> is the reagent-ion signal (m/z 21, H₃¹⁸O⁺) per cycle and <b>K</b> is one sensitivity constant. K is the only quantity not fixed by the raw file — the default is the file's own acquisition calibration; set it in Configuration (or calibrate against a reference). <b>Conc[µg/m³] = Conc · (m − proton) / V<sub>m</sub></b>, with molar volume V<sub>m</sub> from the drift-tube temperature.</p>
+  <p>Primary-ion-normalised model: <b>Conc[ppb] = Corrected · K / I<sub>primary</sub>(t)</b>, where I<sub>primary</sub> is the configured reagent-ion signal (m/z 21.022 by default) per cycle and <b>K</b> is one sensitivity constant. K is the only quantity not fixed by the raw file — the default is the file's own acquisition calibration; set it in Configuration (or calibrate against a reference). <b>Conc[µg/m³] = Conc · (m − proton) / V<sub>m</sub></b>, with molar volume V<sub>m</sub> from the drift-tube temperature.</p>
 
   <h3>6 · Optional corrections</h3>
-  <p><b>Per-compound k (kinetic):</b> scales each compound by its own proton-transfer rate constant (Conc ∝ 1/k) relative to an anchor — physically more accurate than one shared sensitivity. This runs in a <b>hybrid mode that is on by default</b>: a compound is scaled by its own k only when that k is a <i>measured</i> value; compounds whose k is only estimated (or unknown) stay on the shared K, since applying an uncertain k would add error rather than remove it. Estimated k's are marked with <b>~</b> in the Identification card. <b>Humidity:</b> low-proton-affinity compounds (HCN, formaldehyde, formic acid…) have humidity-dependent sensitivity; flagged <i>humid-sensitive</i>, and optionally normalised by the per-cycle water-cluster ratio X = I(m37)/I(m21) raised to a power p — off by default.</p>
+  <p><b>Per-compound k (kinetic):</b> scales each compound by its own proton-transfer rate constant (Conc ∝ 1/k) relative to an anchor — physically more accurate than one shared sensitivity. When enabled, this runs in a hybrid mode: a compound is scaled by its own k only when that k is a <i>measured</i> value; compounds whose k is only estimated (or unknown) stay on the shared K, since applying an uncertain k would add error rather than remove it. Estimated k's are marked with <b>~</b> in the Identification card. <b>Humidity:</b> low-proton-affinity compounds (HCN, formaldehyde, formic acid…) have humidity-dependent sensitivity; flagged <i>humid-sensitive</i>, and optionally normalised by the per-cycle water-cluster ratio X = I(m37)/I(primary) raised to a power p — off by default.</p>
 
   <h3>7 · Time intervals</h3>
   <p>The signal is split into stable plateaus by log-space gradient detection on a composite VOC signal (high = sample, low = background/setup). You rename, reclassify, resize (drag edges), add (⌘/Ctrl-drag) and remove (select + Del) intervals. For each interval the CSV reports Max / Min / Average / Std-dev of Raw, Corrected, Conc and Conc[µg] per compound.</p>
@@ -895,6 +907,8 @@ const cfg = { R:M.R, Rphys:M.R_phys, primarymz:M.primary_mz, K:M.K_default,
               humid:M.humidity_correct===true, hump:M.humidity_p??1.0,
               href:M.humidity_ref??M.humidity_ref_default,
               wholewindows:M.whole_run_windows===true };
+let kSource = M.K_source || (M.sources||{}).K || "file acquisition calibration";
+let vmSource = M.molar_volume_source || (M.sources||{}).molar_volume || "file drift temperature";
 
 // ---- theme (light / dark / system) — persisted in localStorage, defaults to system ----
 function themePref(){ try{ return localStorage.getItem("ptrms-theme")||"system"; }catch(e){ return "system"; } }
@@ -982,7 +996,7 @@ function computeTraces(p){ const raw=rawTrace(p); if(!raw) return null;
   const T=interpT(p.apex), cor=new Float64Array(NCYC), con=new Float64Array(NCYC), ug=new Float64Array(NCYC);
   const kfac=(cfg.kinetic && p.k && !p.k_estimated)?cfg.kanchor/p.k:1.0;
   const isHum=cfg.humid && (p.flags||[]).includes("humid") && cfg.href>0;
-  const haveConc=M.concentration_available && cfg.K!=null;
+  const haveConc=!!(M.primary_available !== false && PC.primary && cfg.K!=null);
   for(let i=0;i<NCYC;i++){ cor[i]=raw[i]/T;
     if(haveConc && PC.primary && PC.primary[i]>0){ let hf=1.0;
       if(isHum && PC.humidity && PC.humidity[i]>0) hf=Math.pow(PC.humidity[i]/cfg.href,cfg.hump);
@@ -1585,7 +1599,14 @@ function submitDone(){
 }
 function download(name,text){ const bl=new Blob([text],{type:"application/json"});
   const u=URL.createObjectURL(bl), a=document.createElement("a"); a.href=u; a.download=name; a.click(); URL.revokeObjectURL(u); }
-function redraw(){ updateMethods(); drawMain(); scheduleSave(); }
+function updateCalNote(){
+  const el=document.getElementById("calnote"); if(!el) return;
+  const available=!!(M.primary_available !== false && PC.primary && cfg.K!=null);
+  el.innerHTML=available
+    ? `K = ${fmt(cfg.K)} (${kSource}); Conc uses the primary-ion-normalised model.`
+    : `No primary-ion / K available — Conc columns are unavailable for this file or until K is entered.`;
+}
+function redraw(){ updateMethods(); updateCalNote(); drawMain(); scheduleSave(); }
 
 // ---- per-interval mass spectrum (served: fetched on demand; standalone: whole run only) ----
 const specCache={};
@@ -1654,6 +1675,8 @@ function setv(id,v){ const el=document.getElementById(id); if(el) el.value=v??""
 setv("R",cfg.R); setv("Rphys",cfg.Rphys); setv("primarymz",cfg.primarymz);
 setv("K",cfg.K); setv("Vm",cfg.Vm); setv("kanchor",cfg.kanchor); setv("hump",cfg.hump); setv("href",cfg.href);
 document.getElementById("wholewindows").checked=cfg.wholewindows;
+document.getElementById("kinetic").checked=cfg.kinetic;
+document.getElementById("humid").checked=cfg.humid;
 // Strict numeric parse: null = blank, NaN = not a valid number, else the number.
 // parseFloat is too lenient ("19.0372s" -> 19.0372), so require the WHOLE string to be
 // a decimal (optional sign, digits, optional fraction, optional exponent) before Number().
@@ -1669,17 +1692,21 @@ document.getElementById("R").onchange=e=>{ const v=parseNum(e.target.value);
 // numeric config inputs: reject non-numbers (restore the last good value). allowEmpty -> blank means null.
 function bind(id,key,allowEmpty){ const el=document.getElementById(id);
   el.onchange=()=>{ const v=parseNum(el.value);
-    if(v===null){ if(allowEmpty){ cfg[key]=null; redraw(); } else { el.value=(cfg[key]??""); } return; }
+    if(v===null){ if(allowEmpty){ cfg[key]=null; if(key==="K") kSource="browser edit"; redraw(); } else { el.value=(cfg[key]??""); } return; }
     if(Number.isNaN(v)){ el.value=(cfg[key]??""); return; }   // not a number -> discard, keep prior value
-    cfg[key]=v; el.value=v; redraw(); }; }
+    cfg[key]=v; el.value=v;
+    if(key==="K") kSource="browser edit";
+    if(key==="Vm") vmSource="browser edit";
+    redraw(); }; }
 bind("K","K",true); bind("Vm","Vm",false); bind("Rphys","Rphys",false);
 bind("primarymz","primarymz",false); bind("kanchor","kanchor",false);
 bind("hump","hump",false); bind("href","href",true);
-document.getElementById("kinetic").checked=cfg.kinetic;   // hybrid kinetic on by default
 document.getElementById("kinetic").onchange=e=>{cfg.kinetic=e.target.checked;redraw();};
 document.getElementById("humid").onchange=e=>{cfg.humid=e.target.checked;redraw();};
 document.getElementById("wholewindows").onchange=e=>{cfg.wholewindows=e.target.checked;redraw();};
-document.getElementById("resetK").onclick=()=>{ cfg.K=M.K_default; cfg.Vm=M.molar_volume;
+document.getElementById("resetK").onclick=()=>{ cfg.K=M.K_file??M.K_default; cfg.Vm=M.molar_volume_file??M.molar_volume;
+  kSource=M.K_file_source||"file acquisition calibration";
+  vmSource=M.molar_volume_file_source||"file drift temperature";
   setv("K",cfg.K); setv("Vm",cfg.Vm); redraw(); };
 function updateMethods(){
   const live=document.getElementById("methodlive"); if(!live) return;
@@ -1689,24 +1716,26 @@ function updateMethods(){
   const source=v=>v==="config.analyze"?"curated config":v==="cli"?"CLI override":v||"legacy default";
   const src=M.sources||{};
   const rSource=source(src.R), rPhysSource=source(src.R_phys), primarySource=source(src.primary_mz);
-  const kSource=M.K_source||source(src.K);
-  const vmSource=M.molar_volume_source||source(src.molar_volume);
+  const effectiveKSource=source(kSource||src.K);
+  const effectiveVmSource=source(vmSource||src.molar_volume);
   const hrefSource=M.humidity_ref!=null?(M.humidity_ref_source||source(src.humidity_ref)):"run median";
   const trans=M.transmission_available?"the file's available transmission curve":"unit fallback (no transmission curve in the file)";
-  const conc=M.concentration_available?"available":"unavailable (primary-ion signal or K is missing)";
+  const concentrationAvailable=!!(M.primary_available !== false && PC.primary && cfg.K!=null);
+  M.concentration_available=concentrationAvailable;
+  const conc=concentrationAvailable?"available":"unavailable (primary-ion signal or K is missing)";
   const kinetic=cfg.kinetic?"on":"off";
   const windows=cfg.wholewindows?"one whole-run window per compound":"isolated per-interval windows";
   live.innerHTML=`
     <h3>Effective settings</h3>
     <p><b>R integration windows:</b> R = ${cfg.R} (${rSource}); manual peak windows override the default.
     <b>R<sub>phys</sub> Gaussian/deconvolution resolution:</b> ${cfg.Rphys} (${rPhysSource}).</p>
-    <p><b>K:</b> ${fmt(cfg.K)} (${kSource}); <b>molar volume:</b> ${fmt(cfg.Vm)} L/mol (${vmSource});
+    <p><b>K:</b> ${fmt(cfg.K)} (${effectiveKSource}); <b>molar volume:</b> ${fmt(cfg.Vm)} L/mol (${effectiveVmSource});
     <b>primary m/z:</b> ${cfg.primarymz} (${primarySource}).</p>
     <p><b>Kinetic correction:</b> ${kinetic}; k_anchor = ${cfg.kanchor} x 10<sup>-9</sup> cm³/s.
     Rate priority is explicit peak k, then formula match, then a unique m/z library match;
     estimated or unknown rates stay on shared K.</p>
     <p><b>Humidity correction:</b> ${cfg.humid?"on":"off"}; p = ${cfg.hump};
-    water-cluster ratio is m/z 37 / m/z 21; reference =
+    water-cluster ratio is m/z 37 / m/z ${cfg.primarymz}; reference =
     ${cfg.href==null?"run median":cfg.href} (${hrefSource}).</p>
     <p><b>Windows:</b> ${windows}; manual windows remain manual. Clustered components use fixed-centre
     Gaussian/deconvolution models, not interval apexes. Transmission uses ${trans}.
@@ -1885,10 +1914,7 @@ document.getElementById("meta").textContent=
 // reflect the default quant in the trace sub-tabs + legend
 document.querySelectorAll("#qtabs button").forEach(b=>b.classList.toggle("on",b.dataset.q===quant));
 document.getElementById("tracelbl").textContent=QSHORT[quant];
-document.getElementById("calnote").innerHTML=
-  M.concentration_available
-    ? `Default K = ${M.K_default} (file's own acquisition calibration). Conc uses the primary-ion-normalised model.`
-    : `No primary-ion / K available — Conc columns are unavailable for this file.`;
+updateCalNote();
 const erow=document.getElementById("exportrow");
 if(SERVED){ const b=document.createElement("button"); b.className="primary"; b.textContent="Done";
   b.onclick=submitDone; erow.appendChild(b); setStat("saved ✓");
