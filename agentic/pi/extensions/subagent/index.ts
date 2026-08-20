@@ -38,8 +38,10 @@ import {
 	type QuestionResponse,
 } from "../_question_protocol/protocol.ts";
 import { dispatchAsk } from "../question/index.ts";
+import { createInteractiveQueue } from "./interactive-queue.ts";
 
 const COLLAPSED_ITEM_COUNT = 10;
+const interactiveQueue = createInteractiveQueue();
 
 function formatTokens(count: number): string {
 	if (count < 1000) return count.toString();
@@ -1047,7 +1049,9 @@ const SubagentParams = Type.Object({
 	),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
 	model: Type.Optional(Type.String({ description: "Preferred model for this call" })),
-	skills: Type.Optional(Type.Array(Type.String(), { description: "Override skills for this call" })),
+	skills: Type.Optional(
+		Type.Array(Type.String(), { description: "Additional skills for this call (combined with the agent's skills)" }),
+	),
 });
 
 function buildSubagentDescription(): string {
@@ -1098,15 +1102,20 @@ export default function (pi: ExtensionAPI) {
 			// A child question is answered by the orchestrator, including when this
 			// process is itself a subagent and the request must travel up to its parent.
 			const fulfillQuestion: QuestionFulfiller = (questions, sig) =>
-				dispatchAsk(ctx, questions, sig);
+				interactiveQueue.run((interactionSignal) => dispatchAsk(ctx, questions, interactionSignal), sig);
 
 			if ((agentScope === "project" || agentScope === "both") && confirmProjectAgents && ctx.hasUI) {
 				const projectAgent = agents.find((a) => a.name === params.agent && a.source === "project");
 				if (projectAgent) {
 					const dir = discovery.projectAgentsDir ?? "(unknown)";
-					const ok = await ctx.ui.confirm(
-						"Run project-local agents?",
-						`Agents: ${projectAgent.name}\nSource: ${dir}\n\nProject agents are repo-controlled. Only continue for trusted repositories.`,
+					const ok = await interactiveQueue.run(
+						(interactionSignal) =>
+							ctx.ui.confirm(
+								"Run project-local agents?",
+								`Agents: ${projectAgent.name}\nSource: ${dir}\n\nProject agents are repo-controlled. Only continue for trusted repositories.`,
+								{ signal: interactionSignal },
+							),
+						signal,
 					);
 					if (!ok) {
 						return {
@@ -1165,8 +1174,10 @@ export default function (pi: ExtensionAPI) {
 				theme.fg("muted", ` [${scope}]`);
 			if (context.isPartial) text += `\n  ${theme.fg("dim", preview)}`;
 			return new Text(text, 0, 0);
-		},		renderResult(result, { expanded, isPartial }, theme, _context) {
-				const details = result.details as SingleResult | undefined;
+		},
+
+		renderResult(result, { expanded, isPartial }, theme, _context) {
+			const details = result.details as SingleResult | undefined;
 			if (!details) {
 				const text = result.content[0];
 				return new Text(text?.type === "text" ? text.text : "(no output)", 0, 0);
