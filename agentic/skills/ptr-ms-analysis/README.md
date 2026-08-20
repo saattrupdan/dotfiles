@@ -98,9 +98,10 @@ signal. Compound identification (`scripts/formula_id.py`) enumerates candidate m
 formulas offline (no external database) and ranks them by exact-mass error, the measured
 vs predicted ¹³C(M+1)/heteroatom(M+2, e.g. S/Cl) isotope pattern, and plausibility
 (integer DBE, nitrogen rule, element ratios) — so near-isobars are told apart by
-composition, not "nearest mass". Names and proton-transfer rate constants come from
-`reference/rate_constants.json` when the formula is known — 218 compounds compiled
-from the **PTR Library** (Pagonis, Sekimoto & de Gouw, *J. Am. Soc. Mass Spectrom.*
+composition, not "nearest mass". Candidate rankings cannot determine structural isomers;
+names and isomer labels come from the bundled PTR Library mapping. Proton-transfer rate
+constants come from `reference/rate_constants.json` when the formula is known — 218 compounds
+compiled from the **PTR Library** (Pagonis, Sekimoto & de Gouw, *J. Am. Soc. Mass Spectrom.*
 2019, doi.org/10.1007/s13361-019-02209-3; tinyurl.com/PTRLibrary), one entry per
 neutral formula with measured k where available (else Su-Chesnavich capture-theory
 k, flagged `k_estimated`), plus proton affinity, isomer names, and fragmentation

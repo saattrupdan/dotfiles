@@ -236,6 +236,9 @@ def score_peak(mz, drift, obs_ratios=None, tol_mDa=12.0, max_candidates=5,
     drift       : run mass-scale (measured apex / true mass) to undo before matching
     obs_ratios  : (r1_obs, r2_obs) measured (M+1)/M and (M+2)/M, or None
     Returns list of candidate dicts, best first, each with the evidence used.
+    ``probability`` is a score/share normalised over the retained candidates,
+    not a calibrated identification probability (a lone candidate therefore
+    must not be presented as 100% confidence).
     """
     neutral = mz / drift - PROTON
     tol = tol_mDa / 1000.0

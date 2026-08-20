@@ -219,7 +219,9 @@ def annotate_peaks(peaks, avgspec=None, a=None, b=None, R=1200.0, elements=None)
     Returns (drift, annotated_peaks). `drift` is the run's global mass scale
     (measured apex / true m/z ≈ 1.0008); each candidate's `delta_mDa` is the exact
     -mass residual after removing that drift, plus predicted/observed isotope
-    ratios and a normalised `probability`."""
+    ratios and a normalised candidate score/share (`probability`). It is not a
+    calibrated identification probability; conservative assignment gates below
+    deliberately require multiple candidates."""
     tbl = ptrms.load_rate_constants()
     comps = tbl["compounds"] if tbl else []
     ratios = []
@@ -260,7 +262,8 @@ def annotate_peaks(peaks, avgspec=None, a=None, b=None, R=1200.0, elements=None)
         cands = formula_id.score_peak(
             mz, drift, obs_ratios=obs_ratios(mz), elements=elements)
         e["candidates"] = cands
-        # identification confidence / near-isobar ambiguity, surfaced explicitly
+        # normalized top-candidate score / near-isobar ambiguity, surfaced explicitly;
+        # conservative assignment gates below require multiple candidates
         if cands:
             e["id_confidence"] = cands[0]["probability"]
             top2 = (len(cands) > 1 and cands[0]["probability"] - cands[1]["probability"] < 0.2)
@@ -420,7 +423,8 @@ def cmd_peaks(args):
                 "(combining exact-mass error, the measured vs predicted "
                 "13C(M+1)/heteroatom(M+2) isotope ratios, and plausibility) — "
                 "use this, not nearest-mass, to resolve isobars. `id_confidence` "
-                "is the top candidate's probability; `id_ambiguous` lists the "
+                "is the top candidate's normalized score/share; a sole candidate is "
+                "not a 100% confidence estimate. `id_ambiguous` lists the "
                 "close rivals when the call is not clear-cut; `overlap` flags a "
                 "neighbouring peak whose spectral overlap adds quantification "
                 "uncertainty (unresolved = worse than deconvolved). `name`/`k` are "
@@ -434,7 +438,9 @@ def cmd_peaks(args):
         note = ("Compact view (default). Each peak: `suggested_label` (a ready-to-use "
                 "label — drop it into your config's peaks, or override it), "
                 "`top_candidate` (best formula/name/mass-error, chosen by isotope "
-                "pattern + plausibility, NOT nearest-mass), `id_confidence`, and, when "
+                "pattern + plausibility, NOT nearest-mass), `id_confidence` (a normalized "
+                "top-candidate score used by conservative gates, not a calibrated "
+                "probability), and, when "
                 "relevant, `id_ambiguous` (close rivals), `overlap` (quantification "
                 "uncertainty), and `likely_artifact` (reagent/cluster diagnostic ions "
                 "— real, keep or drop as you like). "

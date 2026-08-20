@@ -197,10 +197,12 @@ chemistry judgment differs. When a peak has no library name but one plain **C/H/
 wins decisively (top candidate, ≥2 candidates considered, `id_confidence ≥ 0.9`, not
 ambiguous), that formula is offered as both `suggested_label` and `suggested_formula` and
 carried into `--auto-peaks` configs — a confident composition is a real identity, far better
-than a bare "unknown". (A confident halogen/S/P formula at an off-mass is treated as a likely
-calibration artifact and left `unknown m/z …` for you to judge; its candidate still shows in
-`--full` and in the viz Identification card.) **Near-duplicate peaks whose integration windows
-almost coincide (>60 % overlap) double-count one signal**: `n_window_overlap_pairs` warns of
+than a bare "unknown". `id_confidence` is a normalized top-candidate score used by these
+conservative gates, not a calibrated probability; a sole generated candidate is not a 100%
+identification confidence estimate. (A confident halogen/S/P formula at an off-mass is
+treated as a likely calibration artifact and left `unknown m/z …` for you to judge; its
+candidate still shows in `--full` and in the viz Identification card.) **Near-duplicate peaks whose
+integration windows almost coincide (>60 % overlap) double-count one signal**: `n_window_overlap_pairs` warns of
 any in the list, and `--auto-peaks` already merges them (keeps the taller apex) — keep only
 one m/z from each such pair in a hand-built config. `top_candidate` is the best formula/name chosen by isotope pattern +
 plausibility (**not** nearest-mass); `id_ambiguous` lists close rivals when the call is
