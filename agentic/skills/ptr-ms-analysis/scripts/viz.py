@@ -522,7 +522,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
   th:first-child,td:first-child,td.l,th.l{text-align:left}
   tbody tr{cursor:pointer} tbody tr:hover td{background:var(--hover)}
   tr.sel td{background:var(--sel)}
-  .pill{font-size:10px;padding:1px 7px;border-radius:999px;border:1px solid var(--line);color:var(--mut)}
+  .pill{font-size:10px;padding:1px 7px;border-radius:999px;border:1px solid var(--line);color:var(--mut);white-space:nowrap;flex-shrink:0}
   .pill.humid{color:#7dd3fc;border-color:#155e75} .pill.clus{color:var(--hi);border-color:#78491a}
   .pill.frag{color:#c4b5fd;border-color:#4c3a78} .pill.hi{color:var(--hi);border-color:#78491a}
   .pill.ovl{color:#fca5a5;border-color:#7f1d1d}
@@ -621,7 +621,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
   .plist .dc.dmda{min-width:58px;text-align:right} .plist .dc.dmda.warn{color:#f87171}
   .plist .dc.kv{min-width:50px;text-align:right}
   .plist .dc.win{min-width:92px;text-align:right}
-  .plist .dc.pills{display:flex;gap:4px;flex:1 1 0;min-width:0;overflow:hidden}
+  .plist .dc.pills{display:flex;gap:4px;flex:0 0 100px;min-width:100px;overflow:hidden}
   .plist .dc.del{cursor:pointer;color:var(--mut);background:none;border:0;font-size:12px;padding:2px 4px}
   .plist .dc.del:hover{color:#f87171}
   /* configuration slide-over */
