@@ -236,7 +236,8 @@ bare `unknown m/z …`. Scrutinise unidentified and high-m/z peaks first (reagen
 diagnostic ions flagging here is expected and fine to keep as-is).
 
 For a credible assignment pass the canonical target `mz`; the extractor estimates the
-run-wide mass drift and reports the actual apex under `measured_apexes`.
+run-wide mass drift and reports apex diagnostics under `measured_apexes`. For clustered
+peaks those values are fixed Gaussian/deconvolved model centres, not measured apexes.
 
 The HDF5 formula library is broad and does **not** reveal the operator's selected target
 panel. A channel absent at the detection threshold may still have been part of their
@@ -373,8 +374,9 @@ integration window, and the compound's time trace with segments overlaid. They c
 re-centre / add / remove / relabel peaks, drag / add / rename segments, and change **K**,
 molar volume, the kinetic (`k`) correction, and the humidity correction — everything
 recomputes live (the live math mirrors `analyze`; re-centred or overlapping peaks are
-flagged `≈`/`overlap`, exact only after the re-run). **The delivered CSV always comes
-from `analyze`**, never the browser.
+flagged `≈`/`overlap`, while clustered fitted components stay at fixed model centres;
+exact only after the re-run). **The delivered CSV always comes from `analyze`**, never the
+browser.
 
 ### 6. Calibrate concentration when accurate ppb/µg matters
 
@@ -424,10 +426,10 @@ reported via `transmission_available: false`), and with no pre-computed concentr
 report the degradation honestly rather than presenting uncalibrated Corrected/Conc as final.
 
 Concentration uses the standard **primary-ion-normalised** model: dividing by the
-per-cycle reagent-ion signal (H₃O⁺ via its m/z 21 isotope) tracks reagent-ion drift over
-the run, and **K** is a single calibration constant. Peaks are apex-centred
-(auto-corrects calibration drift); closely-spaced peaks (Δm/z < 0.2) are separated by
-linear Gaussian deconvolution. Full derivation: `reference/ionicon-h5-format.md`.
+per-cycle reagent-ion signal (H₃O⁺ via its m/z 21 isotope) tracks reagent-ion drift over the
+run, and **K** is a single calibration constant. Isolated peaks use apex-centred
+(auto-corrected) windows; closely-spaced clustered peaks are Gaussian/deconvolved fitted
+components at fixed model centres. Full derivation: `reference/ionicon-h5-format.md`.
 
 **Per-compound sensitivity (`--kinetic`).** Sensitivity scales with each compound's
 proton-transfer rate constant k (`Conc ∝ 1/k`). By default one k is assumed for all

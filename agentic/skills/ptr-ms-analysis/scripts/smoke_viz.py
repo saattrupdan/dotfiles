@@ -50,7 +50,7 @@ def _synthetic_data() -> Dict[str, Any]:
             "file": "synthetic-review.h5",
             "ncyc": 4,
             "dur": 1.0,
-            "a": 100.0,
+            "a": 1000.0,
             "b": 0.0,
             "R": 1200.0,
             "R_phys": 2400.0,
@@ -70,7 +70,7 @@ def _synthetic_data() -> Dict[str, Any]:
         },
         # The values are only for painting the deterministic canvas.  The review
         # assertions below concern the identification card and its interactions.
-        "spectrum": [10] * 2000,
+        "spectrum": [10] * 13000,
         "peaks": [
             {
                 "id": 0,
@@ -137,6 +137,63 @@ def _synthetic_data() -> Dict[str, Any]:
                 "id_ambiguous": True,
                 "overlap": None,
             },
+            {
+                "id": 3,
+                "mz": 130.0,
+                "apex": 130.0,
+                "label": "Cluster component A",
+                "formula": "",
+                "k": None,
+                "k_estimated": False,
+                "flags": [],
+                "clustered": True,
+                "win_l": 130.0 / (2.0 * 1200.0),
+                "win_r": 130.0 / (2.0 * 1200.0),
+                "win_manual": False,
+                "trace": [40.0, 40.0, 40.0, 40.0],
+                "candidates": [],
+                "id_confidence": None,
+                "id_ambiguous": False,
+                "overlap": {"neighbor": 130.05, "sep_mDa": 50.0, "level": "deconvolved"},
+            },
+            {
+                "id": 4,
+                "mz": 130.05,
+                "apex": 130.05,
+                "label": "Cluster component B",
+                "formula": "",
+                "k": None,
+                "k_estimated": False,
+                "flags": [],
+                "clustered": True,
+                "win_l": 130.05 / (2.0 * 1200.0),
+                "win_r": 130.05 / (2.0 * 1200.0),
+                "win_manual": False,
+                "trace": [35.0, 35.0, 35.0, 35.0],
+                "candidates": [],
+                "id_confidence": None,
+                "id_ambiguous": False,
+                "overlap": {"neighbor": 130.0, "sep_mDa": 50.0, "level": "deconvolved"},
+            },
+            {
+                "id": 5,
+                "mz": 140.0,
+                "apex": 140.0,
+                "label": "Isolated control",
+                "formula": "",
+                "k": None,
+                "k_estimated": False,
+                "flags": [],
+                "clustered": False,
+                "win_l": 140.0 / (2.0 * 1200.0),
+                "win_r": 140.0 / (2.0 * 1200.0),
+                "win_manual": False,
+                "trace": [25.0, 25.0, 25.0, 25.0],
+                "candidates": [],
+                "id_confidence": None,
+                "id_ambiguous": False,
+                "overlap": None,
+            },
         ],
         "ranges": [{"label": "sample_01", "start": 1, "end": 4, "class": "sample"}],
         "checklist": [],
@@ -145,10 +202,11 @@ def _synthetic_data() -> Dict[str, Any]:
 
 
 class _ReviewHandler(http.server.BaseHTTPRequestHandler):
-    """Serve only the generated page and its deterministic spectrum response."""
+    """Serve the generated page and deterministic whole/interval spectra."""
 
     html = ""
     spectrum = b"[]"
+    interval_spectrum = b"[]"
 
     def log_message(self, *_args: Any) -> None:
         pass
@@ -157,7 +215,7 @@ class _ReviewHandler(http.server.BaseHTTPRequestHandler):
         if self.path in ("/", "/index.html"):
             body, content_type = self.html.encode("utf-8"), "text/html; charset=utf-8"
         elif self.path.startswith("/spectrum"):
-            body, content_type = self.spectrum, "application/json"
+            body, content_type = self.interval_spectrum, "application/json"
         else:
             self.send_error(404)
             return
@@ -201,6 +259,16 @@ def _assert(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
+def _interval_spectrum() -> list[int]:
+    """Return an interval spectrum whose shared maximum exposes re-centring bugs."""
+    spectrum = [1] * 13000
+    # m/z 130.0284 is inside both clustered search neighbourhoods and dominates
+    # them. The isolated control has its own shifted maximum at m/z 140.0199.
+    spectrum[11403] = 100
+    spectrum[11833] = 80
+    return spectrum
+
+
 def main() -> int:
     if shutil.which("agent-browser") is None:
         raise SystemExit(
@@ -210,6 +278,7 @@ def main() -> int:
     data = _synthetic_data()
     _ReviewHandler.html = viz.render_html(data)
     _ReviewHandler.spectrum = json.dumps(data["spectrum"]).encode("ascii")
+    _ReviewHandler.interval_spectrum = json.dumps(_interval_spectrum()).encode("ascii")
     server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _ReviewHandler)
     server.daemon_threads = True
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -235,6 +304,49 @@ def main() -> int:
             "Mass spectrum",
             "--exact",
         )
+
+        # Select the clustered component and load an interval whose shared maximum
+        # sits between both model centres. The browser must not turn that maximum
+        # into two displayed apexes, while the isolated control still follows it.
+        _browser(session, "find", "nth", "3", ".plist li", "click")
+        _browser(
+            session,
+            "eval",
+            "(() => { const s=document.querySelector('#specrange'); s.value='0'; "
+            "s.dispatchEvent(new Event('change')); })()",
+        )
+        _browser(session, "wait", "1000")
+        clustered = _eval(
+            session,
+            "(() => { const ps=[peaks[3],peaks[4]]; "
+            "const ws=ps.map(p => { const ax=dispApex(p), "
+            "tb=windowTB(ax,p.winL,p.winR); "
+            "return {centre:ax,left:tb2m(tb[0]),right:tb2m(tb[1])}; }); "
+            "const intersection=Math.max(0,Math.min(ws[0].right,ws[1].right)-"
+            "Math.max(ws[0].left,ws[1].left)); "
+            "const union=Math.max(ws[0].right,ws[1].right)-"
+            "Math.min(ws[0].left,ws[1].left); "
+            "return {windows:ws, overlap:intersection/union, isolated:dispApex(peaks[5]), "
+            "note:document.querySelector('#idpanel').innerText}; })()",
+        )
+        _assert(
+            [item["centre"] for item in clustered["windows"]] == [130, 130.05],
+            "clustered displayed centres moved onto the shared interval maximum",
+        )
+        _assert(
+            clustered["overlap"] < 0.6,
+            "clustered displayed windows became duplicate-like after interval loading",
+        )
+        _assert(
+            clustered["isolated"] > 140.01,
+            "isolated control did not re-centre on its interval maximum",
+        )
+        _assert(
+            "fixed model centre" in clustered["note"]
+            and "not a measured apex" in clustered["note"],
+            "clustered-peak wording is missing from the identification card",
+        )
+        _browser(session, "find", "nth", "0", ".plist li", "click")
 
         sole = _eval(
             session,
