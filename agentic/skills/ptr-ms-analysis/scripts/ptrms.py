@@ -46,9 +46,13 @@ def load_rate_constants(path=None):
 def resolve_k(peaks, rate_table, mz_tol=0.03):
     """Determine each peak's rate constant k (in 1e-9 cm3/s units) and its source.
 
-    Priority: an explicit `k` on the peak > exact `formula` match > a unique
-    m/z match in the table. Returns {mz: {k, source, flags}}. `flags` carries
-    'humid' (needs humidity handling) / 'frag' (fragments) from the table."""
+    Rate-constant priority is an explicit `k` on the peak > exact `formula` match >
+    a unique m/z match in the table. Chemical flags are resolved independently from
+    an exact formula match, otherwise a unique m/z match, without replacing an
+    explicit k or its provenance. Returns {mz: {k, source, flags, k_estimated}}.
+    `flags` carries 'humid' (needs humidity handling) / 'frag' (fragments) from the
+    table.
+    """
     by_formula, by_mz = {}, {}
     if rate_table:
         for c in rate_table.get("compounds", []):
@@ -57,24 +61,30 @@ def resolve_k(peaks, rate_table, mz_tol=0.03):
     out = {}
     for p in peaks:
         mz = float(p["mz"])
-        k, src, flags, kest = None, None, [], False
+        formula_match = (
+            by_formula.get(p["formula"].upper()) if p.get("formula") else None
+        )
+        mz_matches = [
+            c for c in by_mz.get(round(mz, 1), [])
+            if abs(c["mz"] - mz) < mz_tol
+        ]
+        flag_match = formula_match or (mz_matches[0] if len(mz_matches) == 1 else None)
+        flags = list(flag_match.get("flags", [])) if flag_match else []
+
+        k, src, kest = None, None, False
         if p.get("k") is not None:
             k = float(p["k"])
             k = k / 1e-9 if k < 1e-6 else k   # accept SI or 1e-9 units
             src = "explicit"
             kest = bool(p.get("k_estimated", False))
-        elif p.get("formula") and p["formula"].upper() in by_formula:
-            c = by_formula[p["formula"].upper()]
-            k, src, flags = c["k"], "formula:" + c["name"], c["flags"]
-            kest = bool(c.get("k_estimated", False))
-        else:
-            cand = [c for c in by_mz.get(round(mz, 1), [])
-                    if abs(c["mz"] - mz) < mz_tol]
-            if len(cand) == 1:
-                k, src, flags = cand[0]["k"], "mz:" + cand[0]["name"], cand[0]["flags"]
-                kest = bool(cand[0].get("k_estimated", False))
-            elif len(cand) > 1:
-                src = "ambiguous:" + ",".join(c["name"] for c in cand)
+        elif formula_match:
+            k, src = formula_match["k"], "formula:" + formula_match["name"]
+            kest = bool(formula_match.get("k_estimated", False))
+        elif len(mz_matches) == 1:
+            k, src = mz_matches[0]["k"], "mz:" + mz_matches[0]["name"]
+            kest = bool(mz_matches[0].get("k_estimated", False))
+        elif len(mz_matches) > 1:
+            src = "ambiguous:" + ",".join(c["name"] for c in mz_matches)
         out[mz] = dict(k=k, source=src, flags=flags, k_estimated=kest)
     return out
 
