@@ -49,18 +49,18 @@ across sessions. It's exposed as three tools:
   librarian can attach it to the right concept.
 - **`memory_update`** — correct or deprecate outdated knowledge.
 
-**These three tools are the _only_ way to reach memory.** Never `read`/`search`/`bash`
+**These three tools are the *only* way to reach memory.** Never `read`/`search`/`bash`
 the knowledge-base files yourself — even when a `memory_query` result cites paths like
 `/users/dan-smart.md`. Those are virtual paths, not real files.
 
 **What's worth saving:** tool/SDK misuse and fixes, build/test/run gotchas, repeated
-requests, preferences, feedback, and non-obvious decisions. Skip anything in `git log`/
-`blame`/`AGENTS.md` or trivially re-derivable. When in doubt, save it — the cost is low
-compared to having it next time.
+requests, preferences, feedback, and non-obvious decisions. Skip anything in `git
+log`/`blame`/`AGENTS.md` or trivially re-derivable. When in doubt, save it — the cost
+is low compared to having it next time.
 
 **Cost & discipline.** Each operation runs a local model, so use deliberately: recall at
-the start, persist at the end. `memory_status` and `memory_maintain` are available via
-`mcp`.
+the start of the conversation, persist at the end. `memory_status` and `memory_maintain`
+are available via `mcp`.
 
 **How to talk about memory:** Speak as if you're remembering — "I recall…", "I don't
 remember seeing that". Never say "According to the memory" or "Nothing was found in the
@@ -116,5 +116,4 @@ says "show me", "paste", or "raw output".
 ### Asking the user: always use `question`
 
 Call the `question` tool for decisions, confirmations, or missing info — never ask
-conversationally. It renders a prompt with buttons, waits for an answer, records the
-Q&A.
+conversationally. It renders a prompt with buttons, waits for an answer, records the Q&A.
