@@ -39,6 +39,7 @@ import {
 } from "../_question_protocol/protocol.ts";
 import { dispatchAsk } from "../question/index.ts";
 import { createInteractiveQueue } from "./interactive-queue.ts";
+import { resolveSkillAllowList } from "./skill-scope.ts";
 
 const COLLAPSED_ITEM_COUNT = 10;
 const interactiveQueue = createInteractiveQueue();
@@ -554,9 +555,8 @@ async function runSingleAgent(
 	//   undefined  → no restriction; let the child discover skills normally.
 	//   []         → strict empty allow-list; child sees no skills.
 	//   ["a","b"]  → only those skills (plus any per-task additions).
-	const hasAllowList = agent.skills !== undefined || (taskSkills && taskSkills.length > 0);
-	if (hasAllowList) {
-		const effectiveSkills = Array.from(new Set([...(agent.skills ?? []), ...(taskSkills ?? [])]));
+	const effectiveSkills = resolveSkillAllowList(agent.skills, taskSkills);
+	if (effectiveSkills !== undefined) {
 		baseArgs.push("--no-skills");
 		const skillsRoot = path.join(getAgentDir(), "skills");
 		for (const name of effectiveSkills) {
