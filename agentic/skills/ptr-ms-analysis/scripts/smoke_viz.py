@@ -62,7 +62,11 @@ def _synthetic_data() -> Dict[str, Any]:
             "humidity_p": 0.6,
             "humidity_ref": 1.3,
             "whole_run_windows": False,
-            "sources": {"K": "config.analyze", "molar_volume": "config.analyze"},
+            "sources": {
+                "R": "config.analyze", "R_phys": "config.analyze",
+                "primary_mz": "config.analyze", "whole_run_windows": "config.analyze",
+                "K": "config.analyze", "molar_volume": "config.analyze",
+            },
             "K_source": "config.analyze",
             "K_file": 0.8,
             "K_file_source": "file acquisition calibration",
@@ -289,6 +293,30 @@ def _assert(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
+def _assert_complete_posts(expected: Dict[str, Any], path: str, start: int) -> int:
+    """Require every new request body to equal the browser's full config snapshot."""
+    recent = [body for posted_path, body in _ReviewHandler.posts[start:] if posted_path == path]
+    _assert(recent, "browser did not POST %s after the edit" % path)
+    _assert(all(body == expected for body in recent),
+            "%s body differs from the browser's complete buildConfig()" % path)
+    return len(_ReviewHandler.posts)
+
+
+def _assert_config_round_trip(config: Dict[str, Any]) -> None:
+    """Check fields whose loss would make a saved review non-reproducible."""
+    _assert(config["unknown_top_level"]["keep"], "unknown top-level field was dropped")
+    _assert(config["analyze"]["unknown_setting"] == "keep",
+            "unknown analyze field was dropped")
+    _assert([peak["mz"] for peak in config["peaks"]]
+            == [100, 110, 120, 130, 130.05, 140],
+            "peaks did not round-trip")
+    _assert([(item["label"], item["start"], item["end"])
+              for item in config["ranges"]]
+            == [("sample_01", 1, 2), ("sample_02", 3, 4)],
+            "ranges did not round-trip")
+    _assert(config["checklist"] == [], "checklist did not round-trip")
+
+
 def _interval_spectrum() -> list[int]:
     """Return an interval spectrum whose shared maximum exposes re-centring bugs."""
     spectrum = [1] * 13000
@@ -309,6 +337,7 @@ def main() -> int:
     _ReviewHandler.html = viz.render_html(data)
     _ReviewHandler.spectrum = json.dumps(data["spectrum"]).encode("ascii")
     _ReviewHandler.interval_spectrum = json.dumps(_interval_spectrum()).encode("ascii")
+    _ReviewHandler.posts = []
     server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _ReviewHandler)
     server.daemon_threads = True
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -323,6 +352,10 @@ def main() -> int:
         _browser(session, "eval", "localStorage.setItem('ptrms-onboarded', '1')")
         _browser(session, "reload")
         _browser(session, "wait", "--load", "networkidle")
+        # Discard any delayed request from the previous page/session before the
+        # first controlled edit; every request below has a matching snapshot.
+        _ReviewHandler.posts = []
+        post_cursor = 0
 
         # Methods is live provenance, not static help: inspect curated non-default
         # settings, edit the controls, and verify both save and Done payloads.
@@ -355,11 +388,21 @@ def main() -> int:
         _browser(session, "wait", "1000")
         edited = _eval(
             session,
-            "({text:document.querySelector('#methodlive').innerText, config:buildConfig(), "
-            "humidChecked:document.querySelector('#humid').checked})",
+            "({text:document.querySelector('#methodlive').innerText, "
+            "banner:document.querySelector('#stalebanner').innerText, "
+            "config:buildConfig(), humidChecked:document.querySelector('#humid').checked, "
+            "stale:staleSettings(), served:SERVED, protocol:location.protocol})",
         )
+        _assert(edited["served"], "browser did not recognise the HTTP review server")
         _assert("Kinetic correction: off" in edited["text"], "Methods did not update kinetic state")
         _assert("browser edit" in edited["text"], "Methods did not update calibration provenance")
+        _assert("PREVIEW STALE" in edited["text"] and "PREVIEW STALE" in edited["banner"],
+                "re-extraction edits were not prominently marked stale")
+        _assert("Done-only" in edited["text"] and "preview 19.022" in edited["text"]
+                and "final 20.022" in edited["text"],
+                "stale Methods wording did not distinguish preview and final values")
+        _assert(edited["stale"] == {"primary": True, "Rphys": True, "windows": True},
+                "stale settings did not track the edited re-extraction values")
         _assert("m/z 37 / m/z 20.022" in edited["text"],
                 "Methods did not update humidity denominator")
         _assert(not edited["humidChecked"], "humidity checkbox did not update")
@@ -369,19 +412,62 @@ def main() -> int:
                 "primary m/z control was not exported")
         _assert(edited["config"]["analyze"]["whole_run_windows"],
                 "window mode control was not exported")
-        _assert(edited["config"]["unknown_top_level"]["keep"]
-                and edited["config"]["analyze"]["unknown_setting"] == "keep",
-                "unknown config fields were dropped on round-trip")
+        _assert_config_round_trip(edited["config"])
+        post_cursor = _assert_complete_posts(edited["config"], "/save", post_cursor)
+        # Reverting exactly to the immutable preview settings must clear every stale
+        # marker and restore the original provenance, not leave a sticky warning.
+        post_cursor = len(_ReviewHandler.posts)
+        _browser(session, "eval", "(() => { const set=(id,v)=>{const e=document.querySelector('#'+id);"
+                 "e.value=v; e.dispatchEvent(new Event('change',{bubbles:true}));}; "
+                 "set('Rphys','3100'); set('primarymz','19.022'); "
+                 "document.querySelector('#wholewindows').click(); })()")
+        _browser(session, "wait", "1000")
+        reverted = _eval(session, "({text:document.querySelector('#methodlive').innerText, "
+                               "banner:document.querySelector('#stalebanner').innerText, "
+                               "stale:staleSettings(), config:buildConfig()})")
+        _assert(reverted["stale"] == {"primary": False, "Rphys": False, "windows": False},
+                "reverting to preview settings left stale state behind")
+        _assert(reverted["banner"] == "" and "PREVIEW STALE" not in reverted["text"],
+                "reverting to preview settings left a stale warning behind")
+        _assert("primary m/z: 19.022 (curated config)" in reverted["text"]
+                and "Rphys" in reverted["text"],
+                "reverting did not restore initial setting provenance")
+        post_cursor = _assert_complete_posts(reverted["config"], "/save", post_cursor)
+        # Leave the final Done payload edited, so the smoke covers the actual
+        # authoritative rerun configuration after a stale->fresh transition.
+        post_cursor = len(_ReviewHandler.posts)
+        _browser(session, "eval", "(() => { const set=(id,v)=>{const e=document.querySelector('#'+id);"
+                 "e.value=v; e.dispatchEvent(new Event('change',{bubbles:true}));}; "
+                 "set('Rphys','3300'); set('primarymz','20.022'); "
+                 "document.querySelector('#wholewindows').click(); })()")
+        _browser(session, "wait", "1000")
+        final_preview = _eval(session, "({config:buildConfig(), stale:staleSettings()})")
+        _assert(final_preview["stale"] == {"primary": True, "Rphys": True, "windows": True},
+                "final edited settings did not become stale again")
+        _assert_config_round_trip(final_preview["config"])
+        post_cursor = _assert_complete_posts(final_preview["config"], "/save", post_cursor)
+        post_cursor = len(_ReviewHandler.posts)
         _browser(session, "eval", "document.querySelector('#K').value=''; document.querySelector('#K').dispatchEvent(new Event('change',{bubbles:true}))")
         _browser(session, "wait", "700")
-        unavailable = _eval(session, "({methods:document.querySelector('#methodlive').innerText, note:document.querySelector('#calnote').innerText})")
+        unavailable = _eval(session, "({methods:document.querySelector('#methodlive').innerText, "
+                                 "note:document.querySelector('#calnote').innerText, config:buildConfig()})")
         _assert("Concentration is unavailable" in unavailable["methods"] and "unavailable" in unavailable["note"],
                 "concentration availability did not update when K was cleared")
+        _assert_config_round_trip(unavailable["config"])
+        post_cursor = _assert_complete_posts(unavailable["config"], "/save", post_cursor)
+        post_cursor = len(_ReviewHandler.posts)
         _browser(session, "eval", "document.querySelector('#K').value='2.5'; document.querySelector('#K').dispatchEvent(new Event('change',{bubbles:true}))")
         _browser(session, "wait", "700")
+        filled = _eval(session, "({config:buildConfig()})")
+        post_cursor = _assert_complete_posts(filled["config"], "/save", post_cursor)
+        post_cursor = len(_ReviewHandler.posts)
         _browser(session, "eval", "document.querySelector('#resetK').click()")
-        reset = _eval(session, "({K:cfg.K,Vm:cfg.Vm,text:document.querySelector('#methodlive').innerText,note:document.querySelector('#calnote').innerText})")
+        _browser(session, "wait", "700")
+        reset = _eval(session, "({K:cfg.K,Vm:cfg.Vm,text:document.querySelector('#methodlive').innerText,"
+                           "note:document.querySelector('#calnote').innerText,config:buildConfig()})")
         _assert(reset["K"] == 0.8 and reset["Vm"] == 24.0, "reset did not restore file-derived calibration")
+        _assert_config_round_trip(reset["config"])
+        post_cursor = _assert_complete_posts(reset["config"], "/save", post_cursor)
         _assert("file acquisition calibration" in reset["text"] and "file drift temperature" in reset["text"],
                 "reset provenance is not file-derived")
         _browser(session, "eval", "document.querySelector('#methodClose').click()")
@@ -494,16 +580,21 @@ def main() -> int:
 
         # This is a real click on the second rendered candidate row.  It must
         # update the assignment rather than merely changing source/data strings.
+        post_cursor = len(_ReviewHandler.posts)
         _browser(
             session,
             "eval",
             "document.querySelectorAll('#idpanel .cand')[1].click()",
         )
+        _browser(session, "wait", "700")
         assigned = _eval(
             session,
             "{conf:document.querySelector('#idconf').innerText, "
-            "assignment:document.querySelector('#idpanel .idnote').innerText}",
+            "assignment:document.querySelector('#idpanel .idnote').innerText, "
+            "config:buildConfig()}",
         )
+        _assert_config_round_trip(assigned["config"])
+        post_cursor = _assert_complete_posts(assigned["config"], "/save", post_cursor)
         _assert(
             "assigned" in assigned["conf"].lower(),
             "candidate click did not assign the formula",
@@ -531,16 +622,18 @@ def main() -> int:
             "assigned formula is not marked in the candidate card",
         )
 
+        done_cursor = len(_ReviewHandler.posts)
         _browser(session, "find", "role", "button", "click", "--name", "Done")
         _browser(session, "wait", "800")
         posted = _eval(session, "({config:buildConfig()})")
+        _assert_config_round_trip(posted["config"])
         save_posts = [body for path, body in _ReviewHandler.posts if path == "/save"]
-        _assert(save_posts, "browser did not POST /save")
-        _assert(save_posts[-1]["analyze"] == posted["config"]["analyze"],
-                "save analyze settings differ from the UI")
-        done_posts = [body for path, body in _ReviewHandler.posts if path == "/done"]
-        _assert(done_posts and done_posts[-1]["analyze"] == posted["config"]["analyze"],
-                "Done analyze settings differ from the UI")
+        _assert(save_posts and save_posts[-1] == posted["config"],
+                "latest save body differs from the browser's complete buildConfig()")
+        done_posts = [body for path, body in _ReviewHandler.posts[done_cursor:]
+                      if path == "/done"]
+        _assert(done_posts and all(body == posted["config"] for body in done_posts),
+                "Done body differs from the browser's complete buildConfig()")
         print("viz browser identification/configuration regression: OK")
         return 0
     finally:

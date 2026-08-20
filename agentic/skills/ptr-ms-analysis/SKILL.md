@@ -381,11 +381,17 @@ In the app the expert sees the mass spectrum, a large zoom of the selected peak 
 integration window, and the compound's time trace with segments overlaid. They can
 re-centre / add / remove / relabel peaks, drag / add / rename segments, and change **R**,
 **R_phys**, primary m/z, **K**, molar volume, the kinetic (`k`) correction, humidity
-settings, and whole-run versus isolated per-interval windows. The Methods card is live:
-it states R integration windows, R_phys Gaussian/deconvolution resolution, K/Vm sources,
-primary m/z, k priority and anchor, humidity p/reference, transmission fallback,
-concentration availability, manual-window behaviour, and clustered fixed-centre behaviour.
-Browser values are preview values; **Done** performs the authoritative full-precision
+settings, and whole-run versus isolated per-interval windows. R windowing, peak/interval
+edits, K, molar volume, kinetic, and humidity controls recompute from embedded preview
+data. In contrast, primary m/z, R_phys, and whole-run window mode require HDF5
+re-extraction/deconvolution; the plots and Methods card prominently mark those settings
+stale, show preview versus final values, and label their provenance `browser edit`.
+Reverting to the preview initial value clears the stale state. This remains true in
+standalone HTML; there is no hidden refresh API. The Methods card states R integration
+windows, which settings are live-safe or Done-only, R_phys Gaussian/deconvolution
+resolution, K/Vm sources, primary m/z, k priority and anchor, humidity p/reference,
+transmission fallback, concentration availability, manual-window behaviour, and
+clustered fixed-centre behaviour. **Done** performs the authoritative full-precision
 `analyze` rerun and writes the CSV. The delivered CSV always comes from `analyze`, never
 the browser.
 

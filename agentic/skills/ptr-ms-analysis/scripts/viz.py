@@ -15,10 +15,11 @@ The two views (mass spectrum, signal over time) share one large tabbed plot with
 a draggable overview inset; the controls sit below it. With `--serve` the page
 live-saves every edit into the --config file and the CLI blocks until the expert
 clicks "Done"; with `--html` it writes a standalone, portable HTML file instead.
-All numbers are embedded, so recompute is instant and offline. Live values use a
+Most preview values are embedded and recompute offline. Live values use a
 window-sum integration (exact for isolated peaks); overlapping peaks are flagged
 — their authoritative values come from the deconvolution in `ptr analyze` when
-the config is re-run.
+Done is clicked. Changes to primary m/z, physical resolution, or whole-run window
+mode require re-extraction and are marked stale until that authoritative rerun.
 """
 from __future__ import annotations
 import http.server
@@ -220,6 +221,10 @@ def build_viz_data(f, peaks_cfg, ranges_cfg, R=1200.0, R_phys=2400.0,
             "file": os.path.abspath(f.filename) if hasattr(f, "filename") else "",
             "ncyc": ncyc, "dur": dur, "a": a, "b": b,
             "R": R, "R_phys": R_phys, "primary_mz": primary_mz,
+            "preview_initial": {
+                "R": R, "R_phys": R_phys, "primary_mz": primary_mz,
+                "whole_run_windows": analysis_settings["whole_run_windows"],
+            },
             "proton": ptrms.PROTON, "k_anchor": analysis_settings["k_anchor"],
             "kinetic": analysis_settings["kinetic"],
             "humidity_correct": analysis_settings["humidity_correct"],
@@ -480,6 +485,9 @@ _TEMPLATE = r"""<!DOCTYPE html>
   .pad{padding:14px 15px}
   canvas{width:100%;display:block;background:var(--panel2)}
   #plot{cursor:grab} #plot.grabbing{cursor:grabbing}
+  .stale{margin:10px 14px 0;padding:10px 12px;border:2px solid #f59e0b;border-radius:8px;
+    background:rgba(245,158,11,.14);color:var(--fg);font-size:12px;line-height:1.45}
+  .stale b{color:var(--hi)}
   .plotfoot{padding:9px 15px;color:var(--mut);font-size:11.5px;border-top:1px solid var(--line);
             display:flex;gap:14px;align-items:center;flex-wrap:wrap}
   .legs{display:inline-flex;gap:16px;align-items:center;flex-wrap:wrap}
@@ -719,6 +727,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
   <main class="main">
   <!-- one big tabbed plot; overview inset lives in its corner -->
   <div class="card" style="position:relative">
+    <div id="stalebanner" class="stale" hidden role="alert"></div>
     <h2>
       <span class="tabs big" id="maintabs">
         <button data-tab="trace" class="on">Signal over time</button>
@@ -787,7 +796,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
 <div id="cfgscrim" hidden></div>
 <div id="cfgpanel" hidden>
   <h2>Configuration <span class="grow"></span><button class="hbtn" id="cfgClose">✕</button></h2>
-  <p class="mut" style="font-size:11.5px;margin:2px 0 0">Values that can't be set by interacting with the plot.</p>
+  <p class="mut" style="font-size:11.5px;margin:2px 0 0">Values that can't be set by interacting with the plot. R, K, molar volume, and correction controls update the preview; primary m/z, R<sub>phys</sub>, and window mode are applied to the raw file on Done.</p>
   <div class="grp">
     <h3>Concentration calibration</h3>
     <div class="row">
@@ -845,7 +854,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
   <p>Peaks are local maxima of the average spectrum above a relative-height threshold. For each, candidate <b>molecular formulas</b> are enumerated offline (all plausible CHNOPS+halogen formulas within ~12 mDa) and ranked by three independent lines of evidence: exact-mass error, the measured-vs-predicted <b>¹³C (M+1) and heteroatom (M+2, e.g. S/Cl) isotope pattern</b>, and plausibility (integer ring+double-bond equivalents, the nitrogen rule, element ratios). Near-isobars are told apart by composition, not "nearest mass". Names and isomer labels come from the bundled PTR Library mapping when the formula is known; formula ranking cannot determine structural isomers.</p>
 
   <h3>3 · Integration (Raw)</h3>
-  <p><b>Isolated peaks:</b> Raw is a plain <b>window-sum</b> of the measured intensities across the peak's m/z window — no peak shape assumed, so asymmetric or flat-topped peaks are handled as-is. You set that window by dragging the dashed handles (left and right independently).</p>
+  <p><b>Isolated peaks:</b> Raw is a plain <b>window-sum</b> of the measured intensities across the peak's m/z window — no peak shape assumed, so asymmetric or flat-topped peaks are handled as-is. You set that window by dragging the dashed handles (left and right independently). The default R window setting is recomputed in the preview; the delivered CSV re-extracts it at full precision.</p>
   <p><b>Clustered peaks</b> (within ~0.2 Da) are Gaussian/deconvolved fitted components at fixed model centres; a component may not form a visible local maximum in every selected interval, so its model centre is not a measured apex. Their amplitudes are separated by <b>linear Gaussian deconvolution</b> (σ from the instrument resolution), rescaled back to the window-sum scale. Peaks closer than the resolution are flagged <i>unresolved</i> — their Raw is unreliable even after deconvolution.</p>
 
   <h3>4 · Transmission → Corrected</h3>
@@ -874,7 +883,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
   </ul>
 
   <h3>Live preview vs. the delivered CSV</h3>
-  <p>The browser recomputes instantly using window-sums, so isolated-peak values are exact and update as you edit. Re-centred / re-windowed peaks show a <b>≈</b> (rescaled by the average-spectrum window ratio). When you click <b>Done</b>, the full-precision analysis re-runs server-side (including Gaussian deconvolution for overlaps) and writes the CSV — that file is always the authoritative result.</p>
+  <p>Many preview values update instantly using embedded data and window-sums, so isolated-peak edits are exact within that preview. Re-centred / re-windowed peaks show a <b>≈</b> (rescaled by the average-spectrum window ratio). Changes to primary m/z, R<sub>phys</sub>, or whole-run window mode cannot be re-extracted from the embedded data, especially in standalone HTML: the plots and Methods card mark those values <b>stale</b> and do not claim live numerical recomputation. Click <b>Done</b> (or hand the downloaded config to <code>ptr analyze</code>) to re-extract at the final settings. The resulting CSV is always authoritative.</p>
 </div>
 
 <script>
@@ -900,8 +909,13 @@ let showDetails = false;   // peaks sidebar: labels only until 'details'
 let hoverRange = null;     // interval hovered in the trace (to show its label)
 let hoverPeakId = null;    // peak whose window is hovered in the spectrum (highlight, mirror of hoverRange)
 const QSHORT = {raw:"Raw",cor:"Corrected",con:"Conc",ug:"Conc µg"};
-// Effective settings were resolved by the CLI. The browser edits a preview copy;
-// Done sends the same values back for the authoritative full-precision rerun.
+// Effective settings were resolved by the CLI. PREVIEW_INITIAL is immutable: it
+// records the extraction settings represented by the embedded data. cfg is the
+// live/final configuration sent to save and to the authoritative Done rerun.
+const initial=M.preview_initial||{R:M.R,R_phys:M.R_phys,primary_mz:M.primary_mz,
+  whole_run_windows:M.whole_run_windows===true};
+const PREVIEW_INITIAL=Object.freeze({R:initial.R,Rphys:initial.R_phys,
+  primarymz:initial.primary_mz,wholewindows:initial.whole_run_windows===true});
 const cfg = { R:M.R, Rphys:M.R_phys, primarymz:M.primary_mz, K:M.K_default,
               Vm:M.molar_volume, kinetic:M.kinetic===true, kanchor:M.k_anchor,
               humid:M.humidity_correct===true, hump:M.humidity_p??1.0,
@@ -1544,8 +1558,8 @@ function buildConfig(){ return {
     humidity_p:cfg.hump, humidity_ref:cfg.href,
     whole_run_windows:cfg.wholewindows },
   // preserve the agent-authored review checklist so live-save doesn't strip it
-  ...((DATA.checklist&&DATA.checklist.length)?{checklist:DATA.checklist.map(
-      it=>it.detail?{text:it.text,detail:it.detail}:it.text)}:{}) }; }
+  checklist:(DATA.checklist||[]).map(it=>it.detail?{text:it.text,detail:it.detail}:it.text)
+}; }
 let saveTimer=null;
 function scheduleSave(){ if(!SERVED) return; setStat("saving…");
   clearTimeout(saveTimer); saveTimer=setTimeout(()=>{ fetch("/save",{method:"POST",
@@ -1708,14 +1722,42 @@ document.getElementById("resetK").onclick=()=>{ cfg.K=M.K_file??M.K_default; cfg
   kSource=M.K_file_source||"file acquisition calibration";
   vmSource=M.molar_volume_file_source||"file drift temperature";
   setv("K",cfg.K); setv("Vm",cfg.Vm); redraw(); };
+function staleSettings(){ return {
+  primary:cfg.primarymz!==PREVIEW_INITIAL.primarymz,
+  Rphys:cfg.Rphys!==PREVIEW_INITIAL.Rphys,
+  windows:cfg.wholewindows!==PREVIEW_INITIAL.wholewindows
+}; }
+function staleRows(stale){ const rows=[];
+  if(stale.primary) rows.push(`<b>primary m/z</b>: preview ${PREVIEW_INITIAL.primarymz} -> final ${cfg.primarymz}`);
+  if(stale.Rphys) rows.push(`<b>R<sub>phys</sub></b>: preview ${PREVIEW_INITIAL.Rphys} -> final ${cfg.Rphys}`);
+  if(stale.windows){ const p=PREVIEW_INITIAL.wholewindows?"whole-run":"per-interval";
+    const f=cfg.wholewindows?"whole-run":"per-interval";
+    rows.push(`<b>window mode</b>: preview ${p} -> final ${f}`); }
+  return rows; }
+function staleHtml(stale){ const rows=staleRows(stale); if(!rows.length) return "";
+  return `<div class="stale"><b>PREVIEW STALE — Done-only re-extraction required.</b>
+    Embedded plot data still represents the preview extraction. ${rows.join("; ")}.<br>
+    The edited values apply in the authoritative Done rerun (or <code>ptr analyze</code>);
+    they are not numerically recomputed in this page.</div>`; }
+function updateStaleness(){ const stale=staleSettings(), rows=staleRows(stale);
+  const banner=document.getElementById("stalebanner"); if(!banner) return;
+  banner.hidden=!rows.length;
+  banner.innerHTML=rows.length
+    ? `<b>PREVIEW STALE — authoritative Done rerun required.</b> ${rows.join("; ")}. `+
+      `Plots retain the embedded preview extraction; final values apply only after Done.`
+    : ""; }
 function updateMethods(){
   const live=document.getElementById("methodlive"); if(!live) return;
   Array.from(methodPanel.children).forEach(el=>{
     if(el!==live && el.tagName!=="H2") el.hidden=true;
   });
+  const stale=staleSettings(); updateStaleness();
   const source=v=>v==="config.analyze"?"curated config":v==="cli"?"CLI override":v||"legacy default";
+  const settingSource=(key,v)=>stale[key]?"browser edit":source(v);
   const src=M.sources||{};
-  const rSource=source(src.R), rPhysSource=source(src.R_phys), primarySource=source(src.primary_mz);
+  const rSource=source(src.R), rPhysSource=settingSource("Rphys",src.R_phys);
+  const primarySource=settingSource("primary",src.primary_mz);
+  const windowSource=settingSource("windows",src.whole_run_windows);
   const effectiveKSource=source(kSource||src.K);
   const effectiveVmSource=source(vmSource||src.molar_volume);
   const hrefSource=M.humidity_ref!=null?(M.humidity_ref_source||source(src.humidity_ref)):"run median";
@@ -1725,7 +1767,7 @@ function updateMethods(){
   const conc=concentrationAvailable?"available":"unavailable (primary-ion signal or K is missing)";
   const kinetic=cfg.kinetic?"on":"off";
   const windows=cfg.wholewindows?"one whole-run window per compound":"isolated per-interval windows";
-  live.innerHTML=`
+  live.innerHTML=staleHtml(stale)+`
     <h3>Effective settings</h3>
     <p><b>R integration windows:</b> R = ${cfg.R} (${rSource}); manual peak windows override the default.
     <b>R<sub>phys</sub> Gaussian/deconvolution resolution:</b> ${cfg.Rphys} (${rPhysSource}).</p>
@@ -1737,11 +1779,11 @@ function updateMethods(){
     <p><b>Humidity correction:</b> ${cfg.humid?"on":"off"}; p = ${cfg.hump};
     water-cluster ratio is m/z 37 / m/z ${cfg.primarymz}; reference =
     ${cfg.href==null?"run median":cfg.href} (${hrefSource}).</p>
-    <p><b>Windows:</b> ${windows}; manual windows remain manual. Clustered components use fixed-centre
+    <p><b>Windows:</b> ${windows} (${windowSource}); manual windows remain manual. Clustered components use fixed-centre
     Gaussian/deconvolution models, not interval apexes. Transmission uses ${trans}.
     Concentration is <b>${conc}</b>.</p>
     <h3>Authoritative export</h3>
-    <p>Browser values are a preview. <b>Done</b> performs the authoritative full-precision
+    <p>Browser values are a preview. Live-safe controls update embedded data, but settings marked stale above need raw HDF5 re-extraction. <b>Done</b> performs the authoritative full-precision
     analyze rerun, including Gaussian deconvolution, and writes the CSV.</p>`;
 }
 document.querySelectorAll("#qtabs button").forEach(b=>b.onclick=()=>{ quant=b.dataset.q;
