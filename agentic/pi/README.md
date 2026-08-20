@@ -125,7 +125,8 @@ Agents are discovered from `~/.pi/agent/agents/*.md` (user scope) and, when
 frontmatter declares `tools`, `model`, optional `worktree: true` (run in a
 fresh git worktree, merged back on exit), and an optional `skills:` allow-list
 which scopes the child's `<available_skills>` block. A call's `skills: [...]`
-array adds named skills to that allow-list.
+array adds names to an explicit frontmatter allow-list; when the field is
+omitted, the child's normal unrestricted skill discovery remains unchanged.
 
 See [`extensions/subagent/README.md`](extensions/subagent/README.md) for the
 call fields, frontmatter, skill-scoping, refusal, and worktree semantics.

@@ -76,7 +76,7 @@ A tool call may also request a model. The ordered fallback list is:
 
 1. requested per-call model, if provided,
 2. the agent frontmatter model list, if present,
-3. otherwise the inherited current session model.
+3. the inherited current session model, if available.
 
 Duplicates are removed while preserving the first occurrence.
 
@@ -108,12 +108,14 @@ skipped (the child still launches).
 
 ### Per-call additive skills
 
-The `subagent` tool accepts an optional `skills: ["x", "y"]` array, which is
-**union-merged** with the agent's frontmatter allow-list before launching the
-child.
+The `subagent` tool accepts an optional `skills: ["x", "y"]` array. When the
+agent declares a frontmatter allow-list, the call-level names are union-merged
+into it before launching the child. This also adds names to an explicit empty
+list.
 
-Passing extra skills via the call does **not** widen the allow-list to "all
-skills"; it only adds the named ones to the (possibly empty) frontmatter list.
+When the frontmatter field is omitted, skill discovery remains unrestricted;
+call-level names do not narrow the child to only those skills. Passing extra
+skills also never widens an explicit allow-list to "all skills".
 
 ## Refusal patterns
 
