@@ -50,8 +50,10 @@ about 1 GB, and a full analysis commonly takes about a minute.
 ## Validation
 
 There is currently no automated test, lint, or type-check suite. At minimum, run these
-smoke checks after a change (the deterministic `viz` UI assertion is especially relevant
-when changing identification display):
+smoke checks after a change (the deterministic `viz` browser regression is especially
+relevant when changing identification display). The browser check requires the
+`agent-browser` CLI (`npm i -g agent-browser` and `agent-browser install`) in addition
+to the package's normal Python dependencies:
 
 ```bash
 python3 scripts/smoke_viz.py
