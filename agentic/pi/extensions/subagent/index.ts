@@ -39,6 +39,7 @@ import {
 } from "../_question_protocol/protocol.ts";
 import { dispatchAsk } from "../question/index.ts";
 import { createInteractiveQueue } from "./interactive-queue.ts";
+import { getPiInvocation } from "./pi-invocation.ts";
 import { resolveSkillAllowList } from "./skill-scope.ts";
 
 const COLLAPSED_ITEM_COUNT = 10;
@@ -323,22 +324,6 @@ async function writePromptToTempFile(agentName: string, prompt: string): Promise
 		await fs.promises.writeFile(filePath, prompt, { encoding: "utf-8", mode: 0o600 });
 	});
 	return { dir: tmpDir, filePath };
-}
-
-function getPiInvocation(args: string[]): { command: string; args: string[] } {
-	const currentScript = process.argv[1];
-	const isBunVirtualScript = currentScript?.startsWith("/$bunfs/root/");
-	if (currentScript && !isBunVirtualScript && fs.existsSync(currentScript)) {
-		return { command: process.execPath, args: [currentScript, ...args] };
-	}
-
-	const execName = path.basename(process.execPath).toLowerCase();
-	const isGenericRuntime = /^(node|bun)(\.exe)?$/.test(execName);
-	if (!isGenericRuntime) {
-		return { command: process.execPath, args };
-	}
-
-	return { command: "pi", args };
 }
 
 interface CurrentModel {
