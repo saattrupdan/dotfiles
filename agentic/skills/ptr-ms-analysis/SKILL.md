@@ -2,7 +2,7 @@
 name: ptr-ms-analysis
 description: >
   Analyse PTR-MS / PTR-TOF data from IONICON IoniTOF HDF5 (.h5) files with the
-  standalone ptr-ms-analysis CLI. Use when the user has IONICON PTR-MS .h5 output
+  published ptr-ms-analysis CLI. Use when the user has IONICON PTR-MS .h5 output
   and wants product-ion peaks extracted, transmission-corrected, converted to
   concentration (ppb and µg/m³), and summarised per time segment (breath bags,
   backgrounds, sample periods). Triggers are "PTR-MS", "PTR-TOF", "IoniTOF",
@@ -13,11 +13,10 @@ last-updated: 2026-08-22
 
 # PTR-MS analysis
 
-Use the standalone [`ptr-ms-analysis`](https://github.com/saattrupdan/ptr-ms-analysis)
-repository. The package is not yet published on PyPI, so install it directly from
-that repository. This skill is the agent-facing workflow and scientific guardrail;
-the HDF5 reader, quantification code, browser app, and reference data live in the
-standalone package, not in this skill.
+Use the published [`ptr-ms-analysis`](https://pypi.org/project/ptr-ms-analysis/)
+package. This skill is the agent-facing workflow and scientific guardrail; the HDF5
+reader, quantification code, browser app, and reference data live in the package,
+not in this skill.
 
 ## Run this first
 
@@ -31,17 +30,17 @@ Use an isolated tool installation so the package's dependencies and flat interna
 module names cannot collide with another Python project. Prefer `pipx`:
 
 ```bash
-# First install from the standalone repository
-pipx install git+https://github.com/saattrupdan/ptr-ms-analysis.git
+# First install
+pipx install ptr-ms-analysis
 
-# Later, upgrade from the standalone repository
+# Later, upgrade the published package
 pipx upgrade ptr-ms-analysis
 ```
 
 If `uv` is already available, it is an equivalent alternative:
 
 ```bash
-uv tool install git+https://github.com/saattrupdan/ptr-ms-analysis.git
+uv tool install ptr-ms-analysis
 uv tool upgrade ptr-ms-analysis
 ```
 
