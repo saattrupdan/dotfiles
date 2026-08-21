@@ -8,7 +8,7 @@ description: >
   backgrounds, sample periods). Triggers are "PTR-MS", "PTR-TOF", "IoniTOF",
   "IONICON", "PTR-MS Viewer", "breath VOC analysis", or an .h5 with
   SPECdata/TRACEdata groups.
-last-updated: 2026-08-22
+last-updated: 2026-08-21
 ---
 
 # PTR-MS analysis
@@ -25,6 +25,15 @@ The whole interface is one CLI: `ptr <subcommand> …`. Install it once, then ca
 HDF5 parsing, or hand-build a virtual environment.
 
 ### Install or upgrade
+
+If you previously installed the skill from a checkout, editable install, or Git
+source, first uninstall that pipx/uv tool (as applicable), then install
+`ptr-ms-analysis` from PyPI. After that, use the normal upgrade commands below.
+
+```bash
+pipx uninstall ptr-ms-analysis  # or: uv tool uninstall ptr-ms-analysis
+pipx install ptr-ms-analysis    # or: uv tool install ptr-ms-analysis
+```
 
 Use an isolated tool installation so the package's dependencies and flat internal
 module names cannot collide with another Python project. Prefer `pipx`:
