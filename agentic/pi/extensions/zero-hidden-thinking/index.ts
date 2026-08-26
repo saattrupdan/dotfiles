@@ -43,8 +43,8 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { existsSync, realpathSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -57,27 +57,76 @@ const PATCH_SYMBOL = Symbol.for("pi.zeroHiddenThinking.patched");
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper: resolve installed Pi package root
 // ─────────────────────────────────────────────────────────────────────────────
+function findPackageRoot(startPath: string): string | null {
+	let current = dirname(startPath);
+	while (true) {
+		if (existsSync(resolve(current, "package.json"))) return current;
+		const parent = dirname(current);
+		if (parent === current) return null;
+		current = parent;
+	}
+}
+
 function resolvePiPackageRoot(): string | null {
+	const candidates: string[] = [];
+
 	try {
-		// The extension runtime provides `require`; in Pi's global install this
-		// resolves against the running CLI package even though this extension lives
-		// outside that package.
-		const resolvedPath = require.resolve("@earendil-works/pi-coding-agent");
-		// resolvedPath points to dist/index.js (or similar), walk up to package root.
-		return resolve(resolvedPath, "..", "..");
+		// This works when extension-local resolution can see the Pi package.
+		candidates.push(require.resolve("@earendil-works/pi-coding-agent"));
 	} catch {
-		// Fallback for runtimes where extension-local resolution cannot see the
-		// global package. The pi binary is normally a symlink to
-		// <pkg-root>/dist/cli.js, so realpath(process.argv[1]) gives us the package.
-		const cliPath = process.argv[1];
-		if (!cliPath) return null;
+		// The global package is often outside the extension's resolution paths.
+	}
+
+	const cliPath = process.argv[1];
+	if (cliPath) {
 		try {
-			const pkgRoot = resolve(realpathSync(cliPath), "..", "..");
-			return existsSync(resolve(pkgRoot, "package.json")) ? pkgRoot : null;
+			candidates.push(realpathSync(cliPath));
 		} catch {
-			return null;
+			// Ignore invalid launch paths and fail open below.
 		}
 	}
+
+	for (const candidate of candidates) {
+		const pkgRoot = findPackageRoot(candidate);
+		if (pkgRoot) return pkgRoot;
+	}
+	return null;
+}
+
+async function loadAssistantMessageComponent(pkgRoot: string): Promise<unknown> {
+	const modulePaths: string[] = [];
+	const cliArg = process.argv[1];
+
+	if (cliArg) {
+		try {
+			const cliPath = realpathSync(cliArg);
+			const cliSource = readFileSync(cliPath, "utf8");
+			const importPattern = /(?:from\s*|import\s*)["'](\.[^"']+\.js)["']/g;
+			for (const match of cliSource.matchAll(importPattern)) {
+				modulePaths.push(resolve(dirname(cliPath), match[1]));
+			}
+		} catch {
+			// Older Pi launchers may not be readable or bundled.
+		}
+	}
+
+	// Pre-bundle Pi releases expose the renderer at this stable path.
+	modulePaths.push(
+		resolve(pkgRoot, "dist", "modes", "interactive", "components", "assistant-message.js")
+	);
+
+	for (const modulePath of new Set(modulePaths)) {
+		if (!existsSync(modulePath)) continue;
+		try {
+			// Importing the bundle chunk by its canonical URL returns the same cached
+			// module instance that the CLI uses.
+			const mod = await import(pathToFileURL(modulePath).href);
+			if (mod.AssistantMessageComponent) return mod.AssistantMessageComponent;
+		} catch {
+			// Try the next layout, then fail open if none match.
+		}
+	}
+	return null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -102,37 +151,11 @@ async function applyPatch(): Promise<boolean> {
 		return false;
 	}
 
-	// Path to the compiled assistant-message module
-	// Structure: <pkg-root>/dist/modes/interactive/components/assistant-message.js
-	const assistantMessagePath = resolve(
-		pkgRoot,
-		"dist",
-		"modes",
-		"interactive",
-		"components",
-		"assistant-message.js"
-	);
-
-	let AssistantMessageComponent: unknown;
-
-	try {
-		// Use dynamic ESM import with pathToFileURL to load the SAME module instance
-		// that Pi's TUI uses, rather than a separate jiti/require-loaded copy.
-		const mod = await import(pathToFileURL(assistantMessagePath).href);
-		AssistantMessageComponent = mod.AssistantMessageComponent;
-
-		if (!AssistantMessageComponent) {
-			console.warn(
-				"[zero-hidden-thinking] Warning: AssistantMessageComponent not found in module. " +
-					"Patch not applied (fail-open)."
-			);
-			return false;
-		}
-	} catch (err) {
-		const error = err instanceof Error ? err : new Error(String(err));
+	const AssistantMessageComponent = await loadAssistantMessageComponent(pkgRoot);
+	if (!AssistantMessageComponent) {
 		console.warn(
-			"[zero-hidden-thinking] Warning: Failed to load assistant-message module: " +
-				`${error.message}. Patch not applied (fail-open).`
+			"[zero-hidden-thinking] Warning: AssistantMessageComponent not found in Pi's " +
+				"bundled or unbundled modules. Patch not applied (fail-open)."
 		);
 		return false;
 	}
@@ -159,10 +182,10 @@ async function applyPatch(): Promise<boolean> {
 
 	// Wrapper that filters thinking blocks when hidden
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	proto.updateContent = function (this: any, message: unknown): void {
+	proto.updateContent = function (this: any, message: unknown, ...rest: unknown[]): void {
 		if (!this.hideThinkingBlock) {
-			// Not hidden → call original unchanged
-			return originalUpdateContent.call(this, message);
+			// Not hidden → call original unchanged, including newer optional arguments.
+			return originalUpdateContent.call(this, message, ...rest);
 		}
 
 		// Hidden → filter out thinking blocks from a shallow clone
@@ -174,11 +197,12 @@ async function applyPatch(): Promise<boolean> {
 			filteredMessage.content = msg.content.filter((block) => block.type !== "thinking");
 		}
 
-		// Call original with filtered message
-		originalUpdateContent.call(this, filteredMessage);
-
-		// Restore lastMessage to original so expanding/toggling reasoning still works
-		this.lastMessage = message;
+		try {
+			originalUpdateContent.call(this, filteredMessage, ...rest);
+		} finally {
+			// Restore the original so expanding/toggling reasoning keeps full traces.
+			this.lastMessage = message;
+		}
 	};
 
 	// Mark prototype as patched (idempotent guard on the ACTUAL ESM prototype)
@@ -201,41 +225,10 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 	const success = await applyPatch();
 
 	if (success) {
-		// Patch applied—the extension's job is done.
-		// The thinking-status extension can set any label (e.g. "(…)") and
-		// collapsed thinking will still render as zero lines.
+		// Patch applied—the extension's job is done. Re-resolve on session changes
+		// because /reload can replace extension/runtime module state.
 		pi.on("session_start", async () => {
-			// Verify patch is still active after session reset using the same ESM import
-			const pkgRoot = resolvePiPackageRoot();
-			if (pkgRoot) {
-				const assistantMessagePath = resolve(
-					pkgRoot,
-					"dist",
-					"modes",
-					"interactive",
-					"components",
-					"assistant-message.js"
-				);
-				try {
-					const mod = await import(pathToFileURL(assistantMessagePath).href);
-					// eslint-disable-next-line @typescript-eslint/no-explicit-any
-					const proto = (mod.AssistantMessageComponent as any).prototype;
-					if (!proto[PATCH_SYMBOL]) {
-						console.warn(
-							"[zero-hidden-thinking] Warning: Patch was lost after session_start. " +
-								"Re-applying..."
-						);
-						await applyPatch();
-					}
-				} catch (err) {
-					const error = err instanceof Error ? err : new Error(String(err));
-					console.warn(
-						`[zero-hidden-thinking] Warning: Could not verify patch after session_start: ${error.message}. ` +
-							"Re-applying..."
-					);
-					await applyPatch();
-				}
-			}
+			await applyPatch();
 		});
 	}
 	// If patch failed, we've already logged a warning—fail-open, no further action.
