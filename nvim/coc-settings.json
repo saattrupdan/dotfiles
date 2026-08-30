@@ -5,5 +5,8 @@
   "python.formatting.provider": "ruff",
   "python.analysis.typeCheckingMode": "standard",
   "python.analysis.autoImportCompletions": true,
-  "inlayHint.enable": false
+  "inlayHint.enable": false,
+  "json.schemaDownload.trustedDomains": {
+    "https://raw.githubusercontent.com": true
+  }
 }
