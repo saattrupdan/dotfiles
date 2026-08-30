@@ -11,7 +11,7 @@ deployed config land back in this repo).
 | `nvim/` | Neovim config, built on LazyVim. `init.lua` bootstraps `lua/config/` (options, keymaps, autocmds, lazy.nvim setup) and `lua/plugins/` (one file per plugin). |
 | `agentic/` | Configs for AI coding tools and LLM runtimes. |
 | `agentic/pi/` | The `pi` agent harness — see its own `agentic/pi/AGENTS.md`. Holds `agents/` (subagent prompts), `extensions/` (TypeScript extensions), `prompts/`, `bin/`, and JSON/Markdown settings. |
-| `agentic/skills/` | Skill definitions, one folder per skill (web-service helpers, language conventions, tools). |
+| `agentic/skills/` | Skill definitions, one folder per skill (web-service helpers, language conventions, tools). This folder is the ground truth; `sync.sh` symlinks every skill into `~/.pi/agent/skills/`. |
 | `agentic/llamacpp/` | llama.cpp settings (`makefile`, `preset.ini`). |
 
 ## Conventions
@@ -44,6 +44,13 @@ them by editing files under `node_modules/`.
 
 - **These files are symlinked into their real locations** (e.g. `~/.config/nvim`).
   Editing here edits the live config, and vice versa.
+- **Skills are discovered through symlinks in `~/.pi/agent/skills/`**, not from this
+  repo directly. Adding, renaming, or deleting a folder under `agentic/skills/` has no
+  effect on the running agent until you re-run `./agentic/skills/sync.sh` (from the repo
+  root; `--check` reports drift and exits 1, `--dry-run` previews, `--adopt` also
+  repoints links that currently point at another repo). Skills installed elsewhere
+  (`~/.agents/skills/`, `gitsky/internal-agentic-coding/skills/`) are linked outside
+  this repo's scope and are left alone unless `--adopt` is passed.
 - `nvim/lua/plugins/*.lua.disabled` are intentionally disabled — lazy.nvim only
   loads `.lua` files, so the suffix turns a plugin off. Don't rename them to
   re-enable without reason.

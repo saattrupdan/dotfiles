@@ -17,7 +17,7 @@
 #   ~/.pi/agent/SYSTEM.md       -> agentic/pi/SYSTEM.md
 #   ~/.pi/agent/AGENTS.md       -> agentic/pi/AGENTS.md
 #   ~/.pi/agent/mcp.json        -> agentic/pi/mcp.json
-#   ~/.pi/agent/skills          -> agentic/skills
+#   ~/.pi/agent/skills/<name>   -> agentic/skills/<name>   (one link per skill; see skills/sync.sh)
 #   ~/.pi/agent/themes          -> agentic/pi/themes
 #
 # Dependencies: each extension declares its own npm deps in a per-extension
@@ -104,8 +104,15 @@ link keybindings.json "$SCRIPT_DIR/keybindings.json"
 link SYSTEM.md        "$SCRIPT_DIR/SYSTEM.md"
 link AGENTS.md        "$SCRIPT_DIR/AGENTS.md"
 link mcp.json         "$SCRIPT_DIR/mcp.json"
-link skills           "$REPO_AGENTIC/skills"
 link themes           "$SCRIPT_DIR/themes"
+
+# Skills get one symlink per skill instead of one for the whole folder, because
+# ~/.pi/agent/skills also aggregates skills owned by other repos
+# (~/.agents/skills, gitsky/internal-agentic-coding). sync.sh only ever touches
+# links that point into this repo, so those survive a re-run.
+"$REPO_AGENTIC/skills/sync.sh" --dest "$PI_HOME/skills" \
+  || echo "!!! skills: unresolved entries, see the CHECK lines above" >&2
+echo
 echo
 
 # --- 2. models.json ---------------------------------------------------------

@@ -33,8 +33,8 @@ agentic/pi/
 │   ├── _outliner/     # Library: tree-sitter structural outliner
 │   └── _question_protocol/ # Library
 ├── prompts/           # Slash-command flow definitions
-├── skills/            # Symlinked to ~/.pi/agent/skills/ (shared skill library)
-└── bin/               # Local binaries
+├── themes/            # TUI themes
+└── setup.sh           # Bootstrap: symlinks (skills via agentic/skills/sync.sh), models.json, node + npm deps
 ```
 
 ## Key agents
@@ -79,9 +79,15 @@ worktree builder a disjoint scope.
 
 ## Skills
 
-Skills are in `skills/` (symlinked from `dotfiles/agentic/skills`). Each agent declares
-which skills it may use in its frontmatter (`skills:` allow-list). Omitted = all
-discoverable; empty array = none.
+Skill **definitions** live in the dotfiles repo at `dotfiles/agentic/skills/` (one folder
+per skill, each with a `SKILL.md`); that folder is the ground truth. Pi discovers skills
+through `~/.pi/agent/skills/`, which holds one symlink per skill — created by
+`agentic/skills/sync.sh`. Add/rename/delete a skill, then re-run that script (`--check`
+reports drift). A few skills are installed outside the repo (`~/.agents/skills/`,
+`gitsky/internal-agentic-coding/skills/`) and are linked in separately.
+
+Each agent declares which skills it may use in its frontmatter (`skills:` allow-list).
+Omitted = all discoverable; empty array = none.
 
 ## Important notes
 
