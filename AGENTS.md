@@ -18,6 +18,9 @@ deployed config land back in this repo).
 
 - Commit messages follow Conventional Commits (see recent history: `chore:`,
   `fix:`, `feat:`). Most dotfile syncs land as `chore: Update dot files`.
+- **Always push after committing** (`git push origin main`, direct to `main`). This repo
+  exists to sync config between devices, so an unpushed commit is invisible to the other
+  machines; re-run `git pull --rebase origin main` first if it was updated elsewhere.
 
 ## Quality checks
 
