@@ -81,6 +81,13 @@ across sessions. It's exposed as three tools:
   librarian can attach it to the right concept.
 - **`memory_update`** — correct or deprecate outdated knowledge.
 
+**Writes are queued, not applied inline.** `memory_add` and `memory_update` return as
+soon as the write is on disk; a detached worker applies it to Understory in the
+background (median ~17s, worst case minutes). So: one call is enough, never re-call it
+to confirm or wait for the write before finishing your reply, and treat the returned job
+id as the receipt. `memory_query` still runs synchronously and does not see queued
+writes. `/memory-queue` inspects the queue and requeues permanent failures.
+
 **These three tools are the *only* way to reach memory.** Never `read`/`search`/`bash`
 the knowledge-base files yourself — even when a `memory_query` result cites paths like
 `/users/dan-smart.md`. Those are virtual paths, not real files.
@@ -106,8 +113,8 @@ memory".
 3. **Checkpoint before responding.** Before your final answer, decide whether durable
    new knowledge or a correction emerged from the work. If yes, call `memory_add` for
    new facts or `memory_update` for corrections. If nothing durable emerged, skip the
-   write. The final response is gated on completing this checkpoint and any required
-   write.
+   write. The final response is gated on completing this checkpoint and queueing any
+   required write — queueing is the whole obligation, since the worker applies it.
 
 ## Available subagents
 

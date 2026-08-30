@@ -24,7 +24,9 @@
       "lifecycle": "eager",
       "requestTimeoutMs": 600000,
       "directTools": [
-        "memory_query",
+        "memory_query"
+      ],
+      "excludeTools": [
         "memory_add",
         "memory_update"
       ]
