@@ -449,21 +449,80 @@ const Params = Type.Object({
 });
 
 // ---------------------------------------------------------------------------
+// Lazy dependency resolution
+// ---------------------------------------------------------------------------
+//
+// The `read` tool is registered synchronously and every sibling module is
+// loaded on first use. Registration must never sit behind an `await`: pi only
+// re-registers tools when the extension factory resolves, so a slow or failing
+// sibling import leaves pi's *built-in* `read` in place — which has no URL or
+// document support and answers every URL read with
+// `ENOENT: no such file or directory, access '<cwd>/https:/…'`.
+
+
+type OutlinerModule = Awaited<ReturnType<typeof loadModules>>["outliner"];
+type IndexStoreModule = Awaited<ReturnType<typeof loadModules>>["indexStore"];
+type SkillModule = Awaited<ReturnType<typeof loadSkillRenderHelpers>>;
+
+interface ReadDeps {
+	outline: OutlinerModule["outline"];
+	collapsedView: OutlinerModule["collapsedView"];
+	openIndex: IndexStoreModule["openIndex"];
+	refreshFile: IndexStoreModule["refreshFile"];
+	getFileOutline: IndexStoreModule["getFileOutline"];
+	getSymbol: IndexStoreModule["getSymbol"];
+}
+
+let depsPromise: Promise<ReadDeps> | null = null;
+let depsFailure: string | null = null;
+let helpersFailure: string | null = null;
+let builtinReadRenderResult: RenderResultFn | null = null;
+let collapseAutoloadResult: SkillModule["collapseAutoloadResult"] | null = null;
+
+/** Resolve the outliner + index-store modules once, retrying after failure. */
+function loadDeps(): Promise<ReadDeps> {
+	if (!depsPromise) {
+		depsPromise = loadModules()
+			.then(({ outliner, indexStore }) => ({
+				outline: outliner.outline,
+				collapsedView: outliner.collapsedView,
+				openIndex: indexStore.openIndex,
+				refreshFile: indexStore.refreshFile,
+				getFileOutline: indexStore.getFileOutline,
+				getSymbol: indexStore.getSymbol,
+			}))
+			.catch((err: unknown) => {
+				depsPromise = null;
+				depsFailure = (err as Error)?.message ?? String(err);
+				throw err;
+			});
+	}
+	return depsPromise;
+}
+
+/** Warm the synchronous `renderResult` helpers without blocking registration. */
+function warmRenderHelpers(): void {
+	void loadSkillRenderHelpers()
+		.then((skill) => {
+			collapseAutoloadResult = skill.collapseAutoloadResult;
+		})
+		.catch((err: unknown) => {
+			helpersFailure = `skill helpers: ${(err as Error)?.message ?? String(err)}`;
+		});
+	try {
+		// Deferred from registration time: only the renderer is needed here, and
+		// renderResult has a plain-text fallback if this is not ready yet.
+		builtinReadRenderResult = createReadToolDefinition(process.cwd()).renderResult as RenderResultFn;
+	} catch (err) {
+		helpersFailure = `built-in renderer: ${(err as Error)?.message ?? String(err)}`;
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Tool definition
 // ---------------------------------------------------------------------------
 
-export default async function (pi: ExtensionAPI) {
-	const { outliner, indexStore } = await loadModules();
-	const { outline, collapsedView } = outliner;
-	const { openIndex, refreshFile, getFileOutline, getSymbol } = indexStore;
-
-	// Delegate result rendering to pi's built-in `read` renderer, first
-	// collapsing any skill-autoload injection to its summary line (see
-	// renderResult below). Captured here because renderResult is synchronous and
-	// cannot await the sibling-extension helper import itself.
-	const builtinReadRenderResult = createReadToolDefinition(process.cwd()).renderResult as RenderResultFn;
-	const { collapseAutoloadResult } = await loadSkillRenderHelpers();
-
+export default function (pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "read",
 		label: "read",
@@ -481,6 +540,24 @@ export default async function (pi: ExtensionAPI) {
 
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			const { path: filePath, symbol } = params;
+			let deps: ReadDeps;
+			try {
+				deps = await loadDeps();
+			} catch (err) {
+				return {
+					content: [
+						{
+							type: "text",
+							text:
+								`read could not load its helper modules: ${(err as Error)?.message ?? String(err)}.`
+								+ (depsFailure && depsFailure !== (err as Error)?.message ? ` (earlier: ${depsFailure})` : "")
+								+ (helpersFailure ? ` (${helpersFailure})` : "")
+								+ " Restart pi to reload the extensions.",
+						},
+					],
+				};
+			}
+			const { outline, collapsedView, openIndex, refreshFile, getFileOutline, getSymbol } = deps;
 			// 0a. URL → download + convert to Markdown via docling, then render.
 			if (URL_RE.test(filePath)) {
 				const sha = sha256String(filePath);
@@ -700,6 +777,15 @@ export default async function (pi: ExtensionAPI) {
 		// built-in read renderer — so the full guidance still shows on expand
 		// (Ctrl+O) and every other result renders exactly as before.
 		renderResult(result, options, theme, context) {
+			if (!builtinReadRenderResult || !collapseAutoloadResult) {
+				// Helpers are still loading (or failed to load) — render the plain
+				// text instead of blocking the UI on them.
+				const text = (result.content ?? [])
+					.map((block) => (block.type === "text" ? block.text : ""))
+					.join("\n")
+					.trim();
+				return new Text(text, 0, 0);
+			}
 			return builtinReadRenderResult(
 				collapseAutoloadResult(result, options.expanded, context.isError),
 				options,
@@ -708,6 +794,10 @@ export default async function (pi: ExtensionAPI) {
 			);
 		},
 	});
+
+	// Start resolving the deferred helpers now so the first call rarely waits.
+	warmRenderHelpers();
+	void loadDeps().catch(() => undefined);
 }
 
 // ---------------------------------------------------------------------------
