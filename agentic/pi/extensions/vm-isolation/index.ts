@@ -5,8 +5,11 @@
  * - APFS snapshots before each agent run (instant rollback)
  * - Intercepts destructive bash commands (rm, mv, dd, etc.)
  * - Git-aware protection (tracked files require extra confirmation)
- * - Protects files outside project directory
  * - Real-time file system monitoring
+ *
+ * Commands that only touch paths outside the project are deliberately not
+ * flagged: the snapshot taken before every run already covers them, and the
+ * warning was pure noise (see the note in `tool_execution_start`).
  *
  * Configuration (settings.json):
  * ```json
@@ -14,9 +17,7 @@
  *   "fileProtection": {
  *     "enabled": true,
  *     "autoSnapshot": true,
- *     "protectOutsideProject": true,
- *     "blockCriticalCommands": true,
- *     "allowedPaths": ["./", "/tmp/", "/var/folders/"]
+ *     "blockCriticalCommands": true
  *   }
  * }
  * ```
@@ -71,9 +72,7 @@ function errorStdout(error: unknown): string | undefined {
 interface FileProtectionConfig {
 	enabled: boolean;
 	autoSnapshot: boolean;
-	protectOutsideProject: boolean;
 	blockCriticalCommands: boolean;
-	allowedPaths: string[];
 }
 
 interface ActiveProtection {
@@ -103,9 +102,7 @@ export default function (pi: ExtensionAPI) {
 	let config: FileProtectionConfig = {
 		enabled: true,
 		autoSnapshot: true,
-		protectOutsideProject: true,
 		blockCriticalCommands: true,
-		allowedPaths: [],
 	};
 
 	/**
@@ -118,13 +115,6 @@ export default function (pi: ExtensionAPI) {
 				const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
 				if (settings.fileProtection) {
 					config = { ...config, ...settings.fileProtection };
-					if (config.allowedPaths.length === 0) {
-						config.allowedPaths = [
-							process.cwd() + '/',
-							os.tmpdir() + '/',
-							path.join(os.tmpdir(), 'var', 'folders') + '/',
-						];
-					}
 				}
 			}
 		} catch {
@@ -226,16 +216,6 @@ export default function (pi: ExtensionAPI) {
 			// Fail-secure: if we can't check, block the command
 			return { safe: false, severity: 'high', reason: 'Safety check unavailable - command blocked' };
 		}
-	}
-
-	/**
-	 * Check if a path is outside allowed directories
-	 */
-	function isPathAllowed(filePath: string): boolean {
-		if (!config.protectOutsideProject) return true;
-
-		const normalizedPath = path.resolve(filePath);
-		return config.allowedPaths.some(allowed => normalizedPath.startsWith(path.resolve(allowed)));
 	}
 
 	/**
@@ -347,21 +327,13 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 
-		// Check 2: Paths outside allowed directories
-		const pathPattern = command.match(/(?:^|\s)(\/[\w/.-]+|~\/[\w/.-]+|\.\/[\w/.-]+)/g);
-		if (pathPattern) {
-			const blockedPaths = pathPattern.filter((p: string) => {
-				const pPath = p.trim();
-				return !isPathAllowed(pPath);
-			});
+		// Paths outside the project are intentionally not reported here. The
+		// per-run snapshot covers them, and the check could only warn, so all it
+		// did was overwrite the 🛡️ status with "⚠️ Outside paths" on commands that
+		// mention an absolute path (allowedPaths was empty unless overridden in
+		// settings.json, which made every absolute path look out of bounds).
 
-			if (blockedPaths.length > 0) {
-				// Warn but don't block (too aggressive)
-				ctx.ui.setStatus('file-protection', `⚠️ Outside paths: ${blockedPaths.slice(0, 2).join(', ')}`);
-			}
-		}
-
-		// Check 3: Git-tracked file modifications
+		// Check 2: Git-tracked file modifications
 		if (command.includes(' > ') || command.includes('>> ') || command.includes('rm ')) {
 			const fileMatch = command.match(/>\s*([^\s;&|]+)/) || command.match(/rm\s+([^\s;&|]+)/);
 			if (fileMatch) {
@@ -392,7 +364,6 @@ export default function (pi: ExtensionAPI) {
 						'**File Protection Status**',
 						`- Enabled: ${config.enabled}`,
 						`- Auto-snapshot: ${config.autoSnapshot}`,
-						`- Protect outside project: ${config.protectOutsideProject}`,
 						`- Block critical commands: ${config.blockCriticalCommands}`,
 						`- System support: ${systemCheck.supported ? '✅' : '❌'}${systemCheck.reason ? ` (${systemCheck.reason})` : ''}`,
 						`- Recent snapshots: ${snapshots.length > 0 ? snapshots.slice(-5).join(', ') : 'None'}`,
