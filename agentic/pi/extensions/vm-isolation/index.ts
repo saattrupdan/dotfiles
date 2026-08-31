@@ -27,17 +27,34 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import * as childProcess from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
 
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 
+/**
+ * Run a command with a timeout. Uses exec's own timeout so the child is killed
+ * and no timer outlives the call — the previous Promise.race left a pending
+ * timeout per call, which kept the event loop alive for up to 8 s after pi
+ * wanted to exit.
+ */
 const execAsync = (cmd: string, timeoutMs = 8000) =>
-	Promise.race([
-		promisify(childProcess.exec)(cmd),
-		new Promise<never>((_, reject) =>
-			setTimeout(() => reject(new Error('exec timed out')), timeoutMs)
-		),
-	]);
+	new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+		childProcess.exec(cmd, { timeout: timeoutMs }, (error, stdout, stderr) => {
+			if (error) reject(error);
+			else resolve({ stdout, stderr });
+		});
+	});
+/**
+ * execFile variant for calls that pass agent-authored text as an argument.
+ * Never builds a shell command line: `check-command $(...)` would otherwise be
+ * expanded and run here, outside the tool call being inspected.
+ */
+const execFileAsync = (file: string, args: string[], timeoutMs = 8000) =>
+	new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+		childProcess.execFile(file, args, { timeout: timeoutMs }, (error, stdout, stderr) => {
+			if (error) reject(error);
+			else resolve({ stdout, stderr });
+		});
+	});
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FILE_PROTECTOR_PATH = path.join(__dirname, 'vm-runner/.build/debug/vm-runner');
 
@@ -60,14 +77,29 @@ interface FileProtectionConfig {
 }
 
 interface ActiveProtection {
-	agentId: string;
+	/**
+	 * Session id, which is stable for the whole run. Do not use the session-tree
+	 * leaf id: it changes whenever an entry is appended, so a key captured at
+	 * agent_start no longer exists by the time a tool call runs.
+	 */
+	sessionId: string;
 	snapshotName?: string;
 	startedAt: number;
 	projectRoot: string;
+	/** False once the background check finds no APFS/tmutil support. */
+	supported: boolean;
+}
+
+function protectionKey(ctx: ExtensionContext): string {
+	return ctx.sessionManager.getSessionId();
 }
 
 export default function (pi: ExtensionAPI) {
 	const activeProtections = new Map<string, ActiveProtection>();
+	/** Background snapshot work per run, joined before it is depended upon. */
+	const pendingProtections = new Map<string, Promise<void>>();
+	/** `which tmutil` cannot start working mid-session, so ask once. */
+	let systemSupport: Promise<{ supported: boolean; reason?: string }> | null = null;
 	let config: FileProtectionConfig = {
 		enabled: true,
 		autoSnapshot: true,
@@ -104,17 +136,22 @@ export default function (pi: ExtensionAPI) {
 	 * Check if macOS with APFS support
 	 */
 	async function checkSystemSupport(): Promise<{ supported: boolean; reason?: string }> {
-		if (os.platform() !== 'darwin') {
-			return { supported: false, reason: 'File protection requires macOS' };
-		}
+		if (!systemSupport) {
+			systemSupport = (async (): Promise<{ supported: boolean; reason?: string }> => {
+				if (os.platform() !== 'darwin') {
+					return { supported: false, reason: 'File protection requires macOS' };
+				}
 
-		try {
-			// Check if tmutil is available
-			await execAsync('which tmutil');
-			return { supported: true };
-		} catch {
-			return { supported: false, reason: 'tmutil not available' };
+				try {
+					// Check if tmutil is available
+					await execAsync('which tmutil');
+					return { supported: true };
+				} catch {
+					return { supported: false, reason: 'tmutil not available' };
+				}
+			})();
 		}
+		return systemSupport;
 	}
 
 	/**
@@ -164,7 +201,7 @@ export default function (pi: ExtensionAPI) {
 		reason?: string;
 	}> {
 		try {
-			const { stdout } = await execAsync(`${FILE_PROTECTOR_PATH} check-command ${command}`);
+			const { stdout } = await execFileAsync(FILE_PROTECTOR_PATH, ['check-command', command]);
 			// Extract JSON line from output (tmutil may prepend NOTE messages)
 			const jsonLine = stdout.trim().split('\n').find(line => line.startsWith('{'));
 			if (!jsonLine) return { safe: true, severity: 'none' };
@@ -217,44 +254,69 @@ export default function (pi: ExtensionAPI) {
 	loadConfig();
 
 	// Hook into agent lifecycle
-	pi.on('agent_start', async (_event, ctx) => {
+	//
+	// The snapshot is taken in the background rather than awaited here: pi
+	// awaits every agent_start handler before it emits turn_start, which is
+	// when the submitted message becomes visible, so awaiting `tmutil
+	// localsnapshot` delays the message by 0.1-0.3 s per turn (and up to the
+	// 8 s exec timeout if tmutil stalls). Nothing needs the snapshot before the
+	// agent's first tool call, which always follows a model round trip; the
+	// places that do depend on it join pendingProtections first.
+	pi.on('agent_start', (_event, ctx) => {
 		if (!config.enabled) return;
 		if (!ctx.hasUI) return;
 
+		const key = protectionKey(ctx);
+		// Registered synchronously so tool_execution_start never mistakes a
+		// half-started run for "protection off".
+		activeProtections.set(key, {
+			sessionId: key,
+			startedAt: Date.now(),
+			projectRoot: ctx.cwd,
+			supported: true,
+		});
+		pendingProtections.set(key, takeProtectionSnapshot(key, ctx));
+	});
+
+	async function takeProtectionSnapshot(key: string, ctx: ExtensionContext): Promise<void> {
+		const protection = activeProtections.get(key);
+		if (!protection) return;
+
 		const systemCheck = await checkSystemSupport();
 		if (!systemCheck.supported) {
+			protection.supported = false;
 			ctx.ui.setStatus('file-protection', `⚠️ ${systemCheck.reason}`);
 			return;
 		}
 
 		try {
 			const snapshotName = await createSnapshot();
-			const agentId = ctx.sessionManager.getLeafEntry()?.id || 'unknown';
-			
-			activeProtections.set(agentId, {
-				agentId,
-				snapshotName: snapshotName || undefined,
-				startedAt: Date.now(),
-				projectRoot: ctx.cwd,
-			});
-
+			protection.snapshotName = snapshotName || undefined;
 			ctx.ui.setStatus('file-protection', snapshotName ? '🛡️' : undefined);
 		} catch {
+			protection.supported = false;
 			ctx.ui.setStatus('file-protection', '⚠️ Protection inactive');
 		}
-	});
+	}
 
 	pi.on('agent_end', async (_event, ctx) => {
 		if (!ctx.hasUI) return;
-		const agentId = ctx.sessionManager.getLeafEntry()?.id;
-		if (!agentId || !activeProtections.has(agentId)) return;
+		const key = protectionKey(ctx);
+		if (!activeProtections.has(key)) return;
 
-		activeProtections.delete(agentId);
+		// Prune only after this run's snapshot landed, so cleanup never deletes
+		// (or races) a snapshot tmutil is still creating.
+		const protection = activeProtections.get(key);
+		await pendingProtections.get(key);
+		activeProtections.delete(key);
+		pendingProtections.delete(key);
 		// Cleanup old snapshots (keep last 10)
-		try {
-			await execAsync(`${FILE_PROTECTOR_PATH} cleanup`);
-		} catch {
-			// Cleanup is best-effort.
+		if (protection?.supported) {
+			try {
+				await execAsync(`${FILE_PROTECTOR_PATH} cleanup`);
+			} catch {
+				// Cleanup is best-effort.
+			}
 		}
 		ctx.ui.setStatus('file-protection', undefined);
 	});
@@ -265,9 +327,13 @@ export default function (pi: ExtensionAPI) {
 		if (event?.toolName !== 'bash') return;
 		if (!ctx.hasUI) return;
 
-		const agentId = ctx.sessionManager.getLeafEntry()?.id;
-		const protection = agentId ? activeProtections.get(agentId) : null;
-		if (!protection) return;
+		const key = protectionKey(ctx);
+		// Join the background snapshot before consulting the record: in practice
+		// it finished long ago (the model had to answer first), but this keeps
+		// the guard from being skipped on a run that started milliseconds ago.
+		await pendingProtections.get(key);
+		const protection = activeProtections.get(key);
+		if (!protection?.supported) return;
 
 		const command = event?.args?.command || '';
 		if (!command) return;
