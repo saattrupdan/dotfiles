@@ -21,6 +21,7 @@ return {
       "@yaegassy/coc-volar",
       "coc-tsserver",
       "coc-lua",
+      "@yaegassy/coc-ty",
     }
   end,
 }

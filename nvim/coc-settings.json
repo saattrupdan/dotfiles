@@ -1,10 +1,6 @@
 {
   "coc.preferences.enableMarkdown": false,
   "diagnostic.checkCurrentLine": true,
-  "python.linting.ruffEnabled": true,
-  "python.formatting.provider": "ruff",
-  "python.analysis.typeCheckingMode": "standard",
-  "python.analysis.autoImportCompletions": true,
   "inlayHint.enable": false,
   "json.schemaDownload.trustedDomains": {
     "https://raw.githubusercontent.com": true,
