@@ -169,6 +169,16 @@ export default function (pi: ExtensionAPI) {
 	};
 
 	// Setup footer and load quota on various events
+	pi.on("session_start", (_event, ctx) => {
+		// Pi clears the custom footer when it tears down the extension UI for
+		// /reload, /new, /resume and /fork, so the re-registered extension has to
+		// install it again here — otherwise the built-in footer is on screen until
+		// the next message. Force past any `installed` bookkeeping left over from
+		// the previous load; the message guard still defers install while the
+		// splash owns the chrome (a session with no messages yet).
+		setupFooter(ctx, { force: true });
+		maybeRender?.();
+	});
 	pi.on("agent_start", (_event, ctx) => {
 		setupFooter(ctx, { force: true, allowWithoutMessages: true });
 		maybeRender?.();

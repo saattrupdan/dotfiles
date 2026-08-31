@@ -60,3 +60,14 @@ No quota cache should live under the extension source tree.
 
 Quota bars are hidden for the `inference` provider because it is not
 subscription-based.
+
+## Footer Lifetime
+
+Pi owns one footer slot and clears it (restoring the built-in footer) whenever it
+tears down extension UI — `/reload`, `/new`, `/resume`, `/fork`. It then re-runs
+the extensions and emits `session_start`, so the footer is reinstalled there and
+survives a reload without waiting for the next message. The reinstall is forced
+because `installed` may still be stale from the previous load of the module.
+
+On a session with no messages yet the install is deferred to `agent_start`, so
+the splash screen keeps its own chrome until the first prompt.
