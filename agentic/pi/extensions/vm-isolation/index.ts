@@ -36,26 +36,46 @@ import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-a
  * and no timer outlives the call — the previous Promise.race left a pending
  * timeout per call, which kept the event loop alive for up to 8 s after pi
  * wanted to exit.
- */
-const execAsync = (cmd: string, timeoutMs = 8000) =>
-	new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-		childProcess.exec(cmd, { timeout: timeoutMs }, (error, stdout, stderr) => {
-			if (error) reject(error);
-			else resolve({ stdout, stderr });
-		});
-	});
-/**
- * execFile variant for calls that pass agent-authored text as an argument.
- * Never builds a shell command line: `check-command $(...)` would otherwise be
- * expanded and run here, outside the tool call being inspected.
+ *
+ * Everything goes through a no-shell spawn rather than exec. Two reasons:
+ * agent-authored text must never be interpolated into a shell command line
+ * (`$(...)` in an inspected command used to execute here, outside the tool
+ * call), and the timeout must reach the grandchild. The old helper put no
+ * timeout on `exec` at all and merely abandoned the promise, so a stalled
+ * `tmutil localsnapshot` kept running as an orphan — two of them were left
+ * wedged in the volume-snapshot metadata. The child is detached into its own
+ * process group and killed with the group, because vm-runner spawns tmutil
+ * itself and a signal to vm-runner alone would orphan exactly that process.
  */
 const execFileAsync = (file: string, args: string[], timeoutMs = 8000) =>
 	new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-		childProcess.execFile(file, args, { timeout: timeoutMs }, (error, stdout, stderr) => {
-			if (error) reject(error);
-			else resolve({ stdout, stderr });
+		const child = childProcess.spawn(file, args, {
+			detached: true,
+			stdio: ['ignore', 'pipe', 'pipe'],
+		});
+		let stdout = '';
+		let stderr = '';
+		child.stdout?.on('data', (chunk) => { stdout += chunk; });
+		child.stderr?.on('data', (chunk) => { stderr += chunk; });
+		const timer = setTimeout(() => {
+			try {
+				process.kill(-(child.pid as number), 'SIGKILL');
+			} catch {
+				/* already gone */
+			}
+		}, timeoutMs);
+		timer.unref?.();
+		child.once('error', (error) => {
+			clearTimeout(timer);
+			reject(error);
+		});
+		child.once('close', (code) => {
+			clearTimeout(timer);
+			if (code === 0) resolve({ stdout, stderr });
+			else reject(Object.assign(new Error(`${file} exited with code ${code}`), { stdout, stderr }));
 		});
 	});
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FILE_PROTECTOR_PATH = path.join(__dirname, 'vm-runner/.build/debug/vm-runner');
 
@@ -97,7 +117,7 @@ export default function (pi: ExtensionAPI) {
 	const activeProtections = new Map<string, ActiveProtection>();
 	/** Background snapshot work per run, joined before it is depended upon. */
 	const pendingProtections = new Map<string, Promise<void>>();
-	/** `which tmutil` cannot start working mid-session, so ask once. */
+	/** Resolved once: tmutil is not going to appear mid-session. */
 	let systemSupport: Promise<{ supported: boolean; reason?: string }> | null = null;
 	let config: FileProtectionConfig = {
 		enabled: true,
@@ -132,13 +152,10 @@ export default function (pi: ExtensionAPI) {
 					return { supported: false, reason: 'File protection requires macOS' };
 				}
 
-				try {
-					// Check if tmutil is available
-					await execAsync('which tmutil');
-					return { supported: true };
-				} catch {
+				if (!fs.existsSync('/usr/bin/tmutil')) {
 					return { supported: false, reason: 'tmutil not available' };
 				}
+				return { supported: true };
 			})();
 		}
 		return systemSupport;
@@ -151,7 +168,7 @@ export default function (pi: ExtensionAPI) {
 		if (!config.autoSnapshot) return null;
 
 		try {
-			const { stdout } = await execAsync(`${FILE_PROTECTOR_PATH} snapshot`);
+			const { stdout } = await execFileAsync(FILE_PROTECTOR_PATH, ['snapshot']);
 			// tmutil outputs a NOTE message to stdout before the JSON, so extract only the JSON line
 			const jsonLine = stdout.trim().split('\n').find(line => line.startsWith('{'));
 			if (!jsonLine) return null;
@@ -171,7 +188,7 @@ export default function (pi: ExtensionAPI) {
 	 */
 	async function listSnapshots(): Promise<string[]> {
 		try {
-			const { stdout } = await execAsync(`${FILE_PROTECTOR_PATH} list-snapshots`);
+			const { stdout } = await execFileAsync(FILE_PROTECTOR_PATH, ['list-snapshots']);
 			// Extract JSON line from output (tmutil may prepend NOTE messages)
 			const jsonLine = stdout.trim().split('\n').find(line => line.startsWith('{'));
 			if (!jsonLine) return [];
@@ -227,7 +244,10 @@ export default function (pi: ExtensionAPI) {
 	 */
 	async function isGitTracked(filePath: string, projectRoot: string): Promise<boolean> {
 		try {
-			const { stdout } = await execAsync(`git -C "${projectRoot}" ls-files --error-unmatch "${filePath}" 2>/dev/null`);
+			const { stdout } = await execFileAsync(
+				'git',
+				['-C', projectRoot, 'ls-files', '--error-unmatch', filePath],
+			);
 			return stdout.trim().length > 0;
 		} catch {
 			return false;
@@ -278,8 +298,13 @@ export default function (pi: ExtensionAPI) {
 			protection.snapshotName = snapshotName || undefined;
 			ctx.ui.setStatus('file-protection', snapshotName ? '🛡️' : undefined);
 		} catch {
-			protection.supported = false;
-			ctx.ui.setStatus('file-protection', '⚠️ Protection inactive');
+			// Only the snapshot failed. `supported` means "this machine can protect
+			// files" and still holds, so the dangerous-command guard in
+			// tool_execution_start must stay on: with the volume under heavy I/O (a
+			// migration saturating APFS) `tmutil localsnapshot` blocks past the 8 s
+			// timeout, and clearing `supported` here silently disarmed the guard for
+			// the whole run. Rollback is unavailable; blocking still works.
+			ctx.ui.setStatus('file-protection', '⚠️ No rollback point (snapshot timed out)');
 		}
 	}
 
@@ -288,16 +313,29 @@ export default function (pi: ExtensionAPI) {
 		const key = protectionKey(ctx);
 		if (!activeProtections.has(key)) return;
 
-		// Prune only after this run's snapshot landed, so cleanup never deletes
-		// (or races) a snapshot tmutil is still creating.
+		// Give this run's snapshot a moment to land so cleanup cannot prune (or
+		// race) a snapshot tmutil is still creating. Bounded: `tmutil
+		// localsnapshot` blocks indefinitely while the volume is saturated, and
+		// awaiting it here would keep the session "busy" long after the answer.
 		const protection = activeProtections.get(key);
-		await pendingProtections.get(key);
+		const pending = pendingProtections.get(key);
+		let snapshotLanded = true;
+		if (pending) {
+			const timer = new Promise<boolean>((resolve) => {
+				const t = setTimeout(() => resolve(false), 1000);
+				t.unref?.();
+			});
+			snapshotLanded = await Promise.race([
+				pending.then(() => true, () => true),
+				timer,
+			]);
+		}
 		activeProtections.delete(key);
 		pendingProtections.delete(key);
 		// Cleanup old snapshots (keep last 10)
-		if (protection?.supported) {
+		if (protection?.supported && snapshotLanded) {
 			try {
-				await execAsync(`${FILE_PROTECTOR_PATH} cleanup`);
+				await execFileAsync(FILE_PROTECTOR_PATH, ['cleanup']);
 			} catch {
 				// Cleanup is best-effort.
 			}
@@ -312,10 +350,10 @@ export default function (pi: ExtensionAPI) {
 		if (!ctx.hasUI) return;
 
 		const key = protectionKey(ctx);
-		// Join the background snapshot before consulting the record: in practice
-		// it finished long ago (the model had to answer first), but this keeps
-		// the guard from being skipped on a run that started milliseconds ago.
-		await pendingProtections.get(key);
+		// No join on the background snapshot: the record above is registered
+		// synchronously in agent_start and the system check is a stat, so there is
+		// nothing left to wait for — and waiting would move a wedged tmutil's 8 s
+		// timeout from the submit path onto the first tool call.
 		const protection = activeProtections.get(key);
 		if (!protection?.supported) return;
 
@@ -404,7 +442,7 @@ export default function (pi: ExtensionAPI) {
 						return;
 					}
 					try {
-						const { stdout } = await execAsync(`${FILE_PROTECTOR_PATH} rollback ${snapshotName}`);
+						const { stdout } = await execFileAsync(FILE_PROTECTOR_PATH, ['rollback', snapshotName]);
 						const result = JSON.parse(stdout);
 						if (result.status === 'success') {
 							ctx.ui.setStatus('file-protection', `✅ ${result.message}`);
