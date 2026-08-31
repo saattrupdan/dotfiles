@@ -230,7 +230,7 @@ export default function (pi: ExtensionAPI) {
 			);
 		},
 
-		renderResult(result, options, theme) {
+		renderResult(result, options, theme, context) {
 			// If collapsed (not expanded), show only a summary line
 			if (!options.expanded) {
 				const text = (result.content ?? [])
@@ -250,8 +250,7 @@ export default function (pi: ExtensionAPI) {
 					);
 				}
 				// Fallback for errors or unexpected output
-				const details = result.details;
-				if (details?.isError) {
+				if (context.isError) {
 					return new Text(theme.fg("error", "✗ code_tree failed"), 0, 0);
 				}
 				return new Text(theme.fg("success", "✓ code_tree executed"), 0, 0);

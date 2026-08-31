@@ -404,13 +404,14 @@ const OUTLINE_FOOTER =
 	`To see content, read again with symbol="<name>" for a function/class/section body (names above), ` +
 	`symbol="__preamble__" for imports/constants, or use \`search\` to locate something specific.`;
 
-function listDirectory(absolutePath: string) {
+function listDirectory(absolutePath: string): AgentToolResult<unknown> {
 	let entries: fs.Dirent[];
 	try {
 		entries = fs.readdirSync(absolutePath, { withFileTypes: true });
 	} catch (err) {
 		return {
 			content: [{ type: "text", text: `Could not read directory ${absolutePath}: ${(err as Error).message}` }],
+			details: undefined,
 		};
 	}
 	const dirs: string[] = [];
@@ -430,6 +431,7 @@ function listDirectory(absolutePath: string) {
 		: "";
 	return {
 		content: [{ type: "text", text: `${header}\n${shown.join("\n")}${footer}` }],
+		details: undefined,
 	};
 }
 
@@ -547,7 +549,7 @@ export default function (pi: ExtensionAPI): void {
 				return {
 					content: [
 						{
-							type: "text",
+							type: "text" as const,
 							text:
 								`read could not load its helper modules: ${(err as Error)?.message ?? String(err)}.`
 								+ (depsFailure && depsFailure !== (err as Error)?.message ? ` (earlier: ${depsFailure})` : "")
@@ -555,6 +557,7 @@ export default function (pi: ExtensionAPI): void {
 								+ " Restart pi to reload the extensions.",
 						},
 					],
+					details: undefined,
 				};
 			}
 			const { outline, collapsedView, openIndex, refreshFile, getFileOutline, getSymbol } = deps;
@@ -573,12 +576,12 @@ export default function (pi: ExtensionAPI): void {
 				try {
 					markdown = await convertToMarkdown(filePath, sha, signal);
 				} catch (err) {
-					return { content: [{ type: "text", text: `Could not fetch ${filePath} via docling: ${(err as Error).message}` }] };
+					return { content: [{ type: "text", text: `Could not fetch ${filePath} via docling: ${(err as Error).message}` }], details: undefined };
 				}
 				const banner = `# ${filePath} — fetched and converted to Markdown via docling`;
 				const rendered = withBanner(renderContent(filePath, "page.md", markdown, symbol, outline, collapsedView, key, sha), banner);
 				const callIdx = ++callIndex.current;
-				dedupeCache.set(key, { sha, callIndex: callIdx, text: rendered.content[0].text });
+				dedupeCache.set(key, { sha, callIndex: callIdx, text: textOf(rendered) });
 				return rendered;
 			}
 
@@ -595,16 +598,19 @@ export default function (pi: ExtensionAPI): void {
 								text: `SYSTEM.md is the child agent's system prompt. Here's a brief preview:\n\n${content}`,
 							},
 						],
+						details: undefined,
 					};
 				} catch {
 					return {
 						content: [{ type: "text", text: "SYSTEM.md is the child agent's system prompt." }],
+						details: undefined,
 					};
 				}
 			}		// 1. Existence check
 		if (!fs.existsSync(absolutePath)) {
 			return {
 				content: [{ type: "text", text: `File not found: ${absolutePath}` }],
+				details: undefined,
 			};
 		}
 
@@ -636,6 +642,7 @@ export default function (pi: ExtensionAPI): void {
 				content: [
 					{ type: "image", data: buffer.toString("base64"), mimeType },
 				],
+				details: undefined,
 			};
 		}
 
@@ -660,14 +667,14 @@ export default function (pi: ExtensionAPI): void {
 					markdown = await convertToMarkdown(absolutePath, sha, signal);
 				} catch (err) {
 					const converter = OPENDOCUMENT_EXTENSIONS.has(ext) ? "pandoc" : "docling";
-					return { content: [{ type: "text", text: `Could not convert ${path.basename(absolutePath)} via ${converter}: ${(err as Error).message}` }] };
+					return { content: [{ type: "text", text: `Could not convert ${path.basename(absolutePath)} via ${converter}: ${(err as Error).message}` }], details: undefined };
 				}
 				const displayPath = path.basename(absolutePath);
 				const converter = OPENDOCUMENT_EXTENSIONS.has(ext) ? "pandoc" : "docling";
 				const banner = `# ${displayPath} — ${ext.slice(1).toUpperCase()} converted to Markdown via ${converter}`;
 				const rendered = withBanner(renderContent(displayPath, `${displayPath}.md`, markdown, symbol, outline, collapsedView, key, sha), banner);
 				const callIdx = ++callIndex.current;
-				dedupeCache.set(key, { sha, callIndex: callIdx, text: rendered.content[0].text });
+				dedupeCache.set(key, { sha, callIndex: callIdx, text: textOf(rendered) });
 				return rendered;
 			}
 
@@ -701,7 +708,7 @@ export default function (pi: ExtensionAPI): void {
 					: `# ${relPath}::__preamble__  lines 1-${lastLine} (no class/function found — whole file)`;
 				const callIdx = ++callIndex.current;
 				dedupeCache.set(key, { sha, callIndex: callIdx, text: `${preambleHeader}\n${slice.join("\n")}` });
-				return { content: [{ type: "text", text: `${preambleHeader}\n${slice.join("\n")}` }] };
+				return { content: [{ type: "text", text: `${preambleHeader}\n${slice.join("\n")}` }], details: undefined };
 			}
 
 			// 5. Symbol body
@@ -715,6 +722,7 @@ export default function (pi: ExtensionAPI): void {
 								text: `Symbol "${symbol}" not found in ${relPath}. Read the file without \`symbol\` to see the outline, or use \`search\` to locate it.`,
 							},
 						],
+						details: undefined,
 					};
 				}
 				const slice = allLines.slice(sym.line_start - 1, sym.line_end);
@@ -723,7 +731,7 @@ export default function (pi: ExtensionAPI): void {
 				const numbered = slice.map((line, i) => `  ${sym.line_start + i}: ${line}`).join("\n");
 				const callIdx = ++callIndex.current;
 				dedupeCache.set(key, { sha, callIndex: callIdx, text: `${symbolPreamble}${numbered}` });
-				return { content: [{ type: "text", text: `${symbolPreamble}${numbered}` }] };
+				return { content: [{ type: "text", text: `${symbolPreamble}${numbered}` }], details: undefined };
 			}
 
 			// 6. Small file → verbatim
@@ -731,7 +739,7 @@ export default function (pi: ExtensionAPI): void {
 				const smallFileHeader = `# ${relPath} (${totalLines} lines)`;
 				const callIdx = ++callIndex.current;
 				dedupeCache.set(key, { sha, callIndex: callIdx, text: `${smallFileHeader}\n${content}` });
-				return { content: [{ type: "text", text: `${smallFileHeader}\n${content}` }] };
+				return { content: [{ type: "text", text: `${smallFileHeader}\n${content}` }], details: undefined };
 			}
 
 			// 7. Large file → outline from the index
@@ -743,7 +751,7 @@ export default function (pi: ExtensionAPI): void {
 			if (result.entries.length === 0) {
 				const callIdx = ++callIndex.current;
 				dedupeCache.set(key, { sha, callIndex: callIdx, text: `# ${relPath} (${totalLines} lines, no sections — full contents)\n${content}` });
-				return { content: [{ type: "text", text: `# ${relPath} (${totalLines} lines, no sections — full contents)\n${content}` }] };
+				return { content: [{ type: "text", text: `# ${relPath} (${totalLines} lines, no sections — full contents)\n${content}` }], details: undefined };
 			}
 			// Show all heading levels (section, subsection, subsubsection, etc.) for easier navigation.
 			const view = collapsedView(result, { hidePrivate: true, maxLines: 200 });
@@ -756,6 +764,7 @@ export default function (pi: ExtensionAPI): void {
 				content: [
 					{ type: "text", text: output },
 				],
+				details: undefined,
 			};
 		},
 
@@ -833,8 +842,14 @@ async function loadSkillRenderHelpers(): Promise<typeof import("../skill/types.t
 // Index-free rendering (files outside the repo, converted documents, URLs)
 // ---------------------------------------------------------------------------
 
+/** First text block of a tool result, or "" when the result starts with an image. */
+function textOf(result: AgentToolResult<unknown>): string {
+	const first = result.content[0];
+	return first && first.type === "text" ? first.text : "";
+}
+
 /** Prepend a one-line banner to a tool result's first text block. */
-function withBanner(result: { content: { type: string; text: string }[] }, banner: string) {
+function withBanner(result: AgentToolResult<unknown>, banner: string): AgentToolResult<unknown> {
 	const first = result.content[0];
 	if (first && first.type === "text") first.text = `${banner}\n${first.text}`;
 	return result;
@@ -856,7 +871,7 @@ function renderContent(
 	collapsedView: (typeof import("../_outliner/outliner.js"))["collapsedView"],
 	key: string,
 	sha: string,
-) {
+): AgentToolResult<unknown> {
 	const allLines = content.split("\n");
 	const totalLines = allLines.length;
 
@@ -872,7 +887,7 @@ function renderContent(
 		const text = `${header}\n${slice.join("\n")}`;
 		const callIdx = ++callIndex.current;
 		dedupeCache.set(key, { sha, callIndex: callIdx, text });
-		return { content: [{ type: "text", text }] };
+		return { content: [{ type: "text", text }], details: undefined };
 	}
 
 	if (symbol) {
@@ -892,6 +907,7 @@ function renderContent(
 		if (!hit) {
 			return {
 				content: [{ type: "text", text: `Symbol "${symbol}" not found in ${displayPath}.` }],
+				details: undefined,
 			};
 		}
 		const slice = allLines.slice(hit.line - 1, hit.lineEnd);
@@ -913,7 +929,7 @@ function renderContent(
 		const text = `${preamble}${numbered}`;
 		const callIdx = ++callIndex.current;
 		dedupeCache.set(key, { sha, callIndex: callIdx, text });
-		return { content: [{ type: "text", text }] };
+		return { content: [{ type: "text", text }], details: undefined };
 	}
 
 	if (totalLines <= SMALL_FILE_LINES) {
@@ -922,6 +938,7 @@ function renderContent(
 		dedupeCache.set(key, { sha, callIndex: callIdx, text });
 		return {
 			content: [{ type: "text", text }],
+			details: undefined,
 		};
 	}
 
@@ -935,6 +952,7 @@ function renderContent(
 		dedupeCache.set(key, { sha, callIndex: callIdx, text });
 		return {
 			content: [{ type: "text", text }],
+			details: undefined,
 		};
 	}
 	// Show all heading levels (section, subsection, subsubsection, etc.) for easier navigation.
@@ -946,6 +964,7 @@ function renderContent(
 		content: [
 			{ type: "text", text },
 		],
+		details: undefined,
 	};
 }
 
@@ -958,7 +977,7 @@ function readOutsideRepo(
 	collapsedView: (typeof import("../_outliner/outliner.js"))["collapsedView"],
 	key: string,
 	sha: string,
-) {
+): AgentToolResult<unknown> {
 	const content = fs.readFileSync(absolutePath, "utf-8");
 
 	return renderContent(absolutePath, absolutePath, content, symbol, outline, collapsedView, key, sha);

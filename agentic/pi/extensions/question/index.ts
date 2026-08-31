@@ -68,8 +68,11 @@ async function askOneLocally(
 	title: string,
 	signal: AbortSignal | undefined,
 ): Promise<AskOutcome> {
+	// QuestionItem.options is optional on the wire, but every branch below needs a
+	// defined list to index into.
+	const choiceList: string[] = item.options ?? [];
 	try {
-		if (item.options && item.options.length > 0 && item.multiSelect) {
+		if (choiceList.length > 0 && item.multiSelect) {
 			const selected = new Set<number>();
 			return new Promise<AskOutcome>((resolve) => {
 				let cursorIndex = 0;
@@ -78,13 +81,13 @@ async function askOneLocally(
 					const key = data;
 					// Down Arrow
 					if (key === "\x1b[B") {
-						cursorIndex = (cursorIndex + 1) % item.options.length;
+						cursorIndex = (cursorIndex + 1) % choiceList.length;
 						render();
 						return { consume: true };
 					}
 					// Up Arrow
 					if (key === "\x1b[A") {
-						cursorIndex = (cursorIndex - 1 + item.options.length) % item.options.length;
+						cursorIndex = (cursorIndex - 1 + choiceList.length) % choiceList.length;
 						render();
 						return { consume: true };
 					}
@@ -104,7 +107,7 @@ async function askOneLocally(
 						if (selected.size === 0) {
 							resolve({ error: "empty" });
 						} else {
-							const answers = Array.from(selected).map((i) => item.options[i]);
+							const answers = Array.from(selected).map((i) => choiceList[i]);
 							resolve({ answer: answers.join(", ") });
 						}
 						return { consume: true };
@@ -129,26 +132,26 @@ async function askOneLocally(
 					const lines: string[] = [];
 					lines.push(colors.orange + colors.bold + title + colors.reset);
 					lines.push("");
-					for (let i = 0; i < item.options.length; i++) {
+					for (let i = 0; i < choiceList.length; i++) {
 						const isSelected = selected.has(i);
 						const isCursor = i === cursorIndex;
 						const cursor = isCursor ? colors.orange + "→" + colors.reset : " ";
 						const box = isSelected ? colors.green + "[✓]" + colors.reset : colors.dim + "[ ]" + colors.reset;
-						const optionText = isCursor ? colors.orange + colors.bold + item.options[i] + colors.reset : item.options[i];
+						const optionText = isCursor ? colors.orange + colors.bold + choiceList[i] + colors.reset : choiceList[i];
 						lines.push(cursor + " " + box + " " + optionText);
 					}
 					lines.push("");
 					lines.push(colors.dim + "↑↓ navigate · Space: toggle · Enter: submit · Esc: cancel" + colors.reset);
 					ui.setWorkingMessage(lines.join("\n"));
 				};
-				void signal; // eslint-disable-line @typescript-eslint/no-unused-vars
+				void signal;
 
 				render();
 			});
 		}
 
-		if (item.options && item.options.length > 0) {
-			const choices = [...item.options, OTHER_LABEL];
+		if (choiceList.length > 0) {
+			const choices = [...choiceList, OTHER_LABEL];
 			const choice = await ui.select(title, choices, { signal });
 			if (choice === undefined) return { error: "dismissed" };
 			if (choice === OTHER_LABEL) {
@@ -207,7 +210,7 @@ function getResponseStream(): net.Socket | null {
 
 function askViaBridge(
 	questions: QuestionItem[],
-	signal: AbortSignal | undefined,
+	_signal: AbortSignal | undefined,
 ): Promise<QuestionResponse> {
 	return new Promise((resolve) => {
 		const id = crypto.randomBytes(6).toString("hex");
@@ -285,7 +288,7 @@ export default function (pi: ExtensionAPI) {
 			"checkbox-list multi-select (↑↓ navigate, Space toggle, Enter submit).",
 		parameters: Params,
 		async execute(_toolCallId, { question, options, multiSelect }, signal, _onUpdate, ctx: ExtensionContext): Promise<AgentToolResult<unknown>> {
-			const item: QuestionItem = { question, ...(options ? { options } : {}), ...(multiSelect ? { multiSelect } : {}) };
+			const item: QuestionItem = { question, options: options ?? [], ...(multiSelect ? { multiSelect } : {}) };
 			const out = await dispatchAsk(ctx, [item], signal);
 			return buildResult(item, out);
 		},
@@ -297,7 +300,7 @@ export default function (pi: ExtensionAPI) {
 	});
 }
 
-function buildResult(item: QuestionItem, out: { answers?: string[]; error?: string }) {
+function buildResult(item: QuestionItem, out: { answers?: string[]; error?: string }): AgentToolResult<unknown> {
 	if (out.error) {
 		return { content: [{ type: "text", text: out.error + " Proceed with a reasonable default." }], details: undefined };
 	}

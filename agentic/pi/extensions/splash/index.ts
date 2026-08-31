@@ -139,6 +139,8 @@ let splashTui: TUI | undefined;
 // Best-effort and fully guarded — if pi's internals change, the try/catch leaves the UI
 // untouched and the line simply stays.
 const RELOADED_STATUS = /Reloaded keybindings, extensions, skills, prompts, themes/;
+// Stripping SGR sequences is the whole point, so the control character is intentional.
+// eslint-disable-next-line no-control-regex
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 
 // Returns true once the status line has been found and removed.

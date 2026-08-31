@@ -320,7 +320,8 @@ function runEngine(repoRoot: string, query: string, regex: boolean, maxResults?:
 			return { results, engine: "ripgrep", total: results.length };
 		}
 		// Detect timeout — provides a clearer error than "killed" or signal code.
-		const isTimeout = proc.error?.code === "ETIME" || (proc.error?.message?.includes("timed out"));
+		const spawnError = proc.error as NodeJS.ErrnoException | undefined;
+		const isTimeout = spawnError?.code === "ETIME" || !!spawnError?.message?.includes("timed out");
 		rgError = isTimeout
 			? `ripgrep timed out after ${RG_TIMEOUT_MS / 1000}s — too many files to search. Try running in a smaller directory (e.g. a git repo), or refine your query.`
 			: proc.error?.message ?? proc.stderr?.trim() ?? `exit ${proc.status}`;

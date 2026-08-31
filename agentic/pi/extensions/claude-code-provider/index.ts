@@ -89,10 +89,9 @@ const CLAUDE_CODE_DEBUG_ENABLED = process.env[CLAUDE_CODE_DEBUG_ENV] === "1";
 const STALE_TOOL_RESULT_ERROR = "[Error: Tool result is stale - invocation sequence mismatch]";
 
 /** Result of parsing text for tool calls: segments of text or tool calls */
-interface ParsedTextSegment {
-	type: 'text' | 'toolCall';
-	content: string | ToolCallWithReplayMetadata;
-}
+type ParsedTextSegment =
+	| { type: 'text'; content: string }
+	| { type: 'toolCall'; content: ToolCallWithReplayMetadata };
 
 /**
  * Parse text for tool call patterns and return segments (text/toolCall).

@@ -13,12 +13,8 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-// @ts-expect-error - module not installed but types are used
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-// @ts-expect-error - module not installed but types are used
-import type { Message } from "@earendil-works/pi-ai";
-// @ts-expect-error - module not installed but types are used
-import { StringEnum } from "@earendil-works/pi-ai";
+import { StringEnum, type Message } from "@earendil-works/pi-ai";
 import { type ExtensionAPI, getAgentDir, getMarkdownTheme, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";

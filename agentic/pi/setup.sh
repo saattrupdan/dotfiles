@@ -616,6 +616,59 @@ for pkg in "$EXT_DIR"/*/package.json; do
 done
 
 echo "Done: $installed extension(s) installed."
+
+# --- 5b. One copy of pi's own types for the whole extension tree -------------
+#
+# Extensions import @earendil-works/* and typebox. Those must resolve to the
+# build pi actually runs on — not to the published copies that each extension's
+# own `dependencies: {"@earendil-works/pi-coding-agent": "*"}` pulls in, and not
+# to whatever global install happens to be on PATH. Mixed copies make the same
+# interface two unrelated types (TS2719 on every registerTool), which is why
+# tsconfig.json maps those specifiers onto $EXT_DIR/node_modules and this step
+# fills that directory in.
+#
+# Runs AFTER the npm installs above because npm prunes entries it did not
+# create, which would otherwise delete these links.
+
+echo "Linking pi's own packages into $EXT_DIR/node_modules"
+
+pi_pkg=""
+for launcher in "${PI_HOME:-$HOME/.pi/agent}/bin/pi" "$(command -v pi 2>/dev/null)"; do
+  [ -f "$launcher" ] || continue
+  cli="$(grep -o '/[^" ]*pi-coding-agent/dist/[^"]*\.js' "$launcher" 2>/dev/null | head -1)"
+  [ -n "$cli" ] || continue
+  cand="${cli%/dist/*}"
+  [ -f "$cand/package.json" ] && { pi_pkg="$cand"; break; }
+done
+if [ -z "$pi_pkg" ]; then
+  # Fall back to the global root of the Node that runs pi.
+  npm_root="$("$PI_NODE" -e 'process.stdout.write(require("node:child_process").execSync("npm root -g").toString().trim())' 2>/dev/null)"
+  cand="$npm_root/@earendil-works/pi-coding-agent"
+  [ -f "$cand/package.json" ] && pi_pkg="$cand"
+fi
+if [ -z "$pi_pkg" ]; then
+  echo "!!! could not locate pi's package directory — typechecking will fail with" >&2
+  echo "    TS2307 on @earendil-works/* (set PI_NODE, or install pi globally)." >&2
+else
+  echo "--- pi package: $pi_pkg"
+  # Root devDependencies (@types/node) — the per-extension loop only visits
+  # */package.json, so the extensions root is installed here.
+  if [ -f "$EXT_DIR/package.json" ] && [ ! -d "$EXT_DIR/node_modules/@types/node" ]; then
+    echo "--- installing typecheck devDependencies in $EXT_DIR"
+    (cd "$EXT_DIR" && PATH="$PI_NODE_BIN_DIR:$PATH" npm install --no-audit --no-fund) \
+      || echo "!!! npm install failed in $EXT_DIR" >&2
+  fi
+  mkdir -p "$EXT_DIR/node_modules/@earendil-works"
+  ln -sfn "$pi_pkg" "$EXT_DIR/node_modules/@earendil-works/pi-coding-agent"
+  for m in "$pi_pkg"/node_modules/@earendil-works/*; do
+    [ -d "$m" ] || continue
+    ln -sfn "$m" "$EXT_DIR/node_modules/@earendil-works/$(basename "$m")"
+  done
+  [ -d "$pi_pkg/node_modules/typebox" ] \
+    && ln -sfn "$pi_pkg/node_modules/typebox" "$EXT_DIR/node_modules/typebox"
+  echo "--- linked $(ls "$EXT_DIR/node_modules/@earendil-works" | tr '\n' ' ')plus typebox"
+fi
+echo
 if [ -n "$failed" ]; then
   echo "Failed:$failed" >&2
   echo "Native modules failed to build. Check you're on LTS Node ($(node -v)), that" >&2

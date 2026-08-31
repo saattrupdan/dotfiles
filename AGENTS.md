@@ -31,17 +31,34 @@ use the project-local `tsc`/`eslint`):
 ```sh
 cd agentic/pi/extensions
 
-# Typecheck — the trailing filter drops third-party errors inside dependency
-# .d.ts files (the project itself excludes node_modules; skipLibCheck is off).
+# Typecheck — the trailing filter drops errors from third-party TypeScript
+# sources (pi-mcp-adapter ships .ts, which mcp-collapse imports).
 ./node_modules/.bin/tsc -p tsconfig.json --noEmit 2>&1 | grep "error TS" | grep -v node_modules
 
 # Lint — eslint.config.mjs already ignores **/node_modules/**.
 ./node_modules/.bin/eslint .
 ```
 
-A clean typecheck prints nothing. The 9 remaining `node_modules` errors are
-upstream dependency declaration bugs, so the filter is expected — never "fix"
-them by editing files under `node_modules/`.
+A clean typecheck prints nothing and a clean lint reports 0 errors (the ~26
+`no-explicit-any` warnings are pre-existing style noise, not failures).
+
+**How `@earendil-works/*` resolves for the typecheck.** `tsconfig.json` maps
+those specifiers and `typebox` onto `extensions/node_modules`, and `setup.sh`
+(section 5b) fills that directory with symlinks to the packages of the pi build
+that actually runs — located from the pinned launcher, with `npm root -g` as
+fallback. That indirection is load-bearing: each extension's own
+`dependencies: {"@earendil-works/pi-coding-agent": "*"}` installs a *published*
+copy, and mixing it with the live build makes the same interface two unrelated
+types (`TS2719` on every `registerTool`). Consequences:
+
+- `TS2307: Cannot find module '@earendil-works/...'` for every extension means
+  the links are missing or stale (pi was upgraded/removed, or a fresh clone).
+  Re-run `./agentic/pi/setup.sh`; it also installs the root `@types/node`.
+- Run `npm install` inside `extensions/` last, or re-run `setup.sh` after it —
+  npm prunes the foreign symlinks.
+- Never add absolute paths (a Node version directory, an nvm root) to
+  `tsconfig.json`; they break on another machine. `skipLibCheck` stays on so
+  dependency `.d.ts` files, including pi's own, are trusted.
 
 ## Gotchas
 
