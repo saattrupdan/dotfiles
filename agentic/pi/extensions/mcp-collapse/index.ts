@@ -72,7 +72,10 @@ const MCP_DIRECT_TOOL_LABEL = "MCP: ";
 // neutralize those paths in their execute() output (see file header for the why).
 const MEMORY_TOOLS = new Set(["memory_query", "memory_add", "memory_update"]);
 // Tools whose payload isn't worth surfacing get a fixed collapsed summary instead of a
-// snippet of their (often long) result text.
+// snippet of their (often long) result text. `memory_add`/`memory_update` are normally
+// registered by the memory-async extension instead of by the adapter (see mcp.json
+// excludeTools), in which case those entries are unused and that extension's own
+// renderers apply; they take effect again only if the direct tools are re-enabled.
 const FIXED_RESULT_SUMMARY: Record<string, string> = {
 	memory_query: "Remembered a thing",
 	memory_add: "Stored a memory",

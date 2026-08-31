@@ -19,6 +19,12 @@
  *     job id and any backlog, and warns when past writes failed permanently.
  *   - `/memory-queue` shows the queue and log, and can requeue failures.
  *
+ * A third, purely visual, consequence: these tools are no longer MCP direct
+ * tools, so `mcp-collapse` (which owns pi-mcp-adapter and restyles its tools)
+ * no longer reaches them. Without renderers pi prints the whole argument JSON,
+ * which is the paragraph of knowledge being saved. Hence the `renderCall` /
+ * `renderResult` pair below — collapsed to one line, expanded with Ctrl+O.
+ *
  * Requires `memory_add`/`memory_update` to be removed from the understory
  * `directTools` list in mcp.json, otherwise two tools share the name.
  */
@@ -29,7 +35,13 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type {
+	AgentToolResult,
+	ExtensionAPI,
+	Theme,
+	ToolRenderResultOptions,
+} from "@earendil-works/pi-coding-agent";
+import { type Component, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 const ROOT = process.env.MEMORY_ASYNC_DIR ?? path.join(os.homedir(), ".pi", "agent", "memory-async");
@@ -123,6 +135,51 @@ function queueSummary(): { pending: number; ahead: number; failed: number; faile
 	return { pending, ahead: Math.max(0, pending - 1), failed, failedNote };
 }
 
+/**
+ * Collapsed-view summaries. The two tools used to be MCP direct tools, which
+ * `mcp-collapse` rendered as a single "✓ Stored a memory" line; now that this
+ * extension owns them it must provide the renderers itself, or pi falls back to
+ * its default view — tool name, the *entire* argument JSON (i.e. the whole
+ * paragraph of knowledge), and the raw ack.
+ *
+ * Wording says "queued", not "stored": the write has not happened yet, and a
+ * green "✓ Stored" would be a lie about a deferred action.
+ */
+const COLLAPSED_SUMMARY: Record<string, string> = {
+	memory_add: "Queued a memory write",
+	memory_update: "Queued a memory update",
+};
+
+function resultText(result: AgentToolResult<unknown>): string {
+	return result.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
+}
+
+/** Display-only renderers: the model always sees the full ack, Ctrl+O shows it. */
+function renderQueuedCall(name: string, args: Record<string, unknown>, theme: Theme, expanded: boolean): Component {
+	const title = theme.fg("toolTitle", theme.bold(name));
+	if (!expanded || !args || Object.keys(args).length === 0) {
+		return new Text(title, 0, 0);
+	}
+	return new Text(`${title}\n${theme.fg("muted", JSON.stringify(args, null, 2))}`, 0, 0);
+}
+
+function renderQueuedResult(
+	name: string,
+	result: AgentToolResult<unknown>,
+	options: ToolRenderResultOptions,
+	theme: Theme,
+	isError: boolean,
+): Component {
+	if (options.isPartial) {
+		return new Text(theme.fg("warning", "…"), 0, 0);
+	}
+	if (options.expanded || isError) {
+		const paint = (line: string) => theme.fg(isError ? "error" : "toolOutput", line);
+		return new Text(resultText(result).split("\n").map(paint).join("\n"), 0, 0);
+	}
+	return new Text(theme.fg("success", `✓ ${COLLAPSED_SUMMARY[name] ?? "Queued a memory write"}`), 0, 0);
+}
+
 function registerWriteTool(
 	pi: ExtensionAPI,
 	name: string,
@@ -175,6 +232,11 @@ function registerWriteTool(
 				details: undefined,
 			};
 		},
+
+		renderCall: (args, theme, ctx) => renderQueuedCall(name, args as Record<string, unknown>, theme, ctx.expanded),
+
+		renderResult: (result, options, theme, ctx) =>
+			renderQueuedResult(name, result as AgentToolResult<unknown>, options, theme, ctx.isError),
 	});
 }
 
