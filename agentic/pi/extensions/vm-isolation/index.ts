@@ -197,24 +197,28 @@ export default function (pi: ExtensionAPI) {
 			if (!jsonLine) return { safe: true, severity: 'none' };
 			const result = JSON.parse(jsonLine);
 
-			if (result.shouldBlock) {
-				return { safe: false, severity: 'critical', reason: 'Blocked destructive command' };
-			}
-
-			if (result.critical.length > 0) {
+			// The runner answers with booleans (`"critical":true`), not arrays, so
+			// `result.critical.length` was always undefined and these reasons were dead
+			// code — every block reported the generic "Blocked destructive command".
+			if (result.critical) {
 				return { safe: false, severity: 'critical', reason: 'Critical pattern detected' };
 			}
-			if (result.high?.length > 0) {
+			if (result.high) {
 				return { safe: false, severity: 'high', reason: 'High-risk pattern detected' };
 			}
-			if (result.medium?.length > 0) {
+			if (result.medium) {
 				return { safe: true, severity: 'medium', reason: 'Medium-risk pattern - proceed with caution' };
+			}
+			if (result.shouldBlock) {
+				return { safe: false, severity: 'high', reason: 'Blocked destructive command' };
 			}
 
 			return { safe: true, severity: 'none' };
-		} catch {
-			// Fail-secure: if we can't check, block the command
-			return { safe: false, severity: 'high', reason: 'Safety check unavailable - command blocked' };
+		} catch (err) {
+			// Fail-secure: if we can't check, block the command. Name the reason so a
+			// lockout is diagnosable — an unreadable runner response and a missing
+			// binary look identical otherwise.
+			return { safe: false, severity: 'high', reason: `Safety check unavailable - command blocked (${errorMessage(err)})` };
 		}
 	}
 

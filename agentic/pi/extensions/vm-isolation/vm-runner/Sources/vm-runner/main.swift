@@ -54,12 +54,28 @@ import Foundation
         print("{\"status\":\"success\",\"deleted\":\(toDelete),\"kept\":\(min(all.count, maxKeep))}")
     }
     
+    /// JSON-escape a string before embedding it in the output object. Quoting `"`
+    /// alone is not enough: a command containing a backslash (`grep -n "a\.b"`, a
+    /// `printf "\n"`) produced invalid JSON, the extension's `JSON.parse` threw, and
+    /// its fail-secure path blocked an ordinary command.
+    static func jsonEscape(_ s: String) -> String {
+        var r = s.replacingOccurrences(of: "\\", with: "\\\\")
+        r = r.replacingOccurrences(of: "\"", with: "\\\"")
+        r = r.replacingOccurrences(of: "\n", with: "\\n")
+        r = r.replacingOccurrences(of: "\r", with: "\\r")
+        r = r.replacingOccurrences(of: "\t", with: "\\t")
+        return r
+    }
+
     static func checkCommand(_ args: [String]) {
         let cmd = args.joined(separator: " ")
         var (c, h, m) = (false, false, false)
+        // Leading word boundaries are load-bearing. `dd\s+` without one matches the
+        // "dd" inside "git add .", so every `git add` looked like a `dd` disk write
+        // and was blocked; `rm\s+` likewise matched "harm " and "charm ".
         let patterns: [(String, String)] = [
-            (#"rm\s+-rf\s+/"#, "c"), (#"rm\s+-rf\s+\*"#, "c"), (#"rm\s+-rf"#, "h"),
-            (#"rm\s+"#, "m"), (#"dd\s+"#, "h"), (#"mkfs"#, "c"), (#"chmod\s+-R\s+777"#, "h")
+            (#"\brm\s+-rf\s+/"#, "c"), (#"\brm\s+-rf\s+\*"#, "c"), (#"\brm\s+-rf"#, "h"),
+            (#"\brm\s+"#, "m"), (#"\bdd\s+"#, "h"), (#"\bmkfs"#, "c"), (#"\bchmod\s+-R\s+777"#, "h")
         ]
         for (pat, sev) in patterns {
             if let r = try? NSRegularExpression(pattern: pat), !r.matches(in: cmd, range: NSRange(cmd.startIndex..., in: cmd)).isEmpty {
@@ -67,6 +83,6 @@ import Foundation
             }
         }
         let block = c || h
-        print("{\"command\":\"\(cmd.replacingOccurrences(of: "\"", with: "\\\""))\",\"shouldBlock\":\(block),\"critical\":\(c),\"high\":\(h),\"medium\":\(m)}")
+        print("{\"command\":\"\(jsonEscape(cmd))\",\"shouldBlock\":\(block),\"critical\":\(c),\"high\":\(h),\"medium\":\(m)}")
     }
 }

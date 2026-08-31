@@ -214,13 +214,31 @@ vm-isolation/
 The extension uses regex patterns to detect dangerous commands:
 
 ```swift
-let dangerousPatterns = [
-    (#"rm\s+-rf\s+/"#, "critical"),     // rm -rf /
-    (#"rm\s+-rf\s+\*"#, "critical"),    // rm -rf *
-    (#"rm\s+-rf"#, "high"),             // rm -rf 
-    (#"dd\s+"#, "high"),                 # dd if=...
-    (#"mkfs"#, "critical"),              # Format disk
+let patterns: [(String, String)] = [
+    (#"\brm\s+-rf\s+/"#, "c"),    // rm -rf /
+    (#"\brm\s+-rf\s+\*"#, "c"),   // rm -rf *
+    (#"\brm\s+-rf"#, "h"),        // rm -rf anywhere
+    (#"\brm\s+"#, "m"),           // rm — warn only
+    (#"\bdd\s+"#, "h"),           // dd if=... of=...
+    (#"\bmkfs"#, "c"),            // format disk
+    (#"\bchmod\s+-R\s+777"#, "h"), // world-writable recursively
 ]
+```
+
+Every pattern needs its leading word boundary. Without it `dd\s+` matches the
+"dd" inside `git add .`, which reads as a `dd` disk write and gets the command
+blocked — and `rm\s+` matches "harm " or "charm ". `check-command` answers with
+booleans (`"critical":true`), and escapes the echoed command as JSON, so a
+command containing backslashes stays parseable.
+
+Check both properties after any change (the strings are only arguments, never
+evaluated — `check-command` matches and prints, it does not run):
+
+```sh
+cd vm-runner && swift build
+B=.build/debug/vm-runner
+for c in 'git add .' 'grep -n "a\.b" f' 'sed -n "1,5p" f'; do $B check-command "$c"; done   # shouldBlock:false
+for c in 'rm -rf /' 'dd if=/dev/zero of=/tmp/x' 'mkfs -t apfs /dev/disk3'; do $B check-command "$c"; done  # shouldBlock:true
 ```
 
 ### Snapshot Management
