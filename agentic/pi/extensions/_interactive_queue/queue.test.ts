@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { createInteractiveQueue } from "./interactive-queue.ts";
+import { createInteractiveQueue } from "./queue.ts";
 
 function deferred<T>() {
 	let resolve!: (value: T | PromiseLike<T>) => void;

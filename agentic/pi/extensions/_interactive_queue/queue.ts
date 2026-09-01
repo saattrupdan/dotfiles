@@ -1,8 +1,18 @@
 /**
  * FIFO serialization for process-global interactive UI operations.
  *
+ * Pi renders a single extension selector/input at a time: a second concurrent
+ * prompt overwrites the first component without disposing or resolving it, so
+ * the abandoned promise hangs until the run is aborted. Anything that pops a
+ * prompt therefore has to take this queue — the `question` tool and the
+ * subagent extension's confirmations and bridged child questions share the one
+ * process-wide instance exported at the bottom of this file.
+ *
  * The operation receives a signal derived from the caller's signal. An active
  * operation must honor that signal so an abort can release the queue slot.
+ *
+ * Do not wrap an operation that queues on this same instance — nesting
+ * `interactiveQueue.run` inside a queued operation deadlocks the FIFO.
  */
 
 export type InteractiveOperation<T> = (signal: AbortSignal) => Promise<T>;
@@ -113,3 +123,10 @@ export class InteractiveQueue {
 export function createInteractiveQueue(): InteractiveQueue {
 	return new InteractiveQueue();
 }
+
+/**
+ * The process-wide queue every prompt in this pi process must go through.
+ * Extensions import this instead of creating their own instance, otherwise two
+ * unrelated extensions can still open a selector at the same time.
+ */
+export const interactiveQueue = createInteractiveQueue();

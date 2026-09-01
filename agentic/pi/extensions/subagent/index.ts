@@ -33,13 +33,12 @@ import {
 	type QuestionItem,
 	type QuestionResponse,
 } from "../_question_protocol/protocol.ts";
+import { interactiveQueue } from "../_interactive_queue/queue.ts";
 import { dispatchAsk } from "../question/index.ts";
-import { createInteractiveQueue } from "./interactive-queue.ts";
 import { getPiInvocation } from "./pi-invocation.ts";
 import { resolveSkillAllowList } from "./skill-scope.ts";
 
 const COLLAPSED_ITEM_COUNT = 10;
-const interactiveQueue = createInteractiveQueue();
 
 function formatTokens(count: number): string {
 	if (count < 1000) return count.toString();
@@ -1082,8 +1081,9 @@ export default function (pi: ExtensionAPI) {
 
 			// A child question is answered by the orchestrator, including when this
 			// process is itself a subagent and the request must travel up to its parent.
-			const fulfillQuestion: QuestionFulfiller = (questions, sig) =>
-				interactiveQueue.run((interactionSignal) => dispatchAsk(ctx, questions, interactionSignal), sig);
+			// dispatchAsk queues on the shared interactive queue itself, so it must not
+			// be wrapped here.
+			const fulfillQuestion: QuestionFulfiller = (questions, sig) => dispatchAsk(ctx, questions, sig);
 
 			if ((agentScope === "project" || agentScope === "both") && confirmProjectAgents && ctx.hasUI) {
 				const projectAgent = agents.find((a) => a.name === params.agent && a.source === "project");

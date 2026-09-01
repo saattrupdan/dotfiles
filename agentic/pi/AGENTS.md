@@ -93,6 +93,12 @@ Omitted = all discoverable; empty array = none.
 
 - You **cannot** edit `node_modules/` files directly (including the Pi agent framework
   itself), you have to make an extension instead.
+- **Pi renders one UI prompt at a time.** A second concurrent `ui.select`/`ui.input`
+  replaces the first component without resolving its promise, so that tool call hangs
+  until the run is aborted. Every extension that opens a prompt must go through the shared
+  FIFO in `extensions/_interactive_queue/queue.ts` (`interactiveQueue.run`) and must not
+  nest a queued call inside a queued call; tools that must not overlap others in the same
+  turn also set `executionMode: "sequential"` on `registerTool`.
 - **`auth.json`** contains OAuth tokens. Never commit, paste, or screenshot it.
 - **Most files are symlinks** into `~/gitsky/dotfiles/agentic/`. Edit via the symlink —
   the dotfiles repo is the source of truth. Commit changes there.

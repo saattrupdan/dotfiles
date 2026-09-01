@@ -10,6 +10,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 import { isLidClosed } from "../_lid_state/lid.ts";
+import { interactiveQueue } from "../_interactive_queue/queue.ts";
 
 import {
 	encodeRequest,
@@ -210,7 +211,7 @@ function getResponseStream(): net.Socket | null {
 
 function askViaBridge(
 	questions: QuestionItem[],
-	_signal: AbortSignal | undefined,
+	signal: AbortSignal | undefined,
 ): Promise<QuestionResponse> {
 	return new Promise((resolve) => {
 		const id = crypto.randomBytes(6).toString("hex");
@@ -227,8 +228,13 @@ function askViaBridge(
 			channel.off("data", onData);
 			channel.off("end", onEnd);
 			channel.off("close", onEnd);
+			signal?.removeEventListener("abort", onAbort);
 			resolve(res);
 		};
+		// Without this the reply might never arrive (run aborted while the ask sat
+		// in the queue), and because the ask holds the queue slot every later prompt
+		// in the process would block behind it.
+		const onAbort = () => settle({ id, error: "aborted" });
 		const onData = (chunk: Buffer | string) => {
 			buffer += chunk.toString();
 			let nl = buffer.indexOf("\n");
@@ -249,6 +255,10 @@ function askViaBridge(
 		channel.on("data", onData);
 		channel.on("end", onEnd);
 		channel.on("close", onEnd);
+		if (signal) {
+			if (signal.aborted) onAbort();
+			else signal.addEventListener("abort", onAbort, { once: true });
+		}
 		process.stderr.write(encodeRequest({ id, questions }));
 	});
 }
@@ -264,12 +274,30 @@ export async function dispatchAsk(
 	if (isLidClosed()) {
 		return { error: "Lid closed — interactive questions unavailable." };
 	}
+	// Pi renders one extension prompt at a time: two asks opened together would
+	// overwrite each other's selector, and the abandoned promise would hang. Take
+	// the process-wide queue instead, so asks appear one after another. The queue
+	// hands the operation its own signal, which fires if the caller aborts while
+	// waiting or while prompting.
+	const runQueued = async (
+		ask: (interactionSignal: AbortSignal) => Promise<{ answers?: string[]; error?: string }>,
+	): Promise<{ answers?: string[]; error?: string }> => {
+		try {
+			return await interactiveQueue.run((interactionSignal) => ask(interactionSignal), signal);
+		} catch (err) {
+			if ((err as Error)?.name === "AbortError") return { error: "aborted" };
+			return { error: "question queue failed: " + (err as Error).message };
+		}
+	};
+
 	if (ctx.hasUI) {
-		return askLocally(ctx.ui, questions, signal);
+		return runQueued((interactionSignal) => askLocally(ctx.ui, questions, interactionSignal));
 	}
 	if (process.env.PI_SUBAGENT_CHILD === "1") {
-		const res = await askViaBridge(questions, signal);
-		return { answers: res.answers, error: res.error };
+		return runQueued(async (interactionSignal) => {
+			const res = await askViaBridge(questions, interactionSignal);
+			return { answers: res.answers, error: res.error };
+		});
 	}
 	return { error: "No interactive UI available." };
 }
@@ -283,10 +311,15 @@ export default function (pi: ExtensionAPI) {
 			"unresolved user intent, user-visible scope or behavior, meaningful constraints or risk, " +
 			"or permission for a consequential action — not for routine implementation details or " +
 			"uncertainty merely found in tool or subagent output. Reframe genuine technical " +
-			"uncertainty in terms of its user-visible consequences. Pass `question` and optionally " +
+			"uncertainty in terms of its user-visible consequences. Calls are asked one at a time: " +
+			"several question calls in one turn are queued and posed in order, never at once, so a " +
+			"later call is only shown after the earlier one is answered. Pass `question` and optionally " +
 			"`options` (list of choices with 'Other…' auto-appended). Pass `multiSelect: true` for " +
 			"checkbox-list multi-select (↑↓ navigate, Space toggle, Enter submit).",
 		parameters: Params,
+		// Ask batches in order: the next question is posed once the current one is
+		// answered, which is what makes back-to-back calls safe.
+		executionMode: "sequential",
 		async execute(_toolCallId, { question, options, multiSelect }, signal, _onUpdate, ctx: ExtensionContext): Promise<AgentToolResult<unknown>> {
 			const item: QuestionItem = { question, options: options ?? [], ...(multiSelect ? { multiSelect } : {}) };
 			const out = await dispatchAsk(ctx, [item], signal);

@@ -1,0 +1,7 @@
+{
+  "name": "@pi/interactive-queue",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared library for FIFO-serializing process-global interactive UI prompts"
+}
