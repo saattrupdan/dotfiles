@@ -3,7 +3,7 @@ name: planner
 description: Produces concrete implementation plans for code changes. Read-only. Cannot edit files or spawn subagents.
 model:
   - openai-codex/gpt-5.6-sol
-  - claude-code/claude-opus-5
+  - sparkie/qwen3.8-flash-next
 tools: read, skill, memory_query, question
 skills: []
 worktree: false

@@ -12,6 +12,8 @@
 
 # Cache files
 **/.ruff_cache/
+# zsh compiled scripts — regenerable, and zsh picks them up by side effect
+**/*.zwc
 
 # Node
 **/node_modules/

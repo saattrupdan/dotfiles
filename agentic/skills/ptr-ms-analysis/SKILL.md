@@ -1,1 +1,1 @@
-../../../../ptr/SKILL.md
+../../../../ptr-ms-analysis/SKILL.md

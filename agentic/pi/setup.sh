@@ -616,6 +616,37 @@ for pkg in "$EXT_DIR"/*/package.json; do
 done
 
 echo "Done: $installed extension(s) installed."
+echo
+
+# --- 5a. Swift helper binaries that extensions spawn -------------------------
+# vm-isolation runs every bash call through vm-runner, and its safety check
+# fails CLOSED: with no .build/debug/vm-runner the tool blocks *every* command
+# ("BLOCKED: Safety check unavailable — command blocked (spawn … vm-runner …
+# ENOENT)"), pi included. npm never builds that binary and .build/ is gitignored,
+# so a machine that only ran setup.sh ends up with a pi that cannot run a single
+# shell command. Build it wherever a Swift toolchain exists; warn elsewhere
+# instead of failing, since the extension is only load-bearing on macOS.
+for pkg in "$EXT_DIR"/*/vm-runner/Package.swift; do
+  [ -e "$pkg" ] || continue
+  dir="$(dirname "$pkg")"
+  name="$(basename "$(dirname "$dir")")"
+  if [ -x "$dir/.build/debug/vm-runner" ]; then
+    echo "=== $name: vm-runner already built"
+    continue
+  fi
+  if ! command -v swift >/dev/null 2>&1; then
+    echo "!!! $name: swift not found — vm-runner NOT built. If this extension gates" >&2
+    echo "    the bash tool, no command will run until you build it by hand:" >&2
+    echo "    (cd $dir && swift build)" >&2
+    continue
+  fi
+  echo "--- $name: swift build (vm-runner)"
+  # Debug, not release: that is the path the extension spawns.
+  if ! (cd "$dir" && swift build); then
+    echo "!!! $name: swift build failed — the bash tool may refuse every command." >&2
+  fi
+done
+echo
 
 # --- 5b. One copy of pi's own types for the whole extension tree -------------
 #

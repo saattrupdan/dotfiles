@@ -2,8 +2,8 @@
 name: builder
 description: Implements a concrete, scoped code change. Has full read/write/bash permissions. Always runs in an isolated git worktree that is merged back on completion.
 model:
-  - sparkie/qwen3.8-flash-next
   - openai-codex/gpt-5.6-luna
+  - sparkie/qwen3.8-flash-next
 tools: search, read, write, edit, skill, bash, memory_query, question
 skills: [commit, python, fastapi, vue, sqlmodel, full-stack, slides, agent-browser]
 worktree: true

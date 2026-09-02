@@ -1,6 +1,6 @@
 {
   "claude-code.nvim": { "branch": "main", "commit": "55c0cb59828fbc3bec744288286a46f5d5750b83" },
-  "coc.nvim": { "branch": "release", "commit": "5e8b50583c8d9b630acfef041a279523f16dd37f" },
+  "coc.nvim": { "branch": "release", "commit": "bf3d499c999fc8ff1ef292e5594a3fc2a999bf65" },
   "gruvbox": { "branch": "master", "commit": "180ad85971343df68be3422a5630fa84e45a9ab2" },
   "lazy.nvim": { "branch": "main", "commit": "306a05526ada86a7b30af95c5cc81ffba93fef97" },
   "llama.vim": { "branch": "master", "commit": "239d8d1f76677262ca2595e43647a8649b543617" },

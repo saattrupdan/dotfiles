@@ -2,8 +2,8 @@
 name: explorer
 description: Read-only locator for code and the web. Returns paths, line ranges, and tight summaries. Cannot edit or implement.
 model:
-  - sparkie/qwen3.8-flash-next
   - openai-codex/gpt-5.6-luna
+  - sparkie/qwen3.8-flash-next
 tools: code_tree, search, read, skill, web_browse, tavily_search, memory_query, question
 skills: []
 worktree: false

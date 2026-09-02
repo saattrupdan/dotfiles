@@ -23,19 +23,34 @@ fpath+=~/.zfunc
   git clone --depth 1 -- https://github.com/marlonrichert/zsh-snap.git ~/znap-plugins/znap
 source ~/znap-plugins/znap/znap.zsh  # Start Znap
 
+# zsh-autocomplete computes its completions in a background worker driven by `zasync`
+# (marlonrichert/zasync), which it autoloads *by name*. Zsh looks that name up on $fpath
+# and never checks it again, so if the checkout isn't on $fpath the plugin ends up holding
+# an autoload stub whose every call does nothing: no worker, no completions, no menu, and
+# no error message anywhere — the symptom is simply "autocomplete never shows anything".
+# The plugin's own fallback (an `autoload` by absolute path) does not register a callable
+# `zasync` either, so both the checkout and the $fpath entry have to be guaranteed here.
+[[ -d ~/.cache/zsh/zasync/.git ]] ||
+  git clone --depth 1 -- https://github.com/marlonrichert/zasync.git ~/.cache/zsh/zasync
+fpath+=( ~/.cache/zsh/zasync )
+
 # Autocomplete plugin. This block owns the completion system while present, and is safe
 # to delete wholesale: the guarded `compinit` lower down takes over automatically if
 # it's gone, so no other edits are needed.
 # PINNED. We hold this at a known-good commit rather than tracking main. Commit bbba73e
 # ("Add support for tiny terminals") hangs every new shell on zsh 5.9 — you can't open a
-# tab. The commit below loads cleanly and has the later completion-widget/fd fixes, so
-# don't move it to an older one. To bump it deliberately: cd into the repo, `git pull`,
-# test, then update this hash. The rev-parse guard re-pins if `znap pull` ever moves it.
-_autocomplete_commit=027cdab14451e98c9d36d72b1f79d9488ac88e46
+# tab. The commit below is the current tip of main, verified to list completions on this
+# machine (zsh 5.9) together with the zasync setup above; the older pin 027cdab predates
+# zasync and listed nothing in testing.
+# NB: the pin only holds if the clone has its full history — a `--depth 1` clone does not
+# contain the pinned commit, and the checkout below fails in silence, leaving you on main.
+# If this repo is ever cloned shallow: `git fetch --unshallow`.
+_autocomplete_commit=bf8db6bd4e346f55b5ad8301a028e45e615834c8
 [[ -r ~/znap-plugins/marlonrichert/zsh-autocomplete ]] ||
   znap clone marlonrichert/zsh-autocomplete
 [[ $(git -C ~/znap-plugins/marlonrichert/zsh-autocomplete rev-parse HEAD 2>/dev/null) == $_autocomplete_commit ]] ||
-  git -C ~/znap-plugins/marlonrichert/zsh-autocomplete checkout -q $_autocomplete_commit 2>/dev/null
+  git -C ~/znap-plugins/marlonrichert/zsh-autocomplete checkout -q $_autocomplete_commit ||
+  print -u2 -- "zsh-autocomplete: pinned commit $_autocomplete_commit is unavailable (shallow clone?)"
 unset _autocomplete_commit
 znap source zsh-autocomplete
 zstyle ':autocomplete:*' append-semicolon no
@@ -137,14 +152,10 @@ set_tab_title  # Set it now for the current session
 
 
 #========================
-# SSH wrapper to pass config alias to remote
+# SSH tab titles
 #========================
-
-#========================
-# SSH wrapper
-#========================
-# Note: Remote servers set their own tab titles, which override local settings.
-# Can't change this without modifying the remote server's config.
+# Remote servers set their own tab titles, which override local settings. Can't change
+# this without modifying the remote server's config.
 
 
 #=============================
@@ -165,7 +176,7 @@ _ssh_complete() {
 complete -F _ssh_complete ssh
 
 # Docker autocompletion
-fpath=(/Users/dansmart/.docker/completions $fpath)
+[[ -d ~/.docker/completions ]] && fpath=(~/.docker/completions $fpath)
 
 # Initialise the completion system — but ONLY if a plugin hasn't already taken it over
 if [[ $functions[compdef] != *_autocomplete__compdef* ]]; then
@@ -174,7 +185,7 @@ if [[ $functions[compdef] != *_autocomplete__compdef* ]]; then
 fi
 
 # Bun autocompletion
-[ -s "/Users/dansmart/.bun/_bun" ] && source "/Users/dansmart/.bun/_bun"
+[ -s "$HOME/.bun/_bun" ] && source "$HOME/.bun/_bun"
 
 
 #==================================
@@ -184,22 +195,22 @@ fi
 # Set up Bun
 export BUN_INSTALL="$HOME/.bun"
 
-# Set up PATH
-export PATH="/opt/homebrew/bin:$PATH"
-export PATH="/usr/local/sbin:$PATH"
-export PATH="$HOME/.poetry/bin:$PATH"
-export PATH="$HOME/Applications/nvim/bin:$PATH"
-export PATH="$PATH:/Users/dan/.local/bin"
-export PATH="$PATH:/Users/dan/.cache/lm-studio/bin"
-export PATH="$HOME/.cargo/bin:$PATH"
-export PATH="/usr/local/opt/openjdk/bin:$PATH"
-export PATH="$PATH:/Users/dan/.lmstudio/bin"
-export PATH="$PATH:/Users/dan/.local/share/nvim/mason/bin"
-export PATH="$PATH:/Users/dansmart/.lmstudio/bin"
-export PATH="$HOME/.local/bin:$PATH"
-export PATH="$HOME/.local/share/../bin:$PATH"
-export PATH="/opt/homebrew/opt/openjdk/bin:$PATH"
-export PATH="$BUN_INSTALL/bin:$PATH"
+# Set up PATH — the loop prepends, so it is listed from LOWEST to HIGHEST precedence and
+# the last entry wins. That keeps the old ranking intact for the directories that actually
+# exist here: ~/.local/bin over ~/.cargo/bin over Homebrew, so a pipx/uv-installed tool
+# still beats the Homebrew one. Entries are $HOME-/prefix-relative so they survive a
+# machine swap, and each is added only when the directory exists, so an uninstalled tool no
+# longer leaves a dead entry behind. Earlier versions of this list also carried absolute
+# paths into /Users/dan/... and /Users/dansmart/... (leftovers from two previous Macs),
+# /usr/local/... (Intel Homebrew on an Apple Silicon box), and ~/.local/share/../bin, which
+# is just ~/.local/bin spelled differently. All of that is gone for good.
+for _p in /opt/homebrew/bin /opt/homebrew/opt/openjdk/bin "$HOME/Applications/nvim/bin" \
+          "$HOME/.poetry/bin" "$HOME/.lmstudio/bin" "$HOME/.local/share/nvim/mason/bin" \
+          "$BUN_INSTALL/bin" "$HOME/.cargo/bin" "$HOME/.local/bin"; do
+  [[ -d $_p ]] && PATH="$_p:$PATH"
+done
+unset _p
+export PATH
 
 # Ensure openblas has been set up, which is used for Numpy to work
 export OPENBLAS="$(brew --prefix openblas)"
@@ -278,7 +289,6 @@ online() {
 alias ls='eza'
 alias vim='nvim'
 alias gt='cd ~/gitsky'
-alias pc='cd ~/pCloud\ Drive'
 alias ll='ls -l'
 alias la='ls -ah'
 alias lla='ls -lah'
