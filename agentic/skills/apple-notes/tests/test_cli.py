@@ -626,7 +626,9 @@ def test_index_build_then_incremental_noop(live_db: Path) -> None:
     # The new note is now visible to both search paths.
     assert any(
         row["id"] == note["id"]
-        for row in run_cli("search", "zyphraspex", "--json").ok().json
+        for row in run_cli("search", "zyphraspex", "--no-sync", "--json")
+        .ok()
+        .json["results"]
     )
     found = (
         run_cli("find", "zyphraspex semantic probe marker", "-n", "5", "--json")
@@ -646,8 +648,16 @@ def test_search_lexical_all_and_any(live_db: Path) -> None:
     ).ok()
     run_cli("index", "--json").ok()
 
-    both = run_cli("search", "quokka", "wombat", "--match", "all", "--json").ok().json
-    either = run_cli("search", "quokka", "wombat", "--match", "any", "--json").ok().json
+    both = (
+        run_cli("search", "quokka", "wombat", "--match", "all", "--no-sync", "--json")
+        .ok()
+        .json["results"]
+    )
+    either = (
+        run_cli("search", "quokka", "wombat", "--match", "any", "--no-sync", "--json")
+        .ok()
+        .json["results"]
+    )
     assert len(both) <= len(either)
     titled = {row["title"] for row in either}
     assert title("lex-a") in titled or title("lex-b") in titled, either
@@ -712,8 +722,15 @@ def test_index_survives_dead_endpoint(
         "text indexing must not depend on the server"
     )
 
-    hits = run_cli("search", "Notes", "--no-sync", "-n", "5", "--json").ok().json
+    hits = (
+        run_cli("search", "Notes", "--no-sync", "-n", "5", "--json")
+        .ok()
+        .json["results"]
+    )
     assert hits, "lexical search must work with no embeddings at all"
+    assert (
+        run_cli("search", "Notes", "--no-sync", "--json").ok().json["sync"] is None
+    ), "--no-sync must not report a sync"
     failed = run_cli("find", "anything", "--no-sync")
     assert failed.code != 0 and "notes index" in failed.err, failed.err
 
@@ -740,8 +757,49 @@ def test_index_detects_a_changed_note(live_db: Path) -> None:
     ).ok()
     synced = run_cli("index", "--json").ok().json
     assert synced["updated"] >= 1, "an edited note must be re-indexed"
-    hits = run_cli("search", "distinctly", "--json").ok().json
+    hits = run_cli("search", "distinctly", "--no-sync", "--json").ok().json["results"]
     assert any(row["id"] == note["id"] for row in hits), hits
+
+
+@needs_endpoint
+def test_search_refreshes_the_index_itself(live_db: Path) -> None:
+    """`search` must never answer from an index that predates the note.
+
+    Regression guard: `search` used to build the index only when the table was
+    completely empty, so text added after the last `notes index` was reported
+    as "0 matches" -- a miss that looks exactly like a real answer.
+    """
+    note = (
+        run_cli(
+            "create",
+            "--title",
+            title("stale-guard"),
+            "--body",
+            "the first plumbusverse marker",
+            "-f",
+            SCRATCH,
+            "--json",
+        )
+        .ok()
+        .json
+    )
+    run_cli("index", "--json").ok()
+
+    # Change the note without touching `notes index` afterwards.
+    run_cli(
+        "append", note["id"], "--body", "appended twosockel later text", "--json"
+    ).ok()
+
+    hits = run_cli("search", "twosockel", "--json").ok()
+    assert any(row["id"] == note["id"] for row in hits.json["results"]), hits
+    assert hits.json["sync"] is not None, "search must report the refresh it did"
+
+    # The human path must render the payload too, not just the JSON one.
+    human = run_cli("search", "twosockel").ok().out
+    assert "# 0 match" not in human, human
+    assert "match(es) for any(twosockel)" in human, human
+    assert "index synced" in human, human
+    assert note["id"] in human, human
 
 
 def test_mixed_models_are_not_ranked_together(

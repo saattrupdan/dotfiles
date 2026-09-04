@@ -359,12 +359,19 @@ def cmd_index(args: argparse.Namespace) -> None:
 def cmd_search(args: argparse.Namespace) -> None:
     conn = index.connect()
     try:
+        # Refresh before querying, exactly like `find`: answering "0 matches"
+        # from an index that predates the note the caller is asking about is
+        # the worst possible failure for a tool driven by an agent, because an
+        # empty result set looks like a real answer.
+        sync_info: dict[str, t.Any] | None = None
+        if not args.no_sync:
+            sync_info = index.sync(conn, quiet=args.json)
         if index.stats(conn)["notes"] == 0:
-            if not args.no_sync:
-                print("# index is empty; building it first", file=sys.stderr)
-                index.sync(conn, quiet=args.json)
-            else:
-                raise UsageError("index is empty. Run: notes index")
+            raise UsageError(
+                "index is empty. Run: notes index"
+                if args.no_sync
+                else "Notes.app reports no notes to index"
+            )
         hits = index.search_lexical(
             conn, args.keywords, match=args.match, limit=args.limit, folder=args.folder
         )
@@ -372,9 +379,13 @@ def cmd_search(args: argparse.Namespace) -> None:
     finally:
         conn.close()
 
-    def render(hits: list[dict[str, t.Any]]) -> None:
+    def render(payload: dict[str, t.Any]) -> None:
+        hits = payload["results"]
+        timing = ""
+        if sync_info is not None:
+            timing = f", index synced in {sync_info['seconds_total']:.1f}s"
         print(
-            f"# {len(hits)} match(es) for {args.match}({', '.join(args.keywords)}) over {info['notes']} indexed note(s) [{info['lexical']}]"
+            f"# {len(hits)} match(es) for {args.match}({', '.join(args.keywords)}) over {info['notes']} indexed note(s) [{info['lexical']}]{timing}"
         )
         for hit in hits:
             print(f"{hit['modified']}  {hit['folder']}  {hit['id']}")
@@ -382,7 +393,17 @@ def cmd_search(args: argparse.Namespace) -> None:
             if hit.get("snippet"):
                 print(f"        {hit['snippet']}")
 
-    _emit(hits, args, render)
+    _emit(
+        {
+            "keywords": args.keywords,
+            "match": args.match,
+            "results": hits,
+            "index": info,
+            "sync": sync_info,
+        },
+        args,
+        render,
+    )
 
 
 def cmd_find(args: argparse.Namespace) -> None:
@@ -691,7 +712,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-n", "--limit", type=int, default=20)
     p.add_argument("-f", "--folder", help="restrict to a folder")
     p.add_argument(
-        "--no-sync", action="store_true", help="do not build the index if it is empty"
+        "--no-sync",
+        action="store_true",
+        help="skip the incremental index refresh (results may be stale)",
     )
     _add_json(p)
     p.set_defaults(func=cmd_search)

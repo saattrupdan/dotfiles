@@ -560,15 +560,26 @@ def search_lexical(
     conn.row_factory = sqlite3.Row
     try:
         hits = list(conn.execute(sql, params))
-    except sqlite3.OperationalError:
+    except sqlite3.OperationalError as exc:
+        # The LIKE fallback is deliberate graceful degradation for an
+        # interpreter built without FTS5 -- but it matches *substrings*, not
+        # tokens, so it answers differently. If the query itself was rejected,
+        # that is a bug, and it must not masquerade as a working fallback.
+        print(
+            f"# warning: FTS5 query failed ({exc}); falling back to substring "
+            "matching, which can match more than FTS would",
+            file=sys.stderr,
+        )
         hits = _search_like(conn, terms, match=match, limit=limit, folder=folder)
         return hits
     finally:
         conn.row_factory = None
     out = [dict(hit) for hit in hits[:limit]]
     for hit in out:
-        hit["snippet"] = (
-            hit.get("snippet") or _preview(hit.get("body") or "", terms)
+        # Notes' plaintext is multi-line; a hit must stay on one line so the
+        # output stays parseable line-by-line.
+        hit["snippet"] = " ".join(
+            (hit.get("snippet") or _preview(hit.get("body") or "", terms)).split()
         ).strip()
         hit.pop("body", None)
     return out

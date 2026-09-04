@@ -129,14 +129,18 @@ notes find "flight bookings" --folder Travels -n 3 --json
 
 `search` is lexical and served entirely from the local index — it never asks
 Notes.app per note. `find` embeds your query and ranks notes by cosine
-similarity, printing rank, score, modified, folder, id and a snippet.
+similarity, printing rank, score, modified, folder, id and a snippet. With
+`--json` both return `{keywords|query, results, index, sync}`; the hits are
+under `results`.
 
-**`find` refreshes the index first** (unless `--no-sync`): an incremental
-refresh over 439 notes costs ~1.5 s, of which ~1.5 s is the single metadata
-`osascript` call and re-embedding is free unless something changed. A cold
-`notes index --full` over 439 notes took 12 s (2 s reading, 10 s embedding).
-If the index is empty, `search` builds it too. Use `--no-sync` when you want
-the answer from what is already indexed and nothing else.
+**Both `search` and `find` refresh the index first** (unless `--no-sync`): an
+incremental refresh over 439 notes costs ~1.5 s, of which ~1.5 s is the single
+metadata `osascript` call and re-embedding is free unless something changed. A
+cold `notes index --full` over 439 notes took 12 s (2 s reading, 10 s
+embedding). Refreshing before querying matters: answering "0 matches" from an
+index that predates the note you were asked about is indistinguishable from a
+genuine miss. Use `--no-sync` when you want the answer from what is already
+indexed and nothing else.
 
 ### Index and configuration
 
