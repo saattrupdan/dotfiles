@@ -1,0 +1,18 @@
+[project]
+name = "apple-notes"
+version = "1.0.0"
+description = "CLI for Apple Notes on macOS — CRUD plus local semantic search over osascript, standard library only"
+requires-python = ">=3.12"
+
+[project.scripts]
+notes = "apple_notes.main:main"
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["apple_notes"]
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
