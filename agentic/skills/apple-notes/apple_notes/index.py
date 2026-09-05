@@ -20,6 +20,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import sqlite3
 import statistics
 import sys
@@ -318,6 +319,9 @@ def sync(
     batch: int = 32,
     max_chars: int = DEFAULT_MAX_CHARS,
     quiet: bool = False,
+    metadata_timeout: float | None = None,
+    embed_timeout: float | None = None,
+    stop_on_embed_error: bool = False,
 ) -> dict[str, t.Any]:
     """Bring the index in line with Notes.
 
@@ -325,8 +329,21 @@ def sync(
     metadata, and bodies are fetched and re-embedded only for notes that are
     new or whose modification date moved. ``full`` drops every row and re-reads
     the library, fetching bodies inside the same osascript pass.
+
+    The three ``*_timeout``/``stop_on_embed_error`` knobs exist for the
+    *automatic* sync ``search`` and ``find`` run before answering. There the
+    vectors are a bonus and so is Notes.app answering at all, so a short probe
+    and a give-up on the first embedding failure keep a dead endpoint or an
+    unresponsive Notes.app from turning a 50 ms keyword lookup into minutes.
+    Explicit ``notes index`` leaves them at their defaults. Text is indexed
+    either way.
     """
     started = time.monotonic()
+    # None means "whatever the read is worth on its own"; the automatic sync
+    # passes a short probe budget instead (see the docstring).
+    read_timeout = (
+        applescript.BODY_TIMEOUT if metadata_timeout is None else metadata_timeout
+    )
     result: dict[str, t.Any] = {
         "full": full,
         "seen": 0,
@@ -350,7 +367,7 @@ def sync(
     t0 = time.monotonic()
     metadata = [
         row
-        for row in applescript.note_metadata(bodies=full)
+        for row in applescript.note_metadata(bodies=full, timeout=read_timeout)
         if not is_excluded(row["folder"])
     ]
     result["seconds_metadata"] = time.monotonic() - t0
@@ -388,7 +405,7 @@ def sync(
         if full or len(changed) >= BULK_BODY_THRESHOLD:
             bodies = {
                 row["id"]: row.get("body", "")
-                for row in applescript.note_metadata(bodies=True)
+                for row in applescript.note_metadata(bodies=True, timeout=read_timeout)
             }
         else:
             bodies = applescript.bodies_by_id([row["id"] for row in changed])
@@ -398,11 +415,28 @@ def sync(
         # text still lands in the index so `search` works without a server.
         vectors: dict[str, list[float]] = {}
         t0 = time.monotonic()
+        give_up = False
         for start in range(0, len(changed), batch):
+            if give_up:
+                break
             chunk = changed[start : start + batch]
             texts = [truncate(bodies.get(row["id"], ""), max_chars) for row in chunk]
+            # Notes with an empty plaintext are left out of the request:
+            # llama.cpp answers 400 for an empty input, and that fails the
+            # whole batch (measured: 421 of 453 embedded after a single note
+            # was emptied). Only the literally empty string is skipped — a
+            # whitespace-only body is tokenised fine and keeps its vector.
+            pairs = [
+                (row, text) for row, text in zip(chunk, texts, strict=True) if text
+            ]
+            if not pairs:
+                continue
             try:
-                for row, vec in zip(chunk, embed(texts), strict=True):
+                kwargs: dict[str, t.Any] = {}
+                if embed_timeout is not None:
+                    kwargs["timeout"] = embed_timeout
+                embedded = embed([text for _, text in pairs], **kwargs)
+                for (row, _), vec in zip(pairs, embedded, strict=True):
                     vectors[row["id"]] = vec
             except (
                 urllib.error.URLError,
@@ -411,8 +445,10 @@ def sync(
                 KeyError,
                 IndexError,
             ) as exc:
+                give_up = stop_on_embed_error
+                note = "; skipping the remaining batches" if give_up else ""
                 result["embed_errors"].append(
-                    f"batch {start // batch + 1}: {http_error_text(exc)}"
+                    f"batch {start // batch + 1}: {http_error_text(exc)}{note}"
                 )
                 if not quiet:
                     print(
@@ -529,6 +565,33 @@ def _where(folder: str | None) -> tuple[str, list[str]]:
     return "", []
 
 
+# FTS5 operators, quoting and row filters are syntax, not words: a term
+# carrying any of them is handed to MATCH untouched rather than escaped into
+# uselessness (a quoted term with an outside star, e.g. `"euroev"*`, is the
+# whole point).
+_FTS_SYNTAX_RE = re.compile(r"""[():"^]|\s(?:AND|OR|NOT|NEAR)\s""", re.IGNORECASE)
+
+
+def _fts_term(term: str) -> str:
+    """One MATCH element for ``term``: a quoted **prefix** query.
+
+    FTS5 matches whole tokens, so ``notes search euroev`` answered "0
+    match(es)" while ``euroeval`` sat in 78 notes — exactly the clean-looking
+    silent miss this CLI exists to kill. A trailing ``*`` makes the last token
+    a prefix match, which costs nothing on a whole word (a token is its own
+    prefix) and fixes every stem. It has to sit *outside* the quotes: inside
+    them ``*`` is a literal character — measured 0 hits for ``"euroev*"``
+    against 78 for ``"euroev"*`` on the same index.
+    """
+    body = term.strip()
+    if _FTS_SYNTAX_RE.search(body):
+        return body
+    body = body.rstrip("*")
+    if not body:
+        raise IndexError_("search keywords must contain something to match")
+    return '"' + body.replace('"', '""') + '"*'
+
+
 def search_lexical(
     conn: sqlite3.Connection,
     terms: t.Sequence[str],
@@ -538,11 +601,11 @@ def search_lexical(
     folder: str | None = None,
 ) -> list[dict[str, t.Any]]:
     """Keyword search over the index. FTS5 when available, LIKE when not."""
-    terms = [term for term in terms if term]
+    terms = [term.strip() for term in terms if term and term.strip(" *")]
     if not terms:
         raise IndexError_("search needs at least one keyword")
     joiner = " AND " if match == "all" else " OR "
-    clause = joiner.join('"' + term.replace('"', '""') + '"' for term in terms)
+    clause = joiner.join(_fts_term(term) for term in terms)
     sql = (
         "SELECT n.id, n.title, n.folder, n.account, n.modified, n.body, "
         "       snippet(notes_fts, 2, '', '', ' […] ', 12) AS snippet, "
@@ -597,8 +660,11 @@ def _search_like(
     conds = []
     params: list[t.Any] = []
     for term in terms:
+        # Substring matching already behaves like a prefix match, so a stem
+        # typed with an explicit star must not search for the star itself.
+        needle = "%" + term.casefold().rstrip("*").strip() + "%"
         conds.append("(lower(title) LIKE ? OR lower(body) LIKE ?)")
-        params += ["%" + term.casefold() + "%", "%" + term.casefold() + "%"]
+        params += [needle, needle]
     sql = (
         "SELECT id, title, folder, account, modified, body FROM notes WHERE "
         + joiner.join(conds)

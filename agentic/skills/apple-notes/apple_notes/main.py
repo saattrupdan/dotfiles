@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """``notes`` — CRUD and semantic search over Apple Notes, through AppleScript only.
 
 Subcommands:
@@ -25,10 +24,19 @@ import typing as t
 import urllib.error
 from pathlib import Path
 
-from . import applescript, index
+from . import applescript, index, undo
 from .applescript import AppleScriptError
 
 ID_PREFIX = "x-coredata://"
+
+# Budgets for the automatic sync `search`/`find` run before answering. Both
+# commands used to inherit the read-only defaults (a 600 s body/metadata call
+# and a 120 s embedding request, each retried), which meant an unresponsive
+# Notes.app or a dead embedder could hold a keyword lookup — a ~50 ms job —
+# for minutes. Neither is allowed to fail the query: `search`/`find` warn and
+# answer from the index instead. See ./SKILL.md (Searching).
+AUTO_METADATA_TIMEOUT = 20.0
+AUTO_EMBED_TIMEOUT = 10.0
 
 
 class UsageError(RuntimeError):
@@ -54,51 +62,103 @@ def _emit(
 # ---------------------------------------------------------------------------
 
 
+def _title_matches(
+    title: str, *, include_deleted: bool
+) -> tuple[list[dict[str, str]], int]:
+    """Notes titled exactly ``title``, as ``(usable matches, hidden matches)``.
+
+    ``every note whose name is X`` is unscoped: it answers with copies that are
+    sitting in Recently Deleted, which is how `notes get --title X` could
+    resolve a note the user had just thrown away. The same exclusion `list`
+    applies is applied here, and the hidden count is reported so the error text
+    can say where the note actually is.
+    """
+    matches = applescript.ids_by_title(title)
+    if include_deleted:
+        return matches, 0
+    keep = [m for m in matches if not index.is_excluded(m["folder"])]
+    return keep, len(matches) - len(keep)
+
+
+def _deleted_note(hidden: int) -> str:
+    if not hidden:
+        return ""
+    return (
+        f" ({hidden} match(es) are in Recently Deleted and are skipped; "
+        "pass --include-deleted to use them)"
+    )
+
+
 def resolve_id(args: argparse.Namespace) -> str:
     """Pick exactly one note id from ``<id>`` and/or ``--title``.
 
     Ids are the reliable handle. Titles are not unique, and AppleScript's own
     ``first note whose name is X`` resolves a duplicated title to whichever
     copy the store happens to hit first -- so an ambiguous title is refused
-    here rather than guessed at.
+    here rather than guessed at. When both handles are given, ``--title`` must
+    name the same note as the id; it is never silently ignored.
     """
     explicit = getattr(args, "id", None)
     title = getattr(args, "title", None)
+    include_deleted = bool(getattr(args, "include_deleted", False))
     if explicit:
         if not explicit.startswith(ID_PREFIX):
             raise UsageError(
                 f"{explicit!r} is not a note id (expected x-coredata://…/ICNote/pNNN); use --title for a title"
             )
-        return explicit
-    if title:
-        matches = applescript.ids_by_title(title)
+        if not title:
+            return explicit
+        matches, hidden = _title_matches(title, include_deleted=include_deleted)
+        if any(match["id"] == explicit for match in matches):
+            return explicit
         if not matches:
             raise UsageError(
-                f"no note titled {title!r}. Find the id with: notes search {title.split()[0] if title.split() else '…'}"
+                f"no note titled {title!r}{_deleted_note(hidden)}; it does not name {explicit}"
+            )
+        others = ", ".join(match["id"] for match in matches[:3])
+        raise UsageError(
+            f"--title {title!r} names {others}, not {explicit}. Give one handle, not two: "
+            "the id and the title disagree."
+        )
+    if title:
+        matches, hidden = _title_matches(title, include_deleted=include_deleted)
+        if not matches:
+            raise UsageError(
+                f"no note titled {title!r}{_deleted_note(hidden)}. Find the id with: notes search {title.split()[0] if title.split() else '…'}"
             )
         if len(matches) > 1:
             lines = "\n".join(
                 f"  {m['id']}  [{m['account']}/{m['folder']}]" for m in matches[:10]
             )
             raise UsageError(
-                f"{len(matches)} notes are titled {title!r}; titles are not unique. Pick an id:\n{lines}"
+                f"{len(matches)} notes are titled {title!r}; titles are not unique, and matches in "
+                f"Recently Deleted are skipped unless you pass --include-deleted. Pick an id:\n{lines}"
             )
         return matches[0]["id"]
     raise UsageError("give a note id (from `notes list`) or --title")
 
 
-def _read_body(args: argparse.Namespace) -> str | None:
-    """Collect body text from --body / --body-file / --stdin."""
+def _read_body(args: argparse.Namespace, *, allow_empty: bool = False) -> str | None:
+    """Collect body text from --body / --body-file / --stdin.
+
+    An empty result from ``--body-file``/``--stdin`` counts as *no body*: a
+    mistyped redirect (``--stdin < /dev/null``) would otherwise pass straight
+    through and replace a note's text with nothing. ``--force`` says the empty
+    body is what you meant.
+    """
     given = [bool(args.body), bool(args.body_file), bool(args.stdin)]
     if sum(given) > 1:
         raise UsageError("--body, --body-file and --stdin are mutually exclusive")
     if args.body:
         return args.body
+    text: str | None = None
     if args.body_file:
-        return Path(args.body_file).expanduser().read_text(encoding="utf-8")
-    if args.stdin:
-        return sys.stdin.read()
-    return None
+        text = Path(args.body_file).expanduser().read_text(encoding="utf-8")
+    elif args.stdin:
+        text = sys.stdin.read()
+    if text is not None and not text.strip() and not allow_empty:
+        return None
+    return text
 
 
 def _guard_attachments(note_id: str, *, force: bool) -> dict[str, t.Any]:
@@ -216,16 +276,41 @@ def cmd_create(args: argparse.Namespace) -> None:
 
 def _write(args: argparse.Namespace, mode: str) -> None:
     note_id = resolve_id(args)
-    body = _read_body(args)
     new_title = getattr(args, "rename", None)
+    if new_title is not None and not new_title.strip():
+        raise UsageError(
+            "--rename needs a title: an empty one strips the note's title entirely"
+        )
+    body = _read_body(args, allow_empty=bool(args.force))
+    empty_input = body is None and (bool(args.body_file) or bool(args.stdin))
     if body is None and not new_title:
         raise UsageError(
             "nothing to do: give --body, --body-file, --stdin, or --rename"
+            + (
+                " -- an empty --stdin/--body-file counts as no body, pass --force to write an empty body on purpose"
+                if empty_input
+                else ""
+            )
         )
+    if empty_input:
+        print(
+            "warning: the body input was empty, so only the rename was applied; "
+            "pass --force to write an empty body on purpose",
+            file=sys.stderr,
+        )
+    saved: dict[str, t.Any] | None = None
     if body is not None:
-        _guard_attachments(note_id, force=args.force)
+        current = _guard_attachments(note_id, force=args.force)
         if mode == "replace" and not args.force:
             _warn_if_rich(note_id)
+        # Snapshotted *before* the write: if the write itself fails, the text
+        # it would have destroyed is already on disk.
+        try:
+            saved = undo.save(
+                note_id, title=current["title"], body=current["plaintext"]
+            )
+        except OSError as exc:
+            raise UsageError(str(exc)) from exc
     result = applescript.update_note(
         note_id,
         body=body,
@@ -245,14 +330,21 @@ def _write(args: argparse.Namespace, mode: str) -> None:
             f"warning: {lost} attachment(s) disappeared from this note during the rewrite",
             file=sys.stderr,
         )
+    payload: dict[str, t.Any] = {"id": note_id, **result}
+    if saved:
+        payload["undo"] = saved
 
-    def render(result: dict[str, str]) -> None:
-        print(f"updated:   {result['title']}")
-        print(f"folder:    {result['account']}/{result['folder']}")
-        print(f"modified:  {result['modified']}")
-        print(f"id:        {note_id}")
+    def render(payload: dict[str, t.Any]) -> None:
+        print(f"updated:   {payload['title']}")
+        print(f"folder:    {payload['account']}/{payload['folder']}")
+        print(f"modified:  {payload['modified']}")
+        print(f"id:        {payload['id']}")
+        if payload.get("undo"):
+            print(
+                f"undo:      {payload['undo']['path']}  (previous body, restore with --body-file)"
+            )
 
-    _emit({"id": note_id, **result}, args, render)
+    _emit(payload, args, render)
 
 
 def cmd_update(args: argparse.Namespace) -> None:
@@ -356,6 +448,59 @@ def cmd_index(args: argparse.Namespace) -> None:
     _emit(result, args, render)
 
 
+def _sync_for_query(
+    conn: sqlite3.Connection, args: argparse.Namespace
+) -> tuple[dict[str, t.Any] | None, str | None]:
+    """Refresh the index before answering, as ``(sync info, stale warning)``.
+
+    A query must never be answered from an index that predates the note being
+    asked about, so this syncs first — but it must also not *depend* on
+    Notes.app and the embedder being alive: `search` used to answer from the
+    index in ~50 ms, and a hung Notes.app or a dead embedder made it fail or
+    crawl. Anything the refresh raises is turned into a loud "results may be
+    stale" warning and the query runs against what is already indexed.
+    """
+    try:
+        return (
+            index.sync(
+                conn,
+                quiet=args.json,
+                metadata_timeout=AUTO_METADATA_TIMEOUT,
+                embed_timeout=AUTO_EMBED_TIMEOUT,
+                stop_on_embed_error=True,
+            ),
+            None,
+        )
+    except (AppleScriptError, urllib.error.URLError, OSError) as exc:
+        reason = (
+            str(exc)
+            if isinstance(exc, AppleScriptError)
+            else index.http_error_text(exc)
+        )
+        warning = f"results may be stale, the index was not refreshed: {reason}"
+        print(f"warning: {warning}", file=sys.stderr)
+        return None, warning
+
+
+def _sync_note(sync_info: dict[str, t.Any] | None) -> str:
+    """`, index synced in 2.2s (added 1, removed 3)` for a query header.
+
+    The counts matter more than the timing: pruning trusts absence from the
+    metadata listing, so a folder that answers with zero notes silently drops
+    its rows — and a header that only ever printed seconds hid that.
+    """
+    if not sync_info:
+        return ""
+    note = f", index synced in {sync_info['seconds_total']:.1f}s"
+    changed = [
+        f"{key} {sync_info[key]}" for key in ("added", "updated") if sync_info.get(key)
+    ]
+    if changed or sync_info.get("removed"):
+        changed.append(f"removed {sync_info.get('removed', 0)}")
+        note += " (" + ", ".join(changed) + ")"
+    return note
+
+
 def cmd_search(args: argparse.Namespace) -> None:
     conn = index.connect()
     try:
@@ -363,9 +508,9 @@ def cmd_search(args: argparse.Namespace) -> None:
         # from an index that predates the note the caller is asking about is
         # the worst possible failure for a tool driven by an agent, because an
         # empty result set looks like a real answer.
-        sync_info: dict[str, t.Any] | None = None
+        sync_info, stale = (None, None)
         if not args.no_sync:
-            sync_info = index.sync(conn, quiet=args.json)
+            sync_info, stale = _sync_for_query(conn, args)
         if index.stats(conn)["notes"] == 0:
             raise UsageError(
                 "index is empty. Run: notes index"
@@ -379,13 +524,19 @@ def cmd_search(args: argparse.Namespace) -> None:
     finally:
         conn.close()
 
+    if not hits:
+        example = " ".join(args.keywords)
+        print(
+            f"hint: nothing matched; stems only match word beginnings, so try a shorter or looser "
+            f'keyword, or search by meaning instead: notes find "{example}"',
+            file=sys.stderr,
+        )
+
     def render(payload: dict[str, t.Any]) -> None:
         hits = payload["results"]
-        timing = ""
-        if sync_info is not None:
-            timing = f", index synced in {sync_info['seconds_total']:.1f}s"
+        info = payload["index"]
         print(
-            f"# {len(hits)} match(es) for {args.match}({', '.join(args.keywords)}) over {info['notes']} indexed note(s) [{info['lexical']}]{timing}"
+            f"# {len(hits)} match(es) for {args.match}({', '.join(args.keywords)}) over {info['notes']} indexed note(s) [{info['lexical']}]{_sync_note(payload['sync'])}"
         )
         for hit in hits:
             print(f"{hit['modified']}  {hit['folder']}  {hit['id']}")
@@ -400,6 +551,7 @@ def cmd_search(args: argparse.Namespace) -> None:
             "results": hits,
             "index": info,
             "sync": sync_info,
+            "stale": stale,
         },
         args,
         render,
@@ -409,9 +561,9 @@ def cmd_search(args: argparse.Namespace) -> None:
 def cmd_find(args: argparse.Namespace) -> None:
     conn = index.connect()
     try:
-        sync_info: dict[str, t.Any] | None = None
+        sync_info, stale = (None, None)
         if not args.no_sync:
-            sync_info = index.sync(conn, quiet=args.json)
+            sync_info, stale = _sync_for_query(conn, args)
         mismatch = index.vector_mismatch(conn)
         if mismatch:
             raise UsageError(
@@ -433,12 +585,10 @@ def cmd_find(args: argparse.Namespace) -> None:
 
     def render(payload: dict[str, t.Any]) -> None:
         hits = payload["results"]
-        timing = ""
-        if payload["sync"] is not None:
-            timing = f", index synced in {payload['sync']['seconds_total']:.1f}s"
+        info = payload["index"]
         print(
             f"# {len(hits)} result(s) for {args.query!r} — {info['embedded']}/{info['notes']} notes vectorised "
-            f"with {info['model']} ({info['dims']} dims){timing}"
+            f"with {info['model']} ({info['dims']} dims){_sync_note(payload['sync'])}"
         )
         for rank, hit in enumerate(hits, start=1):
             print(
@@ -449,7 +599,13 @@ def cmd_find(args: argparse.Namespace) -> None:
                 print(f"        {hit['snippet']}")
 
     _emit(
-        {"query": args.query, "results": hits, "index": info, "sync": sync_info},
+        {
+            "query": args.query,
+            "results": hits,
+            "index": info,
+            "sync": sync_info,
+            "stale": stale,
+        },
         args,
         render,
     )
@@ -582,7 +738,7 @@ def _note_target(
 
     The positional is optional so that ``notes get --title X`` parses; which of
     the two is present is decided by :func:`resolve_id`, which also refuses an
-    ambiguous title.
+    ambiguous title and ignores Recently Deleted unless told not to.
     """
     parser.add_argument(
         "id", nargs="?", metavar="ID", help="note id (x-coredata://…/ICNote/pNNN)"
@@ -591,6 +747,11 @@ def _note_target(
         "--title",
         help=title_help
         or "resolve by title instead — only safe when titles are unique",
+    )
+    parser.add_argument(
+        "--include-deleted",
+        action="store_true",
+        help="let --title also match notes in Recently Deleted",
     )
 
 
@@ -783,6 +944,12 @@ def main(argv: t.Sequence[str] | None = None) -> int:
     except UsageError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+    except KeyError:
+        # KeyError is a LookupError, but it is never "the note is gone" here:
+        # it means a payload we built ourselves is missing a field. Swallowing
+        # it reported internal bugs as "no note with id …", which is a dead end
+        # for whoever is debugging. Let it raise, with the traceback intact.
+        raise
     except LookupError:
         print(f"error: no note with id {getattr(args, 'id', '?')}", file=sys.stderr)
         print("hint: find the id with `notes list` or `notes search`", file=sys.stderr)
