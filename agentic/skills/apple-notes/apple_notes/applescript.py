@@ -47,6 +47,13 @@ BODY_TIMEOUT = 600
 
 # Apple events worth retrying: the app was launching, busy, or the event timed
 # out. All transient on a Mac where Notes.app is starting or still syncing.
+#
+# These are only ever *safe* for read-only scripts. Every mutation script below
+# keeps firing Apple events *after* the write (``id of n``, ``name of n``, the
+# ``notePath`` container walk), so a write that fails part-way is
+# indistinguishable from a transient failure, and a retry re-runs the mutation
+# itself — and a second ``delete`` on a note already in Recently Deleted
+# erases it for good. Mutations therefore pass ``retries=0``; see :func:`run`.
 _RETRY_CODES = {-600, -609, -1712, -1713, -108, 12}
 
 _ERROR_RE = re.compile(
@@ -457,6 +464,11 @@ def run(
     shell-quoted or AppleScript-quoted and no user text can escape its string.
     Transient Apple-event failures are retried with backoff; every other
     failure raises with the message Notes actually produced.
+
+    ``retries=0`` is mandatory for anything that writes: the retry set covers
+    timeouts, and a mutation script does further Apple-event work *after* the
+    write, so a timeout can never be told apart from "the write never
+    happened". Reads keep the default.
     """
     fd, path = tempfile.mkstemp(prefix="pi-notes-", suffix=".applescript")
     try:
@@ -659,7 +671,11 @@ def create_note(
     path = _write_temp(_to_html(body))
     try:
         records = _records(
-            run(_CREATE_SCRIPT, [account or default_account(), title, path, folder])
+            run(
+                _CREATE_SCRIPT,
+                [account or default_account(), title, path, folder],
+                retries=0,
+            )
         )
     finally:
         os.unlink(path)
@@ -698,7 +714,7 @@ def update_note(
         args.append(title)
     path = args[2]
     try:
-        records = _records(run(_UPDATE_SCRIPT, args))
+        records = _records(run(_UPDATE_SCRIPT, args, retries=0))
     finally:
         os.unlink(path)
     _raise_if_error(records, f"updating {note_id}")
@@ -720,7 +736,9 @@ def update_note(
 def delete_note(note_id: str) -> dict[str, str]:
     """Move a note to Recently Deleted, returning where it was."""
     try:
-        records = _records(run(_DELETE_SCRIPT, [note_id]))
+        # retries=0: a second `delete` on a note that is already in Recently
+        # Deleted erases it permanently, so a timeout must never re-run this.
+        records = _records(run(_DELETE_SCRIPT, [note_id], retries=0))
     except AppleScriptError as exc:
         raise _missing(exc, note_id) from exc
     _raise_if_error(records, f"deleting {note_id}")
@@ -735,7 +753,11 @@ def move_note(
     """Move a note to ``folder`` (a path like ``Research/TrustLLM``)."""
     try:
         records = _records(
-            run(_MOVE_SCRIPT, [note_id, account or default_account(), folder])
+            run(
+                _MOVE_SCRIPT,
+                [note_id, account or default_account(), folder],
+                retries=0,
+            )
         )
     except AppleScriptError as exc:
         raise _missing(exc, note_id) from exc

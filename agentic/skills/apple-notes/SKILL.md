@@ -1,7 +1,7 @@
 ---
 name: apple-notes
 description: Read, write, and semantically search the user's Apple Notes on macOS via the `notes` CLI (AppleScript only, no Full Disk Access). Use to list/get/create/update/append/move/delete notes, enumerate folders, keyword-search the whole library, or find notes by meaning rather than by keyword.
-last-updated: 2026-09-04
+last-updated: 2026-09-05
 ---
 
 # apple-notes
@@ -55,8 +55,9 @@ Automation permission prompt.
 ### Resolve notes by id, not by title
 
 `list` and `search` print an id like
-`x-coredata://6E9256B3-…/ICNote/p841`. **Use it.** Every command also accepts
-`--title`, but titles are *not unique* in Notes, and AppleScript's own
+`x-coredata://6E9256B3-…/ICNote/p841`. **Use it.** Every command that names a
+note (`get`, `update`, `append`, `delete`, `mv`) also accepts `--title`, but
+titles are *not unique* in Notes, and AppleScript's own
 `first note whose name is X` silently resolves a duplicated title to whichever
 copy the store hits first. This CLI looks up **all** matches
 (`every note whose name is X`) and refuses to guess:
@@ -71,7 +72,13 @@ error: 3 notes are titled 'Meeting'; titles are not unique. Pick an id:
 
 A title that matches exactly one note resolves fine, and a title that matches
 nothing is an error, never an empty result. `--rename NEW` (on `update`) sets a
-new title; `--title` only ever *resolves*.
+new title; `--title` only ever *resolves* — and passing **both** an id and
+`--title` is only allowed when they name the same note, so a stale `--title`
+can never be silently ignored.
+
+By-name lookup is scoped like `list`: copies sitting in **Recently Deleted**
+are skipped, so a note you just deleted does not resolve by title (pass
+`--include-deleted` to name one anyway).
 
 ### Reading
 
@@ -115,6 +122,36 @@ CLI compares the attachment count before and after and warns on stderr.
 Notes keeps it for ~30 days. `delete` on a note that is already in Recently
 Deleted erases it for good.
 
+**Every write is attempted exactly once.** A mutation keeps firing Apple events
+*after* the change (`id of n`, `name of n`, the folder walk), so a timeout after
+a write is indistinguishable from "the write never happened" — retrying would
+run the mutation again, and a second `delete` on a note already in Recently
+Deleted erases it. So writes are never retried: if one fails, check the note's
+state before re-running it. Reads do retry, because they are safe to repeat.
+
+**`update`/`append` save what they replace first.** Before any write that
+changes the body, the note's previous plaintext is dropped in
+`~/Library/Application Support/apple-notes/undo/` as `<stamp>-<id>.txt` (the
+newest ~50 are kept; override the directory with `NOTES_UNDO_DIR`) and the path
+is printed as the `undo:` line and under `undo.path` in `--json`. Put it back
+with `notes update <id> --body-file <that file>` — the file is the old body
+verbatim, with no header. It is a file and deliberately *not* a table in the
+index: that database is documented as a cache where deleting it loses nothing,
+and undo history must survive an `rm` of a cache. To look around, plain `ls -t`
+of that directory is the interface. A rename-only `update` writes no file (the
+body was not touched, and the old title is in the output as `title_before`), and
+`delete` needs none — Recently Deleted *is* the recovery path.
+
+**An empty body is treated as no body.** `notes update <id> --stdin < /dev/null`
+and an empty `--body-file` are refused as "nothing to do" rather than writing an
+empty note; pass `--force` when emptying a note is the actual goal. `--rename ""`
+is refused for the same reason (it would strip the title).
+
+`--body` text is **escaped and rendered literally** (`_to_html`: escape `& < >`,
+newlines to `<br>`, wrapped in one `<div>`), so there is no way to write rich
+text — bold, headings or real lists — through this CLI. Use `append` to preserve
+formatting that is already there, and accept that anything you add is plain text.
+
 Dates are local-time ISO-8601 (`2026-09-04T16:16:36`), assembled from Notes'
 date components rather than from `date string`, which would be locale-dependent.
 
@@ -130,17 +167,38 @@ notes find "flight bookings" --folder Travels -n 3 --json
 `search` is lexical and served entirely from the local index — it never asks
 Notes.app per note. `find` embeds your query and ranks notes by cosine
 similarity, printing rank, score, modified, folder, id and a snippet. With
-`--json` both return `{keywords|query, results, index, sync}`; the hits are
-under `results`.
+`--json` both return `{keywords|query, results, index, sync, stale}`; the hits
+are under `results`.
+
+**Bare keywords are prefix-matched.** FTS5 matches whole tokens, so an unstemmed
+query used to be a silent lie: `notes search euroev` returned a clean-looking
+`# 0 match(es)` while `euroeval` sat in 78 notes. A keyword is now handed to
+FTS5 as `"<keyword>"*`, which finds every word that *starts* with it and costs
+nothing on a whole word. (The star has to sit outside the quotes — `"euroev"*`
+is 78 hits, `"euroev*"` is 0.) A keyword that already carries FTS5 syntax
+(a quote, parentheses, `:`, `^`, or a bare `AND`/`OR`/`NEAR`) is passed through
+untouched, so `notes search '"euroev"*'` still means what you typed. When a
+query matches nothing, `search` says so on stderr with the `notes find` fallback
+next to it — a zero is never just a zero.
 
 **Both `search` and `find` refresh the index first** (unless `--no-sync`): an
-incremental refresh over 439 notes costs ~1.5 s, of which ~1.5 s is the single
-metadata `osascript` call and re-embedding is free unless something changed. A
-cold `notes index --full` over 439 notes took 12 s (2 s reading, 10 s
-embedding). Refreshing before querying matters: answering "0 matches" from an
-index that predates the note you were asked about is indistinguishable from a
-genuine miss. Use `--no-sync` when you want the answer from what is already
-indexed and nothing else.
+incremental refresh over 439 notes costs ~2 s (measured 1.9–2.2 s), of which
+essentially all of it is the single metadata `osascript` call, and re-embedding
+is free unless something changed. A cold `notes index --full` over 439 notes
+took 12 s (2 s reading, 10 s embedding). Refreshing before querying matters:
+answering "0 matches" from an index that predates the note you were asked about
+is indistinguishable from a genuine miss. Use `--no-sync` when you want the
+answer from what is already indexed and nothing else.
+
+The refresh is not allowed to *own* the query, though: the automatic sync gets a
+20 s budget for the metadata read and 10 s per embedding batch, and gives up on
+the first embedding failure. If Notes.app does not answer, or the embedder is
+down, you get a loud `warning: results may be stale, …` on stderr and the answer
+from whatever is already indexed — `search` still answers in milliseconds rather
+than waiting minutes on a server that is not there. The refresh counts are in
+the header (`added`/`updated` when nonzero, `removed` whenever anything moved)
+because pruning trusts absence from the listing: if a folder answers with zero
+notes, its rows leave the index, and that must be visible.
 
 ### Index and configuration
 
@@ -151,13 +209,16 @@ notes doctor           # what is reachable, how stale the index is, and what to 
 ```
 
 The index lives at `~/Library/Application Support/apple-notes/index.sqlite`
-and is a pure cache — `rm` it and nothing is lost but the embedding round.
+and is a pure cache — `rm` it and nothing is lost but the embedding round. That
+is also why the undo files from `update`/`append` are plain files next to it and
+not rows inside it.
 
 | Environment variable | Default | Meaning |
 | --- | --- | --- |
 | `NOTES_EMBED_BASE_URL` | `http://127.0.0.1:8080/v1` | OpenAI-compatible endpoint serving `/embeddings` |
 | `NOTES_EMBED_MODEL` | `jina-code-embeddings-0.5b` | model alias to send |
 | `NOTES_DB` | `~/Library/Application Support/apple-notes/index.sqlite` | index location |
+| `NOTES_UNDO_DIR` | `~/Library/Application Support/apple-notes/undo` | where `update`/`append` keep previous bodies |
 | `NOTES_EXCLUDE_FOLDERS` | `Recently Deleted` (+ localised names) | colon-separated folder paths to skip |
 
 Use `127.0.0.1`, **not** `host.docker.internal` — that name does not resolve on
@@ -172,13 +233,24 @@ them with what the index recorded. If the alias or the dimensionality changed,
 `find` refuses to rank — mixing vectors from two models in one ranking is worse
 than no ranking — and tells you to run `notes index --full`.
 
+**Only the first `--max-chars` characters (6000 by default) are embedded**, while
+the whole body stays in the index for `search`. With a `--pooling last` embedder
+the representation is dominated by the end of the window it was given, so text
+past 6000 characters is simply invisible to `find` — one note in the 439-note
+reference library (7638 characters) is already over the line. `search` still
+finds it; raise `--max-chars` if `find` must. A note whose plaintext is **empty**
+is left out of the embedding request entirely — the endpoint answers 400 for an
+empty input, which would fail every other note in its batch — so such a note
+never shows up in `find`, while `search` still matches its title. (Whitespace
+alone is tokenised normally and keeps its vector.)
+
 ## Common tasks
 
 **"What did I write about X?"** — `notes find "<X in your words>" -n 8`; use
 `search` instead if you remember the exact word or need an exact phrase.
 
 **"Summarise my notes from last week"** — `notes list --modified-since
-$(date -v-7h +%F) --json`, then `notes get` each id.
+$(date -v-7d +%F) --json`, then `notes get` each id.
 
 **"Add this to my note about Y"** — `notes append <id> --body "…"` after finding
 the id with `notes find Y` or `notes search Y`. Never `update` unless the user
@@ -230,14 +302,16 @@ multiplications, tens of milliseconds, so numpy would buy nothing.
 - **The configured embedder is a *code* model applied to prose.** On News
   Fetcher's prose corpus the same model produced nearest-neighbour cosines of
   min 0.371 / median 0.532 / max 0.735; on this Mac's 439 notes `notes doctor`
-  measures 0.566 / 0.684 / 0.766 (best non-self match over 3 probes).
-  Everything is compressed into a narrow band and 0.75+ is effectively
-  unreachable. So **`find` applies no absolute threshold by default** — scores
-  are printed for ranking, and `--min-score` has no default value on purpose.
-  Scores are only comparable within this model and this index; comparing a 0.61
-  to a 0.58 is meaningful, comparing 0.61 to "0.6 is a good match" is not.
-  Swapping in a text embedding model is the real fix, which is exactly why the
-  alias, dims and base URL are configurable and recorded in the index.
+  measures 0.566 / 0.684 / 0.766 (best non-self match over 3 probes). The whole
+  library lands in a band a few tenths wide, and its *ceiling* is that max: on
+  this library the single best match there is scores 0.766, so a threshold of
+  0.75 admits roughly one note and 0.8 admits none. So **`find` applies no
+  absolute threshold by default** — scores are printed for ranking, and
+  `--min-score` has no default value on purpose. Scores are only comparable
+  within this model and this index; comparing a 0.61 to a 0.58 is meaningful,
+  comparing 0.61 to "0.6 is a good match" is not. Swapping in a text embedding
+  model is the real fix, which is exactly why the alias, dims and base URL are
+  configurable and recorded in the index.
 - **Checklists cannot be created programmatically.** Notes stores a checklist
   as a protobuf paragraph style, and AppleScript's `body` strips
   `<input type="checkbox">` — measured: a body written as
@@ -271,5 +345,32 @@ multiplications, tens of milliseconds, so numpy would buy nothing.
   never fetched in bulk per folder unless the whole library is being read at
   once (that path is fine, measured).
 - **No tags, no attachments API, no shared-note management, no Reminders.**
-  Attachments are only detected (via the `attachments` count and U+FFFC in
-  plaintext) so that they can be protected, not read or written.
+  Attachments are only counted (the `attachments` property, fetched by
+  `get`/`update` before and after a rewrite) so that they can be protected, not
+  read or written.
+
+### Known gaps
+
+Raised in review, reproduced, and **not** fixed — do not assume these are
+handled:
+
+- **No probe-vector hash guard** (`index.py`, `vector_mismatch`). The guard
+  compares the *alias* and the dimensionality only. Serve a different GGUF, or
+  the same GGUF with `--pooling mean` instead of `--pooling last`, under the
+  same alias and width, and `find` silently mixes two vector spaces and ranks
+  garbage. A hash of a fixed probe string's vector would catch it; it does not
+  exist yet.
+- **`stats()["with_body"]` over-reports.** `digest("")` is the SHA-256 of the
+  empty string, not the empty string, so `body_hash <> ''` is true for a note
+  whose body never arrived. A test that asserted on it was vacuous for the same
+  reason. Nothing depends on it for correctness, but do not read it as "bodies
+  are present".
+- **`has_fts5()` runs CREATE/DROP inside `stats()`.** It probes by creating and
+  dropping a throwaway table on every call, so a transient failure there can
+  leave `notes_fts` un-refreshed while `notes` is fine — a stale lexical answer
+  with a healthy-looking index.
+- **`unpack()` does not validate its blob.** It hands any length to
+  `array.frombytes`; a `dims * 4 == len(blob)` assert would turn a truncated
+  blob into an error instead of a silently short vector (and `zip(...,
+  strict=False)` in `cosine` would then score it against a longer query as if
+  nothing happened).

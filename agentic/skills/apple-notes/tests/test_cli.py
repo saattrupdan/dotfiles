@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Deterministic tests for the ``notes`` CLI.
 
 DEVIATION FROM ``create-a-skill``
@@ -21,12 +20,14 @@ These tests run against the developer's real Notes library. Therefore:
   ``pi-skill-test <session id> …`` and lives in a scratch folder named
   ``pi-skill-test-scratch-<session id>``;
 * nothing is ever deleted without ``--yes``, no bulk delete is ever run, and
-  the teardown deletes only the notes this session created;
+  the teardown deletes only the notes this suite created;
 * the count stays in single digits per run;
-* the teardown deletes the notes this session created and then deletes them
-  again from Recently Deleted to purge them, asserting that no
-  ``pi-skill-test `` note survives anywhere (`delete` alone only moves a note
-  to Recently Deleted, where Notes keeps it for about 30 days).
+* the teardown purges the whole ``pi-skill-`` prefix — not just this session's
+  titles, which cannot see another session's leftovers — inside a
+  ``try``/``finally``, so the scratch folder goes away even after a failed
+  test. Purging means deleting twice: once to move the note to Recently
+  Deleted, once to erase it there (`delete` alone leaves it sitting in the
+  user's Recently Deleted for about 30 days).
 
 Embedding-dependent tests are skipped when the local embedder does not answer;
 a dead endpoint has its own tests, which assert graceful failure.
@@ -54,11 +55,16 @@ SKILL_DIR = Path(__file__).resolve().parent.parent
 if str(SKILL_DIR) not in sys.path:
     sys.path.insert(0, str(SKILL_DIR))
 
-from apple_notes import applescript, index
+from apple_notes import applescript, index, undo
 from apple_notes import main as cli
 
 SESSION = f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
 PREFIX = f"pi-skill-test {SESSION} "
+# Everything this suite has ever called a test note, not just this session's.
+# `pi-skill-check <epoch>` artifacts from an earlier run sat in Recently
+# Deleted until someone purged them by hand, because a prefix tied to one
+# session can never see another session's leftovers.
+SWEEP = "pi-skill-"
 SCRATCH = f"pi-skill-test-scratch-{SESSION}"
 DEAD_ENDPOINT = "http://127.0.0.1:1/v1"
 
@@ -145,37 +151,80 @@ needs_endpoint = pytest.mark.skipif(
 # ---------------------------------------------------------------------------
 
 
+def purge_test_notes(prefix: str = SWEEP) -> None:
+    """Delete every note whose title starts with ``prefix``, then purge them.
+
+    Two passes are needed because `delete` only moves a note to Recently
+    Deleted, where it stays queryable for ~30 days. These notes were created
+    minutes ago by these very tests, so a second delete purges them instead of
+    leaving one row per test run behind in the user's Recently Deleted -- and
+    the sweep is the whole ``pi-skill-`` prefix, so a crashed earlier session
+    cannot leave notes behind either.
+    """
+    for _ in range(4):
+        mine = [
+            row
+            for row in applescript.note_metadata()
+            if row["title"].startswith(prefix)
+        ]
+        if not mine:
+            return
+        for row in mine:
+            run_cli("delete", row["id"], "--yes")
+    raise AssertionError("test notes survived the purge sweep")  # pragma: no cover
+
+
+def remove_scratch_folders() -> None:
+    """Delete every ``pi-skill-test-scratch-*`` folder, this run's or not.
+
+    The fixture only names its own folder, so a session that crashed before its
+    teardown left an empty scratch folder behind forever -- two were sitting in
+    the reference library when this was written.
+    """
+    for folder in applescript.folders():
+        leaf = folder["path"].rsplit("/", 1)[-1]
+        if leaf.startswith("pi-skill-test-scratch-"):
+            osascript(
+                f'tell application "Notes" to delete (first folder whose name is "{leaf}")'
+            )
+
+
 @pytest.fixture(scope="session")
 def live_db(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Notes with a scratch folder, and a session-scoped temp index."""
     db = tmp_path_factory.mktemp("apple-notes") / "index.sqlite"
     os.environ["NOTES_DB"] = str(db)
+    # Every write snapshots the body it replaces. Point that at the session
+    # temp dir so no test run leaves scratch content in the real
+    # ~/Library/Application Support/apple-notes/undo/.
+    os.environ["NOTES_UNDO_DIR"] = str(db.parent / "undo")
     osascript(
         'tell application "Notes" to tell account "iCloud" to '
         f'make new folder with properties {{name:"{SCRATCH}"}}'
     )
     assert SCRATCH in {folder["path"] for folder in applescript.folders()}
-    yield db
-    # Teardown: delete every note this session created, then the scratch folder.
-    for row in applescript.note_metadata():
-        if row["title"].startswith(PREFIX):
-            run_cli("delete", row["id"], "--yes")
-    # `delete` only moves a note to Recently Deleted, where it stays queryable
-    # for ~30 days. These notes were created minutes ago by this very session,
-    # so a second delete purges them rather than leaving one row per test run
-    # behind in the user's Recently Deleted.
-    for row in applescript.note_metadata():
-        if row["title"].startswith(PREFIX) and index.is_excluded(row["folder"]):
-            run_cli("delete", row["id"], "--yes")
-    leftover = [
-        row for row in applescript.note_metadata() if row["title"].startswith(PREFIX)
-    ]
-    assert leftover == [], f"test notes survived teardown: {leftover}"
-    osascript(
-        f'tell application "Notes" to delete (first folder whose name is "{SCRATCH}")'
-    )
-    assert SCRATCH not in {folder["path"] for folder in applescript.folders()}
-    os.environ.pop("NOTES_DB", None)
+    try:
+        yield db
+    finally:
+        # Teardown runs even when a test failed mid-way, or the scratch folder
+        # and every note in it would be left in the user's library.
+        try:
+            purge_test_notes()
+            leftover = [
+                row
+                for row in applescript.note_metadata()
+                if row["title"].startswith(SWEEP)
+            ]
+            assert leftover == [], f"test notes survived teardown: {leftover}"
+        finally:
+            try:
+                remove_scratch_folders()
+            finally:
+                assert SCRATCH not in {
+                    folder["path"] for folder in applescript.folders()
+                }
+                os.environ.pop("NOTES_DB", None)
+                os.environ.pop("NOTES_UNDO_DIR", None)
 
 
 @pytest.fixture()
@@ -203,21 +252,33 @@ def isolated_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return db
 
 
-def seed(conn: sqlite3.Connection, rows: list[tuple[str, list[float]]]) -> None:
+def seed(
+    conn: sqlite3.Connection,
+    rows: list[tuple[str, list[float]]],
+    *,
+    text: str | None = None,
+) -> None:
+    """Insert notes with hand-made vectors.
+
+    ``text`` overrides title and body for every row, for tests that care about
+    what the lexical index tokenises rather than what it ranks.
+    """
     conn.executescript(index.SCHEMA)
     if index.has_fts5(conn):
         conn.executescript(index.FTS_SCHEMA)
     for note_id, vector in rows:
+        title = text or f"note {note_id}"
+        body = text or f"body of {note_id}"
         conn.execute(
             "INSERT INTO notes(id, title, folder, account, modified, body, body_hash, embedding, model, dims, indexed_at)"
             " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (
                 note_id,
-                f"note {note_id}",
+                title,
                 "Notes",
                 "iCloud",
                 "2026-01-01T00:00:00",
-                f"body of {note_id}",
+                body,
                 "hash",
                 index.pack(vector),
                 index.model(),
@@ -228,7 +289,7 @@ def seed(conn: sqlite3.Connection, rows: list[tuple[str, list[float]]]) -> None:
         if index.has_fts5(conn):
             conn.execute(
                 "INSERT INTO notes_fts(note_id, title, body) VALUES(?,?,?)",
-                (note_id, note_id, f"body of {note_id}"),
+                (note_id, title, body),
             )
     conn.commit()
 
@@ -579,6 +640,179 @@ def test_mv_and_delete(live_db: Path) -> None:
     )
 
 
+def test_empty_body_input_is_refused(
+    scratch_note: dict[str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty --stdin/--body-file is *no body*, not an empty note.
+
+    `notes update <id> --stdin < /dev/null` used to pass the `body is None`
+    guard and write `<div></div>` — a redirect typo that quietly empties a
+    note, with no way back.
+    """
+    monkeypatch.setenv("NOTES_UNDO_DIR", str(tmp_path / "undo"))
+    empty = tmp_path / "empty.txt"
+    empty.write_text("", encoding="utf-8")
+    for argv in (
+        ("update", scratch_note["id"], "--body-file", str(empty)),
+        ("append", scratch_note["id"], "--body-file", str(empty)),
+    ):
+        result = run_cli(*argv)
+        assert result.code != 0 and "nothing to do" in result.err, result.err
+
+    monkeypatch.setattr(sys, "stdin", _StdinStub(""))
+    refused = run_cli("update", scratch_note["id"], "--stdin")
+    assert refused.code != 0 and "nothing to do" in refused.err, refused.err
+    text = run_cli("get", scratch_note["id"], "--json").ok().json["plaintext"]
+    assert text.startswith("alpha beta"), "the note must be untouched"
+
+    # --force is how you say emptying it is the actual goal.
+    run_cli("update", scratch_note["id"], "--stdin", "--force", "--json").ok()
+    assert run_cli("get", scratch_note["id"], "--json").ok().json["plaintext"] == ""
+
+    # Leave no empty note behind: there is nothing to embed for one, and the
+    # library-wide index test asserts every note came back with a vector.
+    run_cli("update", scratch_note["id"], "--body", "alpha beta gamma", "--json").ok()
+
+
+def test_update_keeps_an_undo_copy(
+    scratch_note: dict[str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A full-body replace must leave the previous body somewhere findable.
+
+    The file is the previous plaintext byte for byte, so `--body-file` puts it
+    back; the payload names the path, and it is a file rather than a row in the
+    index because that database is documented as a cache.
+    """
+    undo_dir = tmp_path / "undo"
+    monkeypatch.setenv("NOTES_UNDO_DIR", str(undo_dir))
+
+    human = (
+        run_cli("update", scratch_note["id"], "--body", "first replacement").ok().out
+    )
+    assert "undo:" in human and "restore" in human, human
+
+    payload = (
+        run_cli("update", scratch_note["id"], "--body", "second replacement", "--json")
+        .ok()
+        .json
+    )
+    saved = Path(payload["undo"]["path"])
+    assert saved.parent == undo_dir
+    assert (
+        saved.name.startswith("20")
+        and scratch_note["id"].rsplit("/", 1)[-1] in saved.name
+    )
+    assert saved.read_text(encoding="utf-8") == "first replacement"
+    assert payload["undo"]["title"] == scratch_note["title"]
+    assert payload["undo"]["chars"] == len("first replacement")
+
+    # And it really does restore the note.
+    run_cli("update", scratch_note["id"], "--body-file", str(saved), "--json").ok()
+    assert (
+        run_cli("get", scratch_note["id"], "--json").ok().json["plaintext"]
+        == "first replacement"
+    )
+    assert len(list(undo_dir.glob("*.txt"))) == 3
+
+
+def test_undo_files_are_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "undo"
+    monkeypatch.setenv("NOTES_UNDO_DIR", str(target))
+    for i in range(undo.KEEP + 7):
+        undo.save(
+            f"x-coredata://00000000-0000-0000-0000-000000000000/ICNote/p{i}",
+            title="t",
+            body="b",
+        )
+    files = sorted(target.glob("*.txt"))
+    assert len(files) == undo.KEEP, "the undo directory must not grow without bound"
+
+
+def test_rename_refuses_an_empty_title(
+    scratch_note: dict[str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--rename ""` used to clear the title, which is never what was meant."""
+    monkeypatch.setenv("NOTES_UNDO_DIR", str(tmp_path / "undo"))
+    result = run_cli("update", scratch_note["id"], "--rename", "")
+    assert result.code != 0 and "--rename needs a title" in result.err, result.err
+    assert (
+        run_cli("get", scratch_note["id"], "--json").ok().json["title"]
+        == scratch_note["title"]
+    )
+
+
+def test_title_lookup_skips_recently_deleted_and_agrees_with_the_id(
+    live_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`every note whose name is X` is unscoped; the CLI must not be.
+
+    Reproduced against a trashed copy: `notes get --title X` returned the note
+    in Recently Deleted and exited 0. Giving both an id and `--title` also used
+    to ignore `--title` completely.
+    """
+    monkeypatch.setenv("NOTES_UNDO_DIR", str(tmp_path / "undo"))
+    note = (
+        run_cli(
+            "create",
+            "--title",
+            title("trashed"),
+            "--body",
+            "gone soon",
+            "-f",
+            SCRATCH,
+            "--json",
+        )
+        .ok()
+        .json
+    )
+    assert (
+        run_cli("get", "--title", title("trashed"), "--json").ok().json["id"]
+        == note["id"]
+    )
+
+    # Both handles given: they must name the same note.
+    assert (
+        run_cli("get", note["id"], "--title", title("trashed"), "--json")
+        .ok()
+        .json["id"]
+        == note["id"]
+    )
+    rival = (
+        run_cli(
+            "create",
+            "--title",
+            title("rival"),
+            "--body",
+            "a different note",
+            "-f",
+            SCRATCH,
+            "--json",
+        )
+        .ok()
+        .json
+    )
+    conflict = run_cli("get", note["id"], "--title", title("rival"))
+    assert conflict.code != 0 and "one handle" in conflict.err, conflict.err
+    assert rival["id"] in conflict.err, (
+        "the error must name the note the title actually resolves to"
+    )
+    # A title that matches nothing is still a "no note titled", not a conflict.
+    missing = run_cli("get", note["id"], "--title", title("never-created"))
+    assert missing.code != 0 and "no note titled" in missing.err, missing.err
+
+    run_cli("delete", note["id"], "--yes").ok()
+    gone = run_cli("get", "--title", title("trashed"))
+    assert gone.code != 0 and "Recently Deleted" in gone.err, gone.err
+    assert (
+        run_cli("get", "--title", title("trashed"), "--include-deleted", "--json")
+        .ok()
+        .json["id"]
+        == note["id"]
+    )
+
+
 # ---------------------------------------------------------------------------
 # Index, lexical search, semantics
 # ---------------------------------------------------------------------------
@@ -604,8 +838,14 @@ def test_index_build_then_incremental_noop(live_db: Path) -> None:
     built = run_cli("index", "--json").ok().json
     assert built["seen"] > 0
     assert built["index"]["notes"] == built["seen"]
-    assert built["index"]["embedded"] == built["index"]["notes"], (
-        "every note should have a vector"
+    # A note with no text has nothing to embed (the endpoint would reject the
+    # empty input), so the invariant is "every note *with text* has a vector".
+    conn = sqlite3.connect(os.environ["NOTES_DB"])
+    blank = conn.execute("SELECT id, title FROM notes WHERE body = ''").fetchall()
+    conn.close()
+    assert built["index"]["embedded"] == built["index"]["notes"] - len(blank), (
+        f"every note with text should have a vector; "
+        f"embed_errors={built['embed_errors']} blank={blank}"
     )
     assert built["index"]["dims"] == 896, (
         f"expected the configured dims, got {built['index']['dims']}"
@@ -718,6 +958,8 @@ def test_index_survives_dead_endpoint(
     built = run_cli("index", "--json").ok().json
     assert built["embed_errors"], "a dead endpoint must be reported, not swallowed"
     assert built["embedded"] == 0
+    # NOTE: weaker than it looks — `digest("")` is non-empty, so `with_body`
+    # counts rows whose body never arrived. See SKILL.md, Limits: Known gaps.
     assert built["index"]["with_body"] == built["index"]["notes"], (
         "text indexing must not depend on the server"
     )
@@ -906,6 +1148,292 @@ def test_recently_deleted_is_excluded_by_default(
     monkeypatch.setenv("NOTES_EXCLUDE_FOLDERS", "Archive")
     assert index.is_excluded("Archive")
     assert not index.is_excluded("Recently Deleted")
+
+
+# ---------------------------------------------------------------------------
+# Review round: retry policy, stems, undo, empty input, title scoping, sync
+# resilience. Everything here is offline — the runner is stubbed — so none of
+# it adds to the suite's wall time.
+# ---------------------------------------------------------------------------
+
+# The four scripts that write, recognised by the line that mutates. Every one
+# of them keeps firing Apple events *after* the change (`id of n`, `name of n`,
+# the `notePath` container walk), which is why a timeout cannot be retried.
+_MUTATION_MARKERS = ("make new note", "set body of n", "delete n", "move n to")
+# Shaped like real ``osascript`` stderr: ``<path>:<line>:<col>: execution
+# error: … (<code>)``, which is what `_parse_error` reads the code from.
+_TRANSIENT_STDERR = (
+    "/tmp/pi-notes-stub.applescript:37:40: execution error: Notes got an error: "
+    "AppleEvent timed out. (-1712)\n"
+)
+_STUB_ID = "x-coredata://00000000-0000-0000-0000-000000000000/ICNote/p1"
+
+
+def _stub_osascript(
+    monkeypatch: pytest.MonkeyPatch, *, fail_reads: bool = False
+) -> list[str]:
+    """Replace the ``osascript`` launch with a recorder of the scripts run.
+
+    Reads answer from a canned record so the CLI actually reaches the write;
+    every write fails with a retryable Apple-event timeout, which is exactly
+    the case that used to re-run the mutation. Returns the list of script
+    texts, which the test counts by hand.
+    """
+    calls: list[str] = []
+
+    def fake(cmd: list[str], **kwargs: t.Any) -> subprocess.CompletedProcess:
+        script = Path(cmd[1]).read_text(encoding="utf-8")
+        calls.append(script)
+        mutating = any(marker in script for marker in _MUTATION_MARKERS)
+        if fail_reads or mutating:
+            return subprocess.CompletedProcess(cmd, 1, "", _TRANSIENT_STDERR)
+        if "set wantHTML to" in script:  # _GET_SCRIPT
+            fields = [
+                _STUB_ID,
+                "stubbed note",
+                "Notes",
+                "iCloud",
+                "2026-01-01T00:00:00",
+                "2026-01-01T00:00:00",
+                "false",
+                "0",
+                "stub plaintext body",
+                "<div>stub plaintext body</div>",
+            ]
+            return subprocess.CompletedProcess(
+                cmd, 0, applescript.US.join(fields) + applescript.RS, ""
+            )
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(applescript.subprocess, "run", fake)
+    monkeypatch.setattr(applescript.time, "sleep", lambda _seconds: None)
+    return calls
+
+
+def test_writes_are_attempted_exactly_once(
+    isolated_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No mutation may ever run twice.
+
+    `delete` is the sharp edge: the second delete of a note that is already in
+    Recently Deleted erases it for good, and every mutation script does more
+    Apple-event work after the write, so a timeout is indistinguishable from
+    "nothing happened yet".
+    """
+    monkeypatch.setenv("NOTES_UNDO_DIR", str(tmp_path / "undo"))
+    cases = {
+        "create": (
+            "create",
+            "--title",
+            "stub",
+            "--body",
+            "b",
+            "-f",
+            "Notes",
+            "--account",
+            "iCloud",
+        ),
+        "update": ("update", _STUB_ID, "--body", "b"),
+        "delete": ("delete", _STUB_ID, "--yes"),
+        "mv": ("mv", _STUB_ID, "-f", "Archive", "--account", "iCloud"),
+    }
+    for name, argv in cases.items():
+        calls = _stub_osascript(monkeypatch)
+        result = run_cli(*argv)
+        mutating = [c for c in calls if any(m in c for m in _MUTATION_MARKERS)]
+        assert result.code != 0, f"{name} claimed success against a failing Notes"
+        assert len(mutating) == 1, (
+            f"{name} issued {len(mutating)} mutating osascript calls; "
+            "a retry would repeat the write itself"
+        )
+
+
+def test_reads_are_still_retried(
+    isolated_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only writes gave up their retries — a read may safely run again."""
+    calls = _stub_osascript(monkeypatch, fail_reads=True)
+    result = run_cli("list")
+    assert result.code != 0
+    assert len(calls) == 3, f"expected one read plus two retries, got {len(calls)}"
+
+
+def test_a_payload_bug_is_not_reported_as_a_missing_note(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`except LookupError` also caught every KeyError.
+
+    A missing key in a payload we built ourselves was printed as "no note with
+    id …" and exit 1 — a dead end for whoever is debugging the payload.
+    """
+    monkeypatch.setattr(applescript, "get_note", lambda *args, **kwargs: {})
+    with pytest.raises(KeyError):
+        run_cli("get", _STUB_ID)
+
+
+def test_lexical_search_matches_a_stem_and_says_when_it_misses(
+    isolated_db: Path,
+) -> None:
+    """A stem must find the words it starts.
+
+    FTS5 matches whole tokens, so ``notes search euroev`` used to print a clean
+    ``# 0 match(es)`` while ``euroeval`` sat in 78 notes — the same silent-miss
+    class the pre-query sync was added to kill.
+    """
+    conn = index.connect(isolated_db)
+    seed(conn, [("euroeval", [1.0, 0.0])], text="the EuroEval budget line")
+    conn.close()
+
+    conn = index.connect(isolated_db)
+    for term in ("euroev", "euroeval", "euroev*", '"euroev"*'):
+        hits = index.search_lexical(conn, [term])
+        assert [hit["id"] for hit in hits] == ["euroeval"], term
+    assert index.search_lexical(conn, ["wombat"]) == []
+    conn.close()
+
+    miss = run_cli("search", "zyphraspex", "--no-sync").ok()
+    assert "# 0 match" in miss.out
+    assert "hint" in miss.err and "notes find" in miss.err, miss.err
+
+
+def test_search_answers_from_the_index_when_notes_does_not(
+    isolated_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`search` may not depend on Notes.app being awake.
+
+    It used to answer from the index in ~50 ms; the pre-query sync made a hung
+    Notes.app cost the full read timeout per retry instead. Warn, then answer.
+    """
+    conn = index.connect(isolated_db)
+    seed(conn, [("plumbus", [1.0, 0.0])], text="the plumbusverse marker")
+    conn.close()
+
+    def hang(**kwargs: t.Any) -> None:
+        raise applescript.AppleScriptError(
+            "osascript timed out -- is Notes.app showing a modal dialog?", code=-1712
+        )
+
+    monkeypatch.setattr(applescript, "note_metadata", hang)
+    result = run_cli("search", "plumbusverse", "--json")
+    assert result.ok()
+    assert "results may be stale" in result.err, result.err
+    assert [row["id"] for row in result.json["results"]] == ["plumbus"]
+    assert result.json["sync"] is None and result.json["stale"], result.json
+
+    monkeypatch.setattr(index, "embed", lambda texts, **kw: [[1.0, 0.0]])
+    monkeypatch.setattr(index, "embed_probe", lambda **kw: {"ok": True, "dims": 2})
+    found = run_cli("find", "plumbus", "--json")
+    assert found.ok()
+    assert "results may be stale" in found.err, found.err
+    assert found.json["results"][0]["id"] == "plumbus"
+
+
+def test_automatic_sync_probes_a_dead_embedder_once(
+    isolated_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One short probe, not one long wait per batch — and index the text anyway."""
+    rows = [
+        {
+            "account": "iCloud",
+            "folder": "Notes",
+            "id": f"id-{i}",
+            "title": f"note {i}",
+            "modified": "2026-01-01T00:00:00",
+        }
+        for i in range(70)
+    ]
+
+    def metadata(bodies: bool = False, **kwargs: t.Any) -> list[dict[str, str]]:
+        if not bodies:
+            return rows
+        return [{**row, "body": f"the text of {row['id']}"} for row in rows]
+
+    monkeypatch.setattr(applescript, "note_metadata", metadata)
+    monkeypatch.setenv("NOTES_EMBED_BASE_URL", DEAD_ENDPOINT)
+    attempts: list[dict[str, t.Any]] = []
+
+    def dead(texts: t.Sequence[str], **kwargs: t.Any) -> list[list[float]]:
+        attempts.append(kwargs)
+        raise urllib.error.URLError("Connection refused")
+
+    monkeypatch.setattr(index, "embed", dead)
+    result = run_cli("search", "note", "--json").ok()
+    assert len(attempts) == 1, f"a dead embedder cost {len(attempts)} embedding calls"
+    assert attempts[0]["timeout"] == cli.AUTO_EMBED_TIMEOUT, (
+        "the automatic sync must not use the 120 s `notes index` budget"
+    )
+    assert result.json["index"]["notes"] == 70, (
+        "text indexing must not depend on the server"
+    )
+    assert result.json["results"], "lexical search must still work"
+    assert result.json["sync"]["embed_errors"], "the failure must be reported"
+
+
+def test_the_header_shows_what_the_sync_changed(
+    isolated_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pruning trusts absence, so a silent mass-delete must be visible."""
+    monkeypatch.setattr(index, "embed", lambda texts, **kw: [[1.0, 0.0] for _ in texts])
+    rows = [
+        {
+            "account": "iCloud",
+            "folder": "Notes",
+            "id": f"id-{i}",
+            "title": f"note {i}",
+            "modified": "2026-01-01T00:00:00",
+        }
+        for i in range(12)
+    ]
+    monkeypatch.setattr(applescript, "note_metadata", lambda **kw: rows)
+    monkeypatch.setattr(
+        applescript,
+        "bodies_by_id",
+        lambda ids, **kw: {i: f"the text of {i}" for i in ids},
+    )
+    run_cli("search", "note", "--json").ok()
+    monkeypatch.setattr(applescript, "note_metadata", lambda **kw: rows[:2])
+    human = run_cli("search", "note").ok().out
+    assert "removed 10" in human, human
+
+
+def test_an_empty_note_does_not_cost_its_batch(
+    isolated_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """llama.cpp answers 400 for an empty input — so never send one.
+
+    One empty note used to fail the whole batch of 32 and leave 31 unrelated
+    notes unvectorised, which is invisible except as a lower `find` score
+    count. (This is what emptied-the-note looked like end to end: 421 of 453
+    notes embedded after a single note lost its body.)
+    """
+    rows = [
+        {
+            "account": "iCloud",
+            "folder": "Notes",
+            "id": f"id-{i}",
+            "title": f"note {i}",
+            "modified": "2026-01-01T00:00:00",
+        }
+        for i in range(20)
+    ]
+    bodies = {row["id"]: f"text of {row['id']}" for row in rows}
+    bodies["id-7"] = ""
+    monkeypatch.setattr(applescript, "note_metadata", lambda **kw: rows)
+    monkeypatch.setattr(
+        applescript, "bodies_by_id", lambda ids, **kw: {i: bodies[i] for i in ids}
+    )
+    sent: list[str] = []
+
+    def spy(texts: t.Sequence[str], **kwargs: t.Any) -> list[list[float]]:
+        sent.extend(texts)
+        assert all(text for text in texts), "an empty input 400s the whole batch"
+        return [[1.0, 0.0] for _ in texts]
+
+    monkeypatch.setattr(index, "embed", spy)
+    built = run_cli("index", "--json").ok().json
+    assert "" not in sent
+    assert built["embed_errors"] == [], built["embed_errors"]
+    assert built["embedded"] == 19, "the other 19 notes must keep their vectors"
 
 
 # ---------------------------------------------------------------------------
