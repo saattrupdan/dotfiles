@@ -269,7 +269,10 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("memory-queue", {
 		description: "Show background memory writes (status | retry | drop)",
 		handler: async (args, ctx) => {
-			const sub = args[0] ?? "status";
+			// `args` is pi's raw argument STRING, not an array of tokens — indexing
+			// it yields a single character, so `args[0]` on "retry" was "r" and every
+			// subcommand silently fell through to the status branch.
+			const sub = args.trim().split(/\s+/)[0] || "status";
 			const queued = listDir(QUEUE_DIR);
 			const done = listDir(DONE_DIR);
 			const failed = listDir(FAILED_DIR);
