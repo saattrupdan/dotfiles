@@ -19,6 +19,11 @@ const MAX_NAME_LENGTH = 30;
 const NAMING_TIMEOUT_MS = 30_000;
 const MAX_RETRIES = 2;
 
+/** How much of the prompt the mechanical extractor is allowed to look at. A
+ *  title always comes out of the opening of a prompt, so scanning further buys
+ *  nothing — and keeps every regex below bounded in input size. */
+const TITLE_SCAN_LIMIT = 1_000;
+
 export default function (pi: ExtensionAPI) {
 	// Sessions for which a naming call is in flight. Guards against spawning a
 	// second `pi -p` if another user message arrives before the async naming
@@ -253,8 +258,10 @@ function sanitizeTitle(raw: string): string {
  * Extract a descriptive title from the user's prompt by identifying the main action
  * and key topic. Uses pattern matching to find the core task.
  */
-function extractTitleFromPrompt(prompt: string): string {
-	const trimmed = prompt.trim();
+export function extractTitleFromPrompt(prompt: string): string {
+	// Bound the input before anything pattern-matches it. Subagent prompts are
+	// thousands of characters of prose, and this runs on the main thread.
+	const trimmed = prompt.trim().slice(0, TITLE_SCAN_LIMIT);
 
 	// Remove URLs — they're noise in a title
 	let cleaned = trimmed.replace(/https?:\/\/\S+/g, "");
@@ -389,9 +396,14 @@ function extractTitleFromPrompt(prompt: string): string {
 		const unique = Array.from(new Set(techPhrases.map((t) => t.toLowerCase())));
 		keyTerm = unique.slice(0, 2).map((t) => t.charAt(0).toUpperCase() + t.slice(1)).join(" ");
 	} else {
-		// Fallback: extract key nouns after the verb
+		// Fallback: extract key nouns after the verb.
+		// The separator MUST stay inside the repeated group as mandatory (`[- ]+`,
+		// not an optional `[- ]?`): `(?:[a-z]+[- ]?)+` lets one run of lowercase
+		// words be partitioned in exponentially many ways, so when none of the
+		// suffix words appears V8 backtracks forever and pins a core — a builder
+		// subagent hung for ~3 h this way. Keep this regex linear.
 		const afterVerb = cleaned.substring(actionMatch?.index ?? 0).toLowerCase();
-		const nounMatch = /\b((?:[a-z]+[- ]?)+(?:evaluation|model|task|benchmark|dataset|config|api|endpoint|file|module|function))/.exec(afterVerb);
+		const nounMatch = /\b((?:[a-z]+[- ])+(?:evaluation|model|task|benchmark|dataset|config|api|endpoint|file|module|function))\b/.exec(afterVerb);
 		if (nounMatch) {
 			keyTerm = nounMatch[1].split(/[- ]+/).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
 		}
