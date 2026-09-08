@@ -11,6 +11,11 @@
  * the name is filled in a few seconds later. If the model call fails, we fall
  * back to a mechanical title derived from the prompt. Only the first user
  * message in a session is named (dedup via the persisted session name).
+ *
+ * Subagents are the exception: they are named by their parent, which passes the
+ * label down in PI_SUBAGENT_SESSION_NAME (see extensions/subagent/session-label.ts).
+ * A child applies that label and stops — no nested `pi -p`, no mechanical parse
+ * of a multi-KB task prompt.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -23,6 +28,9 @@ const MAX_RETRIES = 2;
  *  title always comes out of the opening of a prompt, so scanning further buys
  *  nothing — and keeps every regex below bounded in input size. */
 const TITLE_SCAN_LIMIT = 1_000;
+
+/** Env var the subagent extension uses to hand its label to a child process. */
+const SUBAGENT_SESSION_NAME_ENV = "PI_SUBAGENT_SESSION_NAME";
 
 export default function (pi: ExtensionAPI) {
 	// Sessions for which a naming call is in flight. Guards against spawning a
@@ -49,6 +57,25 @@ export default function (pi: ExtensionAPI) {
 			}
 		} catch {
 			// getSessionName unavailable - fall through and try to set it anyway
+		}
+
+		// We are a subagent: the parent already named us, e.g. `builder2: Fix the
+		// parser` (see extensions/subagent/session-label.ts). Apply that label and
+		// return before any model call or mechanical fallback — a child must never
+		// spawn a nested `pi -p` to name itself, and its prompt is a multi-KB task
+		// spec, not something to parse for a title. Ordinary sessions never have
+		// this variable set, so nothing above or below changes for them.
+		const inheritedName = process.env[SUBAGENT_SESSION_NAME_ENV]?.trim();
+		if (inheritedName) {
+			try {
+				pi.setSessionName(inheritedName);
+			} catch (error) {
+				// Subagents run with --no-session, so there may be nowhere to write
+				// the name. Degrade quietly; the parent's UI still shows the label.
+				const errorMessage = error instanceof Error ? error.message : String(error);
+				console.error(`[conversation-name] Failed to apply inherited session name: ${errorMessage}`);
+			}
+			return;
 		}
 
 		// One naming call per session at a time.
@@ -422,8 +449,13 @@ export function extractTitleFromPrompt(prompt: string): string {
 		}
 	}
 
-	// Fallback: use first meaningful phrase
-	const firstPhrase = cleaned.split(/[,\b(?:about|for|with|in|on|at|to|from)\b]/)[0]?.trim();
+	// Fallback: use first meaningful phrase. Split on a comma or on a standalone
+	// connective word. The words must sit in an alternation group, not inside a
+	// character class: in /[,\b(?:about|for)\b]/ the \b is a backspace and
+	// (?:…)/:/ are literals, so it was a bag of single characters that split the
+	// phrase at the first `a`, `t`, `i`, … No quantifiers here at all, so the
+	// pattern stays linear.
+	const firstPhrase = cleaned.split(/,|\b(?:about|for|with|in|on|at|to|from)\b/)[0]?.trim();
 	if (firstPhrase && firstPhrase.length > 5 && firstPhrase.length <= MAX_NAME_LENGTH) {
 		return firstPhrase.charAt(0).toUpperCase() + firstPhrase.slice(1);
 	}

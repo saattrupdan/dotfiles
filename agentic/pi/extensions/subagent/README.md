@@ -148,3 +148,21 @@ When `worktree: true` is set, the subagent is spawned in a dedicated git
 worktree on a temporary branch. On successful child exit, the branch is merged
 back into the parent worktree's HEAD and the temporary worktree is cleaned up.
 Failed model retry attempts are discarded without merging or applying changes.
+
+## Session naming
+
+The parent names the child; the child does not name itself. Each spawn gets an
+ordinal per agent name, counted for the lifetime of the parent process, and the
+label is passed to the child in the environment:
+
+```
+PI_SUBAGENT_SESSION_NAME=builder2: <parent session name>
+```
+
+`extensions/conversation-name` applies that value as the child's session name and
+returns before its model naming call, so a child never spawns a nested `pi -p`
+just to title itself. While the parent session has no name yet, the label is the
+bare `builder2`. Ordinary sessions never see this variable.
+
+The same label is shown in the subagent tool's own rows, so parallel builders are
+tellable apart in the parent's UI.

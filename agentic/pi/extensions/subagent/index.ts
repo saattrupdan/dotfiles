@@ -36,6 +36,7 @@ import {
 import { interactiveQueue } from "../_interactive_queue/queue.ts";
 import { dispatchAsk } from "../question/index.ts";
 import { getPiInvocation } from "./pi-invocation.ts";
+import { createSubagentLabelCounter } from "./session-label.ts";
 import { resolveSkillAllowList } from "./skill-scope.ts";
 
 const COLLAPSED_ITEM_COUNT = 10;
@@ -196,6 +197,12 @@ interface ModelAttempt {
 interface SingleResult {
 	agent: string;
 	agentSource: "user" | "project" | "unknown";
+	/**
+	 * Label this child was spawned with, e.g. `builder2: Fix the parser`. Same
+	 * string the child receives in PI_SUBAGENT_SESSION_NAME and applies as its
+	 * own session name; see session-label.ts.
+	 */
+	sessionLabel?: string;
 	task: string;
 	exitCode: number;
 	messages: Message[];
@@ -458,6 +465,7 @@ async function runSingleAgent(
 	requestedModel?: string,
 	taskSkills?: string[],
 	agentScope?: AgentScope,
+	sessionLabel?: string,
 ): Promise<SingleResult> {
 	const agent = agents.find((a) => a.name === agentName);
 
@@ -625,6 +633,7 @@ async function runSingleAgent(
 			let effectiveCwd: string | undefined = cwd;
 			const currentResult: SingleResult = {
 				agent: agentName,
+				sessionLabel,
 				agentSource: agent.source,
 				task,
 				exitCode: 0,
@@ -710,15 +719,27 @@ async function runSingleAgent(
 					// an extra pipe on fd 3 for parent→child responses; the child
 					// finds it via PI_QUESTION_RESPONSE_FD. Child→parent requests
 					// still travel on stderr as tagged lines.
+					// PI_SUBAGENT_SESSION_NAME is the label the child adopts as its
+					// own session name (see session-label.ts and
+					// extensions/conversation-name, which short-circuits on it instead
+					// of spawning a nested `pi -p` to invent one). It is always set
+					// explicitly: our own value must never be inherited down to a
+					// grandchild, which would name it after its grandparent.
+					const childEnv: NodeJS.ProcessEnv = {
+						...process.env,
+						PI_SUBAGENT_CHILD: "1",
+						PI_QUESTION_RESPONSE_FD: "3",
+					};
+					if (sessionLabel) {
+						childEnv.PI_SUBAGENT_SESSION_NAME = sessionLabel;
+					} else {
+						delete childEnv.PI_SUBAGENT_SESSION_NAME;
+					}
 					const proc = spawn(invocation.command, invocation.args, {
 						cwd: effectiveCwd ?? defaultCwd,
 						shell: false,
 						stdio: ["ignore", "pipe", "pipe", "pipe"],
-						env: {
-							...process.env,
-							PI_SUBAGENT_CHILD: "1",
-							PI_QUESTION_RESPONSE_FD: "3",
-						},
+						env: childEnv,
 					});
 
 					// Exit timeout: start after last message, clear on process exit.
@@ -1066,18 +1087,34 @@ function buildSubagentDescription(): string {
 }
 
 export default function (pi: ExtensionAPI) {
+	// Spawn ordinals (builder1, builder2, ...) for this process's lifetime, plus
+	// the label each tool call got, so renderCall can show it in its own row.
+	const labelCounter = createSubagentLabelCounter();
+	const labelsByToolCallId = new Map<string, string>();
+
 	pi.registerTool({
 		name: "subagent",
 		label: "Subagent",
 		description: buildSubagentDescription(),
 		parameters: SubagentParams,
 
-		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			const agentScope: AgentScope = params.agentScope ?? "user";
 			const discovery = discoverAgents(ctx.cwd, agentScope);
 			const agents = discovery.agents;
 			const confirmProjectAgents = params.confirmProjectAgents ?? true;
 			const sessionModel = modelToCliPattern(ctx.model);
+
+			// We own the child's name: it inherits `<agent><n>: <our name>` instead of
+			// generating one itself. An unnamed parent degrades to the bare `builder2`.
+			let parentName: string | undefined;
+			try {
+				parentName = ctx.sessionManager.getSessionName();
+			} catch {
+				// getSessionName unavailable - the label degrades to `builder2`
+			}
+			const sessionLabel = labelCounter.next(params.agent, parentName);
+			labelsByToolCallId.set(toolCallId, sessionLabel);
 
 			// A child question is answered by the orchestrator, including when this
 			// process is itself a subagent and the request must travel up to its parent.
@@ -1103,6 +1140,7 @@ export default function (pi: ExtensionAPI) {
 							content: [{ type: "text", text: "Canceled: project-local agents not approved." }],
 							details: {
 								agent: params.agent,
+								sessionLabel,
 								agentSource: projectAgent.source,
 								task: params.task,
 								exitCode: 1,
@@ -1130,7 +1168,11 @@ export default function (pi: ExtensionAPI) {
 				params.model,
 				params.skills,
 				agentScope,
+				sessionLabel,
 			);
+			// Covers the early-return paths inside runSingleAgent, which build their
+			// own SingleResult before any of them knows about the label.
+			result.sessionLabel = sessionLabel;
 			if (isFailedResult(result)) {
 				const errorMsg = getResultOutput(result);
 				return {
@@ -1147,7 +1189,9 @@ export default function (pi: ExtensionAPI) {
 
 		renderCall(args, theme, context) {
 			const scope: AgentScope = args.agentScope ?? "user";
-			const agentName = args.agent || "...";
+			// The ordinal is handed out in execute(), so the first paint of a brand-new
+			// call row shows the bare agent name and picks up `builder2` on redraw.
+			const agentName = labelsByToolCallId.get(context.toolCallId) ?? (args.agent || "...");
 			const preview = args.task ? (args.task.length > 60 ? `${args.task.slice(0, 60)}...` : args.task) : "...";
 			let text =
 				theme.fg("toolTitle", theme.bold("subagent ")) +
@@ -1270,7 +1314,7 @@ export default function (pi: ExtensionAPI) {
 
 			if (expanded) {
 				const container = new Container();
-				let header = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
+				let header = `${icon} ${theme.fg("toolTitle", theme.bold(r.sessionLabel ?? r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
 				if (isError && r.stopReason) header += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
 				container.addChild(new Text(header, 0, 0));
 				const modelAttemptSummary = formatModelAttempts(r.modelAttempts);
@@ -1309,7 +1353,7 @@ export default function (pi: ExtensionAPI) {
 				return container;
 			}
 
-			let text = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
+			let text = `${icon} ${theme.fg("toolTitle", theme.bold(r.sessionLabel ?? r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
 			if (isError && r.stopReason) text += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
 			const modelAttemptSummary = formatModelAttempts(r.modelAttempts);
 			if (modelAttemptSummary) text += `\n${theme.fg("dim", `Models: ${modelAttemptSummary}`)}`;
