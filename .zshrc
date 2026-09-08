@@ -310,3 +310,5 @@ if [ -f ~/.env ] && [ -s ~/.env ] && grep -qvE '^\s*(#|$)' ~/.env
 then
     export $(cat ~/.env | xargs)
 fi
+
+. "$HOME/.local/share/../bin/env"
