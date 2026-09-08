@@ -587,6 +587,15 @@ echo
 
 failed=""
 installed=0
+force_native_source=false
+if [ "$(uname -s 2>/dev/null)" = "Linux" ]; then
+  case "$(uname -m 2>/dev/null)" in
+    aarch64|arm64)
+      force_native_source=true
+      echo "Linux ARM64 detected: native extension modules will build from source"
+      ;;
+  esac
+fi
 
 for pkg in "$EXT_DIR"/*/package.json; do
   [ -e "$pkg" ] || continue
@@ -605,8 +614,48 @@ for pkg in "$EXT_DIR"/*/package.json; do
 
   echo "--- $name: npm $INSTALL_CMD (Node $("$PI_NODE" -v))"
   # Force pi's Node to the front of PATH so npm/node-gyp build against its ABI,
-  # regardless of which node is otherwise active in this shell.
-  if (cd "$dir" && PATH="$PI_NODE_BIN_DIR:$PATH" CXXFLAGS="--std=c++20" npm "$INSTALL_CMD" --legacy-peer-deps); then
+  # regardless of which node is otherwise active in this shell. The published
+  # tree-sitter-typescript 0.23.2 Linux ARM64 artifact has been observed to
+  # contain x86-64 code, so ARM64 installs never use prebuilds.
+  install_ok=true
+  if [ "$force_native_source" = true ]; then
+    if ! (cd "$dir" && PATH="$PI_NODE_BIN_DIR:$PATH" CXXFLAGS="--std=c++20" npm_config_build_from_source=true npm "$INSTALL_CMD" --legacy-peer-deps); then
+      install_ok=false
+    fi
+  elif ! (cd "$dir" && PATH="$PI_NODE_BIN_DIR:$PATH" CXXFLAGS="--std=c++20" npm "$INSTALL_CMD" --legacy-peer-deps); then
+    install_ok=false
+  fi
+
+  if [ "$install_ok" = true ] && [ "$force_native_source" = true ] && { [ "$name" = "_outliner" ] || [ "$name" = "read" ]; }; then
+    echo "--- $name: rebuilding tree-sitter-typescript from source (Linux ARM64)"
+    if ! (cd "$dir" && PATH="$PI_NODE_BIN_DIR:$PATH" CXXFLAGS="--std=c++20" npm rebuild tree-sitter-typescript --build-from-source); then
+      install_ok=false
+    elif ! (cd "$dir" && PATH="$PI_NODE_BIN_DIR:$PATH" "$PI_NODE" --input-type=commonjs - <<'NODE'
+try {
+  const Parser = require("tree-sitter");
+  const grammars = require("tree-sitter-typescript");
+  const parser = new Parser();
+  for (const [name, grammar, source] of [
+    ["typescript", grammars.typescript, "interface User { name: string }\nconst user: User = { name: 'Ada' };"],
+    ["tsx", grammars.tsx, "const view = <div className=\"user\">{user.name}</div>;"],
+  ]) {
+    if (!grammar) throw new Error(`missing ${name} grammar`);
+    parser.setLanguage(grammar);
+    const tree = parser.parse(source);
+    if (tree.rootNode.hasError) throw new Error(`${name} sample has syntax errors`);
+  }
+} catch (error) {
+  console.error(error);
+  process.exit(1);
+}
+NODE
+    ); then
+      echo "!!! $name: tree-sitter TypeScript/TSX native module failed parser guard" >&2
+      install_ok=false
+    fi
+  fi
+
+  if [ "$install_ok" = true ]; then
     installed=$((installed + 1))
   else
     echo "!!! $name: install failed" >&2

@@ -5,38 +5,22 @@
  * can stay focused on the actual entry-extraction logic.
  */
 
-import { createRequire } from "node:module";
 import * as path from "node:path";
 import Parser from "tree-sitter";
 import Python from "tree-sitter-python";
 import JavaScript from "tree-sitter-javascript";
 import TypeScript from "tree-sitter-typescript";
 
-type ParserConstructor = new () => Parser;
-
 type ParserLanguage = {
 	language: unknown;
-	ParserCtor?: ParserConstructor;
 };
 
 type GrammarModule = Record<string, unknown> & {
 	default?: Record<string, unknown>;
 };
 
-const require = createRequire(import.meta.url);
-
-function loadTypeScriptParser(): ParserConstructor | undefined {
-	try {
-		return require("tree-sitter-typescript/node_modules/tree-sitter") as ParserConstructor;
-	} catch {
-		return undefined;
-	}
-}
-
-const typeScriptParser = loadTypeScriptParser();
-
-function parserLanguage(language: unknown, ParserCtor?: ParserConstructor): ParserLanguage {
-	return { language, ParserCtor };
+function parserLanguage(language: unknown): ParserLanguage {
+	return { language };
 }
 
 function grammar(mod: unknown, key?: string): unknown {
@@ -96,9 +80,9 @@ export function detectLanguage(filePath: string): LanguageInfo {
 		case ".py":
 			return { kind: "python", parserLanguage: parserLanguage(grammar(Python)) };
 		case ".ts":
-			return { kind: "typescript", parserLanguage: parserLanguage(grammar(TypeScript, "typescript"), typeScriptParser) };
+			return { kind: "typescript", parserLanguage: parserLanguage(grammar(TypeScript, "typescript")) };
 		case ".tsx":
-			return { kind: "tsx", parserLanguage: parserLanguage(grammar(TypeScript, "tsx"), typeScriptParser) };
+			return { kind: "tsx", parserLanguage: parserLanguage(grammar(TypeScript, "tsx")) };
 		case ".js":
 		case ".jsx":
 		case ".mjs":
@@ -167,8 +151,7 @@ export function makeParser(language: unknown): Parser {
 	const parserLanguage = isParserLanguage(language)
 		? language
 		: { language } satisfies ParserLanguage;
-	const ParserCtor = parserLanguage.ParserCtor ?? Parser;
-	const parser = new ParserCtor();
+	const parser = new Parser();
 	parser.setLanguage(parserLanguage.language as never);
 	return parser;
 }

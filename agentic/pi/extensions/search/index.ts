@@ -482,10 +482,15 @@ export default async function (pi: ExtensionAPI) {
 			};
 			// Fire-and-forget: reconciliation runs in background, errors silently ignored
 			// to avoid crashing the search tool
-			reconcileIndexAsync(db, repoRoot, outline, updateProgress).catch(() => {
-				// Reconciliation failed silently - index still usable from ensureFullIndex()
-				if (ctx?.hasUI) ctx.ui.setWorkingMessage(undefined);
-			});
+			void reconcileIndexAsync(db, repoRoot, outline, updateProgress).then(
+				() => {
+					if (ctx?.hasUI) ctx.ui.setWorkingMessage(undefined);
+				},
+				() => {
+					// Reconciliation failed silently - index still usable from ensureFullIndex()
+					if (ctx?.hasUI) ctx.ui.setWorkingMessage(undefined);
+				},
+			);
 
 			// --- Definition lookup ---
 			let defResults: { file: string; line: number; kind: string; name: string; parent: string | null }[] = [];

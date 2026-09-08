@@ -117,9 +117,12 @@ npm install
 ```
 
 `node_modules/` and `package-lock.json` are git-ignored. The native tree-sitter
-grammars compile during `npm install`; on a fresh machine you need a working C
-toolchain.
-
+ grammars compile during `npm install`; on a fresh machine you need a working C
+ toolchain. On Linux ARM64, `agentic/pi/setup.sh` deliberately rebuilds
+`tree-sitter-typescript` from source with C++20 and then loads it under Node 24;
+the published 0.23.2 ARM64 artifact is not trusted because it was observed to be
+x86-64. This source-build path has not been live-verified on the Spark from this
+checkout, so a successful local install is not a claim of Spark deployment.
 ## Consumers
 
 - `agentic/pi/extensions/read/` - file reader with outline-on-overflow.
