@@ -1306,18 +1306,22 @@ export default function (pi: ExtensionAPI) {
 				return lines.join("\n");
 			};
 
+			// Pi stacks renderCall and renderResult inside one box, and the call row
+			// above us already names the child (`subagent builder1: <task> [user]`),
+			// so the result must not repeat that identity line. It adds only what the
+			// call row cannot know yet: failures, model attempts, and the output.
 			const r = details;
 			const isError = isFailedResult(r);
-			const icon = isError ? theme.fg("error", "✗") : theme.fg("success", "✓");
 			const displayItems = getDisplayItems(r.messages, (r as any).partialResults);
 			const finalOutput = getFinalOutput(r.messages);
+			const modelAttemptSummary = formatModelAttempts(r.modelAttempts);
+			const failureLine = `${theme.fg("error", "✗ failed")}${
+				r.stopReason ? ` ${theme.fg("error", `[${r.stopReason}]`)}` : ""
+			}`;
 
 			if (expanded) {
 				const container = new Container();
-				let header = `${icon} ${theme.fg("toolTitle", theme.bold(r.sessionLabel ?? r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
-				if (isError && r.stopReason) header += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
-				container.addChild(new Text(header, 0, 0));
-				const modelAttemptSummary = formatModelAttempts(r.modelAttempts);
+				if (isError) container.addChild(new Text(failureLine, 0, 0));
 				if (modelAttemptSummary)
 					container.addChild(new Text(theme.fg("dim", `Models: ${modelAttemptSummary}`), 0, 0));
 				if (isError && r.errorMessage)
@@ -1353,14 +1357,17 @@ export default function (pi: ExtensionAPI) {
 				return container;
 			}
 
-			let text = `${icon} ${theme.fg("toolTitle", theme.bold(r.sessionLabel ?? r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
-			if (isError && r.stopReason) text += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
-			const modelAttemptSummary = formatModelAttempts(r.modelAttempts);
-			if (modelAttemptSummary) text += `\n${theme.fg("dim", `Models: ${modelAttemptSummary}`)}`;
-			if (isError && r.errorMessage) text += `\n${theme.fg("error", `Error: ${r.errorMessage}`)}`;
-			else if (displayItems.length === 0) text += `\n${theme.fg("muted", "(no output)")}`;
+			// Live view while the child is still running. Pi tints the box with the
+			// pending background for us, so no "running" marker is needed here —
+			// just the tail of what the child has done so far. (A green ✓ here was
+			// both a duplicate of the call row and a promise the run had not kept.)
+			let text = "";
+			if (isError) text += `${failureLine}\n`;
+			if (modelAttemptSummary) text += `${theme.fg("dim", `Models: ${modelAttemptSummary}`)}\n`;
+			if (isError && r.errorMessage) text += `${theme.fg("error", `Error: ${r.errorMessage}`)}\n`;
+			if (displayItems.length === 0) text += theme.fg("muted", "(no output yet)");
 			else {
-				text += `\n${renderDisplayItems(displayItems, COLLAPSED_ITEM_COUNT)}`;
+				text += renderDisplayItems(displayItems, COLLAPSED_ITEM_COUNT);
 				if (displayItems.length > COLLAPSED_ITEM_COUNT) text += `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
 			}
 			const usageStr = formatUsageStats(r.usage, r.model);
