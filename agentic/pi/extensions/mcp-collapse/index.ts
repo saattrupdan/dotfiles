@@ -167,11 +167,13 @@ export function summarizeResult(result: ToolResult): string {
 	const textBlocks = result.content
 		.filter((block): block is { type: "text"; text: string } => block.type === "text")
 		.filter((block) => !TOOLCALLID_MARKER.test(block.text.trim()));
+	const text = textBlocks.map((block) => block.text).join("\n");
+	if (!text.trim()) return summarize(resultText(result));
 	for (const block of textBlocks) {
 		const parsedSummary = summarizeJson(block.text);
 		if (parsedSummary !== undefined) return parsedSummary;
 	}
-	return summarize(textBlocks.map((block) => block.text).join("\n"));
+	return summarize(text);
 }
 
 function prettyText(text: string): string {
@@ -221,8 +223,7 @@ function makeRenderCall(name: string) {
 }
 
 export function collapsedSummary(name: string, result: ToolResult): string {
-	if (result.details?.outputGuard?.truncated) return "Completed (output truncated)";
-	return FIXED_RESULT_SUMMARY[name] ?? summarizeResult(result);
+	return FIXED_RESULT_SUMMARY[name] ?? (result.details?.outputGuard?.truncated ? "Completed (output truncated)" : summarizeResult(result));
 }
 
 /** renderResult: one-line "✓ summary" when collapsed; full output when expanded or on error. */

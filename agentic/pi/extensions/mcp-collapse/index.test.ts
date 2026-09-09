@@ -43,6 +43,19 @@ test("does not guess a count for truncated Tavily output", () => {
 	assert.equal(collapsedSummary("tavily_search", result([{ type: "text", text: incomplete }], { outputGuard: { truncated: true } })), summary);
 });
 
+test("preserves fixed memory summaries for truncated results", () => {
+	const truncated = result([{ type: "text", text: "partial memory result" }], { outputGuard: { truncated: true } });
+
+	assert.equal(collapsedSummary("memory_query", truncated), "Remembered a thing");
+});
+
+test("keeps image-only results in the collapsed fallback", () => {
+	const image = result([{ type: "image", mimeType: "image/png" }]);
+	assert.equal(summarizeResult(image), "[image: image/png]");
+	assert.equal(collapsedSummary("some_tool", image), "[image: image/png]");
+	assert.equal(summarizeResult(result([{ type: "image" }])), "[image: ?]");
+});
+
 test("keeps safe fallback and existing scalar summaries", () => {
 	assert.equal(summarizeResult(result([{ type: "text", text: "Completed successfully\nwith details" }])), "Completed successfully");
 	assert.equal(summarizeResult(result([{ type: "text", text: "" }])), "Done");
