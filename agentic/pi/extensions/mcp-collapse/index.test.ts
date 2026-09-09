@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { collapsedSummary, guardMcpGatewayExecute, summarize, summarizeResult } from "./index.ts";
+import {
+	collapsedSummary,
+	guardMcpGatewayExecute,
+	summarize,
+	summarizeResult,
+	wrapMcpAdapterPi,
+} from "./index.ts";
 
 const tavily = (results: unknown[]) => JSON.stringify({ query: "pi", results });
 
@@ -85,6 +91,24 @@ test("rejects gateway calls for currently promoted direct tools without executin
 	assert.match(rejected.content[0].type === "text" ? rejected.content[0].text : "", /not contacted/i);
 });
 
+test("allows recognized gateway actions to take precedence over direct tools", async () => {
+	const directTools = new Set(["memory_query"]);
+	const calls: unknown[][] = [];
+	const gateway = guardMcpGatewayExecute(async (...args) => {
+		calls.push(args);
+		return result([{ type: "text", text: "gateway result" }]);
+	}, directTools);
+
+	for (const action of ["ui-messages", "auth-start", "auth-complete"]) {
+		await gateway(`call-${action}`, { action, tool: "memory_query" });
+	}
+	assert.equal(calls.length, 3);
+
+	const unknownAction = await gateway("call-unknown", { action: "not-an-action", tool: "memory_query" });
+	assert.equal(unknownAction.details?.error, "direct_tool_use_required");
+	assert.equal(calls.length, 3);
+});
+
 test("allows gateway discovery and non-promoted tool calls", async () => {
 	const directTools = new Set(["memory_query"]);
 	const calls: unknown[][] = [];
@@ -96,4 +120,71 @@ test("allows gateway discovery and non-promoted tool calls", async () => {
 	await gateway("call-2", { search: "calendar" });
 	await gateway("call-3", { tool: "calendar_list", args: {} });
 	assert.equal(calls.length, 2);
+});
+
+test("clears promoted tools on fallback demotion and re-promotes them", async () => {
+	type TestResult = { content: Array<{ type: "text"; text: string }>; details?: Record<string, unknown> };
+	type TestTool = {
+		name: string;
+		label?: string;
+		execute?: (...args: unknown[]) => Promise<TestResult>;
+	};
+
+	const registered: TestTool[] = [];
+	let activeTools = ["mcp", "memory_query"];
+	let contacted = 0;
+	const host = {
+		registerTool(tool: unknown) {
+			registered.push(tool as TestTool);
+		},
+		getActiveTools() {
+			return activeTools;
+		},
+		setActiveTools(next: string[]) {
+			activeTools = next;
+		},
+	};
+	const adapter = wrapMcpAdapterPi(host as never) as unknown as {
+		registerTool(tool: TestTool): void;
+		unregisterTool(name: string): boolean;
+		getActiveTools(): string[];
+		setActiveTools(names: string[]): void;
+	};
+
+	adapter.registerTool({
+		name: "memory_query",
+		label: "MCP: memory_query",
+		execute: async () => result([{ type: "text", text: "direct result" }]),
+	});
+	adapter.registerTool({
+		name: "mcp",
+		label: "MCP",
+		execute: async () => {
+			contacted += 1;
+			return result([{ type: "text", text: "server result" }]);
+		},
+	});
+	const gateway = registered.find((tool) => tool.name === "mcp");
+	assert.ok(gateway?.execute);
+
+	await gateway.execute("call-1", { tool: "memory_query" });
+	assert.equal(contacted, 0);
+
+	// This is the adapter's fallback path when the host has no unregisterTool.
+	const unregistered = adapter.unregisterTool("memory_query");
+	assert.equal(unregistered, false);
+	const current = adapter.getActiveTools();
+	adapter.setActiveTools(current.filter((name) => name !== "memory_query"));
+	assert.deepEqual(adapter.getActiveTools(), ["mcp"]);
+
+	await gateway.execute("call-2", { tool: "memory_query" });
+	assert.equal(contacted, 1);
+
+	adapter.registerTool({
+		name: "memory_query",
+		label: "MCP: memory_query",
+		execute: async () => result([{ type: "text", text: "direct result" }]),
+	});
+	await gateway.execute("call-3", { tool: "memory_query" });
+	assert.equal(contacted, 1);
 });

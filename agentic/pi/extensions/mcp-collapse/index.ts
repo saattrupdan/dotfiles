@@ -66,6 +66,8 @@ interface ToolResult {
 
 type ToolExecute = (...args: unknown[]) => Promise<ToolResult>;
 
+const MCP_GATEWAY_ACTIONS = new Set(["ui-messages", "auth-start", "auth-complete"]);
+
 /**
  * Keep promoted MCP tools on their direct route instead of sending them back through mcp().
  *
@@ -79,6 +81,8 @@ export function rejectPromotedDirectToolCall(
 	directToolNames: ReadonlySet<string>,
 ): ToolResult | undefined {
 	if (!params || typeof params !== "object" || Array.isArray(params)) return undefined;
+	const action = (params as { action?: unknown }).action;
+	if (typeof action === "string" && MCP_GATEWAY_ACTIONS.has(action)) return undefined;
 	const toolName = (params as { tool?: unknown }).tool;
 	if (typeof toolName !== "string" || !directToolNames.has(toolName)) return undefined;
 
@@ -372,27 +376,24 @@ function suppressStaleCtxConsoleNoise(): void {
 	target[STALE_CONSOLE_PATCHED] = true;
 }
 
-export default function (pi: ExtensionAPI) {
-	suppressStaleCtxConsoleNoise();
-
-	// Keep this registry alongside the adapter's tool registry. The adapter refreshes direct
-	// tools by registering replacements and unregistering stale names, so intercept both paths.
-	// The gateway wrapper closes over this live set and therefore also handles refreshes that
-	// happen after its initial registration.
-	const directToolNames = new Set<string>();
-
+export function wrapMcpAdapterPi(
+	pi: ExtensionAPI,
+	directToolNames = new Set<string>(),
+): ExtensionAPI {
 	// Install the adapter against a Proxy that injects our renderers into every MCP direct
 	// tool as it is registered. Everything else passes straight through to the real API.
-	const wrapped = new Proxy(pi, {
+	return new Proxy(pi, {
 		get(target, prop) {
 			if (prop === "unregisterTool") {
 				return (name: unknown) => {
 					if (typeof name !== "string") return false;
+					// The adapter calls this even when the host lacks unregisterTool and falls back
+					// to removing the name from the active-tool list. Clear the mirror on the
+					// attempt, not only after a host unregister succeeds.
+					directToolNames.delete(name);
 					const unregisterTool = Reflect.get(target, prop, target);
 					if (typeof unregisterTool !== "function") return false;
-					const result = (unregisterTool as (toolName: string) => unknown).call(target, name);
-					if (result === true) directToolNames.delete(name);
-					return result;
+					return (unregisterTool as (toolName: string) => unknown).call(target, name);
 				};
 			}
 			if (prop === "on") {
@@ -441,6 +442,9 @@ export default function (pi: ExtensionAPI) {
 			return Reflect.get(target, prop, target);
 		},
 	});
+}
 
-	mcpAdapter(wrapped);
+export default function (pi: ExtensionAPI) {
+	suppressStaleCtxConsoleNoise();
+	mcpAdapter(wrapMcpAdapterPi(pi));
 }
