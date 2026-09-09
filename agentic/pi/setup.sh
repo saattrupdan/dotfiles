@@ -214,6 +214,17 @@ fi
 
 echo
 
+# --- 2c. Local SearXNG prerequisite ----------------------------------------
+# Provision the private search secret and validate the compose file when Docker
+# is available. This is intentionally non-fatal: a fresh Pi setup must not
+# require Docker, and it must not start a service as a side effect.
+searxng_setup="$SCRIPT_DIR/services/searxng/setup.sh"
+if [ -x "$searxng_setup" ]; then
+  "$searxng_setup" || echo "!!! SearXNG prerequisites deferred; run $searxng_setup when Docker is available" >&2
+fi
+
+echo
+
 # --- 3. Node -----------------------------------------------------------------
 
 # IMPORTANT: the native modules (better-sqlite3, tree-sitter) are node-gyp

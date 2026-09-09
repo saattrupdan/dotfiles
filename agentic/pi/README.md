@@ -21,8 +21,9 @@ Each subdirectory under `extensions/` is a self-contained pi extension. They
 fall into three categories:
 
 - **Tools the agent calls** — `read`, `skill`, `search`, `code-tree`,
-  `web-browse`, `subagent`. (Web search is no longer a local extension — it's
-  the `tavily_search` MCP tool; see below.)
+  `web-browse`, `web-search`, `subagent`. Web search currently has both the
+  pre-cutover local `web_search` extension and the active `tavily_search` MCP
+  tool; see below.
 - **Behavioural guardrails** (no tools registered) — `no-repeat`, `caffeinate`.
 - **Shared internal library** — `_outliner` (consumed by `read` and `search`).
 
@@ -89,15 +90,23 @@ counts per directory. The agent probes deeper by passing `path` and/or
 `.gitignore` is honoured automatically; falls back to a filesystem walk
 outside a git repo.
 
-### Web search (`tavily_search`, MCP)
+### Web search (`web_search`, pre-cutover)
 
-Web search is not a local extension. It's provided by the **Tavily MCP
-server**, wired through `pi-mcp-adapter` and configured in `mcp.json`. Tavily
-is `eager` (always-on) with `directTools: ["tavily_search"]`, so only the
-single `tavily_search` tool is exposed as a first-class tool (Tavily's other
-MCP tools are hidden). Access-controlled the same way as any tool: only agents
-whose frontmatter lists `tavily_search` in `tools:` see it (in this config, the
-`explorer` subagent). The API key is read at runtime from
+The new native `web_search` extension calls a private SearXNG container at
+`http://127.0.0.1:8888`. Start and smoke-test it with
+`services/searxng/{setup,start,smoke}.sh`; its operation, immutable image pin,
+loopback binding, privacy limits, and troubleshooting are documented in
+[`services/searxng/README.md`](services/searxng/README.md). The extension
+supports bounded result counts, SearXNG language/categories/time filters and
+safe-search, and reports unavailable, malformed, empty, and partial responses
+separately.
+
+This is phase 1 and remains **pre-cutover**: the active web-search path is
+still the **Tavily MCP server**, wired through `pi-mcp-adapter` and configured
+in `mcp.json`. Tavily is `eager` (always-on) with
+`directTools: ["tavily_search"]`, so only its single search tool is exposed.
+Do not remove Tavily until the local service has been validated and compared.
+The Tavily API key is read at runtime from
 `~/.pi/agent/secrets/tavily-api-key` via the `!cat …` marker in `mcp.json`.
 
 ### `web-browse`

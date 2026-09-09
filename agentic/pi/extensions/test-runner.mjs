@@ -10,3 +10,4 @@ const jiti = createJiti(import.meta.url, { moduleCache: false });
 await jiti.import(path.join(root, "_outliner", "outliner.test.ts"), { default: false });
 await jiti.import(path.join(root, "search", "index-store.test.ts"), { default: false });
 await jiti.import(path.join(root, "mcp-collapse", "index.test.ts"), { default: false });
+await jiti.import(path.join(root, "web-search", "index.test.ts"), { default: false });

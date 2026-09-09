@@ -1,0 +1,15 @@
+# Private, local-only SearXNG settings. Keep defaults unless a local override is
+# needed; the environment supplied by the scripts provides the secret and bind.
+use_default_settings: true
+
+search:
+  autocomplete: ""
+  formats:
+    - html
+    - json
+
+server:
+  public_instance: false
+  image_proxy: false
+  bind_address: "0.0.0.0"
+  port: 8080

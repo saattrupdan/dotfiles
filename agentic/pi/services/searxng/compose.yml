@@ -1,0 +1,15 @@
+services:
+  searxng:
+    image: searxng/searxng:2026.9.8-3fdc6d753@sha256:3547509b419cd6a67333d6d68bd1ffad8d46d3669d82e7a7bd538f7b45827432
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8888:8080"
+    environment:
+      SEARXNG_BASE_URL: http://127.0.0.1:8888/
+      SEARXNG_BIND_ADDRESS: "0.0.0.0"
+      SEARXNG_PORT: "8080"
+      SEARXNG_PUBLIC_INSTANCE: "false"
+      SEARXNG_IMAGE_PROXY: "false"
+      SEARXNG_SECRET: "${SEARXNG_SECRET:?SEARXNG_SECRET must be exported by the service scripts}"
+    volumes:
+      - "./settings.yml:/etc/searxng/settings.yml:ro"
