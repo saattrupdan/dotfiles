@@ -1,10 +1,12 @@
 # Private SearXNG
 
-This is the phase-1 local search service for Pi. It publishes SearXNG only on
+This is Pi's local search service. It publishes SearXNG only on
 `127.0.0.1:8888` and is not reachable from the LAN. JSON is enabled for the
 Pi extension; autocomplete, the public-instance features, and image proxying
 are disabled. Search requests still go to the configured upstream engines, so
 this is a private interface, not an anonymity guarantee for those engines.
+Initial quality and latency results are recorded in
+[`VALIDATION.md`](VALIDATION.md).
 
 ## Operations
 

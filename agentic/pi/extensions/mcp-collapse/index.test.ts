@@ -9,18 +9,18 @@ import {
 	wrapMcpAdapterPi,
 } from "./index.ts";
 
-const tavily = (results: unknown[]) => JSON.stringify({ query: "pi", results });
+const searchPayload = (results: unknown[]) => JSON.stringify({ query: "pi", results });
 
 const result = (content: Array<{ type: "text"; text: string } | { type: "image"; mimeType?: string }>, details?: object) => ({
 	content,
 	details,
 });
 
-test("summarizes complete Tavily payloads by result count", () => {
-	assert.equal(summarizeResult(result([{ type: "text", text: tavily([]) }])), "Found 0 results");
-	assert.equal(summarizeResult(result([{ type: "text", text: tavily([{ title: "one" }]) }])), "Found 1 result");
+test("summarizes complete search payloads by result count", () => {
+	assert.equal(summarizeResult(result([{ type: "text", text: searchPayload([]) }])), "Found 0 results");
+	assert.equal(summarizeResult(result([{ type: "text", text: searchPayload([{ title: "one" }]) }])), "Found 1 result");
 	assert.equal(
-		summarizeResult(result([{ type: "text", text: tavily([{ title: "one" }, { title: "two" }]) }])),
+		summarizeResult(result([{ type: "text", text: searchPayload([{ title: "one" }, { title: "two" }]) }])),
 		"Found 2 results",
 	);
 });
@@ -31,22 +31,22 @@ test("ignores copy-paste markers and image blocks while finding JSON", () => {
 			result([
 				{ type: "image", mimeType: "image/png" },
 				{ type: "text", text: "[toolCallId: call-123]" },
-				{ type: "text", text: tavily([{ title: "one" }]) },
+				{ type: "text", text: searchPayload([{ title: "one" }]) },
 			]),
 		),
 		"Found 1 result",
 	);
 });
 
-test("does not guess a count for truncated Tavily output", () => {
-	const incomplete = tavily([{ title: "one" }]).slice(0, -2);
+test("does not guess a count for truncated search output", () => {
+	const incomplete = searchPayload([{ title: "one" }]).slice(0, -2);
 	const summary = summarizeResult(
 		result([{ type: "text", text: incomplete }], { outputGuard: { truncated: true } }),
 	);
 
 	assert.equal(summary, "Completed (output truncated)");
 	assert.doesNotMatch(summary, /^\{"query"/);
-	assert.equal(collapsedSummary("tavily_search", result([{ type: "text", text: incomplete }], { outputGuard: { truncated: true } })), summary);
+	assert.equal(collapsedSummary("search_mcp", result([{ type: "text", text: incomplete }], { outputGuard: { truncated: true } })), summary);
 });
 
 test("preserves fixed memory summaries for truncated results", () => {
@@ -77,7 +77,7 @@ test("keeps fixed memory summaries ahead of their payload", () => {
 });
 
 test("rejects gateway calls for currently promoted direct tools without executing them", async () => {
-	const directTools = new Set(["memory_query", "tavily_search"]);
+	const directTools = new Set(["memory_query", "search_mcp"]);
 	let contacted = false;
 	const gateway = guardMcpGatewayExecute(async () => {
 		contacted = true;

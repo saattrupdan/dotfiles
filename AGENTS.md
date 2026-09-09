@@ -16,6 +16,9 @@ deployed config land back in this repo).
 
 ## Conventions
 
+- **Work directly on `main`. Never create or switch to a feature branch, and never use a
+  git worktree in this repo.** The deployed configs point at the primary checkout;
+  running setup from a temporary worktree can repoint live symlinks to disposable paths.
 - Commit messages follow Conventional Commits (see recent history: `chore:`,
   `fix:`, `feat:`). Most dotfile syncs land as `chore: Update dot files`.
 - **Always push after committing** (`git push origin main`, direct to `main`). This repo

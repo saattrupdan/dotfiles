@@ -60,6 +60,23 @@ REPO_AGENTIC="$(cd "$SCRIPT_DIR/.." && pwd)"   # agentic/
 EXT_DIR="$SCRIPT_DIR/extensions"
 PI_HOME="$HOME/.pi/agent"
 
+# This script rewrites the live ~/.pi/agent symlinks. Running it from a feature
+# branch or linked worktree would point those links at temporary or disposable
+# paths, breaking Pi when that checkout disappears. This dotfiles repo is always
+# maintained directly on the primary main checkout.
+REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -n "$REPO_ROOT" ]; then
+  if [ -f "$REPO_ROOT/.git" ]; then
+    echo "error: refusing to run Pi setup from a linked git worktree: $REPO_ROOT" >&2
+    exit 1
+  fi
+  branch="$(git -C "$REPO_ROOT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+  if [ "$branch" != "main" ]; then
+    echo "error: refusing to run Pi setup from branch '${branch:-detached HEAD}'; switch to main" >&2
+    exit 1
+  fi
+fi
+
 INSTALL_CMD="install"
 SKIP_BIN=0
 BIN_ONLY=0
@@ -188,31 +205,13 @@ fi
 
 echo
 
-# --- 2b. MCP secrets --------------------------------------------------------
-# mcp.json is committed, so per-server secrets are kept out of git and read at
-# launch via `!cat` command markers. Provision the referenced secret files here.
-# This dir is outside the repo (never committed).
+# --- 2b. Local service secrets ---------------------------------------------
+# Service secrets live outside the repo and are never committed.
 
-echo "=== Setting up MCP secrets ==="
+echo "=== Setting up local service secrets ==="
 SECRETS_DIR="$PI_HOME/secrets"
 mkdir -p "$SECRETS_DIR"
 chmod 700 "$SECRETS_DIR"
-
-tavily_secret="$SECRETS_DIR/tavily-api-key"
-if [ -s "$tavily_secret" ]; then
-  echo "tavily-api-key already present — skipping"
-else
-  read -rp "Tavily API key (blank to skip; tavily search stays unconfigured): " tavily_key
-  if [ -n "$tavily_key" ]; then
-    printf '%s' "$tavily_key" > "$tavily_secret"
-    chmod 600 "$tavily_secret"
-    echo "--- wrote $tavily_secret"
-  else
-    echo "skipped — tavily will fail to start until $tavily_secret exists"
-  fi
-fi
-
-echo
 
 # --- 2c. Local SearXNG prerequisite ----------------------------------------
 # Provision the private search secret and validate the compose file when Docker

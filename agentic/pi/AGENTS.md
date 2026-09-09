@@ -43,7 +43,7 @@ agentic/pi/
 | ---------- | ---------------------------------------------------------------- | -------- | --------------------------------------------------------------------------------- |
 | `planner`  | Turns requests into ordered, parallel-friendly plans. Read-only. | No       | `read`, `memory_query`, `question`                                     |
 | `builder`  | Implements one scoped code change. Commits before exiting.       | **Yes**  | `search`, `read`, `write`, `edit`, `bash`, `memory_query`, `question`  |
-| `explorer` | Read-only navigation of local codebase and the web.              | No       | `code_tree`, `search`, `read`, `web_browse`, `tavily_search`, `memory_query`, `question` |
+| `explorer` | Read-only navigation of local codebase and the web.              | No       | `code_tree`, `search`, `read`, `web_browse`, `web_search`, `memory_query`, `question` |
 | `reviewer` | Audits recent commits, produces verdict.                         | No       | `read`, `search`, `bash`, `memory_query`, `question`                   |
 
 Only the **orchestrator** (you) may call `subagent`. Subagents may not delegate further.
@@ -104,8 +104,10 @@ Omitted = all discoverable; empty array = none.
   the dotfiles repo is the source of truth. Commit changes there.
 - **`SYSTEM.md` is intercepted** by the `read` extension — don't expect verbatim
   content.
-- **Builders run in isolated git worktrees.** They must commit before exiting. Parallel
-  builders are safe as long as scopes are disjoint.
+- **Builders normally run in isolated git worktrees.** They must commit before exiting.
+  However, when modifying this dotfiles repo itself, never invoke a worktree builder:
+  work directly on `main` as required by the root `AGENTS.md`. Running Pi setup from a
+  temporary worktree repoints the live `~/.pi/agent` symlinks to disposable paths.
 - **No pagination on `read`.** Use `symbol=` or `search` to locate content in large files.
 
 ### User questions

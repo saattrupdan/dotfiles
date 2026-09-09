@@ -47,7 +47,6 @@ const TOOL_LABELS: Record<string, string> = {
 	question: "Questioning...",
 	web_browse: "Browsing...",
 	web_search: "Searching...",
-	tavily_search: "Googling...",
 	subagent: "Whipping the subagents...",
 	// MCP tools (understory memory)
 	memory_query: "Remembering...",

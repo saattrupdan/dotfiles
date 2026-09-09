@@ -2,8 +2,8 @@
  * Collapse MCP tool call + result display to a one-line summary, expandable with Ctrl+O.
  *
  * Problem: pi-mcp-adapter renders every MCP tool call with its full argument JSON and
- * dumps the raw result (first three lines + "(Ctrl+O to expand)"). For chatty tools like
- * `tavily_search` or the Understory `memory_*` tools this floods the transcript.
+ * dumps the raw result (first three lines + "(Ctrl+O to expand)"). For chatty result-heavy tools or the Understory `memory_*` tools this floods the
+ * transcript.
  *
  * We never edit node_modules, and a *separate* extension cannot reach another extension's
  * registered tool definitions — pi keeps each extension's tool registry siloed, so there
