@@ -57,7 +57,10 @@ interface ResultOptions {
 type ContentBlock = { type: "text"; text: string } | { type: "image"; mimeType?: string };
 interface ToolResult {
 	content: ContentBlock[];
-	details?: { error?: unknown };
+	details?: {
+		error?: unknown;
+		outputGuard?: { truncated?: boolean };
+	};
 }
 
 const MAX_SUMMARY_CHARS = 80;
@@ -115,26 +118,37 @@ function count(n: number, noun: string): string {
 	return `${n} ${noun}${n === 1 ? "" : "s"}`;
 }
 
+function summarizeParsed(parsed: unknown): string | undefined {
+	if (Array.isArray(parsed)) return count(parsed.length, "item");
+	if (parsed && typeof parsed === "object") {
+		const obj = parsed as Record<string, unknown>;
+		if (Array.isArray(obj.results)) return `Found ${count(obj.results.length, "result")}`;
+		for (const key of ["answer", "message", "summary", "content", "text"]) {
+			const value = obj[key];
+			if (typeof value === "string" && value.trim()) return oneLine(value);
+		}
+		return "Done";
+	}
+	if (typeof parsed === "string" && parsed.trim()) return oneLine(parsed);
+	return undefined;
+}
+
+function summarizeJson(text: string): string | undefined {
+	try {
+		return summarizeParsed(JSON.parse(text.trim()));
+	} catch {
+		return undefined;
+	}
+}
+
 /** Best-effort one-line summary of a tool result for the collapsed view. */
-function summarize(text: string): string {
+export function summarize(text: string): string {
 	const trimmed = text.trim();
 	if (!trimmed) return "Done";
-	try {
-		const parsed: unknown = JSON.parse(trimmed);
-		if (Array.isArray(parsed)) return count(parsed.length, "item");
-		if (parsed && typeof parsed === "object") {
-			const obj = parsed as Record<string, unknown>;
-			if (Array.isArray(obj.results)) return `Found ${count(obj.results.length, "result")}`;
-			for (const key of ["answer", "message", "summary", "content", "text"]) {
-				const value = obj[key];
-				if (typeof value === "string" && value.trim()) return oneLine(value);
-			}
-			return "Done";
-		}
-		if (typeof parsed === "string" && parsed.trim()) return oneLine(parsed);
-	} catch {
-		// Not JSON — fall through to the first non-empty line of raw text.
-	}
+	const parsedSummary = summarizeJson(trimmed);
+	if (parsedSummary !== undefined) return parsedSummary;
+
+	// Not JSON — fall through to the first non-empty line of raw text.
 	const firstLine = trimmed.split("\n").map((line) => line.trim()).find(Boolean);
 	return firstLine ? oneLine(firstLine) : "Done";
 }
@@ -144,6 +158,20 @@ function resultText(result: ToolResult): string {
 		.filter((block) => !(block.type === "text" && TOOLCALLID_MARKER.test(block.text.trim())))
 		.map((block) => (block.type === "text" ? block.text : `[image: ${block.mimeType ?? "?"}]`))
 		.join("\n");
+}
+
+/** Summarize text blocks independently before falling back to their joined text. */
+export function summarizeResult(result: ToolResult): string {
+	if (result.details?.outputGuard?.truncated) return "Completed (output truncated)";
+
+	const textBlocks = result.content
+		.filter((block): block is { type: "text"; text: string } => block.type === "text")
+		.filter((block) => !TOOLCALLID_MARKER.test(block.text.trim()));
+	for (const block of textBlocks) {
+		const parsedSummary = summarizeJson(block.text);
+		if (parsedSummary !== undefined) return parsedSummary;
+	}
+	return summarize(textBlocks.map((block) => block.text).join("\n"));
 }
 
 function prettyText(text: string): string {
@@ -192,6 +220,11 @@ function makeRenderCall(name: string) {
 	};
 }
 
+export function collapsedSummary(name: string, result: ToolResult): string {
+	if (result.details?.outputGuard?.truncated) return "Completed (output truncated)";
+	return FIXED_RESULT_SUMMARY[name] ?? summarizeResult(result);
+}
+
 /** renderResult: one-line "✓ summary" when collapsed; full output when expanded or on error. */
 function colourPrefix(line: string, theme: Theme): string {
 	if (line.startsWith("✓")) {
@@ -214,7 +247,7 @@ function makeRenderResult(name: string) {
 			const lines = prettyText(text).split("\n").map((line) => colourPrefix(line, theme));
 			return new Text(lines.join("\n"), 0, 0);
 		}
-		const summary = FIXED_RESULT_SUMMARY[name] ?? summarize(text);
+		const summary = collapsedSummary(name, result);
 		return new Text(colourPrefix(`✓ ${summary}`, theme), 0, 0);
 	};
 }
