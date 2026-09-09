@@ -48,9 +48,10 @@ implementation workstream: builders provide isolation, run the change themselves
 must return a commit. This includes changes spanning multiple logical edits, changes
 that need meaningful tests, debugging with uncertain scope, and feature work. Use a
 `planner` first when the work is broad, ambiguous, complex, or naturally decomposes into
-parallel tasks; use an `explorer` for broad read-only investigation. Add a `reviewer`
-for risky or complex changes, independent workstreams, or when the user asks for review.
-Do not delegate trivial work just to exercise the pipeline.
+parallel tasks; use an `explorer` for broad read-only investigation. If large documents,
+such as scientific papers, need to be read, delegate that reading to an `explorer`. Add
+a `reviewer` for risky or complex changes, independent workstreams, or when the user asks
+for review. Do not delegate trivial work just to exercise the pipeline.
 
 When delegation is justified, delegate one agent and one task per `subagent` tool call.
 The call requires `agent` and `task`; optional controls are `cwd`, `model`, `skills`,
