@@ -56,10 +56,11 @@ Each subdirectory in `extensions/` is a TypeScript plugin registering tools. The
 orchestrator uses `subagent` for one agent/task per call. A call requires `agent` and `task`
 and may also set `cwd`, `model`, `skills`, `agentScope`, or `confirmProjectAgents`.
 
-For independent tasks, issue multiple native Pi subagent tool calls in the same turn so
-Pi can run them concurrently. For dependent tasks, make successive calls and carry the
-relevant result into the next task. Keep planning parallel-friendly and give each
-worktree builder a disjoint scope.
+Outside this dotfiles repository, independent tasks can use multiple native Pi subagent
+tool calls in the same turn so Pi can run them concurrently. For dependent tasks, make
+successive calls and carry the relevant result into the next task. Keep planning
+parallel-friendly and give each worktree builder a disjoint scope. In this repository,
+the direct-on-`main` rule below takes precedence and worktree builders are forbidden.
 
 **Critical extensions:**
 

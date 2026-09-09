@@ -214,8 +214,8 @@ function compactResult(result: SearchResult, index: number): string {
 function renderOutcome(params: SearchParams, outcome: SearchOutcome): string {
 	const lines = [`Search ${outcome.status}: ${params.query}`];
 	if (outcome.error) lines.push(outcome.error);
-	if (outcome.total !== undefined) lines.push(`SearXNG reported ${outcome.total} total results.`);
-	if (outcome.results.length) lines.push(...outcome.results.map(compactResult));
+	if (outcome.total !== undefined) lines.push(`SearXNG reported ${outcome.total} total ${outcome.total === 1 ? "result" : "results"}.`);
+	if (outcome.results.length) lines.push(...outcome.results.map((result, index) => compactResult(result, index + 1)));
 	if (outcome.warnings.length) lines.push(`Engine warnings: ${outcome.warnings.join(", ")}`);
 	return lines.join("\n");
 }
@@ -252,7 +252,8 @@ export default function (pi: ExtensionAPI) {
 			const status = details?.status ?? "ok";
 			if (status === "ok" || status === "partial_failure") {
 				const marker = status === "partial_failure" ? "⚠" : "✓";
-				return new Text(theme.fg(status === "partial_failure" ? "warning" : "success", `${marker} web search (${details?.resultCount ?? 0} results${status === "partial_failure" ? "; partial" : ""})`), 0, 0);
+				const count = details?.resultCount ?? 0;
+				return new Text(theme.fg(status === "partial_failure" ? "warning" : "success", `${marker} web search (${count} ${count === 1 ? "result" : "results"}${status === "partial_failure" ? "; partial" : ""})`), 0, 0);
 			}
 			return new Text(theme.fg("error", `✗ web search ${status}`), 0, 0);
 		},

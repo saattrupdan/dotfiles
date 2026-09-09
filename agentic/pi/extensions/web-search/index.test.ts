@@ -1,12 +1,49 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
+import registerWebSearch, {
 	buildSearchUrl,
 	executeSearch,
 	normalizeResults,
 	parseSearchResponse,
+	type SearchParams,
 } from "./index.ts";
+
+interface ToolResult {
+	content: Array<{ type: string; text?: string }>;
+	details?: { status?: string; resultCount?: number; warnings?: string[] };
+}
+
+interface RenderComponent {
+	render(width: number): string[];
+}
+
+interface RegisteredTool {
+	name: string;
+	execute(toolCallId: string, params: SearchParams, signal: AbortSignal): Promise<ToolResult>;
+	renderCall(args: Record<string, unknown>, theme: unknown): RenderComponent;
+	renderResult(result: ToolResult, options: unknown, theme: unknown): RenderComponent;
+}
+
+const plainTheme = {
+	fg: (_role: string, value: string) => value,
+	bold: (value: string) => value,
+};
+
+function captureTool(): RegisteredTool {
+	let registered: RegisteredTool | undefined;
+	registerWebSearch({
+		registerTool(tool: unknown) {
+			registered = tool as RegisteredTool;
+		},
+	} as never);
+	assert.ok(registered);
+	return registered;
+}
+
+function rendered(component: RenderComponent): string {
+	return component.render(200).join("\n");
+}
 
 test("buildSearchUrl maps SearXNG parameters and always requests JSON", () => {
 	const url = new URL(buildSearchUrl("http://127.0.0.1:8888", {
@@ -68,4 +105,49 @@ test("execution reports a timeout and aborts the request", async () => {
 		init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
 	}), 5);
 	assert.equal(outcome.status, "timeout");
+});
+
+test("execution propagates an external abort", async () => {
+	const controller = new AbortController();
+	let internalSignal: AbortSignal | undefined;
+	const pending = executeSearch({ query: "x" }, controller.signal, (_url, init) => new Promise<Response>((_resolve, reject) => {
+		internalSignal = init?.signal;
+		internalSignal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+	}), 1_000);
+	controller.abort();
+	const outcome = await pending;
+	assert.equal(outcome.status, "aborted");
+	assert.equal(internalSignal?.aborted, true);
+});
+
+test("registered tool limits results and renders one-based singular output", async () => {
+	const tool = captureTool();
+	assert.equal(tool.name, "web_search");
+	const originalFetch = globalThis.fetch;
+	globalThis.fetch = async () => new Response(JSON.stringify({
+		number_of_results: 1,
+		results: [
+			{ title: "First", url: "https://first.example", content: "first result" },
+			{ title: "Second", url: "https://second.example", content: "second result" },
+		],
+	}));
+	try {
+		const result = await tool.execute("call-1", { query: "test", max_results: 1 }, new AbortController().signal);
+		assert.equal(result.details?.resultCount, 1);
+		const output = result.content[0]?.text ?? "";
+		assert.match(output, /\n1\. First\n/);
+		assert.doesNotMatch(output, /\n0\./);
+		assert.doesNotMatch(output, /\n2\./);
+		assert.match(output, /1 total result\./);
+
+		const call = rendered(tool.renderCall({ query: "test" }, plainTheme));
+		assert.match(call, /web_search test/);
+		const collapsed = rendered(tool.renderResult(result, { expanded: false }, plainTheme));
+		assert.match(collapsed, /1 result\)/);
+		assert.doesNotMatch(collapsed, /1 results/);
+		const expanded = rendered(tool.renderResult(result, { expanded: true }, plainTheme));
+		assert.match(expanded, /1\. First/);
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
 });
