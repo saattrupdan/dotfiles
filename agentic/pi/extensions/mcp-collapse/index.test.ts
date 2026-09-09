@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { collapsedSummary, summarize, summarizeResult } from "./index.ts";
+import { collapsedSummary, guardMcpGatewayExecute, summarize, summarizeResult } from "./index.ts";
 
 const tavily = (results: unknown[]) => JSON.stringify({ query: "pi", results });
 
@@ -68,4 +68,32 @@ test("keeps fixed memory summaries ahead of their payload", () => {
 	assert.equal(collapsedSummary("memory_query", result([{ type: "text", text: "a result" }])), "Remembered a thing");
 	assert.equal(collapsedSummary("memory_add", result([{ type: "text", text: "stored" }])), "Stored a memory");
 	assert.equal(collapsedSummary("memory_update", result([{ type: "text", text: "updated" }])), "Updated a memory");
+});
+
+test("rejects gateway calls for currently promoted direct tools without executing them", async () => {
+	const directTools = new Set(["memory_query", "tavily_search"]);
+	let contacted = false;
+	const gateway = guardMcpGatewayExecute(async () => {
+		contacted = true;
+		return result([{ type: "text", text: "server result" }]);
+	}, directTools);
+
+	const rejected = await gateway("call-1", { tool: "memory_query", args: {} });
+	assert.equal(contacted, false);
+	assert.equal(rejected.details?.error, "direct_tool_use_required");
+	assert.match(rejected.content[0].type === "text" ? rejected.content[0].text : "", /call memory_query directly/i);
+	assert.match(rejected.content[0].type === "text" ? rejected.content[0].text : "", /not contacted/i);
+});
+
+test("allows gateway discovery and non-promoted tool calls", async () => {
+	const directTools = new Set(["memory_query"]);
+	const calls: unknown[][] = [];
+	const gateway = guardMcpGatewayExecute(async (...args) => {
+		calls.push(args);
+		return result([{ type: "text", text: "server result" }]);
+	}, directTools);
+
+	await gateway("call-2", { search: "calendar" });
+	await gateway("call-3", { tool: "calendar_list", args: {} });
+	assert.equal(calls.length, 2);
 });
