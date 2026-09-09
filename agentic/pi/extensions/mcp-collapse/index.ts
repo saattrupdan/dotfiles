@@ -60,6 +60,45 @@ interface ToolResult {
 	details?: {
 		error?: unknown;
 		outputGuard?: { truncated?: boolean };
+		[key: string]: unknown;
+	};
+}
+
+type ToolExecute = (...args: unknown[]) => Promise<ToolResult>;
+
+/**
+ * Keep promoted MCP tools on their direct route instead of sending them back through mcp().
+ *
+ * The adapter's gateway is still useful for discovery and for tools that are not promoted.
+ * Returning a result (rather than throwing) makes the instruction visible to the model in the
+ * normal tool-result channel, while the guard's position before `execute` means no MCP request
+ * is made for a promoted tool.
+ */
+export function rejectPromotedDirectToolCall(
+	params: unknown,
+	directToolNames: ReadonlySet<string>,
+): ToolResult | undefined {
+	if (!params || typeof params !== "object" || Array.isArray(params)) return undefined;
+	const toolName = (params as { tool?: unknown }).tool;
+	if (typeof toolName !== "string" || !directToolNames.has(toolName)) return undefined;
+
+	return {
+		content: [{
+			type: "text",
+			text: `MCP tool "${toolName}" is registered as a direct tool. Call ${toolName} directly instead of mcp({ tool: "${toolName}" }). The MCP server was not contacted.`,
+		}],
+		details: { error: "direct_tool_use_required", tool: toolName },
+	};
+}
+
+/** Guard a gateway execute function while leaving discovery/status and other calls untouched. */
+export function guardMcpGatewayExecute(
+	execute: ToolExecute,
+	directToolNames: ReadonlySet<string>,
+): ToolExecute {
+	return async (...args: unknown[]) => {
+		const rejection = rejectPromotedDirectToolCall(args[1], directToolNames);
+		return rejection ?? execute(...args);
 	};
 }
 
@@ -71,6 +110,8 @@ const MAX_SUMMARY_CHARS = 80;
 // notification (errors, "tools skipped", auth prompts) is ever suppressed.
 const MCP_STARTUP_BANNER = /^MCP: \d+(?:\/\d+)? servers connected \(\d+ tools?\)$/;
 const MCP_DIRECT_TOOL_LABEL = "MCP: ";
+const MCP_GATEWAY_NAME = "mcp";
+const MCP_GATEWAY_LABEL = "MCP";
 // Understory memory tools whose results cite the librarian's internal virtual paths. We
 // neutralize those paths in their execute() output (see file header for the why).
 const MEMORY_TOOLS = new Set(["memory_query", "memory_add", "memory_update"]);
@@ -334,10 +375,26 @@ function suppressStaleCtxConsoleNoise(): void {
 export default function (pi: ExtensionAPI) {
 	suppressStaleCtxConsoleNoise();
 
+	// Keep this registry alongside the adapter's tool registry. The adapter refreshes direct
+	// tools by registering replacements and unregistering stale names, so intercept both paths.
+	// The gateway wrapper closes over this live set and therefore also handles refreshes that
+	// happen after its initial registration.
+	const directToolNames = new Set<string>();
+
 	// Install the adapter against a Proxy that injects our renderers into every MCP direct
 	// tool as it is registered. Everything else passes straight through to the real API.
 	const wrapped = new Proxy(pi, {
 		get(target, prop) {
+			if (prop === "unregisterTool") {
+				return (name: unknown) => {
+					if (typeof name !== "string") return false;
+					const unregisterTool = Reflect.get(target, prop, target);
+					if (typeof unregisterTool !== "function") return false;
+					const result = (unregisterTool as (toolName: string) => unknown).call(target, name);
+					if (result === true) directToolNames.delete(name);
+					return result;
+				};
+			}
 			if (prop === "on") {
 				// Event handlers receive ctx as their 2nd arg. Substitute a ctx whose `ui.notify`
 				// filters the startup banner, so the adapter never emits it on the splash screen.
@@ -355,7 +412,9 @@ export default function (pi: ExtensionAPI) {
 					renderResult?: unknown;
 					execute?: (...args: unknown[]) => Promise<ToolResult>;
 				}) => {
-					if (typeof tool.label === "string" && tool.label.startsWith(MCP_DIRECT_TOOL_LABEL)) {
+					const isDirectTool = typeof tool.label === "string" && tool.label.startsWith(MCP_DIRECT_TOOL_LABEL);
+					if (isDirectTool) {
+						directToolNames.add(tool.name);
 						tool.renderCall = makeRenderCall(tool.name);
 						tool.renderResult = makeRenderResult(tool.name);
 						// For memory tools, strip the internal source-path affordance from the
@@ -364,6 +423,16 @@ export default function (pi: ExtensionAPI) {
 							const original = tool.execute;
 							tool.execute = async (...args: unknown[]) => neutralizeMemoryResult(await original(...args));
 						}
+					} else {
+						// A replacement with the same name is no longer a promoted MCP tool.
+						directToolNames.delete(tool.name);
+					}
+					if (
+						tool.name === MCP_GATEWAY_NAME
+						&& tool.label === MCP_GATEWAY_LABEL
+						&& typeof tool.execute === "function"
+					) {
+						tool.execute = guardMcpGatewayExecute(tool.execute, directToolNames);
 					}
 					return (target.registerTool as (t: unknown) => unknown)(tool);
 				};
