@@ -14,6 +14,8 @@
  * every call, so edits are picked up without a full rebuild.
  *
  * Beyond plain-text source, `read` also handles:
+ *   • Images (JPEG, PNG, GIF, WebP, HEIC/HEIF) → returned as image content; HEIC/HEIF
+ *     is converted to an orientation-corrected JPEG first.
  *   • Documents (PDF, DOCX, XLSX, PPTX, ODT, ODS, ODP) → converted to Markdown via the
  *     `docling` CLI, then rendered through the same outline/symbol pipeline.
  *   • URLs (http/https) → downloaded and converted to Markdown via docling,
@@ -37,6 +39,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { type Component, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+
+import { convertHeicToJpeg, isHeifImage } from "./heic.js";
 
 // ---------------------------------------------------------------------------
 // DOCX comment extraction
@@ -244,17 +248,18 @@ function cacheKey(sha: string, filePath: string, symbol: string | undefined): st
 // MIME sniff for binary / image detection
 // ---------------------------------------------------------------------------
 
-const IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp"]);
+const IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif"]);
 
 function isLikelyImage(filePath: string): boolean {
 	const ext = path.extname(filePath).toLowerCase();
 	if (!IMAGE_EXTENSIONS.has(ext)) return false;
 	try {
-		const buf = fs.readFileSync(filePath).slice(0, 8);
+		const buf = fs.readFileSync(filePath).subarray(0, 64);
 		if (buf[0] === 0xff && buf[1] === 0xd8) return true; // JPEG
 		if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return true; // PNG
 		if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return true; // GIF
 		if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46) return true; // RIFF/WebP
+		if ((ext === ".heic" || ext === ".heif") && isHeifImage(buf)) return true;
 		return false;
 	} catch {
 		return false;
@@ -524,13 +529,19 @@ function warmRenderHelpers(): void {
 // Tool definition
 // ---------------------------------------------------------------------------
 
-export default function (pi: ExtensionAPI): void {
+export interface ReadExtensionOverrides {
+	convertHeic?: typeof convertHeicToJpeg;
+}
+
+export default function (pi: ExtensionAPI, overrides: ReadExtensionOverrides = {}): void {
+	const heicConverter = overrides.convertHeic ?? convertHeicToJpeg;
 	pi.registerTool({
 		name: "read",
 		label: "read",
 		description:
 			"Read a file, document, web page, or list a directory. The `path` may be a local path or an http(s) URL.\n" +
 			"  • Path is a directory → truncated listing of entries (dirs first, then files).\n" +
+			"  • Image (JPEG, PNG, GIF, WebP, HEIC/HEIF) → returned as image content; HEIC/HEIF is converted to an orientation-corrected JPEG.\n" +
 			"  • Document (PDF, DOCX, XLSX, PPTX, ODT, ODS, ODP) or URL → converted to Markdown via docling, then rendered exactly like any Markdown file (outline for large ones; read a section with symbol=\"<heading>\"). Conversions are cached, so re-reading the same document/URL is cheap.\n" +
 			"  • No symbol, small file → verbatim contents.\n" +
 			"  • No symbol, large file → outline (module doc, classes/functions with signatures, type hints, and doc-first-line). Use the outline to pick a symbol.\n" +
@@ -624,20 +635,30 @@ export default function (pi: ExtensionAPI): void {
 			// fall through
 		}
 
-		// 2. Image passthrough — read binary and return as image block
+		// 2. Image passthrough — convert HEIC/HEIF to a supported, correctly
+		// oriented JPEG; return other supported image formats unchanged.
 		if (isLikelyImage(absolutePath)) {
-			const buffer = fs.readFileSync(absolutePath);
 			const ext = path.extname(absolutePath).toLowerCase();
+			const isHeic = ext === ".heic" || ext === ".heif";
+			let buffer: Buffer;
+			try {
+				buffer = isHeic
+					? await heicConverter(absolutePath, signal)
+					: fs.readFileSync(absolutePath);
+			} catch (err) {
+				return {
+					content: [{ type: "text", text: `Could not convert ${path.basename(absolutePath)} from HEIC: ${(err as Error).message}` }],
+					details: undefined,
+				};
+			}
 			const mimeType =
-				ext === ".jpg" || ext === ".jpeg"
+				isHeic || ext === ".jpg" || ext === ".jpeg"
 					? "image/jpeg"
 					: ext === ".png"
 						? "image/png"
 						: ext === ".gif"
 							? "image/gif"
-							: ext === ".webp"
-								? "image/webp"
-								: "application/octet-stream";
+							: "image/webp";
 			return {
 				content: [
 					{ type: "image", data: buffer.toString("base64"), mimeType },
