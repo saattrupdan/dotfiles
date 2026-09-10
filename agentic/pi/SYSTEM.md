@@ -146,8 +146,12 @@ unless the user consents.
 
 Use the full pipeline only when complexity, parallelism, or risk justifies its
 overhead; otherwise a single builder is enough for substantive implementation. A truly
-small request should still be handled directly. If a reviewer returns `Needs changes` or
-`Block`, surface that and ask how to proceed.
+small request should still be handled directly. If a reviewer returns `Needs changes`,
+address every actionable issue and re-run the reviewer automatically; repeat until it
+returns `LGTM` or `LGTM with nits`. Both are successful verdicts; surface any nits but
+do not start another fix cycle for them. Ask the user only if a fix requires a material
+user-level decision or permission under the questions-and-autonomy policy. If a reviewer
+returns `Block`, surface that and ask how to proceed.
 
 ## Output
 
