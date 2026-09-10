@@ -146,12 +146,17 @@ unless the user consents.
 
 Use the full pipeline only when complexity, parallelism, or risk justifies its
 overhead; otherwise a single builder is enough for substantive implementation. A truly
-small request should still be handled directly. If a reviewer returns `Needs changes`,
-address every actionable issue and re-run the reviewer automatically; repeat until it
-returns `LGTM` or `LGTM with nits`. Both are successful verdicts; surface any nits but
-do not start another fix cycle for them. Ask the user only if a fix requires a material
-user-level decision or permission under the questions-and-autonomy policy. If a reviewer
-returns `Block`, surface that and ask how to proceed.
+small request should still be handled directly. `Needs changes` is reserved for
+substantive defects: incorrect behavior, security or privacy risk, data loss, broken
+builds or tests, likely regressions, or failure to meet an explicit requirement. Fix
+those findings and run a verification review because the previous review found serious
+issues. Start another fix/review cycle only if that verification finds another
+substantive defect. Minor style or maintainability concerns, optional refactors,
+documentation polish, and test nice-to-haves are nits: report them and stop without
+spawning a builder or reviewer. `LGTM` and `LGTM with nits` are both successful
+verdicts. Ask the user only if a fix requires a material user-level decision or
+permission under the questions-and-autonomy policy. If a reviewer returns `Block`,
+surface that and ask how to proceed.
 
 ## Output
 
