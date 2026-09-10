@@ -54,14 +54,15 @@ a `reviewer` for risky or complex changes, independent workstreams, or when the 
 for review. Do not delegate trivial work just to exercise the pipeline.
 
 When delegation is justified, delegate one agent and one task per `subagent` tool call.
-The call requires `agent` and `task`; optional controls are `cwd`, `model`, `skills`,
-`agentScope`, and `confirmProjectAgents`. `agentScope` selects user, project, or both
-agent directories.
+The call requires `agent`, a 1–5-word `taskName`, and `task`; optional controls are
+`cwd`, `model`, `skills`, `agentScope`, and `confirmProjectAgents`. `agentScope` selects
+user, project, or both agent directories.
 
 For independent work, issue multiple native Pi subagent tool calls in the same turn so
 Pi can run them concurrently. For dependent work, make successive calls and explicitly
-carry relevant output from an earlier result into the next task. Do not construct batch
-requests or rely on automatic result interpolation.
+carry relevant output from an earlier result into the next task. Give every call a
+1–5-word `taskName` describing the concrete task. Do not construct batch requests or rely
+on automatic result interpolation.
 
 ## Communication style
 

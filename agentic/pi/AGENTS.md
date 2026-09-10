@@ -53,8 +53,9 @@ orchestrator has `memory_add` / `_update`.
 ## Extensions (tools)
 
 Each subdirectory in `extensions/` is a TypeScript plugin registering tools. The
-orchestrator uses `subagent` for one agent/task per call. A call requires `agent` and `task`
-and may also set `cwd`, `model`, `skills`, `agentScope`, or `confirmProjectAgents`.
+orchestrator uses `subagent` for one agent/task per call. A call requires `agent`, a
+1–5-word `taskName`, and `task`, and may also set `cwd`, `model`, `skills`, `agentScope`,
+or `confirmProjectAgents`.
 
 Outside this dotfiles repository, independent tasks can use multiple native Pi subagent
 tool calls in the same turn so Pi can run them concurrently. For dependent tasks, make
@@ -72,9 +73,10 @@ the direct-on-`main` rule below takes precedence and worktree builders are forbi
   through to the image reader.
 - **`skill`** — Loads a named skill's `SKILL.md` verbatim (no outlining, no truncation).
   Use this for skill content; `read` will truncate.
-- **`subagent`** — Delegates one agent/task per call. Optional call controls are `cwd`,
-  `model`, `skills`, `agentScope`, and `confirmProjectAgents`. Use multiple native calls
-  for concurrency and successive calls for sequencing.
+- **`subagent`** — Delegates one agent/task per call. Calls require `agent`, a 1–5-word
+  `taskName`, and `task`; optional controls are `cwd`, `model`, `skills`, `agentScope`,
+  and `confirmProjectAgents`. Use multiple native calls for concurrency and successive
+  calls for sequencing.
 - **`_outliner`** — Shared library (underscore prefix = not loaded as extension).
   Tree-sitter-based structural outliner for Python, TS/JS/Vue/Markdown.
 

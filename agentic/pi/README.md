@@ -116,8 +116,8 @@ and returns its stdout/stderr. Session state is preserved across calls by
 ### `subagent`
 
 Delegates one task to one specialised subagent per call. The required fields are
-`agent` and `task`; optional controls are `cwd`, `model`, `skills`, `agentScope`,
-and `confirmProjectAgents`.
+`agent`, a 1–5-word `taskName`, and `task`; optional controls are `cwd`, `model`,
+`skills`, `agentScope`, and `confirmProjectAgents`.
 
 For independent work, the orchestrator issues one call per agent/task and sends
 multiple native Pi tool calls in the same turn. Pi can then run those calls

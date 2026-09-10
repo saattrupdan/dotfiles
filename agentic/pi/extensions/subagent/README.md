@@ -10,11 +10,13 @@ Agents are discovered from `~/.pi/agent/agents/*.md` (user scope) and, when
 
 ## Tool calls
 
-Each call requires `agent` and `task`. The other fields are optional:
+Each call requires `agent`, a 1–5-word `taskName`, and `task`. The other fields
+are optional:
 
 ```json
 {
   "agent": "builder",
+  "taskName": "Fix parser",
   "task": "Implement the parser fix described in issue 123.",
   "cwd": "/path/to/repository",
   "model": "anthropic/claude-sonnet-4-5",
@@ -24,6 +26,8 @@ Each call requires `agent` and `task`. The other fields are optional:
 }
 ```
 
+- `taskName` is the concrete task label used in the child session, parent UI, and
+  worktree merge commit.
 - `cwd` selects the child process's working directory.
 - `model` selects the preferred model for this call.
 - `skills` adds named skills to the agent's frontmatter allow-list.
@@ -146,23 +150,23 @@ Invalid patterns are warned to stderr at load time and skipped. A missing
 
 When `worktree: true` is set, the subagent is spawned in a dedicated git
 worktree on a temporary branch. On successful child exit, the branch is merged
-back into the parent worktree's HEAD and the temporary worktree is cleaned up.
-Failed model retry attempts are discarded without merging or applying changes.
+back into the parent worktree's HEAD with `Merge <agent>: <taskName>` as the
+merge commit subject, and the temporary worktree is cleaned up. Failed model
+retry attempts are discarded without merging or applying changes.
 
 ## Session naming
 
 The parent names the child; the child does not name itself. Each spawn gets an
 ordinal per agent name, counted for the lifetime of the parent process, and the
-label is passed to the child in the environment:
+call's `taskName` becomes the concrete label passed to the child:
 
 ```
-PI_SUBAGENT_SESSION_NAME=builder2: <parent session name>
+PI_SUBAGENT_SESSION_NAME=builder2: Fix parser
 ```
 
 `extensions/conversation-name` applies that value as the child's session name and
 returns before its model naming call, so a child never spawns a nested `pi -p`
-just to title itself. While the parent session has no name yet, the label is the
-bare `builder2`. Ordinary sessions never see this variable.
+just to title itself. Ordinary sessions never see this variable.
 
 The same label is shown in the subagent tool's own rows, so parallel builders are
 tellable apart in the parent's UI.

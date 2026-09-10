@@ -36,7 +36,11 @@ import {
 import { interactiveQueue } from "../_interactive_queue/queue.ts";
 import { dispatchAsk } from "../question/index.ts";
 import { getPiInvocation } from "./pi-invocation.ts";
-import { createSubagentLabelCounter } from "./session-label.ts";
+import {
+	createSubagentLabelCounter,
+	normalizeSubagentTaskName,
+	SUBAGENT_TASK_NAME_PATTERN,
+} from "./session-label.ts";
 import { resolveSkillAllowList } from "./skill-scope.ts";
 
 const COLLAPSED_ITEM_COUNT = 10;
@@ -133,9 +137,8 @@ function formatToolCall(
 		}
 		case "subagent": {
 			const agent = (args.agent || "?") as string;
-			const task = (args.task || "") as string;
-			const preview = task.length > 80 ? `${task.slice(0, 80)}...` : task;
-			return themeFg("muted", "subagent ") + themeFg("accent", agent) + themeFg("dim", ` ${preview}`);
+			const taskName = normalizeSubagentTaskName((args.taskName || "...") as string);
+			return themeFg("muted", "subagent ") + themeFg("accent", agent) + themeFg("dim", `: ${taskName}`);
 		}
 		case "write": {
 			const rawPath = (args.file_path || args.path || "...") as string;
@@ -457,6 +460,7 @@ async function runSingleAgent(
 	agents: AgentConfig[],
 	agentName: string,
 	task: string,
+	taskName: string,
 	cwd: string | undefined,
 	signal: AbortSignal | undefined,
 	onUpdate: OnUpdateCallback | undefined,
@@ -947,7 +951,7 @@ async function runSingleAgent(
 								worktreeHandle,
 								`Discarded worktree ${worktreeHandle.branchName} after failed model attempt.`,
 							)
-							: await mergeAndCleanup(worktreeHandle);
+							: await mergeAndCleanup(worktreeHandle, agentName, taskName);
 						currentResult.worktreeCleanup = cleanup;
 						if (!modelAttemptFailed && !parentAborted && !cleanup.merged && !cleanup.skipped) {
 							currentResult.stderr = `${currentResult.stderr}\n[worktree] ${cleanup.message}`.trim();
@@ -1043,6 +1047,12 @@ const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
 
 const SubagentParams = Type.Object({
 	agent: Type.String({ description: "Name of the agent to invoke" }),
+	taskName: Type.String({
+		description: "Short name describing this task (1–5 words)",
+		minLength: 1,
+		maxLength: 80,
+		pattern: SUBAGENT_TASK_NAME_PATTERN,
+	}),
 	task: Type.String({ description: "Task to delegate to the agent" }),
 	agentScope: Type.Optional(AgentScopeSchema),
 	confirmProjectAgents: Type.Optional(
@@ -1058,6 +1068,7 @@ const SubagentParams = Type.Object({
 function buildSubagentDescription(): string {
 	const base = [
 		"Delegate one task to a specialized subagent with isolated context.",
+		"Give every call a 1–5-word taskName describing the concrete task.",
 		'Default agent scope is "user" (from ~/.pi/agent/agents).',
 		'To enable project-local agents in .pi/agents, set agentScope: "both" (or "project").',
 	].join(" ");
@@ -1105,15 +1116,9 @@ export default function (pi: ExtensionAPI) {
 			const confirmProjectAgents = params.confirmProjectAgents ?? true;
 			const sessionModel = modelToCliPattern(ctx.model);
 
-			// We own the child's name: it inherits `<agent><n>: <our name>` instead of
-			// generating one itself. An unnamed parent degrades to the bare `builder2`.
-			let parentName: string | undefined;
-			try {
-				parentName = ctx.sessionManager.getSessionName();
-			} catch {
-				// getSessionName unavailable - the label degrades to `builder2`
-			}
-			const sessionLabel = labelCounter.next(params.agent, parentName);
+			// We own the child's name: use the concrete task name supplied on this
+			// call instead of inheriting the much broader parent conversation name.
+			const sessionLabel = labelCounter.next(params.agent, params.taskName);
 			labelsByToolCallId.set(toolCallId, sessionLabel);
 
 			// A child question is answered by the orchestrator, including when this
@@ -1160,6 +1165,7 @@ export default function (pi: ExtensionAPI) {
 				agents,
 				params.agent,
 				params.task,
+				params.taskName,
 				params.cwd,
 				signal,
 				onUpdate,
@@ -1189,9 +1195,10 @@ export default function (pi: ExtensionAPI) {
 
 		renderCall(args, theme, context) {
 			const scope: AgentScope = args.agentScope ?? "user";
-			// The ordinal is handed out in execute(), so the first paint of a brand-new
-			// call row shows the bare agent name and picks up `builder2` on redraw.
-			const agentName = labelsByToolCallId.get(context.toolCallId) ?? (args.agent || "...");
+			// The ordinal is handed out in execute(), so the first paint omits only
+			// that number; it can still show the concrete task name immediately.
+			const taskName = normalizeSubagentTaskName(args.taskName || "...");
+			const agentName = labelsByToolCallId.get(context.toolCallId) ?? `${args.agent || "..."}: ${taskName}`;
 			const preview = args.task ? (args.task.length > 60 ? `${args.task.slice(0, 60)}...` : args.task) : "...";
 			let text =
 				theme.fg("toolTitle", theme.bold("subagent ")) +
@@ -1307,7 +1314,7 @@ export default function (pi: ExtensionAPI) {
 			};
 
 			// Pi stacks renderCall and renderResult inside one box, and the call row
-			// above us already names the child (`subagent builder1: <task> [user]`),
+			// above us already names the child (`subagent builder1: <task name> [user]`),
 			// so the result must not repeat that identity line. It adds only what the
 			// call row cannot know yet: failures, model attempts, and the output.
 			const r = details;

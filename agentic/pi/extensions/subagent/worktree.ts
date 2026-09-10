@@ -16,6 +16,7 @@ import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { formatSubagentMergeCommitMessage } from "./session-label.ts";
 
 export interface WorktreeHandle {
 	/** Absolute path of the parent (launching) repository's top-level. */
@@ -275,7 +276,11 @@ export async function createWorktree(parentCwd: string, agentName: string): Prom
  * rather than thrown so the caller can always surface them to the model
  * without losing the subagent's own output.
  */
-export async function mergeAndCleanup(handle: WorktreeHandle): Promise<WorktreeCleanupResult> {
+export async function mergeAndCleanup(
+	handle: WorktreeHandle,
+	agentName: string,
+	taskName: string,
+): Promise<WorktreeCleanupResult> {
 	return withRepoMergeLock(handle.parentRepoRoot, async () => {
 		const { parentRepoRoot, worktreePath, branchName, baseSha } = handle;
 
@@ -358,7 +363,7 @@ export async function mergeAndCleanup(handle: WorktreeHandle): Promise<WorktreeC
 						"merge",
 						"--no-ff",
 						"-m",
-						`merge subagent worktree ${branchName}`,
+						formatSubagentMergeCommitMessage(agentName, taskName),
 						branchName,
 					]);
 					if (r.code === 0) {
