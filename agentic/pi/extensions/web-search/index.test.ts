@@ -20,6 +20,7 @@ interface RenderComponent {
 
 interface RegisteredTool {
 	name: string;
+	executionMode?: string;
 	execute(toolCallId: string, params: SearchParams, signal: AbortSignal): Promise<ToolResult>;
 	renderCall(args: Record<string, unknown>, theme: unknown): RenderComponent;
 	renderResult(result: ToolResult, options: unknown, theme: unknown): RenderComponent;
@@ -120,19 +121,25 @@ test("execution propagates an external abort", async () => {
 	assert.equal(internalSignal?.aborted, true);
 });
 
-test("registered tool limits results and renders one-based singular output", async () => {
+test("registered tool serializes searches, defaults to general, and limits results", async () => {
 	const tool = captureTool();
 	assert.equal(tool.name, "web_search");
+	assert.equal(tool.executionMode, "sequential");
 	const originalFetch = globalThis.fetch;
-	globalThis.fetch = async () => new Response(JSON.stringify({
-		number_of_results: 1,
-		results: [
-			{ title: "First", url: "https://first.example", content: "first result" },
-			{ title: "Second", url: "https://second.example", content: "second result" },
-		],
-	}));
+	let requestedUrl: string | URL | undefined;
+	globalThis.fetch = async (input) => {
+		requestedUrl = input;
+		return new Response(JSON.stringify({
+			number_of_results: 1,
+			results: [
+				{ title: "First", url: "https://first.example", content: "first result" },
+				{ title: "Second", url: "https://second.example", content: "second result" },
+			],
+		}));
+	};
 	try {
 		const result = await tool.execute("call-1", { query: "test", max_results: 1 }, new AbortController().signal);
+		assert.equal(new URL(String(requestedUrl)).searchParams.get("categories"), "general");
 		assert.equal(result.details?.resultCount, 1);
 		const output = result.content[0]?.text ?? "";
 		assert.match(output, /\n1\. First\n/);

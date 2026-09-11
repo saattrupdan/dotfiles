@@ -18,6 +18,13 @@ Search API documentation first and its settings source third.
 
 The three requests returned 39, 53, and 37 total results respectively. Their
 top results were independently corroborated by multiple configured engines,
-including Startpage, Brave, Google CSE, and DuckDuckGo. This establishes the
-initial cutover gate; engine reliability should be revisited if searches begin
-reporting persistent warnings or empty result sets.
+including Startpage, Brave, Google CSE, and DuckDuckGo. This established the
+initial cutover gate.
+
+## Rate-limit revalidation
+
+Revalidated on 11 September 2026 after those original engines began returning
+persistent traffic blocks, CAPTCHAs, and parser errors. The replacement Google,
+Seznam, and Yep engine set returned 32, 36, and 28 results for the three failing
+OpenAI `site:` queries that prompted the change. All three searches completed in
+under two seconds and reported no unresponsive engines.

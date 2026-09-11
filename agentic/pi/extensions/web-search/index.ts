@@ -6,7 +6,10 @@ import { Type } from "typebox";
 
 export const DEFAULT_SEARXNG_URL = "http://127.0.0.1:8888";
 export const DEFAULT_TIMEOUT_MS = 15_000;
+export const MIN_SEARCH_INTERVAL_MS = 1_000;
 export const MAX_RESULTS = 10;
+
+let lastSearchStartedAt = 0;
 
 type SearchStatus = "ok" | "partial_failure" | "empty" | "unavailable" | "non_2xx" | "malformed" | "timeout" | "aborted";
 
@@ -57,7 +60,7 @@ export const Params = Type.Object({
 	query: Type.String({ minLength: 1, maxLength: 400, description: "The web search query." }),
 	max_results: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_RESULTS, description: `Maximum results to return (1-${MAX_RESULTS}).` })),
 	language: Type.Optional(Type.String({ description: "SearXNG language code, for example en or da." })),
-	categories: Type.Optional(Type.String({ description: "Comma-separated SearXNG categories, for example general or news." })),
+	categories: Type.Optional(Type.String({ description: "Comma-separated SearXNG categories, for example general or news. Defaults to general." })),
 	time_range: Type.Optional(Type.Union([
 		Type.Literal("day"),
 		Type.Literal("week"),
@@ -220,18 +223,37 @@ function renderOutcome(params: SearchParams, outcome: SearchOutcome): string {
 	return lines.join("\n");
 }
 
+async function paceSearch(signal?: AbortSignal): Promise<void> {
+	const delayMs = Math.max(0, MIN_SEARCH_INTERVAL_MS - (Date.now() - lastSearchStartedAt));
+	if (delayMs > 0 && !signal?.aborted) {
+		await new Promise<void>((resolve) => {
+			const done = () => {
+				clearTimeout(timer);
+				signal?.removeEventListener("abort", done);
+				resolve();
+			};
+			const timer = setTimeout(done, delayMs);
+			signal?.addEventListener("abort", done, { once: true });
+		});
+	}
+	if (!signal?.aborted) lastSearchStartedAt = Date.now();
+}
+
 export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "web_search",
 		label: "web search",
 		description: "Search the web through the private local SearXNG service. Returns compact HTTP(S) results with snippets, metadata, and engine warnings. The service must be running first.",
 		parameters: Params,
+		executionMode: "sequential",
 		async execute(_toolCallId, params, signal) {
 			const requested = params as SearchParams;
 			const bounded: SearchParams = {
 				...requested,
+				categories: requested.categories ?? "general",
 				max_results: Math.min(Math.max(requested.max_results ?? MAX_RESULTS, 1), MAX_RESULTS),
 			};
+			await paceSearch(signal);
 			const outcome = await executeSearch(bounded, signal);
 			const results = outcome.results.slice(0, bounded.max_results);
 			const finalOutcome = { ...outcome, results };

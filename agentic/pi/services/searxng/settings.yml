@@ -1,12 +1,47 @@
 # Private, local-only SearXNG settings. Keep defaults unless a local override is
 # needed; the environment supplied by the scripts provides the secret and bind.
-use_default_settings: true
+use_default_settings:
+  engines:
+    remove:
+      # These anonymous scrapers persistently return blocks or parser errors.
+      - brave
+      - brave.images
+      - brave.videos
+      - brave.news
+      - duckduckgo
+      - duckduckgo images
+      - duckduckgo videos
+      - duckduckgo news
+      - google cse
+      - google cse images
+      - startpage
+      - startpage news
+      - startpage images
+      # Infobox engines fail noisily on web operators such as site:.
+      - wikipedia
+      - wikidata
 
 search:
   autocomplete: ""
+  # Current upstream recommendations are deliberately longer than this pinned
+  # image's defaults, preventing blocked engines from being hammered repeatedly.
+  suspended_times:
+    SearxEngineAccessDenied: 86400
+    SearxEngineCaptcha: 86400
+    SearxEngineTooManyRequests: 3600
   formats:
     - html
     - json
+
+engines:
+  # These engines return useful results without the persistent blocks seen from
+  # the default Brave, DuckDuckGo, Google CSE, and Startpage scrapers.
+  - name: google
+    disabled: false
+  - name: seznam
+    disabled: false
+  - name: yep
+    disabled: false
 
 server:
   public_instance: false

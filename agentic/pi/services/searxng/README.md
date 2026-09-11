@@ -3,10 +3,13 @@
 This is Pi's local search service. It publishes SearXNG only on
 `127.0.0.1:8888` and is not reachable from the LAN. JSON is enabled for the
 Pi extension; autocomplete, the public-instance features, and image proxying
-are disabled. Search requests still go to the configured upstream engines, so
-this is a private interface, not an anonymity guarantee for those engines.
-Initial quality and latency results are recorded in
-[`VALIDATION.md`](VALIDATION.md).
+are disabled. General web searches use Google, Seznam, and Yep; blocked engines
+are suspended for at least an hour. The Brave, DuckDuckGo, Google CSE, and
+Startpage families are removed because their anonymous endpoints persistently
+return CAPTCHAs, parser errors, or traffic blocks. Search requests still go to
+the configured upstream engines, so this is a private interface, not an
+anonymity guarantee for those engines. Initial quality and latency results are
+recorded in [`VALIDATION.md`](VALIDATION.md).
 
 ## Operations
 
@@ -40,3 +43,6 @@ replace it. Stop it with
 - Malformed or empty JSON: run `smoke.sh`; the extension reports malformed,
   empty, unavailable, non-2xx, timeout, and partial-engine failures
   separately.
+- Upstream CAPTCHA/rate-limit warnings: affected engines remain suspended for
+  one hour (24 hours for CAPTCHA/access denial). Pi serializes concurrent search
+  tool calls so one model turn cannot send an upstream burst.
