@@ -19,11 +19,12 @@
  *     dictation ends in terminals that never send a release event.
  *   • Auto-send: transcription is automatically sent after PI_PTT_AUTO_SEND_DELAY_MS
  *     (default 500ms). Cancel by clearing the editor during the delay.
- *   • PI_PTT_BACKEND=whisper (default): streams through whisper-stream.sh to
- *     whisper-server, with whisper-cli as the final/fallback transcriber.
- *   • PI_PTT_BACKEND=syv: records a WAV and sends it once to syv-transcribe.
- *     The API key comes from SYV_API_KEY in the environment or the private
- *     ~/.pi/agent/secrets/voice-input.env file.
+ *   • PI_PTT_BACKEND=whisper (default): pseudo-streams through voice-stream.mjs
+ *     to whisper-server, with whisper-cli as the final/fallback transcriber.
+ *   • PI_PTT_BACKEND=syv: uses the same wrapper against syv-transcribe's
+ *     authenticated batch API, with one final batch request as fallback.
+ *   • The wrapper re-submits all accumulated audio every
+ *     PI_PTT_STREAM_INTERVAL_MS (default 2000), then once more on release.
  *   • PI_PTT_TRANSCRIBE_CMD remains an advanced final-transcriber override.
  *   • Streaming backend contract: stdin raw PCM s16le mono 16 kHz,
  *     stdout JSONL events {"type":"partial"|"final","text":"..."}.
@@ -61,7 +62,7 @@ const STATUS_KEY = "voice-input";
 
 /** Resolved once at load — env is stable for the process lifetime. */
 const EXTENSION_DIR = path.join(os.homedir(), "gitsky", "dotfiles", "agentic", "pi", "extensions", "_voice-input");
-const DEFAULT_STREAM_WRAPPER = path.join(EXTENSION_DIR, "bin", "whisper-stream.sh");
+const DEFAULT_STREAM_WRAPPER = path.join(EXTENSION_DIR, "bin", "voice-stream.mjs");
 const HAS_STREAM_WRAPPER = fs.existsSync(DEFAULT_STREAM_WRAPPER);
 
 const VOICE_ENV = resolveVoiceInputEnv();
@@ -72,6 +73,7 @@ export const CONFIG = {
 	holdMs: Number(VOICE_ENV.PI_PTT_HOLD_MS) || 700,
 	transcribeCmd: VOICE_ENV.PI_PTT_TRANSCRIBE_CMD?.trim() || "",
 	streamCmd: VOICE_ENV.PI_PTT_STREAM_CMD?.trim() || (HAS_STREAM_WRAPPER ? DEFAULT_STREAM_WRAPPER : ""),
+	streamTimeoutMs: Number(VOICE_ENV.PI_PTT_STREAM_TIMEOUT_MS) || 25_000,
 	whisperBin: VOICE_ENV.PI_PTT_WHISPER_BIN?.trim() || "whisper-cli",
 	whisperModel:
 		VOICE_ENV.PI_PTT_WHISPER_MODEL?.trim() ||
@@ -135,6 +137,7 @@ type StreamSession = {
 	stdoutBuffer: string;
 	partialText: string;
 	finalText: string;
+	finalReceived: boolean;
 	failed: boolean;
 	failureReason: string;
 	prefixText: string; // text in editor before recording started
@@ -194,13 +197,14 @@ export function setVoiceBackend(backend: VoiceBackend): string | null {
 }
 
 function activeStreamCmd(): string {
-	return CONFIG.backend === "whisper" ? CONFIG.streamCmd : "";
+	return CONFIG.streamCmd;
 }
 
 export function describeVoiceBackend(): string {
 	if (CONFIG.transcribeCmd) return "custom command ($PI_PTT_TRANSCRIBE_CMD)";
 	if (CONFIG.backend === "syv") {
-		return `syv-transcribe (${CONFIG.syv.model} at ${CONFIG.syv.baseUrl}, language ${CONFIG.syv.language})`;
+		const backend = `syv-transcribe (${CONFIG.syv.model} at ${CONFIG.syv.baseUrl}, language ${CONFIG.syv.language})`;
+		return activeStreamCmd() ? `${backend} (streaming; authenticated batch fallback)` : backend;
 	}
 	const fallback = `whisper.cpp (${CONFIG.whisperBin}, model ${CONFIG.whisperModel})`;
 	return activeStreamCmd()
@@ -341,6 +345,12 @@ function streamText(value: unknown): string | null {
 	return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : null;
 }
 
+export function needsStreamFallback(
+	session: Pick<StreamSession, "failed" | "finalReceived">,
+): boolean {
+	return session.failed || !session.finalReceived;
+}
+
 export function parseStreamEvent(event: StreamEvent): ParsedStreamEvent {
 	const typed = typeof event.type === "string" ? event.type : "";
 	const finalText = streamText(event.final) ?? (event.is_final === true ? streamText(event.text) : null);
@@ -354,36 +364,42 @@ export function parseStreamEvent(event: StreamEvent): ParsedStreamEvent {
 	return { kind: "ignore" };
 }
 
-function applyStreamEvent(ctx: ExtensionContext, event: StreamEvent): void {
-	if (!streamSession || !liveEditor) return;
+type StreamTextUpdate = { text: string; status: string };
+
+/** Apply one backend event to stream state and return the complete editor text. */
+export function applyStreamEventToText(
+	session: StreamSession,
+	event: StreamEvent,
+	currentText: string,
+): StreamTextUpdate | null {
 	const parsed = parseStreamEvent(event);
 	if (parsed.kind === "final") {
-		// Post-process final text (slash -> /, strip trailing punctuation)
-		streamSession.finalText = postProcessTranscript(parsed.text);
-		if (streamSession.finalText) {
-			// Replace partial with final in editor
-			const currentText = liveEditor.getText();
-			const before = currentText.slice(0, streamSession.partialStart);
-			const after = currentText.slice(streamSession.partialStart + streamSession.partialLen);
-			liveEditor.setText(before + streamSession.finalText + after);
-			streamSession.partialLen = streamSession.finalText.length;
-			setStatus(ctx, `🎙 finalizing…`);
-		}
-		return;
+		session.finalReceived = true;
+		// Replace the partial even when the authoritative final is empty (silence/noise).
+		session.finalText = postProcessTranscript(parsed.text);
+		const before = currentText.slice(0, session.partialStart);
+		const after = currentText.slice(session.partialStart + session.partialLen);
+		session.partialLen = session.finalText.length;
+		return { text: before + session.finalText + after, status: "🎙 finalizing…" };
 	}
 	if (parsed.kind === "partial") {
 		// Post-process partial text for consistency (slash -> /, strip trailing punctuation)
-		streamSession.partialText = postProcessTranscript(parsed.text);
-		// Insert/update partial inline in editor only (no footer spam)
-		const currentText = liveEditor.getText();
-		const before = currentText.slice(0, streamSession.partialStart);
-		const after = currentText.slice(streamSession.partialStart + streamSession.partialLen);
-		const newText = streamSession.prefixText + (streamSession.partialText ? " " + streamSession.partialText : "");
-		liveEditor.setText(before + newText + after);
-		streamSession.partialLen = newText.length;
-		// Status just shows streaming indicator, not the actual text
-		setStatus(ctx, `🎙 streaming…`);
+		session.partialText = postProcessTranscript(parsed.text);
+		const before = currentText.slice(0, session.partialStart);
+		const after = currentText.slice(session.partialStart + session.partialLen);
+		const newText = session.prefixText + (session.partialText ? " " + session.partialText : "");
+		session.partialLen = newText.length;
+		return { text: before + newText + after, status: "🎙 streaming…" };
 	}
+	return null;
+}
+
+function applyStreamEvent(ctx: ExtensionContext, event: StreamEvent): void {
+	if (!streamSession || !liveEditor) return;
+	const update = applyStreamEventToText(streamSession, event, liveEditor.getText());
+	if (!update) return;
+	liveEditor.setText(update.text);
+	setStatus(ctx, update.status);
 }
 
 function parseStreamLines(ctx: ExtensionContext, text: string): void {
@@ -438,7 +454,18 @@ function startStreamingBackend(ctx: ExtensionContext): void {
 	try {
 		streamBackend = spawn("sh", ["-c", streamCmd], {
 			stdio: ["pipe", "pipe", "pipe"],
-			env: { ...process.env, PI_PTT_AUDIO_FORMAT: "s16le", PI_PTT_AUDIO_RATE: "16000", PI_PTT_AUDIO_CHANNELS: "1" },
+			env: {
+				...process.env,
+				PI_PTT_AUDIO_FORMAT: "s16le",
+				PI_PTT_AUDIO_RATE: "16000",
+				PI_PTT_AUDIO_CHANNELS: "1",
+				PI_PTT_BACKEND: CONFIG.backend,
+				PI_PTT_STREAM_TIMEOUT_MS: String(CONFIG.streamTimeoutMs),
+				SYV_API_KEY: CONFIG.syv.apiKey,
+				PI_PTT_SYV_URL: CONFIG.syv.baseUrl,
+				PI_PTT_SYV_MODEL: CONFIG.syv.model,
+				PI_PTT_LANGUAGE: CONFIG.syv.language,
+			},
 		});
 	} catch (err) {
 		streamSession.failed = true;
@@ -462,7 +489,7 @@ function startStreamingBackend(ctx: ExtensionContext): void {
 	streamBackend.on("close", (code) => {
 		if (!streamSession) return;
 		flushStreamLine(ctx);
-		if (code !== 0 && !streamSession.finalText) {
+		if (code !== 0 && !streamSession.finalReceived) {
 			streamSession.failed = true;
 			streamSession.failureReason = `stream backend exited with code ${code}`;
 		}
@@ -575,6 +602,7 @@ function startRecording(ctx: ExtensionContext): void {
 			stdoutBuffer: "",
 			partialText: "",
 			finalText: "",
+			finalReceived: false,
 			failed: false,
 			failureReason: "",
 			prefixText: prefixText,
@@ -650,14 +678,19 @@ async function stopStreamingBackend(ctx: ExtensionContext): Promise<string> {
 		} catch {
 			// already closed
 		}
-		await waitForClose(proc, 1500);
+		// The remote SYV batch endpoint can take longer than local whisper-server.
+		const closeTimeoutMs = CONFIG.backend === "syv" ? CONFIG.streamTimeoutMs + 2_000 : 1500;
+		await waitForClose(proc, closeTimeoutMs);
 		if (proc.exitCode === null) proc.kill("SIGTERM");
 		await waitForClose(proc, 500);
-		if (proc.exitCode === null) proc.kill("SIGKILL");
+		if (proc.exitCode === null) {
+			proc.kill("SIGKILL");
+			await waitForClose(proc, 500);
+		}
 		flushStreamLine(ctx);
 	}
 	streamBackend = null;
-	if (session.finalText && !session.failed) return session.finalText;
+	if (session.finalReceived && !session.failed) return session.finalText;
 	return "";
 }
 
@@ -692,7 +725,7 @@ async function stopAndTranscribe(ctx: ExtensionContext): Promise<void> {
 		let text = "";
 		if (streamSession) {
 			text = await stopStreamingBackend(ctx);
-			if (!text) {
+			if (needsStreamFallback(streamSession)) {
 				const reason = streamSession.failed
 					? streamSession.failureReason || "stream backend failed"
 					: "no final transcript";

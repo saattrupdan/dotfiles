@@ -8,6 +8,8 @@ const { createJiti } = require("jiti");
 const jiti = createJiti(import.meta.url, { moduleCache: false });
 
 await jiti.import(path.join(root, "_outliner", "outliner.test.ts"), { default: false });
+await jiti.import(path.join(root, "_voice-input", "ptt.test.ts"), { default: false });
+await import(path.join(root, "_voice-input", "stream.test.mjs"));
 await jiti.import(path.join(root, "_voice-input", "syv.test.ts"), { default: false });
 await jiti.import(path.join(root, "search", "index-store.test.ts"), { default: false });
 await jiti.import(path.join(root, "mcp-collapse", "index.test.ts"), { default: false });

@@ -30,16 +30,23 @@
  * Select with PI_PTT_BACKEND=whisper|syv (default: whisper), or switch for the
  * current process with `/talk backend whisper|syv`.
  *
- * whisper: streams PCM to whisper.cpp's whisper-server through
- * whisper-stream.sh, with whisper-cli as the final/fallback transcriber.
+ * Both backends pseudo-stream through voice-stream.mjs: every
+ * PI_PTT_STREAM_INTERVAL_MS (default 2000), the wrapper submits all accumulated
+ * audio to the selected backend's normal batch endpoint and displays the result
+ * as a partial. It submits the complete clip once more on release, with a
+ * PI_PTT_STREAM_TIMEOUT_MS request timeout (default 25000).
  *
- * syv: records a WAV and sends it to the OpenAI-compatible syv-transcribe API.
- * Put `SYV_API_KEY=hv_...` in ~/.pi/agent/secrets/voice-input.env (mode 0600).
- * PI_PTT_SYV_URL, PI_PTT_SYV_MODEL and PI_PTT_LANGUAGE override its endpoint,
- * model and language. PI_PTT_ENV_FILE overrides the env-file path.
+ * whisper uses local whisper.cpp's whisper-server, with whisper-cli as the
+ * final/fallback transcriber.
  *
- * Advanced overrides remain available: PI_PTT_STREAM_CMD supplies a JSONL
- * streaming backend, and PI_PTT_TRANSCRIBE_CMD supplies a final WAV command.
+ * syv uses the authenticated OpenAI-compatible syv-transcribe API for partials
+ * and final/fallback transcription. Put `SYV_API_KEY=hv_...` in
+ * ~/.pi/agent/secrets/voice-input.env (mode 0600). PI_PTT_SYV_URL,
+ * PI_PTT_SYV_MODEL and PI_PTT_LANGUAGE override its endpoint, model and
+ * language. PI_PTT_ENV_FILE overrides the env-file path.
+ *
+ * Advanced overrides remain available: PI_PTT_STREAM_CMD supplies another
+ * JSONL streaming backend, and PI_PTT_TRANSCRIBE_CMD supplies a final WAV command.
  * The latter takes precedence over either named backend.
  *
  * Other config: PI_PTT_KEY, PI_PTT_HOLD_MS, PI_PTT_WHISPER_BIN,
