@@ -25,8 +25,10 @@
  * The notification reaches the user even when the terminal is not focused
  * (that's the whole point — macOS surfaces it system-wide). In iTerm2, the
  * terminal-notifier helper makes alerts clickable: a click runs AppleScript
- * that reveals the originating window, tab, and pane. Other terminals, or an
- * unavailable helper, use AppleScript notifications as a fallback.
+ * that reveals the originating window, tab, and pane. Alerts are suppressed
+ * when that iTerm2 tab is already visible and iTerm2 is frontmost. Other
+ * terminals, or an unavailable helper, use AppleScript notifications as a
+ * fallback.
  *
  * Orchestrator-only: subagent processes never have a UI and their question
  * dialogs are bridged to the parent — the parent's own listeners already
@@ -93,6 +95,59 @@ function quoteForShell(value: string): string {
 	return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
+function isOriginatingITermTabFocused(sessionID: string, callback: (focused: boolean) => void): void {
+	const script = `
+		on run argv
+			set targetID to item 1 of argv
+			tell application "System Events"
+				if not (exists application process "iTerm2") then return "false"
+				if not frontmost of application process "iTerm2" then return "false"
+			end tell
+			tell application "iTerm2"
+				try
+					set activeTab to current tab of current window
+					repeat with aSession in sessions of activeTab
+						if id of aSession is targetID then return "true"
+					end repeat
+				end try
+			end tell
+			return "false"
+		end run
+	`.trim();
+
+	let settled = false;
+	let output = "";
+	const finish = (focused: boolean) => {
+		if (settled) return;
+		settled = true;
+		callback(focused);
+	};
+
+	try {
+		const p = spawn("/usr/bin/osascript", ["-e", script, sessionID], {
+			stdio: ["ignore", "pipe", "ignore"],
+		});
+		const timeout = setTimeout(() => {
+			p.kill();
+			finish(false);
+		}, 1_000);
+		p.stdout?.setEncoding("utf8");
+		p.stdout?.on("data", (chunk: string) => {
+			output += chunk;
+		});
+		p.on("error", () => {
+			clearTimeout(timeout);
+			finish(false);
+		});
+		p.on("close", (code) => {
+			clearTimeout(timeout);
+			finish(code === 0 && output.trim() === "true");
+		});
+	} catch {
+		finish(false);
+	}
+}
+
 function notifyViaITerm(title: string, body: string, sound: string): boolean {
 	if (process.env.TERM_PROGRAM !== "iTerm.app") return false;
 	const rawSessionID = process.env.ITERM_SESSION_ID;
@@ -128,21 +183,29 @@ function notifyViaITerm(title: string, body: string, sound: string): boolean {
 		notifyViaAppleScript(title, body, sound);
 	};
 
-	try {
-		const p = spawn(
-			"terminal-notifier",
-			["-title", title, "-message", body, "-sound", sound, "-execute", clickCommand],
-			{ stdio: "ignore", detached: true },
-		);
-		p.on("error", fallback);
-		p.on("exit", (code) => {
-			if (code !== 0) fallback();
-		});
-		p.unref();
-		return true;
-	} catch {
-		return false;
-	}
+	const sendNotification = () => {
+		try {
+			const p = spawn(
+				"terminal-notifier",
+				["-title", title, "-message", body, "-sound", sound, "-execute", clickCommand],
+				{ stdio: "ignore", detached: true },
+			);
+			p.on("error", fallback);
+			p.on("exit", (code) => {
+				if (code !== 0) fallback();
+			});
+			p.unref();
+		} catch {
+			fallback();
+		}
+	};
+
+	// Treat the focus check as best-effort. If AppleScript fails or times out,
+	// show the notification rather than risk silently losing an alert.
+	isOriginatingITermTabFocused(sessionID, (focused) => {
+		if (!focused) sendNotification();
+	});
+	return true;
 }
 
 function notify(title: string, body: string, sound: string): void {
