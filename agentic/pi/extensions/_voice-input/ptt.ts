@@ -19,11 +19,12 @@
  *     dictation ends in terminals that never send a release event.
  *   • Auto-send: transcription is automatically sent after PI_PTT_AUTO_SEND_DELAY_MS
  *     (default 500ms). Cancel by clearing the editor during the delay.
- *   • Default: streaming mode using whisper-stream.sh wrapper around whisper-server
- *     (if the wrapper exists). Records raw PCM s16le mono 16 kHz, streams to
- *     whisper-server in chunks, shows partials in status, pastes final on release.
- *   • Fallback: if $PI_PTT_STREAM_CMD is unset or wrapper missing, records a temp
- *     WAV then transcribes via whisper-cli or $PI_PTT_TRANSCRIBE_CMD.
+ *   • PI_PTT_BACKEND=whisper (default): streams through whisper-stream.sh to
+ *     whisper-server, with whisper-cli as the final/fallback transcriber.
+ *   • PI_PTT_BACKEND=syv: records a WAV and sends it once to syv-transcribe.
+ *     The API key comes from SYV_API_KEY in the environment or the private
+ *     ~/.pi/agent/secrets/voice-input.env file.
+ *   • PI_PTT_TRANSCRIBE_CMD remains an advanced final-transcriber override.
  *   • Streaming backend contract: stdin raw PCM s16le mono 16 kHz,
  *     stdout JSONL events {"type":"partial"|"final","text":"..."}.
  *     Partials are status-only; final is pasted. Failures fall back to WAV path.
@@ -48,6 +49,14 @@ import {
 } from "@earendil-works/pi-tui";
 import type { KeybindingsManager } from "@earendil-works/pi-coding-agent";
 
+import {
+	parseVoiceBackend,
+	resolveSyvConfig,
+	resolveVoiceInputEnv,
+	transcribeSyv,
+	type VoiceBackend,
+} from "./syv.ts";
+
 const STATUS_KEY = "voice-input";
 
 /** Resolved once at load — env is stable for the process lifetime. */
@@ -55,16 +64,20 @@ const EXTENSION_DIR = path.join(os.homedir(), "gitsky", "dotfiles", "agentic", "
 const DEFAULT_STREAM_WRAPPER = path.join(EXTENSION_DIR, "bin", "whisper-stream.sh");
 const HAS_STREAM_WRAPPER = fs.existsSync(DEFAULT_STREAM_WRAPPER);
 
+const VOICE_ENV = resolveVoiceInputEnv();
+
 export const CONFIG = {
-	key: process.env.PI_PTT_KEY?.trim() || "space",
-	holdMs: Number(process.env.PI_PTT_HOLD_MS) || 700,
-	transcribeCmd: process.env.PI_PTT_TRANSCRIBE_CMD?.trim() || "",
-	streamCmd: process.env.PI_PTT_STREAM_CMD?.trim() || (HAS_STREAM_WRAPPER ? DEFAULT_STREAM_WRAPPER : ""),
-	whisperBin: process.env.PI_PTT_WHISPER_BIN?.trim() || "whisper-cli",
+	backend: parseVoiceBackend(VOICE_ENV.PI_PTT_BACKEND),
+	key: VOICE_ENV.PI_PTT_KEY?.trim() || "space",
+	holdMs: Number(VOICE_ENV.PI_PTT_HOLD_MS) || 700,
+	transcribeCmd: VOICE_ENV.PI_PTT_TRANSCRIBE_CMD?.trim() || "",
+	streamCmd: VOICE_ENV.PI_PTT_STREAM_CMD?.trim() || (HAS_STREAM_WRAPPER ? DEFAULT_STREAM_WRAPPER : ""),
+	whisperBin: VOICE_ENV.PI_PTT_WHISPER_BIN?.trim() || "whisper-cli",
 	whisperModel:
-		process.env.PI_PTT_WHISPER_MODEL?.trim() ||
+		VOICE_ENV.PI_PTT_WHISPER_MODEL?.trim() ||
 		path.join(os.homedir(), "local-models", "ggml-large-v3-turbo.bin"),
-	recBin: process.env.PI_PTT_REC_BIN?.trim() || "rec",
+	recBin: VOICE_ENV.PI_PTT_REC_BIN?.trim() || "rec",
+	syv: resolveSyvConfig(VOICE_ENV),
 };
 
 /** A "typing key" produces text, so it needs tap-vs-hold disambiguation. */
@@ -173,6 +186,28 @@ export function setLiveCtx(pi: ExtensionAPI, ctx: ExtensionContext): void {
 export function getState(): State {
 	return state;
 }
+
+export function setVoiceBackend(backend: VoiceBackend): string | null {
+	if (state !== "idle") return "Stop the current recording before switching voice backend.";
+	CONFIG.backend = backend;
+	return null;
+}
+
+function activeStreamCmd(): string {
+	return CONFIG.backend === "whisper" ? CONFIG.streamCmd : "";
+}
+
+export function describeVoiceBackend(): string {
+	if (CONFIG.transcribeCmd) return "custom command ($PI_PTT_TRANSCRIBE_CMD)";
+	if (CONFIG.backend === "syv") {
+		return `syv-transcribe (${CONFIG.syv.model} at ${CONFIG.syv.baseUrl}, language ${CONFIG.syv.language})`;
+	}
+	const fallback = `whisper.cpp (${CONFIG.whisperBin}, model ${CONFIG.whisperModel})`;
+	return activeStreamCmd()
+		? `whisper.cpp server (streaming; fallback: ${fallback})`
+		: fallback;
+}
+
 /** The live PTT status line, or undefined when idle. */
 export function getStatusText(): string | undefined {
 	return statusText;
@@ -225,6 +260,15 @@ export function checkReady(): string | null {
 		return `Recorder "${CONFIG.recBin}" not found. Install SoX:\n    brew install sox`;
 	}
 	if (CONFIG.transcribeCmd) return null; // custom command owns its own deps
+	if (CONFIG.backend === "syv") {
+		if (!CONFIG.syv.apiKey) {
+			return (
+				"syv-transcribe API key missing. Add this to ~/.pi/agent/secrets/voice-input.env:\n" +
+				"    SYV_API_KEY=hv_..."
+			);
+		}
+		return null;
+	}
 	if (!haveBinary(CONFIG.whisperBin)) {
 		return (
 			`Transcriber "${CONFIG.whisperBin}" not found. Install whisper.cpp:\n` +
@@ -389,9 +433,10 @@ async function waitForClose(proc: ChildProcess, timeoutMs: number): Promise<void
 }
 
 function startStreamingBackend(ctx: ExtensionContext): void {
-	if (!streamSession || !CONFIG.streamCmd) return;
+	const streamCmd = activeStreamCmd();
+	if (!streamSession || !streamCmd) return;
 	try {
-		streamBackend = spawn("sh", ["-c", CONFIG.streamCmd], {
+		streamBackend = spawn("sh", ["-c", streamCmd], {
 			stdio: ["pipe", "pipe", "pipe"],
 			env: { ...process.env, PI_PTT_AUDIO_FORMAT: "s16le", PI_PTT_AUDIO_RATE: "16000", PI_PTT_AUDIO_CHANNELS: "1" },
 		});
@@ -445,6 +490,8 @@ async function transcribe(): Promise<string> {
 			env: { ...process.env, PI_PTT_AUDIO: WAV_PATH },
 			timeoutMs: 120_000,
 		});
+	} else if (CONFIG.backend === "syv") {
+		raw = await transcribeSyv(WAV_PATH, CONFIG.syv);
 	} else {
 		// -nt: no timestamps; -np: no progress; -sns: suppress non-speech tokens
 		// ("(dramatic music)" / "[BLANK_AUDIO]") that whisper hallucinates on silence.
@@ -517,7 +564,7 @@ function startRecording(ctx: ExtensionContext): void {
 	streamSession = null;
 	streamBackend = null;
 
-	if (CONFIG.streamCmd) {
+	if (activeStreamCmd()) {
 		// Capture prefix and insert a space to separate streaming text from prior content
 		const prefixText = liveEditor ? liveEditor.getText() : "";
 		if (liveEditor && prefixText && !prefixText.endsWith(" ")) {
@@ -575,7 +622,7 @@ function startRecording(ctx: ExtensionContext): void {
 		setStatus(ctx, undefined);
 	});
 	state = "recording";
-	setStatus(ctx, CONFIG.streamCmd ? "🎙 streaming…" : "🎙 recording…");
+	setStatus(ctx, activeStreamCmd() ? "🎙 streaming…" : "🎙 recording…");
 	maxDurationTimer = setTimeout(() => {
 		if (state === "recording") void stopAndTranscribe(ctx);
 	}, MAX_RECORDING_MS);

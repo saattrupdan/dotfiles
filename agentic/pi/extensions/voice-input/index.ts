@@ -27,30 +27,23 @@
  * immediately when the session already has messages (splash is skipped).
  *
  * ── Transcription backend ────────────────────────────────────────────────────
- * Default: streaming mode using whisper-stream.sh wrapper (if present).
- * Records raw PCM s16le mono 16 kHz, streams to whisper-server in ~1s chunks,
- * shows partials in status, pastes final text on release. Falls back to WAV
- * transcription on stream failure or no final.
+ * Select with PI_PTT_BACKEND=whisper|syv (default: whisper), or switch for the
+ * current process with `/talk backend whisper|syv`.
  *
- * Fallback (when $PI_PTT_STREAM_CMD is unset AND wrapper missing): record a temp
- * WAV on release, then transcribe with either:
- *   1. $PI_PTT_TRANSCRIBE_CMD — a `sh -c` command; WAV path in $PI_PTT_AUDIO,
- *      stdout is the transcript (intended for local/self-hosted backends).
- *   2. whisper.cpp — $PI_PTT_WHISPER_BIN (default `whisper-cli`) + model
- *      $PI_PTT_WHISPER_MODEL (default ~/.cache/whisper/ggml-base.en.bin).
- *      ggml-base.en.bin is English-only; use ggml-small.bin+ for Danish.
+ * whisper: streams PCM to whisper.cpp's whisper-server through
+ * whisper-stream.sh, with whisper-cli as the final/fallback transcriber.
  *
- * Custom streaming: set $PI_PTT_STREAM_CMD to a local command that reads raw PCM
- * s16le mono 16 kHz from stdin and writes JSONL transcript events to stdout,
- * e.g. {"type":"partial","text":"..."} and {"type":"final","text":"..."}.
- * Partial text is shown in status only. On release, final text is pasted; on
- * stream failure/malformed JSON/no final, the captured PCM is written as WAV and
- * the fallback transcription path above is used.
+ * syv: records a WAV and sends it to the OpenAI-compatible syv-transcribe API.
+ * Put `SYV_API_KEY=hv_...` in ~/.pi/agent/secrets/voice-input.env (mode 0600).
+ * PI_PTT_SYV_URL, PI_PTT_SYV_MODEL and PI_PTT_LANGUAGE override its endpoint,
+ * model and language. PI_PTT_ENV_FILE overrides the env-file path.
  *
- * ── Config via environment ───────────────────────────────────────────────────
- *   PI_PTT_KEY, PI_PTT_HOLD_MS, PI_PTT_STREAM_CMD, PI_PTT_TRANSCRIBE_CMD,
- *   PI_PTT_WHISPER_BIN, PI_PTT_WHISPER_MODEL, PI_PTT_REC_BIN — see
- *   ../_voice-input/ptt.ts.
+ * Advanced overrides remain available: PI_PTT_STREAM_CMD supplies a JSONL
+ * streaming backend, and PI_PTT_TRANSCRIBE_CMD supplies a final WAV command.
+ * The latter takes precedence over either named backend.
+ *
+ * Other config: PI_PTT_KEY, PI_PTT_HOLD_MS, PI_PTT_WHISPER_BIN,
+ * PI_PTT_WHISPER_MODEL, PI_PTT_REC_BIN — see ../_voice-input/ptt.ts.
  *
  * Interactive + orchestrator only: needs the TUI editor and a real mic, so it
  * stays inert in print/RPC mode and for subagents.
@@ -65,9 +58,11 @@ import {
 	PttEditor,
 	checkReady,
 	cleanup,
+	describeVoiceBackend,
 	getState,
 	releasesAvailable,
 	setLiveCtx,
+	setVoiceBackend,
 	toggle,
 } from "../_voice-input/ptt.ts";
 
@@ -113,19 +108,33 @@ export default function (pi: ExtensionAPI) {
 	pi.on("agent_start", async (_event, ctx) => {
 		// By the first agent_start the splash has dismissed its editor.
 		installEditor(ctx);
-	});		pi.registerCommand("talk", {
-			description: "Voice dictation: toggle recording (or `status`).",
-			async handler(args, ctx) {
-				setLiveCtx(pi, ctx);
+	});
+
+	pi.registerCommand("talk", {
+		description: "Voice dictation: toggle recording, show status, or switch backend.",
+		async handler(args, ctx) {
+			setLiveCtx(pi, ctx);
 			const arg = args.trim().toLowerCase();
+			if (arg.startsWith("backend")) {
+				const backend = arg.slice("backend".length).trim();
+				if (backend !== "whisper" && backend !== "syv") {
+					pi.sendMessage({
+						customType: "voice-input:error",
+						content: "Usage: /talk backend <whisper|syv>",
+						display: true,
+					});
+					return;
+				}
+				const problem = setVoiceBackend(backend);
+				pi.sendMessage({
+					customType: problem ? "voice-input:error" : "voice-input:status",
+					content: problem ?? `Voice input backend: ${describeVoiceBackend()}`,
+					display: true,
+				});
+				return;
+			}
 			if (arg === "status") {
 				const problem = checkReady();
-				const finalBackend = CONFIG.transcribeCmd
-					? "custom command ($PI_PTT_TRANSCRIBE_CMD)"
-					: `whisper.cpp (${CONFIG.whisperBin}, model ${CONFIG.whisperModel})`;
-				const backend = CONFIG.streamCmd
-					? `streaming ($PI_PTT_STREAM_CMD; fallback: ${finalBackend})`
-					: finalBackend;
 				const kitty = isKittyProtocolActive();
 				const releases = releasesAvailable();
 				const mode = KEY_IS_TYPING
@@ -142,10 +151,18 @@ export default function (pi: ExtensionAPI) {
 					content: [
 						`Voice input — PTT key: ${CONFIG.key}`,
 						`Mode: ${mode}`,
-						`Backend: ${backend}`,
+						`Backend: ${describeVoiceBackend()}`,
 						`State: ${getState()}`,
 						problem ? `⚠ Not ready:\n${problem}` : "✓ Ready.",
 					].join("\n"),
+					display: true,
+				});
+				return;
+			}
+			if (arg) {
+				pi.sendMessage({
+					customType: "voice-input:error",
+					content: "Usage: /talk [status|backend <whisper|syv>]",
 					display: true,
 				});
 				return;
