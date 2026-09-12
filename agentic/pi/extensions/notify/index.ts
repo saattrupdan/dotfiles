@@ -24,9 +24,9 @@
  *
  * The notification reaches the user even when the terminal is not focused
  * (that's the whole point — macOS surfaces it system-wide). In iTerm2, the
- * terminal's rich notification escape sequence makes alerts clickable: a
- * click reveals the originating window, tab, and pane. Other terminals use
- * AppleScript as a fallback.
+ * terminal-notifier helper makes alerts clickable: a click runs AppleScript
+ * that reveals the originating window, tab, and pane. Other terminals, or an
+ * unavailable helper, use AppleScript notifications as a fallback.
  *
  * Orchestrator-only: subagent processes never have a UI and their question
  * dialogs are bridged to the parent — the parent's own listeners already
@@ -46,8 +46,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const IS_MACOS = os.platform() === "darwin";
 
-// Built-in /System/Library/Sounds/*.aiff names used by the AppleScript
-// fallback. iTerm2 controls the sound for its own clickable notifications.
+// Built-in /System/Library/Sounds/*.aiff names. All chosen to be short and
+// gentle; Basso is the lowest-pitched of the bunch, used for failures.
 const SOUND_FINISHED = "Glass";
 const SOUND_QUESTION = "Tink";
 const SOUND_FAILED = "Basso";
@@ -75,15 +75,70 @@ function getSessionName(): string {
 	}
 }
 
-function notifyViaITerm(title: string, body: string): boolean {
-	if (process.env.TERM_PROGRAM !== "iTerm.app" || !process.stdout.isTTY) return false;
-
-	const encode = (value: string) => Buffer.from(value, "utf8").toString("base64");
-	const payload = `title=${encode(title)};message=${encode(body)}`;
+function notifyViaAppleScript(title: string, body: string, sound: string): void {
+	const script =
+		`display notification "${escapeForAppleScript(body)}" ` +
+		`with title "${escapeForAppleScript(title)}" ` +
+		`sound name "${escapeForAppleScript(sound)}"`;
 	try {
-		// iTerm2 records the originating window/tab/pane with this notification
-		// and reveals it when the user clicks the alert.
-		process.stdout.write(`\u001b]1337;Notification=${payload}\u001b\\`);
+		const p = spawn("osascript", ["-e", script], { stdio: "ignore", detached: true });
+		p.on("error", () => {});
+		p.unref();
+	} catch {
+		// best-effort, never throw out of an event handler
+	}
+}
+
+function quoteForShell(value: string): string {
+	return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+function notifyViaITerm(title: string, body: string, sound: string): boolean {
+	if (process.env.TERM_PROGRAM !== "iTerm.app") return false;
+	const rawSessionID = process.env.ITERM_SESSION_ID;
+	if (!rawSessionID) return false;
+	const sessionID = rawSessionID.slice(rawSessionID.indexOf(":") + 1);
+
+	const focusScript = `
+		on run argv
+			set targetID to item 1 of argv
+			tell application "iTerm2"
+				repeat with aWindow in windows
+					repeat with aTab in tabs of aWindow
+						repeat with aSession in sessions of aTab
+							if id of aSession is targetID then
+								select aSession
+								select aTab
+								select aWindow
+								activate
+								return
+							end if
+						end repeat
+					end repeat
+				end repeat
+			end tell
+		end run
+	`.trim();
+	const clickCommand = `/usr/bin/osascript -e ${quoteForShell(focusScript)} ${quoteForShell(sessionID)}`;
+
+	let usedFallback = false;
+	const fallback = () => {
+		if (usedFallback) return;
+		usedFallback = true;
+		notifyViaAppleScript(title, body, sound);
+	};
+
+	try {
+		const p = spawn(
+			"terminal-notifier",
+			["-title", title, "-message", body, "-sound", sound, "-execute", clickCommand],
+			{ stdio: "ignore", detached: true },
+		);
+		p.on("error", fallback);
+		p.on("exit", (code) => {
+			if (code !== 0) fallback();
+		});
+		p.unref();
 		return true;
 	} catch {
 		return false;
@@ -99,19 +154,8 @@ function notify(title: string, body: string, sound: string): void {
 	// Prefix the title with the session name if available (format: "Session — Title")
 	const name = getSessionName();
 	const fullTitle = name ? `${name} — ${title}` : title;
-	if (notifyViaITerm(fullTitle, body)) return;
-
-	const script =
-		`display notification "${escapeForAppleScript(body)}" ` +
-		`with title "${escapeForAppleScript(fullTitle)}" ` +
-		`sound name "${escapeForAppleScript(sound)}"`;
-	try {
-		const p = spawn("osascript", ["-e", script], { stdio: "ignore", detached: true });
-		p.on("error", () => {});
-		p.unref();
-	} catch {
-		// best-effort, never throw out of an event handler
-	}
+	if (notifyViaITerm(fullTitle, body, sound)) return;
+	notifyViaAppleScript(fullTitle, body, sound);
 }
 
 function truncate(s: string, max = 120): string {
