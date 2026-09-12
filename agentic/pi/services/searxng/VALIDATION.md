@@ -21,6 +21,21 @@ top results were independently corroborated by multiple configured engines,
 including Startpage, Brave, Google CSE, and DuckDuckGo. This established the
 initial cutover gate.
 
+## Automatic provider health
+
+Revalidated on 12 September 2026 after the replacement pool degraded: Google
+was suspended after a CAPTCHA, Yep repeatedly returned HTTP 503 or timed out,
+and Seznam was briefly rate-limited. Qwant and Yandex were tested from the same
+host against English technical, Danish public-sector, and current EU policy
+queries. Both returned results without warnings; each query returned 13–28
+combined results in 2.16–3.02 seconds.
+
+The pool now includes both providers. Generic 5xx, connection, and timeout
+failures automatically suspend an engine for 15 minutes before retrying; longer
+built-in cooldowns remain in place for rate limits, CAPTCHAs, and access denial.
+Pi reports a partial search only when more than half of the providers observed
+in that response failed.
+
 ## Rate-limit revalidation
 
 Revalidated on 11 September 2026 after those original engines began returning

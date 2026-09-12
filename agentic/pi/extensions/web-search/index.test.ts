@@ -77,16 +77,39 @@ test("normalization keeps HTTP(S), strips fragments, and dedupes only web URLs",
 	assert.equal(results[2]?.url, undefined);
 });
 
-test("response parsing preserves engine warnings and marks partial failures", () => {
+test("response parsing marks a strict majority of observed providers failed", () => {
 	const outcome = parseSearchResponse({
 		number_of_results: 12,
 		results: [{ title: "result", url: "https://example.test", engines: ["brave", "bing"], category: "news", publishedDate: "today" }],
 		unresponsive_engines: ["google", ["bing", "timeout"]],
 	});
 	assert.equal(outcome.status, "partial_failure");
+	assert.equal(outcome.failedProviderCount, 2);
+	assert.equal(outcome.providerCount, 3);
 	assert.deepEqual(outcome.warnings, ["google", "bing: timeout"]);
 	assert.deepEqual(outcome.results[0]?.engines, ["brave", "bing"]);
 	assert.equal(outcome.results[0]?.category, "news");
+});
+
+test("response parsing does not warn when exactly half the providers failed", () => {
+	const outcome = parseSearchResponse({
+		results: [{ title: "result", url: "https://example.test", engine: "seznam" }],
+		unresponsive_engines: [["google", "Suspended: CAPTCHA"]],
+	});
+	assert.equal(outcome.status, "ok");
+	assert.equal(outcome.failedProviderCount, 1);
+	assert.equal(outcome.providerCount, 2);
+	assert.deepEqual(outcome.warnings, ["google: Suspended: CAPTCHA"]);
+});
+
+test("response parsing deduplicates repeated failures by provider", () => {
+	const outcome = parseSearchResponse({
+		results: [{ title: "result", url: "https://example.test", engine: "seznam" }],
+		unresponsive_engines: [["google", "timeout"], ["google", "Suspended: timeout"]],
+	});
+	assert.equal(outcome.status, "ok");
+	assert.equal(outcome.failedProviderCount, 1);
+	assert.equal(outcome.providerCount, 2);
 });
 
 test("response parsing distinguishes malformed and empty payloads", () => {

@@ -36,6 +36,8 @@ export interface SearchOutcome {
 	status: SearchStatus;
 	results: SearchResult[];
 	warnings: string[];
+	providerCount?: number;
+	failedProviderCount?: number;
 	total?: number;
 	error?: string;
 }
@@ -127,6 +129,15 @@ function warningNames(value: unknown): string[] {
 	return value.map((item) => Array.isArray(item) ? item.join(": ") : String(item)).filter(Boolean);
 }
 
+function failedProviderNames(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+	const names = value
+		.map((item) => Array.isArray(item) ? item[0] : item)
+		.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+		.map((item) => item.trim());
+	return [...new Set(names)];
+}
+
 export function parseSearchResponse(value: unknown): SearchOutcome {
 	if (!value || typeof value !== "object") return { status: "malformed", results: [], warnings: [], error: "SearXNG returned a JSON value that was not an object" };
 	const response = value as RawResponse;
@@ -134,12 +145,22 @@ export function parseSearchResponse(value: unknown): SearchOutcome {
 		return { status: "malformed", results: [], warnings: [], error: "SearXNG JSON did not contain a results array" };
 	}
 	const warnings = warningNames(response.unresponsive_engines);
+	const failedProviders = failedProviderNames(response.unresponsive_engines);
 	const results = normalizeResults(response.results);
+	const observedProviders = new Set(failedProviders);
+	for (const result of results) {
+		for (const engine of result.engines ?? []) observedProviders.add(engine);
+	}
+	const providerCount = observedProviders.size;
+	const failedProviderCount = failedProviders.length;
+	const majorityFailed = providerCount > 0 && failedProviderCount > providerCount / 2;
 	const total = typeof response.number_of_results === "number" ? response.number_of_results : undefined;
 	return {
-		status: results.length === 0 ? "empty" : warnings.length ? "partial_failure" : "ok",
+		status: results.length === 0 ? "empty" : majorityFailed ? "partial_failure" : "ok",
 		results,
 		warnings,
+		providerCount,
+		failedProviderCount,
 		...(total !== undefined ? { total } : {}),
 	};
 }
@@ -259,7 +280,13 @@ export default function (pi: ExtensionAPI) {
 			const finalOutcome = { ...outcome, results };
 			return {
 				content: [{ type: "text", text: renderOutcome(bounded, finalOutcome) }],
-				details: { status: finalOutcome.status, resultCount: results.length, warnings: finalOutcome.warnings },
+				details: {
+					status: finalOutcome.status,
+					resultCount: results.length,
+					warnings: finalOutcome.warnings,
+					providerCount: finalOutcome.providerCount,
+					failedProviderCount: finalOutcome.failedProviderCount,
+				},
 			};
 		},
 		renderCall(args, theme) {

@@ -23,6 +23,10 @@ use_default_settings:
 
 search:
   autocomplete: ""
+  # Automatically cool down providers after transient 5xx, connection, or
+  # timeout failures. The pinned defaults only suspend these for five seconds.
+  ban_time_on_fail: 900
+  max_ban_time_on_fail: 900
   # Current upstream recommendations are deliberately longer than this pinned
   # image's defaults, preventing blocked engines from being hammered repeatedly.
   suspended_times:
@@ -34,11 +38,15 @@ search:
     - json
 
 engines:
-  # These engines return useful results without the persistent blocks seen from
-  # the default Brave, DuckDuckGo, Google CSE, and Startpage scrapers.
+  # Keep a diverse pool and let SearXNG's automatic suspension isolate unhealthy
+  # providers. Qwant and Yandex were added after live validation from this host.
   - name: google
     disabled: false
+  - name: qwant
+    disabled: false
   - name: seznam
+    disabled: false
+  - name: yandex
     disabled: false
   - name: yep
     disabled: false
