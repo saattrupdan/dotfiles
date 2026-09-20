@@ -94,7 +94,10 @@ function resolvePiPackageRoot(): string | null {
 }
 
 async function loadAssistantMessageComponent(pkgRoot: string): Promise<unknown> {
-	const modulePaths: string[] = [];
+	// The bundled public entrypoint re-exports the exact class used by the CLI.
+	// Prefer it over the unbundled compatibility path, whose class belongs to a
+	// separate module graph and therefore cannot patch live TUI instances.
+	const modulePaths: string[] = [resolve(pkgRoot, "dist", "bundle", "index.js")];
 	const cliArg = process.argv[1];
 
 	if (cliArg) {
