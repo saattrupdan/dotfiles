@@ -95,8 +95,8 @@ export default function (pi: ExtensionAPI) {
 	};
 
 	// --- 3. Event-bus override channel ---------------------------------------
-	// Allows other extensions (e.g. claude-code-provider) to temporarily override
-	// the footer label for long-running non-streaming operations.
+	// Allows other extensions to temporarily override the footer label for
+	// long-running non-streaming operations.
 	pi.events.on("thinking-status:override", (data) => {
 		const label = (data as { label?: string | undefined }).label;
 		if (!lastCtx) return;
