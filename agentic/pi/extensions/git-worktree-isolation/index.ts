@@ -10,15 +10,20 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	createLaunchPlan,
+	enforcePrimaryCheckout,
 	enforceRepository,
 	findCommonGitDir,
 	findManifestForCwd,
 	loadManifest,
+	preparePrimarySessionHub,
+	tryAcquirePrimaryLease,
+	type PrimaryLease,
 	type SessionManifest,
 } from "./git.ts";
 
 const CHILD_MANIFEST_ENV = "PI_WORKTREE_SESSION_MANIFEST";
 const DISABLE_ENV = "PI_WORKTREE_ISOLATION_DISABLE";
+const PRIMARY_LEASE_ENV = "PI_WORKTREE_PRIMARY_TOKEN";
 const CUSTOM_TYPE = "git-worktree-isolation:finalize";
 const MAX_REPAIR_TURNS = 6;
 
@@ -26,6 +31,11 @@ const SYSTEM_INSTRUCTION = `You are running in a detached, isolated Git worktree
 Before concluding any turn that changes files, commit all intended changes and leave the worktree clean.
 You may explicitly create or switch to a named feature branch and use a PR workflow. Pi will preserve such a branch and will not merge it automatically.
 If you remain on detached HEAD, Pi will automatically publish your commits to the branch from which this session started.
+Never bypass, remove, or alter the Pi worktree metadata.`;
+
+const PRIMARY_SYSTEM_INSTRUCTION = `You are the primary Pi process for this Git checkout.
+Before concluding any turn that changes files, commit all intended changes and leave the checkout clean.
+Other concurrent Pi processes may publish commits to the current branch, so inspect and integrate concurrent changes safely.
 Never bypass, remove, or alter the Pi worktree metadata.`;
 
 function cliArgs(): string[] {
@@ -60,6 +70,18 @@ function relaunch(plan: Awaited<ReturnType<typeof createLaunchPlan>>, args = cli
 		env: { ...process.env, [CHILD_MANIFEST_ENV]: plan.manifest.manifestPath },
 	});
 	if (result.error) fatal(`could not relaunch Pi: ${result.error.message}`);
+	process.exit(result.status ?? (result.signal === "SIGINT" ? 130 : 1));
+}
+
+function resumeInManagedWorktree(sessionFile: string, cwd: string, manifestPath: string): never {
+	const env: NodeJS.ProcessEnv = { ...process.env, [CHILD_MANIFEST_ENV]: manifestPath };
+	delete env[PRIMARY_LEASE_ENV];
+	const result = spawnSync(process.execPath, [process.argv[1]!, "--session", sessionFile], {
+		cwd,
+		stdio: "inherit",
+		env,
+	});
+	if (result.error) fatal(`could not resume the selected worktree session: ${result.error.message}`);
 	process.exit(result.status ?? (result.signal === "SIGINT" ? 130 : 1));
 }
 
@@ -121,6 +143,89 @@ async function sessionCwd(sessionFile: string): Promise<string | null> {
 	} catch {
 		return null;
 	}
+}
+
+function registerPrimarySession(
+	pi: ExtensionAPI,
+	repoRoot: string,
+	commonGitDir: string,
+	lease: PrimaryLease,
+): void {
+	let repairTurns = 0;
+	let repairMessageActive = false;
+	let enforcementRunning = false;
+	process.env[PRIMARY_LEASE_ENV] = lease.token;
+	process.once("exit", lease.releaseSync);
+
+	pi.on("before_agent_start", (event) => {
+		event.systemPromptOptions.sections["git-worktree-isolation"] = PRIMARY_SYSTEM_INSTRUCTION;
+	});
+
+	pi.on("agent_end", async (_event, ctx: ExtensionContext) => {
+		if (enforcementRunning) return;
+		enforcementRunning = true;
+		try {
+			const result = await enforcePrimaryCheckout(repoRoot);
+			if (result.kind === "ok") {
+				repairTurns = 0;
+				return;
+			}
+			if (result.kind === "blocked") {
+				if (ctx.hasUI) ctx.ui.notify(result.message, "error");
+				else process.stderr.write(`Pi worktree isolation: ${result.message}\n`);
+				return;
+			}
+			if (repairTurns >= MAX_REPAIR_TURNS) {
+				const message = "Git finalization failed after six automatic repair turns; the checkout was preserved.";
+				if (ctx.hasUI) ctx.ui.notify(message, "error");
+				else process.stderr.write(`Pi worktree isolation: ${message}\n`);
+				return;
+			}
+			repairTurns++;
+			repairMessageActive = true;
+			pi.sendMessage(
+				{
+					customType: CUSTOM_TYPE,
+					content: `${result.prompt}\n\nThis is an automatic repository-finalization turn. Perform the Git work, verify the repository state, then reply exactly \`done\`.`,
+					display: false,
+				},
+				{ triggerTurn: true },
+			);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			if (ctx.hasUI) ctx.ui.notify(`Git finalization failed: ${message}`, "error");
+			else process.stderr.write(`Pi worktree isolation: ${message}\n`);
+		} finally {
+			enforcementRunning = false;
+		}
+	});
+
+	pi.on("message_end", (event) => {
+		if (!repairMessageActive) return;
+		if (!event.message || typeof event.message !== "object" || (event.message as { role?: string }).role !== "assistant") return;
+		repairMessageActive = false;
+		if (!isBareDone(event.message)) return;
+		return { message: { ...event.message, content: [{ type: "text", text: "" }] } };
+	});
+
+	pi.on("session_before_switch", async (event, ctx) => {
+		if (event.reason === "new" || !event.targetSessionFile) return;
+		const targetCwd = await sessionCwd(event.targetSessionFile);
+		const targetManifest = targetCwd ? await findManifestForCwd(targetCwd) : null;
+		if (!targetCwd || !targetManifest || targetManifest.commonGitDir !== commonGitDir) return;
+		const finalized = await enforcePrimaryCheckout(repoRoot);
+		if (finalized.kind !== "ok") {
+			ctx.ui.notify("The primary checkout could not be finalized safely, so resume was cancelled.", "warning");
+			return { cancel: true };
+		}
+		await lease.release();
+		resumeInManagedWorktree(event.targetSessionFile, targetCwd, targetManifest.manifestPath);
+	});
+
+	pi.on("session_before_fork", (_event, ctx) => {
+		ctx.ui.notify("Exit Pi and fork from a new invocation so a concurrent fork receives its own worktree.", "warning");
+		return { cancel: true };
+	});
 }
 
 function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): void {
@@ -194,11 +299,24 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 		// process's already-isolated worktree.
 		if (event.reason === "new" || !event.targetSessionFile) return;
 		const targetCwd = await sessionCwd(event.targetSessionFile);
-		if (targetCwd && (path.relative(manifest.worktreeRoot, targetCwd) === "" || !path.relative(manifest.worktreeRoot, targetCwd).startsWith(".."))) {
+		if (
+			targetCwd &&
+			(path.relative(manifest.worktreeRoot, targetCwd) === "" ||
+				!path.relative(manifest.worktreeRoot, targetCwd).startsWith(".."))
+		) {
 			return;
 		}
-		ctx.ui.notify("That session belongs to a different worktree. Exit Pi and resume it from a new invocation.", "warning");
-		return { cancel: true };
+		const targetManifest = targetCwd ? await findManifestForCwd(targetCwd) : null;
+		if (!targetCwd || !targetManifest || targetManifest.commonGitDir !== manifest.commonGitDir) {
+			ctx.ui.notify("That session does not belong to a managed worktree for this repository.", "warning");
+			return { cancel: true };
+		}
+		const finalized = await enforceRepository(manifest);
+		if (finalized.kind !== "ok") {
+			ctx.ui.notify("The current worktree could not be finalized safely, so resume was cancelled.", "warning");
+			return { cancel: true };
+		}
+		resumeInManagedWorktree(event.targetSessionFile, targetCwd, targetManifest.manifestPath);
 	});
 
 	pi.on("session_before_fork", (_event, ctx) => {
@@ -233,23 +351,38 @@ export default async function (pi: ExtensionAPI) {
 		return;
 	}
 
-	const repoRoot = await pi.exec("git", ["rev-parse", "--show-toplevel"]);
-	if (repoRoot.code !== 0) return;
+	const repoRootResult = await pi.exec("git", ["rev-parse", "--show-toplevel"]);
+	if (repoRootResult.code !== 0) return;
+	const repoRoot = repoRootResult.stdout.trim();
+	let currentRepository: string;
 	try {
 		// This extension is deployed from the live dotfiles checkout. That
 		// repository explicitly forbids worktrees because setup can repoint live
 		// symlinks into disposable paths.
 		const extensionRepository = await findCommonGitDir(path.dirname(fileURLToPath(import.meta.url)));
-		const currentRepository = await findCommonGitDir(cwd);
+		const foundRepository = await findCommonGitDir(cwd);
+		if (!foundRepository) return;
+		currentRepository = foundRepository;
 		if (extensionRepository && currentRepository === extensionRepository) return;
 	} catch (error) {
 		fatal(error instanceof Error ? error.message : String(error));
 	}
 
-	if (isLegacyResumeInvocation(cliArgs())) {
-		fatal("this saved session predates worktree isolation and cannot be relocated safely. Start a new session instead.");
-	}
 	try {
+		const primaryLease = await tryAcquirePrimaryLease(currentRepository, process.env[PRIMARY_LEASE_ENV]);
+		if (primaryLease) {
+			try {
+				await preparePrimarySessionHub(cwd, repoRoot, currentRepository);
+			} catch (error) {
+				await primaryLease.release();
+				throw error;
+			}
+			registerPrimarySession(pi, repoRoot, currentRepository, primaryLease);
+			return;
+		}
+		if (isLegacyResumeInvocation(cliArgs())) {
+			fatal("this session belongs to the busy primary checkout and cannot be relocated safely.");
+		}
 		const plan = await createLaunchPlan(cwd);
 		if (cliArgs().some((arg) => arg === "--fork" || arg.startsWith("--fork="))) {
 			// Pi creates a CLI fork before extensions load. Repoint that already-created

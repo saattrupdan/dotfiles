@@ -4,7 +4,15 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, test } from "node:test";
-import { createLaunchPlan, enforceRepository, findManifestForCwd, saveManifest } from "./git.ts";
+import {
+	createLaunchPlan,
+	enforceRepository,
+	findManifestForCwd,
+	preparePrimarySessionHub,
+	saveManifest,
+	sessionDirectoryForCwd,
+	tryAcquirePrimaryLease,
+} from "./git.ts";
 
 const temporaryRoots: string[] = [];
 
@@ -31,6 +39,43 @@ afterEach(() => {
 	for (const root of temporaryRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
+test("leases the primary checkout to only one active Pi process", async () => {
+	const { root } = createRepo();
+	const commonGitDir = path.resolve(root, command(root, ["rev-parse", "--git-common-dir"]));
+	const first = await tryAcquirePrimaryLease(commonGitDir);
+	assert.ok(first);
+	assert.equal(await tryAcquirePrimaryLease(commonGitDir), null);
+	const reloaded = await tryAcquirePrimaryLease(commonGitDir, first.token);
+	assert.ok(reloaded);
+	assert.equal(reloaded.token, first.token);
+	await first.release();
+	const next = await tryAcquirePrimaryLease(commonGitDir);
+	assert.ok(next);
+	await next.release();
+});
+
+test("publishes exactly one primary lease under concurrent acquisition", async () => {
+	const { root } = createRepo();
+	const commonGitDir = path.resolve(root, command(root, ["rev-parse", "--git-common-dir"]));
+	const attempts = await Promise.all(Array.from({ length: 20 }, () => tryAcquirePrimaryLease(commonGitDir)));
+	const winners = attempts.filter((lease) => lease !== null);
+	assert.equal(winners.length, 1);
+	await winners[0]!.release();
+});
+
+test("reclaims a stale primary-checkout lease", async () => {
+	const { root } = createRepo();
+	const commonGitDir = path.resolve(root, command(root, ["rev-parse", "--git-common-dir"]));
+	fs.writeFileSync(
+		path.join(commonGitDir, "pi-worktree-primary.json"),
+		`${JSON.stringify({ pid: 2147483647, token: "stale" })}\n`,
+	);
+	const lease = await tryAcquirePrimaryLease(commonGitDir);
+	assert.ok(lease);
+	assert.notEqual(lease.token, "stale");
+	await lease.release();
+});
+
 test("creates a detached worktree without creating a branch", async () => {
 	const { root, agentDir } = createRepo();
 	const nested = path.join(root, "nested");
@@ -42,12 +87,122 @@ test("creates a detached worktree without creating a branch", async () => {
 	assert.equal(command(root, ["branch", "--format=%(refname:short)"]), "main");
 	assert.equal(plan.childCwd, path.join(plan.manifest.worktreeRoot, "nested"));
 	assert.deepEqual((await findManifestForCwd(plan.childCwd))?.id, plan.manifest.id);
+	const hub = fs.realpathSync(sessionDirectoryForCwd(root, agentDir));
+	assert.equal(fs.realpathSync(sessionDirectoryForCwd(nested, agentDir)), hub);
+	assert.equal(fs.realpathSync(sessionDirectoryForCwd(plan.childCwd, agentDir)), hub);
 });
 
-test("refuses to isolate a dirty launch checkout", async () => {
+test("shares the repository session hub across managed worktrees", async () => {
+	const { root, agentDir } = createRepo();
+	const first = await createLaunchPlan(root, agentDir);
+	const firstSessionDir = sessionDirectoryForCwd(first.childCwd, agentDir);
+	fs.writeFileSync(path.join(firstSessionDir, "first.jsonl"), '{"type":"session"}\n');
+	const second = await createLaunchPlan(root, agentDir);
+	const secondSessionDir = sessionDirectoryForCwd(second.childCwd, agentDir);
+
+	assert.equal(fs.realpathSync(firstSessionDir), fs.realpathSync(secondSessionDir));
+	assert.equal(fs.readFileSync(path.join(secondSessionDir, "first.jsonl"), "utf8"), '{"type":"session"}\n');
+});
+
+test("shares sessions when primary and concurrent agents launch from different subdirectories", async () => {
+	const { root, agentDir } = createRepo();
+	const primaryCwd = path.join(root, "primary-subdir");
+	const concurrentCwd = path.join(root, "concurrent-subdir");
+	fs.mkdirSync(primaryCwd);
+	fs.mkdirSync(concurrentCwd);
+	const canonicalRoot = command(root, ["rev-parse", "--show-toplevel"]);
+	const commonGitDir = path.resolve(canonicalRoot, command(root, ["rev-parse", "--git-common-dir"]));
+	await preparePrimarySessionHub(primaryCwd, canonicalRoot, commonGitDir, agentDir);
+	const primarySessions = sessionDirectoryForCwd(primaryCwd, agentDir);
+	fs.writeFileSync(path.join(primarySessions, "primary.jsonl"), '{"type":"session"}\n');
+	const concurrent = await createLaunchPlan(concurrentCwd, agentDir);
+	const concurrentSessions = sessionDirectoryForCwd(concurrent.childCwd, agentDir);
+
+	assert.equal(fs.realpathSync(primarySessions), fs.realpathSync(concurrentSessions));
+	assert.equal(fs.readFileSync(path.join(concurrentSessions, "primary.jsonl"), "utf8"), '{"type":"session"}\n');
+});
+
+test("snapshots and publishes a dirty launch checkout automatically", async () => {
 	const { root, agentDir } = createRepo();
 	fs.writeFileSync(path.join(root, "base.txt"), "dirty\n");
-	await assert.rejects(createLaunchPlan(root, agentDir), /uncommitted changes/);
+	fs.writeFileSync(path.join(root, "untracked.txt"), "untracked\n");
+	const plan = await createLaunchPlan(root, agentDir);
+
+	assert.ok(plan.manifest.launchSnapshotCommit);
+	assert.equal(fs.readFileSync(path.join(plan.manifest.worktreeRoot, "base.txt"), "utf8"), "dirty\n");
+	assert.equal(fs.readFileSync(path.join(plan.manifest.worktreeRoot, "untracked.txt"), "utf8"), "untracked\n");
+	assert.equal(command(plan.manifest.worktreeRoot, ["status", "--porcelain"]), "");
+	assert.notEqual(command(root, ["status", "--porcelain"]), "");
+
+	const result = await enforceRepository(plan.manifest);
+	assert.equal(result.kind, "ok");
+	assert.equal(command(root, ["status", "--porcelain"]), "");
+	assert.equal(fs.readFileSync(path.join(root, "base.txt"), "utf8"), "dirty\n");
+	assert.equal(fs.readFileSync(path.join(root, "untracked.txt"), "utf8"), "untracked\n");
+	assert.equal(command(root, ["rev-parse", "main"]), command(plan.manifest.worktreeRoot, ["rev-parse", "HEAD"]));
+});
+
+test("preserves partially staged launch content in a durable index checkpoint", async () => {
+	const { root, agentDir } = createRepo();
+	fs.writeFileSync(path.join(root, "base.txt"), "staged version\n");
+	command(root, ["add", "base.txt"]);
+	fs.writeFileSync(path.join(root, "base.txt"), "working version\n");
+	const plan = await createLaunchPlan(root, agentDir);
+
+	assert.ok(plan.manifest.launchIndexCommit);
+	assert.equal(command(root, ["show", `${plan.manifest.launchIndexCommit}:base.txt`]), "staged version");
+	assert.equal(fs.readFileSync(path.join(plan.manifest.worktreeRoot, "base.txt"), "utf8"), "working version\n");
+});
+
+test("blocks index-only drift after a dirty launch snapshot", async () => {
+	const { root, agentDir } = createRepo();
+	fs.writeFileSync(path.join(root, "base.txt"), "launch working version\n");
+	const plan = await createLaunchPlan(root, agentDir);
+	fs.writeFileSync(path.join(root, "base.txt"), "new staged version\n");
+	command(root, ["add", "base.txt"]);
+	fs.writeFileSync(path.join(root, "base.txt"), "launch working version\n");
+	fs.writeFileSync(path.join(plan.manifest.worktreeRoot, "agent.txt"), "agent\n");
+	command(plan.manifest.worktreeRoot, ["add", "agent.txt"]);
+	command(plan.manifest.worktreeRoot, ["commit", "-m", "feat: agent work"]);
+
+	const result = await enforceRepository(plan.manifest);
+	assert.equal(result.kind, "blocked");
+	assert.match(result.kind === "blocked" ? result.message : "", /index changed/);
+	assert.equal(command(root, ["show", ":base.txt"]), "new staged version");
+	assert.equal(fs.readFileSync(path.join(root, "base.txt"), "utf8"), "launch working version\n");
+});
+
+test("safely applies agent changes on top of a dirty launch snapshot", async () => {
+	const { root, agentDir } = createRepo();
+	fs.writeFileSync(path.join(root, "base.txt"), "launch snapshot\n");
+	fs.writeFileSync(path.join(root, "temporary.txt"), "captured untracked file\n");
+	const plan = await createLaunchPlan(root, agentDir);
+	fs.writeFileSync(path.join(plan.manifest.worktreeRoot, "base.txt"), "agent result\n");
+	fs.rmSync(path.join(plan.manifest.worktreeRoot, "temporary.txt"));
+	fs.writeFileSync(path.join(plan.manifest.worktreeRoot, "added.txt"), "agent addition\n");
+	command(plan.manifest.worktreeRoot, ["add", "-A"]);
+	command(plan.manifest.worktreeRoot, ["commit", "-m", "feat: update launch snapshot"]);
+
+	const result = await enforceRepository(plan.manifest);
+	assert.equal(result.kind, "ok");
+	assert.equal(command(root, ["status", "--porcelain"]), "");
+	assert.equal(fs.readFileSync(path.join(root, "base.txt"), "utf8"), "agent result\n");
+	assert.equal(fs.existsSync(path.join(root, "temporary.txt")), false);
+	assert.equal(fs.readFileSync(path.join(root, "added.txt"), "utf8"), "agent addition\n");
+});
+
+test("preserves a launch checkout that changes after its automatic snapshot", async () => {
+	const { root, agentDir } = createRepo();
+	const originalHead = command(root, ["rev-parse", "HEAD"]);
+	fs.writeFileSync(path.join(root, "base.txt"), "snapshotted\n");
+	const plan = await createLaunchPlan(root, agentDir);
+	fs.writeFileSync(path.join(root, "base.txt"), "newer local edit\n");
+
+	const result = await enforceRepository(plan.manifest);
+	assert.equal(result.kind, "blocked");
+	assert.match(result.kind === "blocked" ? result.message : "", /changed after its automatic snapshot/);
+	assert.equal(fs.readFileSync(path.join(root, "base.txt"), "utf8"), "newer local edit\n");
+	assert.equal(command(root, ["rev-parse", "main"]), originalHead);
 });
 
 test("asks the agent to commit dirty managed work", async () => {
@@ -85,8 +240,67 @@ test("blocks publication before overwriting an ignored file", async () => {
 
 	const result = await enforceRepository(plan.manifest);
 	assert.equal(result.kind, "blocked");
-	assert.match(result.kind === "blocked" ? result.message : "", /overwrite an untracked or ignored file/);
+	assert.match(result.kind === "blocked" ? result.message : "", /collides with an untracked or ignored path/);
 	assert.equal(fs.readFileSync(path.join(root, "ignored.txt"), "utf8"), "local\n");
+});
+
+test("blocks an incoming child path beneath an ignored file", async () => {
+	const { root, agentDir } = createRepo();
+	fs.writeFileSync(path.join(root, ".gitignore"), "ignored\n");
+	command(root, ["add", ".gitignore"]);
+	command(root, ["commit", "-m", "chore: ignore collision path"]);
+	const plan = await createLaunchPlan(root, agentDir);
+	fs.mkdirSync(path.join(plan.manifest.worktreeRoot, "ignored"));
+	fs.writeFileSync(path.join(plan.manifest.worktreeRoot, "ignored", "child.txt"), "session\n");
+	command(plan.manifest.worktreeRoot, ["add", "-f", "ignored/child.txt"]);
+	command(plan.manifest.worktreeRoot, ["commit", "-m", "feat: add child path"]);
+	fs.writeFileSync(path.join(root, "ignored"), "local ignored file\n");
+
+	const result = await enforceRepository(plan.manifest);
+	assert.equal(result.kind, "blocked");
+	assert.equal(fs.readFileSync(path.join(root, "ignored"), "utf8"), "local ignored file\n");
+});
+
+test("blocks an incoming file above an ignored child path", async () => {
+	const { root, agentDir } = createRepo();
+	fs.writeFileSync(path.join(root, ".gitignore"), "ignored/\n");
+	command(root, ["add", ".gitignore"]);
+	command(root, ["commit", "-m", "chore: ignore collision directory"]);
+	const plan = await createLaunchPlan(root, agentDir);
+	fs.writeFileSync(path.join(plan.manifest.worktreeRoot, "ignored"), "session file\n");
+	command(plan.manifest.worktreeRoot, ["add", "-f", "ignored"]);
+	command(plan.manifest.worktreeRoot, ["commit", "-m", "feat: add parent path"]);
+	fs.mkdirSync(path.join(root, "ignored"));
+	fs.writeFileSync(path.join(root, "ignored", "child.txt"), "local ignored child\n");
+
+	const result = await enforceRepository(plan.manifest);
+	assert.equal(result.kind, "blocked");
+	assert.equal(fs.readFileSync(path.join(root, "ignored", "child.txt"), "utf8"), "local ignored child\n");
+});
+
+test("preserves dirty-checkout drift after the branch ref was published", async () => {
+	const { root, agentDir } = createRepo();
+	fs.writeFileSync(path.join(root, "base.txt"), "snapshotted\n");
+	const plan = await createLaunchPlan(root, agentDir);
+	const newHead = command(plan.manifest.worktreeRoot, ["rev-parse", "HEAD"]);
+	plan.manifest.pendingSync = {
+		oldHead: plan.manifest.baseSha,
+		newHead,
+		expectedDirtyTree: plan.manifest.launchSnapshotTree,
+		expectedDirtyBase: plan.manifest.baseSha,
+		expectedDirtyCommit: plan.manifest.launchSnapshotCommit,
+		expectedIndexTree: plan.manifest.launchIndexTree,
+		expectedIndexCommit: plan.manifest.launchIndexCommit,
+	};
+	plan.manifest.publishedHead = newHead;
+	await saveManifest(plan.manifest);
+	command(root, ["update-ref", "refs/heads/main", newHead, plan.manifest.baseSha]);
+	fs.writeFileSync(path.join(root, "base.txt"), "new edit after publication\n");
+
+	const result = await enforceRepository(plan.manifest);
+	assert.equal(result.kind, "blocked");
+	assert.equal(fs.readFileSync(path.join(root, "base.txt"), "utf8"), "new edit after publication\n");
+	assert.ok(plan.manifest.pendingSync);
 });
 
 test("recovers checkout synchronization after a crash following ref publication", async () => {

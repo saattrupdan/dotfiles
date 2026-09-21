@@ -12,6 +12,11 @@ const execFileAsync = promisify(execFile);
 export interface PendingSync {
 	oldHead: string;
 	newHead: string;
+	expectedDirtyTree?: string;
+	expectedDirtyBase?: string;
+	expectedDirtyCommit?: string;
+	expectedIndexTree?: string;
+	expectedIndexCommit?: string;
 }
 
 export interface SessionManifest {
@@ -21,10 +26,15 @@ export interface SessionManifest {
 	commonGitDir: string;
 	worktreeRoot: string;
 	launchCwdRelative: string;
+	sessionHubCwd?: string;
 	targetBranch: string;
 	targetRef: string;
 	baseSha: string;
 	publishedHead: string;
+	launchSnapshotCommit?: string;
+	launchSnapshotTree?: string;
+	launchIndexTree?: string;
+	launchIndexCommit?: string;
 	pendingSync?: PendingSync;
 	createdAt: string;
 	manifestPath: string;
@@ -40,16 +50,24 @@ export type EnforcementResult =
 	| { kind: "needs-agent"; prompt: string }
 	| { kind: "blocked"; message: string };
 
+export interface PrimaryLease {
+	path: string;
+	token: string;
+	release: () => Promise<void>;
+	releaseSync: () => void;
+}
+
 interface GitResult {
 	stdout: string;
 	stderr: string;
 	code: number;
 }
 
-async function run(cwd: string, args: string[]): Promise<GitResult> {
+async function run(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<GitResult> {
 	try {
 		const result = await execFileAsync("git", args, {
 			cwd,
+			env: env ? { ...process.env, ...env } : process.env,
 			encoding: "utf8",
 			maxBuffer: 16 * 1024 * 1024,
 		});
@@ -64,12 +82,66 @@ async function run(cwd: string, args: string[]): Promise<GitResult> {
 	}
 }
 
-async function git(cwd: string, args: string[]): Promise<string> {
-	const result = await run(cwd, args);
+async function git(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<string> {
+	const result = await run(cwd, args, env);
 	if (result.code !== 0) {
 		throw new Error(`git ${args.join(" ")} failed: ${result.stderr.trim() || result.stdout.trim()}`);
 	}
 	return result.stdout.trim();
+}
+
+interface WorkingTreeSnapshot {
+	tree: string;
+}
+
+async function workingTreeSnapshot(repoRoot: string, baseSha: string): Promise<WorkingTreeSnapshot> {
+	const indexPath = path.join(os.tmpdir(), `pi-worktree-index-${process.pid}-${randomUUID()}`);
+	const env = { GIT_INDEX_FILE: indexPath };
+	try {
+		await git(repoRoot, ["read-tree", baseSha], env);
+		await git(repoRoot, ["add", "-A", "--", "."], env);
+		const tree = await git(repoRoot, ["write-tree"], env);
+		return { tree };
+	} finally {
+		await fs.promises.rm(indexPath, { force: true });
+	}
+}
+
+interface LaunchSnapshot {
+	startSha: string;
+	workingTree?: string;
+	indexTree?: string;
+	indexCommit?: string;
+}
+
+async function createLaunchSnapshot(repoRoot: string, baseSha: string): Promise<LaunchSnapshot> {
+	const snapshot = await workingTreeSnapshot(repoRoot, baseSha);
+	const indexTree = await git(repoRoot, ["write-tree"]);
+	const baseTree = await git(repoRoot, ["rev-parse", `${baseSha}^{tree}`]);
+	if (snapshot.tree === baseTree && indexTree === baseTree) return { startSha: baseSha };
+	const startSha =
+		snapshot.tree === baseTree
+			? baseSha
+			: await git(repoRoot, [
+					"commit-tree",
+					snapshot.tree,
+					"-p",
+					baseSha,
+					"-m",
+					"chore: checkpoint Pi launch changes",
+				]);
+	const indexCommit =
+		indexTree === baseTree
+			? baseSha
+			: await git(repoRoot, [
+					"commit-tree",
+					indexTree,
+					"-p",
+					baseSha,
+					"-m",
+					"chore: checkpoint Pi launch index",
+				]);
+	return { startSha, workingTree: snapshot.tree, indexTree, indexCommit };
 }
 
 function resolveGitPath(repoRoot: string, value: string): string {
@@ -150,6 +222,86 @@ export async function findRepoRoot(cwd: string): Promise<string | null> {
 	return fs.promises.realpath(result.stdout.trim());
 }
 
+function processIsAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === "EPERM";
+	}
+}
+
+export async function tryAcquirePrimaryLease(
+	commonGitDir: string,
+	existingToken?: string,
+): Promise<PrimaryLease | null> {
+	const leasePath = path.join(commonGitDir, "pi-worktree-primary.json");
+	const makeLease = (token: string): PrimaryLease => {
+		const owned = (): boolean => {
+			try {
+				const value = JSON.parse(fs.readFileSync(leasePath, "utf8")) as { token?: string };
+				return value.token === token;
+			} catch {
+				return false;
+			}
+		};
+		return {
+			path: leasePath,
+			token,
+			release: async () => {
+				if (owned()) await fs.promises.rm(leasePath, { force: true });
+			},
+			releaseSync: () => {
+				if (owned()) fs.rmSync(leasePath, { force: true });
+			},
+		};
+	};
+
+	for (let attempt = 0; attempt < 5; attempt++) {
+		const token = randomUUID();
+		const candidatePath = `${leasePath}.${token}.tmp`;
+		try {
+			await fs.promises.writeFile(
+				candidatePath,
+				`${JSON.stringify({ pid: process.pid, token, startedAt: new Date().toISOString() })}\n`,
+				{ flag: "wx" },
+			);
+			try {
+				await fs.promises.link(candidatePath, leasePath);
+				return makeLease(token);
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+			}
+		} finally {
+			await fs.promises.rm(candidatePath, { force: true });
+		}
+
+		let handle: fs.promises.FileHandle;
+		try {
+			handle = await fs.promises.open(leasePath, "r");
+		} catch {
+			continue;
+		}
+		try {
+			const stat = await handle.stat();
+			const value = JSON.parse(await handle.readFile("utf8")) as { pid?: number; token?: string };
+			if (value.pid === process.pid && value.token && value.token === existingToken) return makeLease(value.token);
+			if (typeof value.pid === "number" && processIsAlive(value.pid)) return null;
+			const current = await fs.promises.stat(leasePath).catch(() => null);
+			if (current && current.dev === stat.dev && current.ino === stat.ino) await fs.promises.rm(leasePath, { force: true });
+		} catch {
+			const stat = await handle.stat().catch(() => null);
+			const current = await fs.promises.stat(leasePath).catch(() => null);
+			if (stat && current && current.dev === stat.dev && current.ino === stat.ino) {
+				await fs.promises.rm(leasePath, { force: true });
+			}
+		} finally {
+			await handle.close();
+		}
+	}
+	return null;
+}
+
 export async function findCommonGitDir(cwd: string): Promise<string | null> {
 	const repoRoot = await findRepoRoot(cwd);
 	if (!repoRoot) return null;
@@ -193,36 +345,133 @@ export async function saveManifest(manifest: SessionManifest): Promise<void> {
 	await fs.promises.rename(temporary, manifest.manifestPath);
 }
 
+export function sessionDirectoryForCwd(cwd: string, agentDir?: string): string {
+	const root = agentDir ?? process.env.PI_CODING_AGENT_DIR ?? path.join(os.homedir(), ".pi", "agent");
+	const resolved = path.resolve(cwd);
+	const safePath = `--${resolved.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
+	return path.join(root, "sessions", safePath);
+}
+
+async function linkSessionDirectory(sourceCwd: string, sessionHubCwd: string, agentDir: string): Promise<void> {
+	const source = sessionDirectoryForCwd(sourceCwd, agentDir);
+	const hub = sessionDirectoryForCwd(sessionHubCwd, agentDir);
+	if (source === hub) {
+		await fs.promises.mkdir(hub, { recursive: true });
+		return;
+	}
+	await fs.promises.mkdir(hub, { recursive: true });
+	await fs.promises.mkdir(path.dirname(source), { recursive: true });
+	const existing = await fs.promises.lstat(source).catch(() => null);
+	if (existing?.isSymbolicLink()) {
+		const target = await fs.promises.realpath(source).catch(() => "");
+		if (target === (await fs.promises.realpath(hub))) return;
+		throw new Error(`Session directory ${source} points somewhere other than the repository session hub.`);
+	}
+	if (existing) {
+		if (!existing.isDirectory()) throw new Error(`Session path ${source} is not a directory.`);
+		for (const entry of await fs.promises.readdir(source)) {
+			const from = path.join(source, entry);
+			const to = path.join(hub, entry);
+			if (await fs.promises.lstat(to).catch(() => null)) {
+				throw new Error(`Cannot consolidate duplicate session file ${entry}.`);
+			}
+			await fs.promises.rename(from, to);
+		}
+		await fs.promises.rmdir(source);
+	}
+	await fs.promises.symlink(hub, source, "dir");
+}
+
+async function consolidateManagedSessionDirectories(
+	commonGitDir: string,
+	sessionHubCwd: string,
+	agentDir: string,
+): Promise<void> {
+	const directory = manifestDirectory(commonGitDir);
+	for (const name of await fs.promises.readdir(directory).catch(() => [] as string[])) {
+		if (!name.endsWith(".json")) continue;
+		try {
+			const manifest = JSON.parse(await fs.promises.readFile(path.join(directory, name), "utf8")) as SessionManifest;
+			const managedAgentDir = path.dirname(path.dirname(path.dirname(manifest.worktreeRoot)));
+			if (path.resolve(managedAgentDir) !== path.resolve(agentDir)) continue;
+			await linkSessionDirectory(
+				path.join(manifest.worktreeRoot, manifest.launchCwdRelative),
+				manifest.sessionHubCwd ?? sessionHubCwd,
+				agentDir,
+			);
+		} catch {
+			// A malformed or concurrently replaced old manifest must not prevent a
+			// fresh session from getting its own shared session directory.
+		}
+	}
+}
+
+export async function preparePrimarySessionHub(
+	cwd: string,
+	repoRoot: string,
+	commonGitDir: string,
+	agentDir?: string,
+): Promise<string> {
+	const root = agentDir ?? process.env.PI_CODING_AGENT_DIR ?? path.join(os.homedir(), ".pi", "agent");
+	const lexicalCwd = path.resolve(cwd);
+	const resolvedCwd = await fs.promises.realpath(cwd);
+	const sessionHubCwd = path.resolve(lexicalCwd, path.relative(resolvedCwd, repoRoot));
+	await consolidateManagedSessionDirectories(commonGitDir, sessionHubCwd, root);
+	await linkSessionDirectory(lexicalCwd, sessionHubCwd, root);
+	return sessionHubCwd;
+}
+
 export async function createLaunchPlan(cwd: string, agentDir?: string): Promise<LaunchPlan> {
 	const repoRoot = await findRepoRoot(cwd);
 	if (!repoRoot) throw new Error(`${cwd} is not inside a Git working tree.`);
 
-	const status = await git(repoRoot, ["status", "--porcelain=v1"]);
-	if (status) {
-		throw new Error("The launch checkout has uncommitted changes. Commit or stash them before starting Pi isolation.");
+	let targetBranch = "";
+	let baseSha = "";
+	let snapshot: LaunchSnapshot | null = null;
+	for (let attempt = 0; attempt < 10; attempt++) {
+		targetBranch = await git(repoRoot, ["symbolic-ref", "--quiet", "--short", "HEAD"]).catch(() => "");
+		if (!targetBranch) throw new Error("Pi isolation requires the launch checkout to be on a named branch.");
+		baseSha = await git(repoRoot, ["rev-parse", "HEAD"]);
+		const candidate = await createLaunchSnapshot(repoRoot, baseSha);
+		const verifiedBranch = await git(repoRoot, ["symbolic-ref", "--quiet", "--short", "HEAD"]).catch(() => "");
+		const verifiedSha = await git(repoRoot, ["rev-parse", "HEAD"]);
+		const verifiedSnapshot = await workingTreeSnapshot(repoRoot, baseSha);
+		const verifiedIndexTree = await git(repoRoot, ["write-tree"]);
+		const snapshotTree = await git(repoRoot, ["rev-parse", `${candidate.startSha}^{tree}`]);
+		const expectedIndexTree = candidate.indexTree ?? snapshotTree;
+		if (
+			verifiedBranch === targetBranch &&
+			verifiedSha === baseSha &&
+			verifiedSnapshot.tree === snapshotTree &&
+			verifiedIndexTree === expectedIndexTree
+		) {
+			snapshot = candidate;
+			break;
+		}
+		await new Promise((resolve) => setTimeout(resolve, 25));
 	}
-	const targetBranch = await git(repoRoot, ["symbolic-ref", "--quiet", "--short", "HEAD"]).catch(() => "");
-	if (!targetBranch) throw new Error("Pi isolation requires the launch checkout to be on a named branch.");
-	const baseSha = await git(repoRoot, ["rev-parse", "HEAD"]);
-	const verifiedBranch = await git(repoRoot, ["symbolic-ref", "--quiet", "--short", "HEAD"]).catch(() => "");
-	const verifiedSha = await git(repoRoot, ["rev-parse", "HEAD"]);
-	const verifiedStatus = await git(repoRoot, ["status", "--porcelain=v1"]);
-	if (verifiedBranch !== targetBranch || verifiedSha !== baseSha || verifiedStatus) {
-		throw new Error("The launch checkout changed while Pi was preparing its isolated worktree. Retry the command.");
-	}
+	if (!snapshot) throw new Error("The launch checkout kept changing while Pi prepared its isolated worktree.");
 	const commonRaw = await git(repoRoot, ["rev-parse", "--git-common-dir"]);
 	const commonGitDir = resolveGitPath(repoRoot, commonRaw);
+	const lexicalCwd = path.resolve(cwd);
 	const resolvedCwd = await fs.promises.realpath(cwd);
 	const relative = path.relative(repoRoot, resolvedCwd);
+	const sessionHubCwd = path.resolve(lexicalCwd, path.relative(resolvedCwd, repoRoot));
 	if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("Launch cwd is outside the repository root.");
 
 	const repoKey = createHash("sha256").update(commonGitDir).digest("hex").slice(0, 12);
 	const root = agentDir ?? process.env.PI_CODING_AGENT_DIR ?? path.join(os.homedir(), ".pi", "agent");
+	await consolidateManagedSessionDirectories(commonGitDir, sessionHubCwd, root);
+	await linkSessionDirectory(lexicalCwd, sessionHubCwd, root);
 	const worktreesRoot = path.join(root, "worktrees", repoKey);
 	const id = cuteSessionId(commonGitDir, worktreesRoot);
 	const requestedWorktreeRoot = path.join(worktreesRoot, id);
 	await fs.promises.mkdir(worktreesRoot, { recursive: true });
-	await git(repoRoot, ["worktree", "add", "--detach", requestedWorktreeRoot, baseSha]);
+	if (snapshot.workingTree && snapshot.indexCommit) {
+		await git(repoRoot, ["update-ref", `refs/pi-worktree-snapshots/${id}/working`, snapshot.startSha]);
+		await git(repoRoot, ["update-ref", `refs/pi-worktree-snapshots/${id}/index`, snapshot.indexCommit]);
+	}
+	await git(repoRoot, ["worktree", "add", "--detach", requestedWorktreeRoot, snapshot.startSha]);
 	const worktreeRoot = await fs.promises.realpath(requestedWorktreeRoot);
 	await git(repoRoot, ["worktree", "lock", "--reason", "active Pi session", worktreeRoot]);
 
@@ -234,16 +483,26 @@ export async function createLaunchPlan(cwd: string, agentDir?: string): Promise<
 		commonGitDir,
 		worktreeRoot,
 		launchCwdRelative: relative,
+		sessionHubCwd,
 		targetBranch,
 		targetRef: `refs/heads/${targetBranch}`,
 		baseSha,
 		publishedHead: baseSha,
+		...(snapshot.workingTree && snapshot.indexTree && snapshot.indexCommit
+			? {
+					launchSnapshotCommit: snapshot.startSha,
+					launchSnapshotTree: snapshot.workingTree,
+					launchIndexTree: snapshot.indexTree,
+					launchIndexCommit: snapshot.indexCommit,
+				}
+			: {}),
 		createdAt: new Date().toISOString(),
 		manifestPath,
 	};
 	await saveManifest(manifest);
 	const childCwd = path.join(worktreeRoot, relative);
 	await fs.promises.mkdir(childCwd, { recursive: true });
+	await linkSessionDirectory(childCwd, sessionHubCwd, root);
 	return { manifest, childCwd };
 }
 
@@ -331,7 +590,37 @@ function nulPaths(output: string): Set<string> {
 	return new Set(output.split("\0").filter(Boolean));
 }
 
-async function checkoutTransitionProblem(holderPath: string, oldHead: string, newHead: string): Promise<string | null> {
+function findPathCollision(incoming: Set<string>, existing: Set<string>): string | null {
+	for (const added of incoming) {
+		for (const present of existing) {
+			if (added === present || added.startsWith(`${present}/`) || present.startsWith(`${added}/`)) return added;
+		}
+	}
+	return null;
+}
+
+async function checkoutTransitionProblem(
+	holderPath: string,
+	oldHead: string,
+	newHead: string,
+	expectedDirtyTree?: string,
+	expectedDirtyBase?: string,
+	expectedIndexTree?: string,
+): Promise<string | null> {
+	if (expectedDirtyTree && expectedDirtyBase) {
+		const current = await workingTreeSnapshot(holderPath, expectedDirtyBase);
+		if (current.tree !== expectedDirtyTree) return "the launch checkout changed after its automatic snapshot";
+		if (expectedIndexTree && (await git(holderPath, ["write-tree"])) !== expectedIndexTree) {
+			return "the launch checkout index changed after its automatic snapshot";
+		}
+		const added = nulPaths(await git(holderPath, ["diff", "--name-only", "--diff-filter=A", "-z", oldHead, newHead]));
+		const ignored = nulPaths(
+			await git(holderPath, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"]),
+		);
+		const ignoredCollision = findPathCollision(added, ignored);
+		return ignoredCollision ? `the incoming tracked path ${ignoredCollision} collides with an ignored path` : null;
+	}
+
 	const indexTree = await git(holderPath, ["write-tree"]);
 	const oldTree = await git(holderPath, ["rev-parse", `${oldHead}^{tree}`]);
 	if (indexTree !== oldTree) return "its index changed after the publication pre-check";
@@ -345,8 +634,96 @@ async function checkoutTransitionProblem(holderPath: string, oldHead: string, ne
 	const ignored = nulPaths(
 		await git(holderPath, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"]),
 	);
-	const collision = [...added].find((file) => untracked.has(file) || ignored.has(file));
-	return collision ? `the incoming tracked file ${collision} would overwrite an untracked or ignored file` : null;
+	const collision = findPathCollision(added, new Set([...untracked, ...ignored]));
+	return collision ? `the incoming tracked path ${collision} collides with an untracked or ignored path` : null;
+}
+
+async function replaceIndexIfUnchanged(
+	holderPath: string,
+	newHead: string,
+	expectedIndexTree: string,
+): Promise<string | null> {
+	const indexRaw = await git(holderPath, ["rev-parse", "--git-path", "index"]);
+	const indexPath = path.isAbsolute(indexRaw) ? indexRaw : path.resolve(holderPath, indexRaw);
+	const nonce = `${process.pid}-${randomUUID()}`;
+	const preparedPath = `${indexPath}.pi-prepared-${nonce}`;
+	const inspectedPath = `${indexPath}.pi-inspected-${nonce}`;
+	const lockPath = `${indexPath}.lock`;
+	let lock: fs.promises.FileHandle | null = null;
+	try {
+		await git(holderPath, ["read-tree", newHead], { GIT_INDEX_FILE: preparedPath });
+		try {
+			lock = await fs.promises.open(lockPath, "wx");
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "EEXIST") return "the checkout index is locked by another Git process";
+			throw error;
+		}
+		const original = await fs.promises.stat(indexPath);
+		await fs.promises.copyFile(indexPath, inspectedPath);
+		const currentTree = await git(holderPath, ["write-tree"], { GIT_INDEX_FILE: inspectedPath });
+		if (currentTree !== expectedIndexTree) return "the launch checkout index changed after its automatic snapshot";
+		await fs.promises.chmod(preparedPath, original.mode);
+		await fs.promises.rename(preparedPath, indexPath);
+		return null;
+	} finally {
+		if (lock) {
+			await lock.close();
+			await fs.promises.rm(lockPath, { force: true });
+		}
+		await fs.promises.rm(preparedPath, { force: true });
+		await fs.promises.rm(inspectedPath, { force: true });
+	}
+}
+
+async function synchronizeDirtySnapshot(holderPath: string, pending: PendingSync): Promise<string | null> {
+	if (
+		!pending.expectedDirtyTree ||
+		!pending.expectedDirtyBase ||
+		!pending.expectedDirtyCommit ||
+		!pending.expectedIndexTree ||
+		!pending.expectedIndexCommit
+	) {
+		return "the dirty-checkout recovery record is incomplete";
+	}
+	const newTree = await git(holderPath, ["rev-parse", `${pending.newHead}^{tree}`]);
+	const indexTree = await git(holderPath, ["write-tree"]);
+	if (indexTree === newTree && !(await git(holderPath, ["status", "--porcelain=v1"]))) return null;
+	const indexAlreadyTransitioned = indexTree === newTree;
+
+	const problem = await checkoutTransitionProblem(
+		holderPath,
+		pending.oldHead,
+		pending.newHead,
+		pending.expectedDirtyTree,
+		pending.expectedDirtyBase,
+		indexAlreadyTransitioned ? undefined : pending.expectedIndexTree,
+	);
+	if (problem) return problem;
+
+	const patchPath = path.join(os.tmpdir(), `pi-worktree-transition-${process.pid}-${randomUUID()}.patch`);
+	try {
+		const createPatch = await run(holderPath, [
+			"diff",
+			"--binary",
+			"--full-index",
+			`--output=${patchPath}`,
+			pending.expectedDirtyCommit,
+			pending.newHead,
+		]);
+		if (createPatch.code !== 0) return `Git could not prepare the checkout transition: ${createPatch.stderr.trim()}`;
+		if (!indexAlreadyTransitioned) {
+			const replaceProblem = await replaceIndexIfUnchanged(holderPath, pending.newHead, pending.expectedIndexTree);
+			if (replaceProblem) return replaceProblem;
+		}
+		if ((await fs.promises.stat(patchPath)).size > 0) {
+			const apply = await run(holderPath, ["apply", "--binary", patchPath]);
+			if (apply.code !== 0) return `working files changed while synchronizing; Git left them intact (${apply.stderr.trim()})`;
+		}
+		const status = await git(holderPath, ["status", "--porcelain=v1"]);
+		return status ? `the checkout still has changes after safe synchronization (${status.split("\n").join(", ")})` : null;
+	} finally {
+		await fs.promises.rm(patchPath, { force: true });
+	}
 }
 
 async function recoverPendingSync(manifest: SessionManifest): Promise<EnforcementResult | null> {
@@ -379,30 +756,40 @@ async function recoverPendingSync(manifest: SessionManifest): Promise<Enforcemen
 		await saveManifest(manifest);
 		return { kind: "ok", message: `Recovered publication to ${manifest.targetBranch}.` };
 	}
-	const newTree = await git(holder.path, ["rev-parse", `${pending.newHead}^{tree}`]);
-	const indexTree = await git(holder.path, ["write-tree"]);
-	if (indexTree === newTree) {
-		const worktreeDiff = await run(holder.path, ["diff", "--quiet"]);
-		if (worktreeDiff.code !== 0) {
-			return {
-				kind: "blocked",
-				message: `The ${manifest.targetBranch} index is synchronized, but ${holder.path} still has working-file changes; recovery was preserved.`,
-			};
-		}
-	} else {
-		const problem = await checkoutTransitionProblem(holder.path, pending.oldHead, pending.newHead);
+	if (pending.expectedDirtyTree && pending.expectedDirtyBase) {
+		const problem = await synchronizeDirtySnapshot(holder.path, pending);
 		if (problem) {
 			return {
 				kind: "blocked",
 				message: `Published to ${manifest.targetBranch}, but cannot safely synchronize ${holder.path}: ${problem}.`,
 			};
 		}
-		const synchronize = await run(holder.path, ["read-tree", "-u", "-m", pending.oldHead, pending.newHead]);
-		if (synchronize.code !== 0) {
-			return {
-				kind: "blocked",
-				message: `Published to ${manifest.targetBranch}, but checkout synchronization is still pending: ${synchronize.stderr.trim()}`,
-			};
+	} else {
+		const newTree = await git(holder.path, ["rev-parse", `${pending.newHead}^{tree}`]);
+		const indexTree = await git(holder.path, ["write-tree"]);
+		if (indexTree === newTree) {
+			const worktreeDiff = await run(holder.path, ["diff", "--quiet"]);
+			if (worktreeDiff.code !== 0) {
+				return {
+					kind: "blocked",
+					message: `The ${manifest.targetBranch} index is synchronized, but ${holder.path} still has working-file changes; recovery was preserved.`,
+				};
+			}
+		} else {
+			const problem = await checkoutTransitionProblem(holder.path, pending.oldHead, pending.newHead);
+			if (problem) {
+				return {
+					kind: "blocked",
+					message: `Published to ${manifest.targetBranch}, but cannot safely synchronize ${holder.path}: ${problem}.`,
+				};
+			}
+			const synchronize = await run(holder.path, ["read-tree", "-u", "-m", pending.oldHead, pending.newHead]);
+			if (synchronize.code !== 0) {
+				return {
+					kind: "blocked",
+					message: `Published to ${manifest.targetBranch}, but checkout synchronization is still pending: ${synchronize.stderr.trim()}`,
+				};
+			}
 		}
 	}
 	delete manifest.pendingSync;
@@ -456,13 +843,38 @@ async function publishDetached(manifest: SessionManifest): Promise<EnforcementRe
 			const holder = (await listWorktrees(manifest.repoRoot)).find(
 				(entry) => entry.branch === manifest.targetBranch,
 			);
+			let expectedDirtyTree: string | undefined;
+			let expectedDirtyBase: string | undefined;
+			let expectedDirtyCommit: string | undefined;
+			let expectedIndexTree: string | undefined;
+			let expectedIndexCommit: string | undefined;
 			if (holder) {
 				const holderBranch = await git(holder.path, ["symbolic-ref", "--quiet", "--short", "HEAD"]).catch(
 					() => "",
 				);
 				const holderHead = await git(holder.path, ["rev-parse", "HEAD"]);
 				if (holderBranch !== manifest.targetBranch || holderHead !== target) continue;
-				const problem = await checkoutTransitionProblem(holder.path, target, head);
+				if (
+					path.resolve(holder.path) === path.resolve(manifest.repoRoot) &&
+					manifest.launchSnapshotTree &&
+					manifest.launchSnapshotCommit &&
+					manifest.launchIndexTree &&
+					manifest.launchIndexCommit
+				) {
+					expectedDirtyTree = manifest.launchSnapshotTree;
+					expectedDirtyBase = manifest.baseSha;
+					expectedDirtyCommit = manifest.launchSnapshotCommit;
+					expectedIndexTree = manifest.launchIndexTree;
+					expectedIndexCommit = manifest.launchIndexCommit;
+				}
+				const problem = await checkoutTransitionProblem(
+					holder.path,
+					target,
+					head,
+					expectedDirtyTree,
+					expectedDirtyBase,
+					expectedIndexTree,
+				);
 				if (problem) {
 					return {
 						kind: "blocked",
@@ -473,7 +885,23 @@ async function publishDetached(manifest: SessionManifest): Promise<EnforcementRe
 
 			// Persist the transition before CAS. If the process dies after moving
 			// the ref, the next run can safely resume index/worktree synchronization.
-			manifest.pendingSync = { oldHead: target, newHead: head };
+			manifest.pendingSync = {
+				oldHead: target,
+				newHead: head,
+				...(expectedDirtyTree &&
+				expectedDirtyBase &&
+				expectedDirtyCommit &&
+				expectedIndexTree &&
+				expectedIndexCommit
+					? {
+							expectedDirtyTree,
+							expectedDirtyBase,
+							expectedDirtyCommit,
+							expectedIndexTree,
+							expectedIndexCommit,
+						}
+					: {}),
+			};
 			await saveManifest(manifest);
 			const update = await run(manifest.repoRoot, ["update-ref", manifest.targetRef, head, target]);
 			if (update.code !== 0) {
@@ -498,6 +926,17 @@ async function publishDetached(manifest: SessionManifest): Promise<EnforcementRe
 	} finally {
 		await release();
 	}
+}
+
+export async function enforcePrimaryCheckout(repoRoot: string): Promise<EnforcementResult> {
+	const status = await git(repoRoot, ["status", "--porcelain=v1"]);
+	return status
+		? {
+				kind: "needs-agent",
+				prompt:
+					"The primary Git checkout still has uncommitted changes. Commit all intended changes and leave `git status --porcelain` empty before finishing.",
+			}
+		: { kind: "ok" };
 }
 
 export async function enforceRepository(manifest: SessionManifest): Promise<EnforcementResult> {
