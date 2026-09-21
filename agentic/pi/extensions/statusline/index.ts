@@ -20,7 +20,7 @@ import type {
 	ExtensionContext,
 	ReadonlyFooterDataProvider,
 } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth } from "@earendil-works/pi-tui";
+import { wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname } from "path";
 import {
@@ -159,7 +159,7 @@ export default function (pi: ExtensionAPI) {
 				invalidate() {},
 				render(width: number): string[] {
 					const line = buildStatusline(ctx, theme, footerData);
-					return [' ' + truncateToWidth(line, width - 1), ''];
+					return [...wrapStatusline(line, width), ""];
 				},
 			};
 		});
@@ -237,6 +237,12 @@ function refreshQuota(ctx: ExtensionContext, options: { force?: boolean } = {}):
 		.finally(() => {
 			quotaFetchInFlight = false;
 		});
+}
+
+export function wrapStatusline(line: string, width: number): string[] {
+	if (width <= 0) return [""];
+	if (width === 1) return [" "];
+	return wrapTextWithAnsi(line, width - 1).map((wrappedLine) => ` ${wrappedLine}`);
 }
 
 function buildStatusline(

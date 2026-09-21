@@ -1,6 +1,8 @@
 # Statusline Extension
 
-Compact single-line footer for Pi showing model, context usage, and subscription quotas.
+Compact footer for Pi showing model, context usage, and subscription quotas. It stays
+on one line when possible and wraps onto additional lines when needed, so narrow
+terminals do not hide status details behind an ellipsis.
 
 ## Features
 

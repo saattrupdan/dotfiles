@@ -16,4 +16,5 @@ await jiti.import(path.join(root, "mcp-collapse", "index.test.ts"), { default: f
 await jiti.import(path.join(root, "git-worktree-isolation", "git.test.ts"), { default: false });
 await jiti.import(path.join(root, "read", "heic.test.ts"), { default: false });
 await jiti.import(path.join(root, "subagent", "session-label.test.ts"), { default: false });
+await jiti.import(path.join(root, "statusline", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "web-search", "index.test.ts"), { default: false });
