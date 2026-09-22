@@ -62,8 +62,7 @@ into the parent's HEAD on exit.
    assumption rather than stopping over routine implementation ambiguity.
 2. Inspect relevant files before changing them.
 3. Make the change in the smallest number of well-scoped commits.
-4. Run cheap sanity checks (`cargo check`, `npm run typecheck`, `pytest -x`) if the repo
-   is set up. If they fail, fix or report.
+4. Do not run tests. The reviewer handles fast test execution when review is warranted.
 5. End with a short Markdown summary: what changed, which files, commit subjects only
    (no diffs).
 
