@@ -138,12 +138,12 @@ call fields, frontmatter, skill-scoping, refusal, and worktree semantics.
 
 ### `no-repeat`
 
-Blocks consecutive duplicate tool calls. If the agent calls the same tool
-with the same arguments twice in a row, the second call is blocked with a
-short nudge telling it to do something different. Catches the common "loop
-forever on the same failing call" failure mode and saves tokens. Runs in
-both the orchestrator and each subagent process (per-process state).
-"Consecutive" means: not separated by any other tool call.
+Blocks consecutive duplicate tool calls and uninterrupted two-argument
+alternating loops. If the agent repeats the same call, or calls one tool with
+arguments A, B, A, B without using another tool in between, the repeated call
+is blocked with a short nudge. Catches common loop failure modes and saves
+tokens without combining calls from unrelated work later in a long session.
+Runs in both the orchestrator and each subagent process (per-process state).
 
 ### `caffeinate`
 

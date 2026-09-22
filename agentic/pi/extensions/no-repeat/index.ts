@@ -16,8 +16,8 @@
  *
  * "Consecutive" means: not separated by any other tool call. Two `read` calls
  * on the same file with a different `search` in between are fine; two
- * identical `read` calls in a row are not. Alternating detection requires the
- * same tool — different tools interleaving don't count.
+ * identical `read` calls in a row are not. Alternating detection also requires
+ * an uninterrupted run of the same tool; another tool breaks the pattern.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -99,21 +99,25 @@ function detectAlternatingPair(history: string[]): boolean {
 export default function (pi: ExtensionAPI) {
 	let last: string | null = null;
 	let currentSessionId: string | undefined;
-	// Per-tool history buffers for alternating-pair detection.
-	const history: Map<string, string[]> = new Map();
+	// History for the current uninterrupted run of one tool. A different tool
+	// breaks the pattern so unrelated calls cannot accumulate into a false loop.
+	let historyTool: string | undefined;
+	let history: string[] = [];
 
 	pi.on("session_start", async (_event, ctx) => {
 		last = null;
 		currentSessionId = undefined;
 		clearAutoloadRetry(sessionId(ctx));
-		history.clear();
+		historyTool = undefined;
+		history = [];
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
 		const session = sessionId(ctx);
 		if (currentSessionId && currentSessionId !== session) {
 			last = null;
-			history.clear();
+			historyTool = undefined;
+			history = [];
 		}
 		currentSessionId = session;
 
@@ -122,7 +126,8 @@ export default function (pi: ExtensionAPI) {
 		const canonical = canonicalInput(event.input);
 		if (!canonical) {
 			last = null;
-			history.clear();
+			historyTool = undefined;
+			history = [];
 			return;
 		}
 
@@ -141,15 +146,19 @@ export default function (pi: ExtensionAPI) {
 			};
 		}
 
-		// --- Alternating-pair check (new) ---
-		// Maintain a rolling history per tool name.
-		let buf = history.get(event.toolName);
-		if (!buf) { buf = []; history.set(event.toolName, buf); }
-		buf.push(fp);
-		if (buf.length > HISTORY_WINDOW) buf.shift();
+		// --- Alternating-pair check ---
+		// Only uninterrupted calls to one tool can constitute a loop. Keeping
+		// per-tool history across unrelated work caused old calls to combine into
+		// false A/B/A/B patterns much later in long sessions.
+		if (historyTool !== event.toolName) {
+			historyTool = event.toolName;
+			history = [];
+		}
+		history.push(fp);
+		if (history.length > HISTORY_WINDOW) history.shift();
 
 		// Check if the latest call continues a two-stage alternating loop.
-		if (detectAlternatingPair(buf)) {
+		if (detectAlternatingPair(history)) {
 			return {
 				block: true,
 				reason: `Alternating loop detected: you've been switching back and forth between two argument sets for \`${event.toolName}\`. Pick one and report what you have — don't keep alternating.`,
