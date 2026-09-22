@@ -126,10 +126,10 @@ internal implementation details.
 
 Slash commands (`prompts/`) define canonical flows:
 
-- `/implement` — planner → parallel builder calls → reviewer; substantive defects may
-  trigger severity-gated builder → verification-review cycles
-- `/review` — reviewer-first audit of existing changes; only substantive defects trigger
-  a builder and verification review
+- `/implement` — planner → parallel builder calls; one reviewer is added only for
+  meaningful risk or complexity, and substantive findings may trigger builder fixes
+- `/review` — one reviewer-first audit of existing changes; only substantive defects
+  trigger builder fixes, with no automatic re-review
 - `/plan` — just call planner, no implementation
 
 These flows describe orchestration at the Pi level. Each arrow is a successive tool

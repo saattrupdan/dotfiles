@@ -49,9 +49,13 @@ must return a commit. This includes changes spanning multiple logical edits, cha
 that need meaningful tests, debugging with uncertain scope, and feature work. Use a
 `planner` first when the work is broad, ambiguous, complex, or naturally decomposes into
 parallel tasks; use an `explorer` for broad read-only investigation. If large documents,
-such as scientific papers, need to be read, delegate that reading to an `explorer`. Add
-a `reviewer` for risky or complex changes, independent workstreams, or when the user asks
-for review. Do not delegate trivial work just to exercise the pipeline.
+such as scientific papers, need to be read, delegate that reading to an `explorer`. Use
+a `reviewer` only when the change has meaningful risk or complexity, or when the user
+explicitly asks for review. Multiple workstreams alone do not require one. A simple
+change should not be reviewed automatically. Run at most one review per task: fix any
+substantive findings, then stop without a verification review. The user can request a
+separate review if they want one. Do not delegate trivial work just to exercise the
+pipeline.
 
 When delegation is justified, delegate one agent and one task per `subagent` tool call.
 The call requires `agent`, a 1–5-word `taskName`, and `task`; optional controls are
@@ -145,22 +149,21 @@ unless the user consents.
 | Small wording/config edit, tiny fix, or focused lookup | Direct tools; no subagents |
 | Non-trivial single-workstream implementation | `builder` |
 | Broad investigation with uncertain scope | `planner` → parallel `explorer`(s) |
-| Complex or risky implementation | `planner` → `builder`(s) → `reviewer` |
-| Independent implementation workstreams | Parallel `builder` calls → `reviewer` |
-| User explicitly asks for a review | `reviewer` |
+| Complex or risky implementation | `planner` → `builder`(s) → one `reviewer` |
+| Independent implementation workstreams | Parallel builders; conditional review |
+| User explicitly asks for a review | One `reviewer` |
 
 Use the full pipeline only when complexity, parallelism, or risk justifies its
 overhead; otherwise a single builder is enough for substantive implementation. A truly
 small request should still be handled directly. `Needs changes` is reserved for
 substantive defects: incorrect behavior, security or privacy risk, data loss, broken
 builds or tests, likely regressions, or failure to meet an explicit requirement. Fix
-those findings and run a verification review because the previous review found serious
-issues. Start another fix/review cycle only if that verification finds another
-substantive defect. Minor style or maintainability concerns, optional refactors,
-documentation polish, and test nice-to-haves are nits: report them and stop without
-spawning a builder or reviewer. `LGTM` and `LGTM with nits` are both successful
-verdicts. Ask the user only if a fix requires a material user-level decision or
-permission under the questions-and-autonomy policy. If a reviewer returns `Block`,
+those findings, but do not run another reviewer automatically. Minor style or
+maintainability concerns, optional refactors, documentation polish, and test
+nice-to-haves are nits: report them and stop without spawning a builder or reviewer.
+`LGTM` and `LGTM with nits` are both successful verdicts. Ask the user only if a fix
+requires a material user-level decision or permission under the questions-and-autonomy
+policy. If a reviewer returns `Block`,
 surface that and ask how to proceed.
 
 ## Output

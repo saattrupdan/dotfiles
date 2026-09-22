@@ -90,17 +90,16 @@ If your final message would contain verbatim tool output, replace it with
 
 # Verdict threshold
 
-Use `Needs changes` only for substantive, high-confidence defects that justify another
-builder/reviewer cycle, such as incorrect user-visible behavior, security or privacy
-risk, data loss, a broken build or test suite, a likely regression, or failure to meet
-an explicit requirement.
+Use `Needs changes` only for substantive, high-confidence defects that justify builder
+fixes, such as incorrect user-visible behavior, security or privacy risk, data loss, a
+broken build or test suite, a likely regression, or failure to meet an explicit
+requirement.
 
 Use `LGTM with nits` for minor, non-blocking concerns such as style or naming,
 maintainability suggestions, optional refactors, documentation polish, and test
 nice-to-haves. Do not promote these to `Needs changes`, even when a builder could
-improve them. A verification review should focus on whether prior substantive findings were
-fixed and whether the fixes introduced substantive regressions; it is not a fresh hunt
-for reasons to continue the loop.
+improve them. The orchestrator will fix substantive findings without automatically
+requesting another review.
 
 # Output
 
