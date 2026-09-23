@@ -15,7 +15,20 @@ After every settled agent run:
   or remote-tracking branch, the session is treated as finalized.
 - A real rebase conflict triggers a hidden follow-up turn requiring the same agent to resolve it.
 
-When a process launches from a dirty checkout, both the working-tree state and the real Git index are captured automatically as separate durable checkpoint commits. This preserves partially staged files as well as tracked and non-ignored untracked content. If the launch checkout remains unchanged, publication updates its index under Git's lock protocol and atomically applies the agent's tree-to-tree patch. Concurrent working-file or index changes block synchronization without being overwritten. Ignored files are never checkpointed or overwritten. A pending checkout synchronization is written to the manifest before the branch ref moves, so a later run can resume safely after a crash.
+When a process launches from a dirty checkout, both the working-tree state and the real
+Git index are captured automatically as separate durable checkpoint commits. This
+preserves partially staged files as well as tracked and non-ignored untracked content.
+Ignored regular files named `.env` or `.env.*` are copied into the same relative
+location in the isolated worktree so local configuration remains available, but they are
+never checkpointed or published. Symlinked env files are not copied. Copies are
+refreshed
+when a managed session starts and removed on normal session shutdown; edits to them are
+therefore ephemeral. If the launch checkout remains unchanged, publication updates its
+index under Git's lock protocol and atomically applies the agent's tree-to-tree patch.
+Concurrent working-file or index changes block synchronization without being
+overwritten. Other ignored files are never checkpointed or overwritten. A pending
+checkout synchronization is written to the manifest before the branch ref moves, so a
+later run can resume safely after a crash.
 
 ## Safety and recovery
 

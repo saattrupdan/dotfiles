@@ -36,6 +36,7 @@ export interface SessionManifest {
 	launchIndexTree?: string;
 	launchIndexCommit?: string;
 	pendingSync?: PendingSync;
+	copiedEnvFiles?: string[];
 	createdAt: string;
 	manifestPath: string;
 }
@@ -117,6 +118,55 @@ interface LaunchSnapshot {
 	workingTree?: string;
 	indexTree?: string;
 	indexCommit?: string;
+}
+
+async function removeEnvFiles(worktreeRoot: string, relativePaths: string[]): Promise<void> {
+	await Promise.all(relativePaths.map((relativePath) => fs.promises.rm(path.join(worktreeRoot, relativePath), { force: true })));
+}
+
+async function copyIgnoredEnvFiles(repoRoot: string, worktreeRoot: string): Promise<string[]> {
+	const ignored = await git(repoRoot, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"]);
+	const candidates = ignored
+		.split("\0")
+		.filter(Boolean)
+		.filter((relativePath) => {
+			const basename = path.basename(relativePath);
+			return basename === ".env" || basename.startsWith(".env.");
+		});
+	const copied: string[] = [];
+	try {
+		for (const relativePath of candidates) {
+			const source = path.join(repoRoot, relativePath);
+			const destination = path.join(worktreeRoot, relativePath);
+			let sourceStat: fs.Stats;
+			try {
+				sourceStat = await fs.promises.lstat(source);
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+				throw error;
+			}
+			if (!sourceStat.isFile()) continue;
+			await fs.promises.mkdir(path.dirname(destination), { recursive: true });
+			await fs.promises.copyFile(source, destination);
+			copied.push(relativePath);
+		}
+		return copied;
+	} catch (error) {
+		await removeEnvFiles(worktreeRoot, copied);
+		throw error;
+	}
+}
+
+export async function hydrateIgnoredEnvFiles(manifest: SessionManifest): Promise<void> {
+	await removeEnvFiles(manifest.worktreeRoot, manifest.copiedEnvFiles ?? []);
+	manifest.copiedEnvFiles = await copyIgnoredEnvFiles(manifest.repoRoot, manifest.worktreeRoot);
+	await saveManifest(manifest);
+}
+
+export async function cleanCopiedEnvFiles(manifest: SessionManifest): Promise<void> {
+	await removeEnvFiles(manifest.worktreeRoot, manifest.copiedEnvFiles ?? []);
+	manifest.copiedEnvFiles = [];
+	await saveManifest(manifest);
 }
 
 async function createLaunchSnapshot(repoRoot: string, baseSha: string): Promise<LaunchSnapshot> {
@@ -377,43 +427,86 @@ export async function createLaunchPlan(cwd: string, agentDir?: string): Promise<
 	const id = cuteSessionId(commonGitDir, worktreesRoot);
 	const requestedWorktreeRoot = path.join(worktreesRoot, id);
 	await fs.promises.mkdir(worktreesRoot, { recursive: true });
-	if (snapshot.workingTree && snapshot.indexCommit) {
-		await git(repoRoot, ["update-ref", `refs/pi-worktree-snapshots/${id}/working`, snapshot.startSha]);
-		await git(repoRoot, ["update-ref", `refs/pi-worktree-snapshots/${id}/index`, snapshot.indexCommit]);
-	}
-	await git(repoRoot, ["worktree", "add", "--detach", requestedWorktreeRoot, snapshot.startSha]);
-	const worktreeRoot = await fs.promises.realpath(requestedWorktreeRoot);
-	await git(repoRoot, ["worktree", "lock", "--reason", "active Pi session", worktreeRoot]);
-
+	const hasSnapshotRefs = Boolean(snapshot.workingTree && snapshot.indexCommit);
 	const manifestPath = path.join(manifestDirectory(commonGitDir), `${id}.json`);
-	const manifest: SessionManifest = {
-		version: 1,
-		id,
-		repoRoot,
-		commonGitDir,
-		worktreeRoot,
-		launchCwdRelative: relative,
-		sessionHubCwd,
-		targetBranch,
-		targetRef: `refs/heads/${targetBranch}`,
-		baseSha,
-		publishedHead: baseSha,
-		...(snapshot.workingTree && snapshot.indexTree && snapshot.indexCommit
-			? {
-					launchSnapshotCommit: snapshot.startSha,
-					launchSnapshotTree: snapshot.workingTree,
-					launchIndexTree: snapshot.indexTree,
-					launchIndexCommit: snapshot.indexCommit,
-				}
-			: {}),
-		createdAt: new Date().toISOString(),
-		manifestPath,
-	};
-	await saveManifest(manifest);
-	const childCwd = path.join(worktreeRoot, relative);
-	await fs.promises.mkdir(childCwd, { recursive: true });
-	await linkSessionDirectory(childCwd, sessionHubCwd, root);
-	return { manifest, childCwd };
+	let worktreeRoot = requestedWorktreeRoot;
+	let worktreeAdded = false;
+	let worktreeLocked = false;
+	let workingRefCreated = false;
+	let indexRefCreated = false;
+	try {
+		if (hasSnapshotRefs) {
+			await git(repoRoot, ["update-ref", `refs/pi-worktree-snapshots/${id}/working`, snapshot.startSha]);
+			workingRefCreated = true;
+			await git(repoRoot, ["update-ref", `refs/pi-worktree-snapshots/${id}/index`, snapshot.indexCommit!]);
+			indexRefCreated = true;
+		}
+		await git(repoRoot, ["worktree", "add", "--detach", requestedWorktreeRoot, snapshot.startSha]);
+		worktreeAdded = true;
+		worktreeRoot = await fs.promises.realpath(requestedWorktreeRoot);
+		const copiedEnvFiles = await copyIgnoredEnvFiles(repoRoot, worktreeRoot);
+		await git(repoRoot, ["worktree", "lock", "--reason", "active Pi session", worktreeRoot]);
+		worktreeLocked = true;
+
+		const manifest: SessionManifest = {
+			version: 1,
+			id,
+			repoRoot,
+			commonGitDir,
+			worktreeRoot,
+			launchCwdRelative: relative,
+			sessionHubCwd,
+			targetBranch,
+			targetRef: `refs/heads/${targetBranch}`,
+			baseSha,
+			publishedHead: baseSha,
+			...(snapshot.workingTree && snapshot.indexTree && snapshot.indexCommit
+				? {
+						launchSnapshotCommit: snapshot.startSha,
+						launchSnapshotTree: snapshot.workingTree,
+						launchIndexTree: snapshot.indexTree,
+						launchIndexCommit: snapshot.indexCommit,
+					}
+				: {}),
+			copiedEnvFiles,
+			createdAt: new Date().toISOString(),
+			manifestPath,
+		};
+		await saveManifest(manifest);
+		const childCwd = path.join(worktreeRoot, relative);
+		await fs.promises.mkdir(childCwd, { recursive: true });
+		await linkSessionDirectory(childCwd, sessionHubCwd, root);
+		return { manifest, childCwd };
+	} catch (error) {
+		const cleanupFailures: string[] = [];
+		const attemptCleanup = async (label: string, operation: () => Promise<unknown>): Promise<void> => {
+			try {
+				await operation();
+			} catch (cleanupError) {
+				cleanupFailures.push(`${label}: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+			}
+		};
+		await attemptCleanup("manifest removal", () => fs.promises.rm(manifestPath, { force: true }));
+		if (worktreeLocked) await attemptCleanup("worktree unlock", () => git(repoRoot, ["worktree", "unlock", worktreeRoot]));
+		if (worktreeAdded) {
+			await attemptCleanup("worktree removal", () => git(repoRoot, ["worktree", "remove", "--force", worktreeRoot]));
+		}
+		if (workingRefCreated) {
+			await attemptCleanup("working snapshot ref removal", () =>
+				git(repoRoot, ["update-ref", "-d", `refs/pi-worktree-snapshots/${id}/working`]),
+			);
+		}
+		if (indexRefCreated) {
+			await attemptCleanup("index snapshot ref removal", () =>
+				git(repoRoot, ["update-ref", "-d", `refs/pi-worktree-snapshots/${id}/index`]),
+			);
+		}
+		if (cleanupFailures.length > 0) {
+			const message = error instanceof Error ? error.message : String(error);
+			throw new Error(`${message}; launch rollback also failed: ${cleanupFailures.join("; ")}`, { cause: error });
+		}
+		throw error;
+	}
 }
 
 async function currentBranch(cwd: string): Promise<string | null> {

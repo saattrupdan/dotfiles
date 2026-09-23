@@ -9,10 +9,12 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
+	cleanCopiedEnvFiles,
 	createLaunchPlan,
 	enforceRepository,
 	findCommonGitDir,
 	findManifestForCwd,
+	hydrateIgnoredEnvFiles,
 	loadManifest,
 	type SessionManifest,
 } from "./git.ts";
@@ -143,8 +145,18 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 		event.systemPromptOptions.sections["git-worktree-isolation"] = SYSTEM_INSTRUCTION;
 	});
 
-	pi.on("session_start", (_event, ctx) => {
+	pi.on("session_start", async (_event, ctx) => {
+		await hydrateIgnoredEnvFiles(manifest);
 		ctx.ui.setStatus("git-worktree-isolation", `🌳 ${manifest.id}`);
+	});
+
+	pi.on("session_shutdown", async () => {
+		try {
+			await cleanCopiedEnvFiles(manifest);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			process.stderr.write(`Pi worktree isolation: could not remove copied env files: ${message}\n`);
+		}
 	});
 
 	// AgentSession explicitly drains messages queued by agent_end handlers before
@@ -222,6 +234,7 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 			ctx.ui.notify("The current worktree could not be finalized safely, so resume was cancelled.", "warning");
 			return { cancel: true };
 		}
+		await cleanCopiedEnvFiles(manifest);
 		resumeInManagedWorktree(event.targetSessionFile, targetCwd, targetManifest.manifestPath);
 	});
 
