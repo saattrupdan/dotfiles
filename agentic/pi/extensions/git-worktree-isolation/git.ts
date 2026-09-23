@@ -50,13 +50,6 @@ export type EnforcementResult =
 	| { kind: "needs-agent"; prompt: string }
 	| { kind: "blocked"; message: string };
 
-export interface PrimaryLease {
-	path: string;
-	token: string;
-	release: () => Promise<void>;
-	releaseSync: () => void;
-}
-
 interface GitResult {
 	stdout: string;
 	stderr: string;
@@ -107,6 +100,18 @@ async function workingTreeSnapshot(repoRoot: string, baseSha: string): Promise<W
 	}
 }
 
+async function indexTreeSnapshot(repoRoot: string): Promise<string> {
+	const indexRaw = await git(repoRoot, ["rev-parse", "--git-path", "index"]);
+	const source = resolveGitPath(repoRoot, indexRaw);
+	const snapshot = path.join(os.tmpdir(), `pi-worktree-real-index-${process.pid}-${randomUUID()}`);
+	try {
+		await fs.promises.copyFile(source, snapshot);
+		return await git(repoRoot, ["write-tree"], { GIT_INDEX_FILE: snapshot });
+	} finally {
+		await fs.promises.rm(snapshot, { force: true });
+	}
+}
+
 interface LaunchSnapshot {
 	startSha: string;
 	workingTree?: string;
@@ -116,7 +121,7 @@ interface LaunchSnapshot {
 
 async function createLaunchSnapshot(repoRoot: string, baseSha: string): Promise<LaunchSnapshot> {
 	const snapshot = await workingTreeSnapshot(repoRoot, baseSha);
-	const indexTree = await git(repoRoot, ["write-tree"]);
+	const indexTree = await indexTreeSnapshot(repoRoot);
 	const baseTree = await git(repoRoot, ["rev-parse", `${baseSha}^{tree}`]);
 	if (snapshot.tree === baseTree && indexTree === baseTree) return { startSha: baseSha };
 	const startSha =
@@ -220,86 +225,6 @@ export async function findRepoRoot(cwd: string): Promise<string | null> {
 	const result = await run(cwd, ["rev-parse", "--show-toplevel"]);
 	if (result.code !== 0 || !result.stdout.trim()) return null;
 	return fs.promises.realpath(result.stdout.trim());
-}
-
-function processIsAlive(pid: number): boolean {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (error) {
-		return (error as NodeJS.ErrnoException).code === "EPERM";
-	}
-}
-
-export async function tryAcquirePrimaryLease(
-	commonGitDir: string,
-	existingToken?: string,
-): Promise<PrimaryLease | null> {
-	const leasePath = path.join(commonGitDir, "pi-worktree-primary.json");
-	const makeLease = (token: string): PrimaryLease => {
-		const owned = (): boolean => {
-			try {
-				const value = JSON.parse(fs.readFileSync(leasePath, "utf8")) as { token?: string };
-				return value.token === token;
-			} catch {
-				return false;
-			}
-		};
-		return {
-			path: leasePath,
-			token,
-			release: async () => {
-				if (owned()) await fs.promises.rm(leasePath, { force: true });
-			},
-			releaseSync: () => {
-				if (owned()) fs.rmSync(leasePath, { force: true });
-			},
-		};
-	};
-
-	for (let attempt = 0; attempt < 5; attempt++) {
-		const token = randomUUID();
-		const candidatePath = `${leasePath}.${token}.tmp`;
-		try {
-			await fs.promises.writeFile(
-				candidatePath,
-				`${JSON.stringify({ pid: process.pid, token, startedAt: new Date().toISOString() })}\n`,
-				{ flag: "wx" },
-			);
-			try {
-				await fs.promises.link(candidatePath, leasePath);
-				return makeLease(token);
-			} catch (error) {
-				if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-			}
-		} finally {
-			await fs.promises.rm(candidatePath, { force: true });
-		}
-
-		let handle: fs.promises.FileHandle;
-		try {
-			handle = await fs.promises.open(leasePath, "r");
-		} catch {
-			continue;
-		}
-		try {
-			const stat = await handle.stat();
-			const value = JSON.parse(await handle.readFile("utf8")) as { pid?: number; token?: string };
-			if (value.pid === process.pid && value.token && value.token === existingToken) return makeLease(value.token);
-			if (typeof value.pid === "number" && processIsAlive(value.pid)) return null;
-			const current = await fs.promises.stat(leasePath).catch(() => null);
-			if (current && current.dev === stat.dev && current.ino === stat.ino) await fs.promises.rm(leasePath, { force: true });
-		} catch {
-			const stat = await handle.stat().catch(() => null);
-			const current = await fs.promises.stat(leasePath).catch(() => null);
-			if (stat && current && current.dev === stat.dev && current.ino === stat.ino) {
-				await fs.promises.rm(leasePath, { force: true });
-			}
-		} finally {
-			await handle.close();
-		}
-	}
-	return null;
 }
 
 export async function findCommonGitDir(cwd: string): Promise<string | null> {
@@ -406,21 +331,6 @@ async function consolidateManagedSessionDirectories(
 	}
 }
 
-export async function preparePrimarySessionHub(
-	cwd: string,
-	repoRoot: string,
-	commonGitDir: string,
-	agentDir?: string,
-): Promise<string> {
-	const root = agentDir ?? process.env.PI_CODING_AGENT_DIR ?? path.join(os.homedir(), ".pi", "agent");
-	const lexicalCwd = path.resolve(cwd);
-	const resolvedCwd = await fs.promises.realpath(cwd);
-	const sessionHubCwd = path.resolve(lexicalCwd, path.relative(resolvedCwd, repoRoot));
-	await consolidateManagedSessionDirectories(commonGitDir, sessionHubCwd, root);
-	await linkSessionDirectory(lexicalCwd, sessionHubCwd, root);
-	return sessionHubCwd;
-}
-
 export async function createLaunchPlan(cwd: string, agentDir?: string): Promise<LaunchPlan> {
 	const repoRoot = await findRepoRoot(cwd);
 	if (!repoRoot) throw new Error(`${cwd} is not inside a Git working tree.`);
@@ -436,7 +346,7 @@ export async function createLaunchPlan(cwd: string, agentDir?: string): Promise<
 		const verifiedBranch = await git(repoRoot, ["symbolic-ref", "--quiet", "--short", "HEAD"]).catch(() => "");
 		const verifiedSha = await git(repoRoot, ["rev-parse", "HEAD"]);
 		const verifiedSnapshot = await workingTreeSnapshot(repoRoot, baseSha);
-		const verifiedIndexTree = await git(repoRoot, ["write-tree"]);
+		const verifiedIndexTree = await indexTreeSnapshot(repoRoot);
 		const snapshotTree = await git(repoRoot, ["rev-parse", `${candidate.startSha}^{tree}`]);
 		const expectedIndexTree = candidate.indexTree ?? snapshotTree;
 		if (
@@ -610,7 +520,7 @@ async function checkoutTransitionProblem(
 	if (expectedDirtyTree && expectedDirtyBase) {
 		const current = await workingTreeSnapshot(holderPath, expectedDirtyBase);
 		if (current.tree !== expectedDirtyTree) return "the launch checkout changed after its automatic snapshot";
-		if (expectedIndexTree && (await git(holderPath, ["write-tree"])) !== expectedIndexTree) {
+		if (expectedIndexTree && (await indexTreeSnapshot(holderPath)) !== expectedIndexTree) {
 			return "the launch checkout index changed after its automatic snapshot";
 		}
 		const added = nulPaths(await git(holderPath, ["diff", "--name-only", "--diff-filter=A", "-z", oldHead, newHead]));
@@ -621,7 +531,7 @@ async function checkoutTransitionProblem(
 		return ignoredCollision ? `the incoming tracked path ${ignoredCollision} collides with an ignored path` : null;
 	}
 
-	const indexTree = await git(holderPath, ["write-tree"]);
+	const indexTree = await indexTreeSnapshot(holderPath);
 	const oldTree = await git(holderPath, ["rev-parse", `${oldHead}^{tree}`]);
 	if (indexTree !== oldTree) return "its index changed after the publication pre-check";
 	const worktreeDiff = await run(holderPath, ["diff", "--quiet"]);
@@ -686,7 +596,7 @@ async function synchronizeDirtySnapshot(holderPath: string, pending: PendingSync
 		return "the dirty-checkout recovery record is incomplete";
 	}
 	const newTree = await git(holderPath, ["rev-parse", `${pending.newHead}^{tree}`]);
-	const indexTree = await git(holderPath, ["write-tree"]);
+	const indexTree = await indexTreeSnapshot(holderPath);
 	if (indexTree === newTree && !(await git(holderPath, ["status", "--porcelain=v1"]))) return null;
 	const indexAlreadyTransitioned = indexTree === newTree;
 
@@ -766,7 +676,7 @@ async function recoverPendingSync(manifest: SessionManifest): Promise<Enforcemen
 		}
 	} else {
 		const newTree = await git(holder.path, ["rev-parse", `${pending.newHead}^{tree}`]);
-		const indexTree = await git(holder.path, ["write-tree"]);
+		const indexTree = await indexTreeSnapshot(holder.path);
 		if (indexTree === newTree) {
 			const worktreeDiff = await run(holder.path, ["diff", "--quiet"]);
 			if (worktreeDiff.code !== 0) {
@@ -926,17 +836,6 @@ async function publishDetached(manifest: SessionManifest): Promise<EnforcementRe
 	} finally {
 		await release();
 	}
-}
-
-export async function enforcePrimaryCheckout(repoRoot: string): Promise<EnforcementResult> {
-	const status = await git(repoRoot, ["status", "--porcelain=v1"]);
-	return status
-		? {
-				kind: "needs-agent",
-				prompt:
-					"The primary Git checkout still has uncommitted changes. Commit all intended changes and leave `git status --porcelain` empty before finishing.",
-			}
-		: { kind: "ok" };
 }
 
 export async function enforceRepository(manifest: SessionManifest): Promise<EnforcementResult> {

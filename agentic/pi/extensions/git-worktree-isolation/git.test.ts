@@ -8,10 +8,8 @@ import {
 	createLaunchPlan,
 	enforceRepository,
 	findManifestForCwd,
-	preparePrimarySessionHub,
 	saveManifest,
 	sessionDirectoryForCwd,
-	tryAcquirePrimaryLease,
 } from "./git.ts";
 
 const temporaryRoots: string[] = [];
@@ -39,43 +37,6 @@ afterEach(() => {
 	for (const root of temporaryRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
-test("leases the primary checkout to only one active Pi process", async () => {
-	const { root } = createRepo();
-	const commonGitDir = path.resolve(root, command(root, ["rev-parse", "--git-common-dir"]));
-	const first = await tryAcquirePrimaryLease(commonGitDir);
-	assert.ok(first);
-	assert.equal(await tryAcquirePrimaryLease(commonGitDir), null);
-	const reloaded = await tryAcquirePrimaryLease(commonGitDir, first.token);
-	assert.ok(reloaded);
-	assert.equal(reloaded.token, first.token);
-	await first.release();
-	const next = await tryAcquirePrimaryLease(commonGitDir);
-	assert.ok(next);
-	await next.release();
-});
-
-test("publishes exactly one primary lease under concurrent acquisition", async () => {
-	const { root } = createRepo();
-	const commonGitDir = path.resolve(root, command(root, ["rev-parse", "--git-common-dir"]));
-	const attempts = await Promise.all(Array.from({ length: 20 }, () => tryAcquirePrimaryLease(commonGitDir)));
-	const winners = attempts.filter((lease) => lease !== null);
-	assert.equal(winners.length, 1);
-	await winners[0]!.release();
-});
-
-test("reclaims a stale primary-checkout lease", async () => {
-	const { root } = createRepo();
-	const commonGitDir = path.resolve(root, command(root, ["rev-parse", "--git-common-dir"]));
-	fs.writeFileSync(
-		path.join(commonGitDir, "pi-worktree-primary.json"),
-		`${JSON.stringify({ pid: 2147483647, token: "stale" })}\n`,
-	);
-	const lease = await tryAcquirePrimaryLease(commonGitDir);
-	assert.ok(lease);
-	assert.notEqual(lease.token, "stale");
-	await lease.release();
-});
-
 test("creates a detached worktree without creating a branch", async () => {
 	const { root, agentDir } = createRepo();
 	const nested = path.join(root, "nested");
@@ -92,6 +53,14 @@ test("creates a detached worktree without creating a branch", async () => {
 	assert.equal(fs.realpathSync(sessionDirectoryForCwd(plan.childCwd, agentDir)), hub);
 });
 
+test("creates distinct worktrees for concurrent launches without contending on the real index", async () => {
+	const { root, agentDir } = createRepo();
+	const plans = await Promise.all(Array.from({ length: 8 }, () => createLaunchPlan(root, agentDir)));
+
+	assert.equal(new Set(plans.map((plan) => plan.manifest.worktreeRoot)).size, plans.length);
+	assert.equal(command(root, ["status", "--porcelain"]), "");
+});
+
 test("shares the repository session hub across managed worktrees", async () => {
 	const { root, agentDir } = createRepo();
 	const first = await createLaunchPlan(root, agentDir);
@@ -104,22 +73,24 @@ test("shares the repository session hub across managed worktrees", async () => {
 	assert.equal(fs.readFileSync(path.join(secondSessionDir, "first.jsonl"), "utf8"), '{"type":"session"}\n');
 });
 
-test("shares sessions when primary and concurrent agents launch from different subdirectories", async () => {
+test("shares sessions across launch subdirectories and their managed worktrees", async () => {
 	const { root, agentDir } = createRepo();
-	const primaryCwd = path.join(root, "primary-subdir");
-	const concurrentCwd = path.join(root, "concurrent-subdir");
-	fs.mkdirSync(primaryCwd);
-	fs.mkdirSync(concurrentCwd);
-	const canonicalRoot = command(root, ["rev-parse", "--show-toplevel"]);
-	const commonGitDir = path.resolve(canonicalRoot, command(root, ["rev-parse", "--git-common-dir"]));
-	await preparePrimarySessionHub(primaryCwd, canonicalRoot, commonGitDir, agentDir);
-	const primarySessions = sessionDirectoryForCwd(primaryCwd, agentDir);
-	fs.writeFileSync(path.join(primarySessions, "primary.jsonl"), '{"type":"session"}\n');
-	const concurrent = await createLaunchPlan(concurrentCwd, agentDir);
-	const concurrentSessions = sessionDirectoryForCwd(concurrent.childCwd, agentDir);
+	const firstCwd = path.join(root, "first-subdir");
+	const secondCwd = path.join(root, "second-subdir");
+	fs.mkdirSync(firstCwd);
+	fs.mkdirSync(secondCwd);
+	const first = await createLaunchPlan(firstCwd, agentDir);
+	const firstLaunchSessions = sessionDirectoryForCwd(firstCwd, agentDir);
+	const firstManagedSessions = sessionDirectoryForCwd(first.childCwd, agentDir);
+	fs.writeFileSync(path.join(firstManagedSessions, "first.jsonl"), '{"type":"session"}\n');
+	const second = await createLaunchPlan(secondCwd, agentDir);
+	const secondLaunchSessions = sessionDirectoryForCwd(secondCwd, agentDir);
+	const secondManagedSessions = sessionDirectoryForCwd(second.childCwd, agentDir);
 
-	assert.equal(fs.realpathSync(primarySessions), fs.realpathSync(concurrentSessions));
-	assert.equal(fs.readFileSync(path.join(concurrentSessions, "primary.jsonl"), "utf8"), '{"type":"session"}\n');
+	assert.equal(fs.realpathSync(firstLaunchSessions), fs.realpathSync(firstManagedSessions));
+	assert.equal(fs.realpathSync(firstManagedSessions), fs.realpathSync(secondLaunchSessions));
+	assert.equal(fs.realpathSync(secondLaunchSessions), fs.realpathSync(secondManagedSessions));
+	assert.equal(fs.readFileSync(path.join(secondManagedSessions, "first.jsonl"), "utf8"), '{"type":"session"}\n');
 });
 
 test("snapshots and publishes a dirty launch checkout automatically", async () => {
