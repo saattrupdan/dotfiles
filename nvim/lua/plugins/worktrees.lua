@@ -4,7 +4,14 @@ return {
     "nvim-lua/plenary.nvim",
     "nvim-telescope/telescope.nvim",
   },
-  opts = {},
+  opts = {
+    switch_file_command = "NvimTreeOpen",
+    hooks = {
+      on_switch = function(_, path)
+        require("nvim-tree.api").tree.change_root(path)
+      end,
+    },
+  },
   config = function(_, opts)
     require("worktrees").setup(opts)
     require("telescope").load_extension("worktrees")
