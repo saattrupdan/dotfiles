@@ -707,6 +707,21 @@ async function recoverPendingSync(manifest: SessionManifest): Promise<Enforcemen
 	return { kind: "ok", message: `Published and synchronized session commit to ${manifest.targetBranch}.` };
 }
 
+async function containingBranch(repoRoot: string, commit: string): Promise<string | null> {
+	const output = await git(repoRoot, [
+		"for-each-ref",
+		"--format=%(refname:short)",
+		"--contains",
+		commit,
+		"refs/heads",
+		"refs/remotes",
+	]);
+	return output
+		.split("\n")
+		.map((ref) => ref.trim())
+		.find((ref) => ref && !ref.endsWith("/HEAD")) ?? null;
+}
+
 async function publishDetached(manifest: SessionManifest): Promise<EnforcementResult> {
 	if (await hasRebaseState(manifest)) {
 		return {
@@ -722,8 +737,18 @@ async function publishDetached(manifest: SessionManifest): Promise<EnforcementRe
 		if (recovered) return recovered;
 		let head = await git(manifest.worktreeRoot, ["rev-parse", "HEAD"]);
 		for (let attempt = 0; attempt < 5; attempt++) {
+			if (head === manifest.publishedHead) return { kind: "ok" };
 			const targetResult = await run(manifest.repoRoot, ["rev-parse", "--verify", `${manifest.targetRef}^{commit}`]);
 			if (targetResult.code !== 0) {
+				const containing = await containingBranch(manifest.repoRoot, head);
+				if (containing) {
+					manifest.publishedHead = head;
+					await saveManifest(manifest);
+					return {
+						kind: "ok",
+						message: `Session commit ${head.slice(0, 8)} is already contained in ${containing}; launch branch ${manifest.targetBranch} was removed.`,
+					};
+				}
 				return {
 					kind: "blocked",
 					message: `Cannot publish this session because its launch branch ${manifest.targetBranch} no longer exists. The commit remains safe in ${manifest.worktreeRoot}.`,
@@ -735,7 +760,6 @@ async function publishDetached(manifest: SessionManifest): Promise<EnforcementRe
 				await saveManifest(manifest);
 				return { kind: "ok" };
 			}
-			if (head === manifest.publishedHead) return { kind: "ok" };
 
 			const targetIsAncestor =
 				(await run(manifest.worktreeRoot, ["merge-base", "--is-ancestor", target, head])).code === 0;
