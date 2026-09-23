@@ -737,7 +737,6 @@ async function publishDetached(manifest: SessionManifest): Promise<EnforcementRe
 		if (recovered) return recovered;
 		let head = await git(manifest.worktreeRoot, ["rev-parse", "HEAD"]);
 		for (let attempt = 0; attempt < 5; attempt++) {
-			if (head === manifest.publishedHead) return { kind: "ok" };
 			const targetResult = await run(manifest.repoRoot, ["rev-parse", "--verify", `${manifest.targetRef}^{commit}`]);
 			if (targetResult.code !== 0) {
 				const containing = await containingBranch(manifest.repoRoot, head);
@@ -760,6 +759,7 @@ async function publishDetached(manifest: SessionManifest): Promise<EnforcementRe
 				await saveManifest(manifest);
 				return { kind: "ok" };
 			}
+			if (head === manifest.publishedHead) return { kind: "ok" };
 
 			const targetIsAncestor =
 				(await run(manifest.worktreeRoot, ["merge-base", "--is-ancestor", target, head])).code === 0;

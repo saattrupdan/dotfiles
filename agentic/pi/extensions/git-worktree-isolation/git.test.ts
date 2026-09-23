@@ -387,6 +387,21 @@ test("accepts a deleted launch branch when another branch contains the detached 
 	assert.equal(plan.manifest.publishedHead, sessionHead);
 });
 
+test("reports a deleted sole launch branch even after the detached commit was published", async () => {
+	const { root, agentDir } = createRepo();
+	const plan = await createLaunchPlan(root, agentDir);
+	fs.writeFileSync(path.join(plan.manifest.worktreeRoot, "session.txt"), "session\n");
+	command(plan.manifest.worktreeRoot, ["add", "."]);
+	command(plan.manifest.worktreeRoot, ["commit", "-m", "feat: session work"]);
+	assert.equal((await enforceRepository(plan.manifest)).kind, "ok");
+	command(root, ["switch", "--detach"]);
+	command(root, ["branch", "-D", "main"]);
+
+	const result = await enforceRepository(plan.manifest);
+	assert.equal(result.kind, "blocked");
+	assert.match(result.kind === "blocked" ? result.message : "", /no longer exists/);
+});
+
 test("reports a deleted launch branch without losing an unreachable detached commit", async () => {
 	const { root, agentDir } = createRepo();
 	const plan = await createLaunchPlan(root, agentDir);
