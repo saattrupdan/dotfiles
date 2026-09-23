@@ -17,5 +17,6 @@
   "vim-merginal": { "branch": "develop", "commit": "3dca10fd8bce10edbc2024651db4ffb6dd2d89de" },
   "vim-numbertoggle": { "branch": "main", "commit": "075b7478777e694fbac330ee34a74590dad0fee1" },
   "vim-table-mode": { "branch": "master", "commit": "bb025308a45c67c7c8f0763ba37bc2ee3f534df0" },
-  "vimtex": { "branch": "master", "commit": "42dcf1699e45725bd3b366ecab2ae06f6e0f8118" }
+  "vimtex": { "branch": "master", "commit": "42dcf1699e45725bd3b366ecab2ae06f6e0f8118" },
+  "worktrees.nvim": { "branch": "main", "commit": "9682494e33b375feccf93412adf807eb15f36c1e" }
 }
