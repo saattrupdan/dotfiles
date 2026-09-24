@@ -11,7 +11,7 @@ import {
 	acquireResumeClaim,
 	acquireSessionLease,
 	assertWorktreeReleasable,
-	checkpointSession,
+	checkpointSessionIfPresent,
 	checkpointWorktreeSessions,
 	consumeResumeRecord,
 	createLaunchPlan,
@@ -285,7 +285,7 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 
 		if (event.reason === "new") {
 			try {
-				await checkpointSession(manifest, currentSessionFile);
+				await checkpointSessionIfPresent(manifest, currentSessionFile);
 				return;
 			} catch (error) {
 				ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
@@ -301,7 +301,7 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 				!path.relative(manifest.worktreeRoot, targetCwd).startsWith(".."))
 		) {
 			try {
-				await checkpointSession(manifest, currentSessionFile);
+				await checkpointSessionIfPresent(manifest, currentSessionFile);
 				return;
 			} catch (error) {
 				ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");

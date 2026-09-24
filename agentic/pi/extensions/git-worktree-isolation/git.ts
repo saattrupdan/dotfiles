@@ -341,6 +341,12 @@ function inferredAgentDir(manifest: SessionManifest): string {
 	return manifest.agentDir ?? path.dirname(path.dirname(path.dirname(manifest.worktreeRoot)));
 }
 
+async function canonicalSessionFilePath(sessionFile: string): Promise<string> {
+	const resolved = path.resolve(sessionFile);
+	const parent = await fs.promises.realpath(path.dirname(resolved));
+	return path.join(parent, path.basename(resolved));
+}
+
 export function resumeRecordPath(sessionFile: string): string {
 	return `${path.resolve(sessionFile)}.pi-worktree.json`;
 }
@@ -348,8 +354,8 @@ export function resumeRecordPath(sessionFile: string): string {
 export async function loadResumeRecord(sessionFile: string): Promise<SessionResumeRecord | null> {
 	try {
 		const parsed = JSON.parse(await fs.promises.readFile(resumeRecordPath(sessionFile), "utf8")) as SessionResumeRecord;
-		const requestedSessionFile = await fs.promises.realpath(sessionFile).catch(() => path.resolve(sessionFile));
-		const recordedSessionFile = await fs.promises.realpath(parsed.sessionFile).catch(() => path.resolve(parsed.sessionFile));
+		const requestedSessionFile = await canonicalSessionFilePath(sessionFile).catch(() => path.resolve(sessionFile));
+		const recordedSessionFile = await canonicalSessionFilePath(parsed.sessionFile).catch(() => path.resolve(parsed.sessionFile));
 		if (
 			parsed.version !== 1 ||
 			recordedSessionFile !== requestedSessionFile ||
@@ -410,7 +416,7 @@ export async function checkpointSession(
 		throw new Error("Cannot release a session with uncommitted changes.");
 	}
 
-	const resolvedSessionFile = await fs.promises.realpath(sessionFile);
+	const resolvedSessionFile = await canonicalSessionFilePath(sessionFile);
 	const resumeSha = await git(manifest.worktreeRoot, ["rev-parse", "HEAD"]);
 	const key = createHash("sha256").update(resolvedSessionFile).digest("hex").slice(0, 24);
 	const resumeRef = `refs/pi-worktree-sessions/${key}`;
@@ -442,6 +448,15 @@ export async function checkpointSession(
 	return record;
 }
 
+export async function checkpointSessionIfPresent(
+	manifest: SessionManifest,
+	sessionFile: string,
+): Promise<SessionResumeRecord | null> {
+	const existing = await fs.promises.lstat(sessionFile).catch(() => null);
+	if (!existing?.isFile()) return null;
+	return checkpointSession(manifest, sessionFile);
+}
+
 export async function assertWorktreeReleasable(manifest: SessionManifest): Promise<void> {
 	if (manifest.pendingSync) throw new Error("Checkout synchronization is still pending.");
 	if (await hasInProgressOperation(manifest)) throw new Error("A Git operation is still in progress.");
@@ -471,7 +486,8 @@ export async function checkpointWorktreeSessions(
 	const sessionFiles = new Map<string, string>();
 	if (requiredSessionFile) {
 		const resolved = path.resolve(requiredSessionFile);
-		sessionFiles.set(await fs.promises.realpath(resolved), resolved);
+		const existing = await fs.promises.lstat(resolved).catch(() => null);
+		if (existing?.isFile()) sessionFiles.set(await canonicalSessionFilePath(resolved), resolved);
 	}
 	for (const entry of await fs.promises.readdir(sessionDir, { withFileTypes: true }).catch(() => [])) {
 		if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
@@ -480,8 +496,8 @@ export async function checkpointWorktreeSessions(
 		if (!cwd) continue;
 		const relative = path.relative(manifest.worktreeRoot, cwd);
 		if (relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))) {
-			const realSessionFile = await fs.promises.realpath(sessionFile);
-			if (!sessionFiles.has(realSessionFile)) sessionFiles.set(realSessionFile, sessionFile);
+			const canonicalSessionFile = await canonicalSessionFilePath(sessionFile);
+			if (!sessionFiles.has(canonicalSessionFile)) sessionFiles.set(canonicalSessionFile, sessionFile);
 		}
 	}
 	const records: SessionResumeRecord[] = [];
@@ -534,13 +550,13 @@ async function acquireFileLease(leasePath: string, purpose: string): Promise<() 
 }
 
 export async function acquireSessionLease(sessionFile: string): Promise<() => Promise<void>> {
-	const realSessionFile = await fs.promises.realpath(sessionFile);
-	return acquireFileLease(`${realSessionFile}.pi-worktree.lock`, "This Pi session");
+	const canonicalSessionFile = await canonicalSessionFilePath(sessionFile);
+	return acquireFileLease(`${canonicalSessionFile}.pi-worktree.lock`, "This Pi session");
 }
 
 export async function acquireResumeClaim(sessionFile: string): Promise<() => Promise<void>> {
-	const realSessionFile = await fs.promises.realpath(sessionFile);
-	return acquireFileLease(`${resumeRecordPath(realSessionFile)}.lock`, "This released Pi session");
+	const canonicalSessionFile = await canonicalSessionFilePath(sessionFile);
+	return acquireFileLease(`${resumeRecordPath(canonicalSessionFile)}.lock`, "This released Pi session");
 }
 
 export function sessionDirectoryForCwd(cwd: string, agentDir?: string): string {

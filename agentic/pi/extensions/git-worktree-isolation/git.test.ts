@@ -9,6 +9,7 @@ import {
 	acquireSessionLease,
 	assertWorktreeReleasable,
 	checkpointSession,
+	checkpointSessionIfPresent,
 	checkpointWorktreeSessions,
 	cleanCopiedEnvFiles,
 	consumeResumeRecord,
@@ -582,6 +583,20 @@ test("checkpoints every legacy transcript that still references a released workt
 	assert.notEqual(await sessionCwd(second), plan.childCwd);
 	assert.ok(await loadResumeRecord(first));
 	assert.ok(await loadResumeRecord(second));
+});
+
+test("allows an allocated session path before Pi creates its transcript", async () => {
+	const { root, agentDir } = createRepo();
+	const plan = await createLaunchPlan(root, agentDir);
+	const sessionDir = sessionDirectoryForCwd(plan.childCwd, agentDir);
+	const sessionFile = path.join(sessionDir, "not-created-yet.jsonl");
+
+	const releaseLease = await acquireSessionLease(sessionFile);
+	assert.equal(await checkpointSessionIfPresent(plan.manifest, sessionFile), null);
+	assert.deepEqual(await checkpointWorktreeSessions(plan.manifest, sessionFile), []);
+	await releaseLease();
+	await releaseManagedWorktree(plan.manifest);
+	assert.equal(fs.existsSync(plan.manifest.worktreeRoot), false);
 });
 
 test("serializes released-session activation and active transcript ownership", async () => {
