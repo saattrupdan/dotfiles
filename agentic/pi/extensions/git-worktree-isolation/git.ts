@@ -27,6 +27,7 @@ export interface SessionManifest {
 	worktreeRoot: string;
 	launchCwdRelative: string;
 	sessionHubCwd?: string;
+	agentDir?: string;
 	targetBranch: string;
 	targetRef: string;
 	baseSha: string;
@@ -39,6 +40,22 @@ export interface SessionManifest {
 	copiedEnvFiles?: string[];
 	createdAt: string;
 	manifestPath: string;
+}
+
+export interface SessionResumeRecord {
+	version: 1;
+	sessionFile: string;
+	repoRoot: string;
+	commonGitDir: string;
+	launchCwdRelative: string;
+	sessionHubCwd: string;
+	agentDir: string;
+	targetBranch: string;
+	targetRef: string;
+	resumeSha: string;
+	resumeRef: string;
+	placeholderCwd: string;
+	createdAt: string;
 }
 
 export interface LaunchPlan {
@@ -320,6 +337,212 @@ export async function saveManifest(manifest: SessionManifest): Promise<void> {
 	await fs.promises.rename(temporary, manifest.manifestPath);
 }
 
+function inferredAgentDir(manifest: SessionManifest): string {
+	return manifest.agentDir ?? path.dirname(path.dirname(path.dirname(manifest.worktreeRoot)));
+}
+
+export function resumeRecordPath(sessionFile: string): string {
+	return `${path.resolve(sessionFile)}.pi-worktree.json`;
+}
+
+export async function loadResumeRecord(sessionFile: string): Promise<SessionResumeRecord | null> {
+	try {
+		const parsed = JSON.parse(await fs.promises.readFile(resumeRecordPath(sessionFile), "utf8")) as SessionResumeRecord;
+		const requestedSessionFile = await fs.promises.realpath(sessionFile).catch(() => path.resolve(sessionFile));
+		const recordedSessionFile = await fs.promises.realpath(parsed.sessionFile).catch(() => path.resolve(parsed.sessionFile));
+		if (
+			parsed.version !== 1 ||
+			recordedSessionFile !== requestedSessionFile ||
+			!parsed.repoRoot ||
+			!parsed.commonGitDir ||
+			!parsed.targetRef ||
+			!parsed.resumeSha ||
+			!parsed.resumeRef ||
+			!parsed.placeholderCwd
+		) {
+			throw new Error("invalid record");
+		}
+		return parsed;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+		throw new Error(`Invalid Pi released-session record for ${sessionFile}.`, { cause: error });
+	}
+}
+
+export async function sessionCwd(sessionFile: string): Promise<string | null> {
+	try {
+		const handle = await fs.promises.open(sessionFile, "r");
+		try {
+			const buffer = Buffer.alloc(16 * 1024);
+			const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+			const firstLine = buffer.subarray(0, bytesRead).toString("utf8").split("\n", 1)[0];
+			const header = JSON.parse(firstLine) as { cwd?: unknown };
+			return typeof header.cwd === "string" ? path.resolve(header.cwd) : null;
+		} finally {
+			await handle.close();
+		}
+	} catch {
+		return null;
+	}
+}
+
+export async function rewriteSessionCwd(sessionFile: string, cwd: string): Promise<void> {
+	const content = await fs.promises.readFile(sessionFile, "utf8");
+	const newline = content.indexOf("\n");
+	if (newline < 0) throw new Error(`Session has no header line: ${sessionFile}`);
+	const header = JSON.parse(content.slice(0, newline)) as { type?: unknown; cwd?: unknown };
+	if (header.type !== "session") throw new Error(`Session has an invalid header: ${sessionFile}`);
+	header.cwd = cwd;
+	const temporary = `${sessionFile}.${process.pid}.tmp`;
+	await fs.promises.writeFile(temporary, `${JSON.stringify(header)}\n${content.slice(newline + 1)}`, "utf8");
+	await fs.promises.rename(temporary, sessionFile);
+}
+
+export async function checkpointSession(
+	manifest: SessionManifest,
+	sessionFile: string,
+): Promise<SessionResumeRecord> {
+	if (manifest.pendingSync) throw new Error("Cannot release a session while checkout synchronization is pending.");
+	if (await hasInProgressOperation(manifest)) {
+		throw new Error("Cannot release a session while a Git operation is in progress.");
+	}
+	if (await git(manifest.worktreeRoot, ["status", "--porcelain=v1"])) {
+		throw new Error("Cannot release a session with uncommitted changes.");
+	}
+
+	const resolvedSessionFile = await fs.promises.realpath(sessionFile);
+	const resumeSha = await git(manifest.worktreeRoot, ["rev-parse", "HEAD"]);
+	const key = createHash("sha256").update(resolvedSessionFile).digest("hex").slice(0, 24);
+	const resumeRef = `refs/pi-worktree-sessions/${key}`;
+	const agentDir = inferredAgentDir(manifest);
+	const placeholderCwd = path.join(agentDir, "released-sessions", key);
+	const record: SessionResumeRecord = {
+		version: 1,
+		sessionFile: resolvedSessionFile,
+		repoRoot: manifest.repoRoot,
+		commonGitDir: manifest.commonGitDir,
+		launchCwdRelative: manifest.launchCwdRelative,
+		sessionHubCwd: manifest.sessionHubCwd ?? manifest.repoRoot,
+		agentDir,
+		targetBranch: manifest.targetBranch,
+		targetRef: manifest.targetRef,
+		resumeSha,
+		resumeRef,
+		placeholderCwd,
+		createdAt: new Date().toISOString(),
+	};
+
+	await git(manifest.repoRoot, ["update-ref", resumeRef, resumeSha]);
+	await fs.promises.mkdir(placeholderCwd, { recursive: true });
+	const recordPath = resumeRecordPath(resolvedSessionFile);
+	const temporary = `${recordPath}.${process.pid}.tmp`;
+	await fs.promises.writeFile(temporary, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+	await fs.promises.rename(temporary, recordPath);
+	await rewriteSessionCwd(resolvedSessionFile, placeholderCwd);
+	return record;
+}
+
+export async function assertWorktreeReleasable(manifest: SessionManifest): Promise<void> {
+	if (manifest.pendingSync) throw new Error("Checkout synchronization is still pending.");
+	if (await hasInProgressOperation(manifest)) throw new Error("A Git operation is still in progress.");
+	if (await git(manifest.worktreeRoot, ["status", "--porcelain=v1"])) {
+		throw new Error("The managed worktree is not clean.");
+	}
+	const ignored = await git(manifest.worktreeRoot, [
+		"ls-files",
+		"--others",
+		"--ignored",
+		"--exclude-standard",
+		"--directory",
+		"-z",
+	]);
+	const copiedEnvFiles = new Set(manifest.copiedEnvFiles ?? []);
+	const unknownIgnored = ignored.split("\0").find((relativePath) => relativePath && !copiedEnvFiles.has(relativePath));
+	if (unknownIgnored) {
+		throw new Error(`Ignored path ${unknownIgnored} is not ephemeral session configuration; worktree was preserved.`);
+	}
+}
+
+export async function checkpointWorktreeSessions(
+	manifest: SessionManifest,
+	requiredSessionFile?: string,
+): Promise<SessionResumeRecord[]> {
+	const sessionDir = sessionDirectoryForCwd(manifest.sessionHubCwd ?? manifest.repoRoot, inferredAgentDir(manifest));
+	const sessionFiles = new Map<string, string>();
+	if (requiredSessionFile) {
+		const resolved = path.resolve(requiredSessionFile);
+		sessionFiles.set(await fs.promises.realpath(resolved), resolved);
+	}
+	for (const entry of await fs.promises.readdir(sessionDir, { withFileTypes: true }).catch(() => [])) {
+		if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
+		const sessionFile = path.join(sessionDir, entry.name);
+		const cwd = await sessionCwd(sessionFile);
+		if (!cwd) continue;
+		const relative = path.relative(manifest.worktreeRoot, cwd);
+		if (relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))) {
+			const realSessionFile = await fs.promises.realpath(sessionFile);
+			if (!sessionFiles.has(realSessionFile)) sessionFiles.set(realSessionFile, sessionFile);
+		}
+	}
+	const records: SessionResumeRecord[] = [];
+	for (const sessionFile of sessionFiles.values()) records.push(await checkpointSession(manifest, sessionFile));
+	return records;
+}
+
+export async function consumeResumeRecord(record: SessionResumeRecord): Promise<void> {
+	await git(record.repoRoot, ["update-ref", "-d", record.resumeRef, record.resumeSha]);
+	await fs.promises.rm(resumeRecordPath(record.sessionFile), { force: true });
+}
+
+function processIsAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === "EPERM";
+	}
+}
+
+async function acquireFileLease(leasePath: string, purpose: string): Promise<() => Promise<void>> {
+	for (let attempt = 0; attempt < 2; attempt++) {
+		try {
+			const handle = await fs.promises.open(leasePath, "wx");
+			await handle.writeFile(`${JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() })}\n`, "utf8");
+			await handle.close();
+			return async () => {
+				try {
+					const owner = JSON.parse(await fs.promises.readFile(leasePath, "utf8")) as { pid?: unknown };
+					if (owner.pid === process.pid) await fs.promises.rm(leasePath, { force: true });
+				} catch (error) {
+					if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+				}
+			};
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+			try {
+				const owner = JSON.parse(await fs.promises.readFile(leasePath, "utf8")) as { pid?: unknown };
+				if (typeof owner.pid === "number" && processIsAlive(owner.pid)) {
+					throw new Error(`${purpose} is already active in process ${owner.pid}.`, { cause: error });
+				}
+			} catch (ownerError) {
+				if (ownerError instanceof Error && ownerError.message.includes("already active")) throw ownerError;
+			}
+			await fs.promises.rm(leasePath, { force: true });
+		}
+	}
+	throw new Error(`Could not acquire ${purpose} lease.`);
+}
+
+export async function acquireSessionLease(sessionFile: string): Promise<() => Promise<void>> {
+	const realSessionFile = await fs.promises.realpath(sessionFile);
+	return acquireFileLease(`${realSessionFile}.pi-worktree.lock`, "This Pi session");
+}
+
+export async function acquireResumeClaim(sessionFile: string): Promise<() => Promise<void>> {
+	const realSessionFile = await fs.promises.realpath(sessionFile);
+	return acquireFileLease(`${resumeRecordPath(realSessionFile)}.lock`, "This released Pi session");
+}
+
 export function sessionDirectoryForCwd(cwd: string, agentDir?: string): string {
 	const root = agentDir ?? process.env.PI_CODING_AGENT_DIR ?? path.join(os.homedir(), ".pi", "agent");
 	const resolved = path.resolve(cwd);
@@ -456,6 +679,7 @@ export async function createLaunchPlan(cwd: string, agentDir?: string): Promise<
 			worktreeRoot,
 			launchCwdRelative: relative,
 			sessionHubCwd,
+			agentDir: root,
 			targetBranch,
 			targetRef: `refs/heads/${targetBranch}`,
 			baseSha,
@@ -509,9 +733,109 @@ export async function createLaunchPlan(cwd: string, agentDir?: string): Promise<
 	}
 }
 
+export async function createResumePlan(record: SessionResumeRecord): Promise<LaunchPlan> {
+	const repoRoot = await fs.promises.realpath(record.repoRoot);
+	const commonRaw = await git(repoRoot, ["rev-parse", "--git-common-dir"]);
+	const commonGitDir = resolveGitPath(repoRoot, commonRaw);
+	if (commonGitDir !== path.resolve(record.commonGitDir)) {
+		throw new Error("The released session no longer belongs to the recorded repository.");
+	}
+	const protectedSha = await git(repoRoot, ["rev-parse", "--verify", `${record.resumeRef}^{commit}`]);
+	if (protectedSha !== record.resumeSha) throw new Error("The released session's protected commit changed unexpectedly.");
+
+	let startSha = record.resumeSha;
+	const target = await run(repoRoot, ["rev-parse", "--verify", `${record.targetRef}^{commit}`]);
+	if (target.code === 0) {
+		const targetSha = target.stdout.trim();
+		const contains = await run(repoRoot, ["merge-base", "--is-ancestor", record.resumeSha, targetSha]);
+		if (contains.code !== 0) {
+			throw new Error(`Cannot resume automatically because ${record.targetBranch} no longer contains the session commit.`);
+		}
+		startSha = targetSha;
+	}
+
+	const repoKey = createHash("sha256").update(commonGitDir).digest("hex").slice(0, 12);
+	const worktreesRoot = path.join(record.agentDir, "worktrees", repoKey);
+	const id = cuteSessionId(commonGitDir, worktreesRoot);
+	const requestedWorktreeRoot = path.join(worktreesRoot, id);
+	const manifestPath = path.join(manifestDirectory(commonGitDir), `${id}.json`);
+	await fs.promises.mkdir(worktreesRoot, { recursive: true });
+	let worktreeRoot = requestedWorktreeRoot;
+	let worktreeAdded = false;
+	let worktreeLocked = false;
+	try {
+		await git(repoRoot, ["worktree", "add", "--detach", requestedWorktreeRoot, startSha]);
+		worktreeAdded = true;
+		worktreeRoot = await fs.promises.realpath(requestedWorktreeRoot);
+		const copiedEnvFiles = await copyIgnoredEnvFiles(repoRoot, worktreeRoot);
+		await git(repoRoot, ["worktree", "lock", "--reason", "active Pi session", worktreeRoot]);
+		worktreeLocked = true;
+		const manifest: SessionManifest = {
+			version: 1,
+			id,
+			repoRoot,
+			commonGitDir,
+			worktreeRoot,
+			launchCwdRelative: record.launchCwdRelative,
+			sessionHubCwd: record.sessionHubCwd,
+			agentDir: record.agentDir,
+			targetBranch: record.targetBranch,
+			targetRef: record.targetRef,
+			baseSha: startSha,
+			publishedHead: startSha,
+			copiedEnvFiles,
+			createdAt: new Date().toISOString(),
+			manifestPath,
+		};
+		await saveManifest(manifest);
+		const childCwd = path.join(worktreeRoot, record.launchCwdRelative);
+		await fs.promises.mkdir(childCwd, { recursive: true });
+		await linkSessionDirectory(childCwd, record.sessionHubCwd, record.agentDir);
+		return { manifest, childCwd };
+	} catch (error) {
+		await fs.promises.rm(manifestPath, { force: true }).catch(() => undefined);
+		if (worktreeLocked) await git(repoRoot, ["worktree", "unlock", worktreeRoot]).catch(() => undefined);
+		if (worktreeAdded) await git(repoRoot, ["worktree", "remove", "--force", worktreeRoot]).catch(() => undefined);
+		throw error;
+	}
+}
+
+export async function releaseManagedWorktree(manifest: SessionManifest): Promise<void> {
+	await assertWorktreeReleasable(manifest);
+	await cleanCopiedEnvFiles(manifest);
+	await git(manifest.repoRoot, ["worktree", "unlock", manifest.worktreeRoot]);
+	try {
+		await git(manifest.repoRoot, ["worktree", "remove", "--force", manifest.worktreeRoot]);
+	} catch (error) {
+		await git(manifest.repoRoot, ["worktree", "lock", "--reason", "active Pi session", manifest.worktreeRoot]).catch(
+			() => undefined,
+		);
+		throw error;
+	}
+	const cleanup = await Promise.allSettled([
+		git(manifest.repoRoot, ["update-ref", "-d", `refs/pi-worktree-snapshots/${manifest.id}/working`]),
+		git(manifest.repoRoot, ["update-ref", "-d", `refs/pi-worktree-snapshots/${manifest.id}/index`]),
+		fs.promises.rm(manifest.manifestPath, { force: true }),
+	]);
+	for (const result of cleanup) {
+		if (result.status === "rejected") {
+			const message = result.reason instanceof Error ? result.reason.message : String(result.reason);
+			process.stderr.write(`Pi worktree isolation: post-release metadata cleanup failed: ${message}\n`);
+		}
+	}
+}
+
 async function currentBranch(cwd: string): Promise<string | null> {
 	const branch = await git(cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]).catch(() => "");
 	return branch || null;
+}
+
+async function hasInProgressOperation(manifest: SessionManifest): Promise<boolean> {
+	const gitDirRaw = await git(manifest.worktreeRoot, ["rev-parse", "--git-dir"]);
+	const gitDir = resolveGitPath(manifest.worktreeRoot, gitDirRaw);
+	return ["rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_LOG"].some(
+		(name) => fs.existsSync(path.join(gitDir, name)),
+	);
 }
 
 async function hasRebaseState(manifest: SessionManifest): Promise<boolean> {
@@ -973,6 +1297,13 @@ export async function enforceRepository(manifest: SessionManifest): Promise<Enfo
 	}
 
 	const branch = await currentBranch(manifest.worktreeRoot);
-	if (branch) return { kind: "ok", message: `Work remains on agent-selected branch ${branch}.` };
+	if (branch) {
+		const head = await git(manifest.worktreeRoot, ["rev-parse", "HEAD"]);
+		manifest.targetBranch = branch;
+		manifest.targetRef = `refs/heads/${branch}`;
+		manifest.publishedHead = head;
+		await saveManifest(manifest);
+		return { kind: "ok", message: `Work remains on agent-selected branch ${branch}.` };
+	}
 	return publishDetached(manifest);
 }

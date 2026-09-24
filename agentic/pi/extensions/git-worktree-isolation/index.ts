@@ -4,18 +4,27 @@
  */
 
 import { spawnSync } from "node:child_process";
-import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
-	cleanCopiedEnvFiles,
+	acquireResumeClaim,
+	acquireSessionLease,
+	assertWorktreeReleasable,
+	checkpointSession,
+	checkpointWorktreeSessions,
+	consumeResumeRecord,
 	createLaunchPlan,
+	createResumePlan,
 	enforceRepository,
 	findCommonGitDir,
 	findManifestForCwd,
 	hydrateIgnoredEnvFiles,
 	loadManifest,
+	loadResumeRecord,
+	releaseManagedWorktree,
+	rewriteSessionCwd,
+	sessionCwd,
 	type SessionManifest,
 } from "./git.ts";
 
@@ -40,8 +49,22 @@ function isMetadataInvocation(args: string[]): boolean {
 	return args.some((arg) => ["--help", "-h", "--version", "-v", "--list-models", "--export"].includes(arg));
 }
 
+function optionArgs(args: string[]): string[] {
+	const end = args.indexOf("--");
+	return end < 0 ? args : args.slice(0, end);
+}
+
 function isLegacyResumeInvocation(args: string[]): boolean {
-	return args.some((arg) => ["--continue", "-c", "--resume", "-r", "--session"].includes(arg));
+	return optionArgs(args).some(
+		(arg) =>
+			["--continue", "-c", "--resume", "-r", "--session", "--session-id"].includes(arg) ||
+			arg.startsWith("--session=") ||
+			arg.startsWith("--session-id="),
+	);
+}
+
+function isSessionIdInvocation(args: string[]): boolean {
+	return optionArgs(args).some((arg) => arg === "--session-id" || arg.startsWith("--session-id="));
 }
 
 function fatal(message: string): never {
@@ -76,6 +99,36 @@ function resumeInManagedWorktree(sessionFile: string, cwd: string, manifestPath:
 	process.exit(result.status ?? (result.signal === "SIGINT" ? 130 : 1));
 }
 
+async function activateReleasedSession(sessionFile: string, expectedCommonGitDir?: string) {
+	const releaseClaim = await acquireResumeClaim(sessionFile);
+	try {
+		const record = await loadResumeRecord(sessionFile);
+		if (!record) throw new Error("The released-session record is no longer available.");
+		if (expectedCommonGitDir && record.commonGitDir !== expectedCommonGitDir) {
+			throw new Error("Session is not managed by this repository.");
+		}
+		const plan = await createResumePlan(record);
+		await rewriteSessionCwd(record.sessionFile, plan.childCwd);
+		await consumeResumeRecord(record);
+		return plan;
+	} finally {
+		await releaseClaim();
+	}
+}
+
+function registerReleasedSessionStartup(pi: ExtensionAPI): void {
+	pi.on("session_start", async (_event, ctx) => {
+		const sessionFile = ctx.sessionManager.getSessionFile();
+		if (!sessionFile) fatal("the selected saved session has no session file.");
+		try {
+			const plan = await activateReleasedSession(sessionFile);
+			resumeInManagedWorktree(sessionFile, plan.childCwd, plan.manifest.manifestPath);
+		} catch (error) {
+			fatal(error instanceof Error ? error.message : String(error));
+		}
+	});
+}
+
 function isBareDone(message: unknown): boolean {
 	if (!message || typeof message !== "object") return false;
 	const candidate = message as { role?: string; content?: unknown };
@@ -107,55 +160,61 @@ function forkChildArgs(sessionFile: string): string[] {
 	return ["--session", sessionFile, ...result];
 }
 
-async function rewriteSessionCwd(sessionFile: string, cwd: string): Promise<void> {
-	const content = await fs.promises.readFile(sessionFile, "utf8");
-	const newline = content.indexOf("\n");
-	if (newline < 0) throw new Error(`Fork session has no header line: ${sessionFile}`);
-	const header = JSON.parse(content.slice(0, newline)) as { type?: unknown; cwd?: unknown };
-	if (header.type !== "session") throw new Error(`Fork session has an invalid header: ${sessionFile}`);
-	header.cwd = cwd;
-	const temporary = `${sessionFile}.${process.pid}.tmp`;
-	await fs.promises.writeFile(temporary, `${JSON.stringify(header)}\n${content.slice(newline + 1)}`, "utf8");
-	await fs.promises.rename(temporary, sessionFile);
-}
-
-async function sessionCwd(sessionFile: string): Promise<string | null> {
-	try {
-		const handle = await fs.promises.open(sessionFile, "r");
-		try {
-			const buffer = Buffer.alloc(16 * 1024);
-			const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-			const firstLine = buffer.subarray(0, bytesRead).toString("utf8").split("\n", 1)[0];
-			const header = JSON.parse(firstLine) as { cwd?: unknown };
-			return typeof header.cwd === "string" ? path.resolve(header.cwd) : null;
-		} finally {
-			await handle.close();
-		}
-	} catch {
-		return null;
-	}
-}
-
 function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): void {
 	let repairTurns = 0;
 	let repairMessageActive = false;
 	let enforcementRunning = false;
+	let releaseSessionLease: (() => Promise<void>) | null = null;
+
+	const releaseTranscript = async (): Promise<void> => {
+		if (!releaseSessionLease) return;
+		const release = releaseSessionLease;
+		releaseSessionLease = null;
+		await release();
+	};
 
 	pi.on("before_agent_start", (event) => {
 		event.systemPromptOptions.sections["git-worktree-isolation"] = SYSTEM_INSTRUCTION;
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
+		const sessionFile = ctx.sessionManager.getSessionFile();
+		if (sessionFile) {
+			try {
+				releaseSessionLease = await acquireSessionLease(sessionFile);
+			} catch (error) {
+				fatal(error instanceof Error ? error.message : String(error));
+			}
+		}
 		await hydrateIgnoredEnvFiles(manifest);
 		ctx.ui.setStatus("git-worktree-isolation", `🌳 ${manifest.id}`);
 	});
 
-	pi.on("session_shutdown", async () => {
+	pi.on("session_shutdown", async (event, ctx) => {
+		if (event.reason !== "quit") {
+			await releaseTranscript();
+			return;
+		}
 		try {
-			await cleanCopiedEnvFiles(manifest);
+			const sessionFile = ctx.sessionManager.getSessionFile();
+			if (!sessionFile) {
+				process.stderr.write("Pi worktree isolation: session has no saved transcript; worktree was preserved.\n");
+				return;
+			}
+			const finalized = await enforceRepository(manifest);
+			if (finalized.kind !== "ok") {
+				process.stderr.write("Pi worktree isolation: repository is not safely finalized; worktree was preserved.\n");
+				return;
+			}
+			await assertWorktreeReleasable(manifest);
+			await checkpointWorktreeSessions(manifest, sessionFile);
+			process.chdir(manifest.repoRoot);
+			await releaseManagedWorktree(manifest);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			process.stderr.write(`Pi worktree isolation: could not remove copied env files: ${message}\n`);
+			process.stderr.write(`Pi worktree isolation: could not release finalized worktree: ${message}\n`);
+		} finally {
+			await releaseTranscript();
 		}
 	});
 
@@ -213,29 +272,64 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 	});
 
 	pi.on("session_before_switch", async (event, ctx) => {
-		// /new is sequential within one Pi process, so it safely reuses the
-		// process's already-isolated worktree.
-		if (event.reason === "new" || !event.targetSessionFile) return;
+		const finalized = await enforceRepository(manifest);
+		if (finalized.kind !== "ok") {
+			ctx.ui.notify("The current worktree could not be finalized safely, so the session switch was cancelled.", "warning");
+			return { cancel: true };
+		}
+		const currentSessionFile = ctx.sessionManager.getSessionFile();
+		if (!currentSessionFile) {
+			ctx.ui.notify("The current session has no saved transcript, so it cannot be released safely.", "warning");
+			return { cancel: true };
+		}
+
+		if (event.reason === "new") {
+			try {
+				await checkpointSession(manifest, currentSessionFile);
+				return;
+			} catch (error) {
+				ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
+				return { cancel: true };
+			}
+		}
+		if (!event.targetSessionFile) return { cancel: true };
+
 		const targetCwd = await sessionCwd(event.targetSessionFile);
 		if (
 			targetCwd &&
 			(path.relative(manifest.worktreeRoot, targetCwd) === "" ||
 				!path.relative(manifest.worktreeRoot, targetCwd).startsWith(".."))
 		) {
-			return;
+			try {
+				await checkpointSession(manifest, currentSessionFile);
+				return;
+			} catch (error) {
+				ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
+				return { cancel: true };
+			}
 		}
-		const targetManifest = targetCwd ? await findManifestForCwd(targetCwd) : null;
-		if (!targetCwd || !targetManifest || targetManifest.commonGitDir !== manifest.commonGitDir) {
-			ctx.ui.notify("That session does not belong to a managed worktree for this repository.", "warning");
+
+		let targetManifest = targetCwd ? await findManifestForCwd(targetCwd) : null;
+		let resumedCwd = targetCwd;
+		try {
+			if (!targetManifest) {
+				const plan = await activateReleasedSession(event.targetSessionFile, manifest.commonGitDir);
+				targetManifest = plan.manifest;
+				resumedCwd = plan.childCwd;
+			}
+			if (!resumedCwd || targetManifest.commonGitDir !== manifest.commonGitDir) {
+				throw new Error("Session is not managed by this repository.");
+			}
+			await assertWorktreeReleasable(manifest);
+			await checkpointWorktreeSessions(manifest, currentSessionFile);
+			process.chdir(manifest.repoRoot);
+			await releaseManagedWorktree(manifest);
+			await releaseTranscript();
+			resumeInManagedWorktree(event.targetSessionFile, resumedCwd, targetManifest.manifestPath);
+		} catch (error) {
+			ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
 			return { cancel: true };
 		}
-		const finalized = await enforceRepository(manifest);
-		if (finalized.kind !== "ok") {
-			ctx.ui.notify("The current worktree could not be finalized safely, so resume was cancelled.", "warning");
-			return { cancel: true };
-		}
-		await cleanCopiedEnvFiles(manifest);
-		resumeInManagedWorktree(event.targetSessionFile, targetCwd, targetManifest.manifestPath);
 	});
 
 	pi.on("session_before_fork", (_event, ctx) => {
@@ -269,22 +363,26 @@ export default async function (pi: ExtensionAPI) {
 		registerManagedSession(pi, manifest);
 		return;
 	}
-
+	const resumeInvocation = isLegacyResumeInvocation(cliArgs());
 	try {
 		// This extension is deployed from the live dotfiles checkout. That
 		// repository explicitly forbids worktrees because setup can repoint live
 		// symlinks into disposable paths.
 		const extensionRepository = await findCommonGitDir(path.dirname(fileURLToPath(import.meta.url)));
 		const currentRepository = await findCommonGitDir(cwd);
-		if (!currentRepository) return;
+		if (!currentRepository) {
+			if (resumeInvocation) registerReleasedSessionStartup(pi);
+			return;
+		}
 		if (extensionRepository && currentRepository === extensionRepository) return;
+		if (resumeInvocation && !isSessionIdInvocation(cliArgs())) {
+			registerReleasedSessionStartup(pi);
+			return;
+		}
 	} catch (error) {
 		fatal(error instanceof Error ? error.message : String(error));
 	}
 
-	if (isLegacyResumeInvocation(cliArgs())) {
-		fatal("this saved session predates worktree isolation and cannot be relocated safely. Start a new session instead.");
-	}
 	try {
 		const plan = await createLaunchPlan(cwd);
 		if (cliArgs().some((arg) => arg === "--fork" || arg.startsWith("--fork="))) {

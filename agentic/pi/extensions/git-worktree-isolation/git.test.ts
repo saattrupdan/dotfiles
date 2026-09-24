@@ -5,12 +5,23 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, test } from "node:test";
 import {
+	acquireResumeClaim,
+	acquireSessionLease,
+	assertWorktreeReleasable,
+	checkpointSession,
+	checkpointWorktreeSessions,
 	cleanCopiedEnvFiles,
+	consumeResumeRecord,
 	createLaunchPlan,
+	createResumePlan,
 	enforceRepository,
 	findManifestForCwd,
 	hydrateIgnoredEnvFiles,
+	loadResumeRecord,
+	releaseManagedWorktree,
+	rewriteSessionCwd,
 	saveManifest,
+	sessionCwd,
 	sessionDirectoryForCwd,
 } from "./git.ts";
 
@@ -467,4 +478,125 @@ test("returns a repair prompt for a real rebase conflict", async () => {
 	const retry = await enforceRepository(plan.manifest);
 	assert.equal(retry.kind, "needs-agent");
 	assert.match(retry.kind === "needs-agent" ? retry.prompt : "", /rebase conflict/i);
+});
+
+test("releases a finalized worktree and recreates it when the session resumes", async () => {
+	const { root, agentDir } = createRepo();
+	const plan = await createLaunchPlan(root, agentDir);
+	fs.writeFileSync(path.join(plan.childCwd, "session.txt"), "session\n");
+	command(plan.childCwd, ["add", "session.txt"]);
+	command(plan.childCwd, ["commit", "-m", "feat: session"]);
+	assert.equal((await enforceRepository(plan.manifest)).kind, "ok");
+	const publishedHead = command(root, ["rev-parse", "main"]);
+	const sessionFile = path.join(agentDir, "session.jsonl");
+	fs.mkdirSync(agentDir, { recursive: true });
+	fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", id: "test", cwd: plan.childCwd })}\n{"type":"message"}\n`);
+
+	const record = await checkpointSession(plan.manifest, sessionFile);
+	assert.equal(await sessionCwd(sessionFile), record.placeholderCwd);
+	assert.equal(command(root, ["rev-parse", record.resumeRef]), publishedHead);
+	await releaseManagedWorktree(plan.manifest);
+	assert.equal(fs.existsSync(plan.manifest.worktreeRoot), false);
+	assert.equal(fs.existsSync(plan.manifest.manifestPath), false);
+	assert.deepEqual(await loadResumeRecord(sessionFile), record);
+
+	const resumed = await createResumePlan(record);
+	assert.notEqual(resumed.manifest.worktreeRoot, plan.manifest.worktreeRoot);
+	assert.equal(command(resumed.childCwd, ["rev-parse", "HEAD"]), publishedHead);
+	assert.throws(() => command(resumed.childCwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]));
+	await rewriteSessionCwd(sessionFile, resumed.childCwd);
+	await consumeResumeRecord(record);
+	assert.equal(await sessionCwd(sessionFile), resumed.childCwd);
+	assert.equal(await loadResumeRecord(sessionFile), null);
+	assert.throws(() => command(root, ["show-ref", "--verify", record.resumeRef]));
+});
+
+test("resumes at an advanced target branch while retaining the session branch identity", async () => {
+	const { root, agentDir } = createRepo();
+	const plan = await createLaunchPlan(root, agentDir);
+	command(plan.childCwd, ["switch", "-c", "feat/session"]);
+	fs.writeFileSync(path.join(plan.childCwd, "feature.txt"), "feature\n");
+	command(plan.childCwd, ["add", "feature.txt"]);
+	command(plan.childCwd, ["commit", "-m", "feat: feature"]);
+	assert.equal((await enforceRepository(plan.manifest)).kind, "ok");
+	assert.equal(plan.manifest.targetBranch, "feat/session");
+	const sessionFile = path.join(agentDir, "feature.jsonl");
+	fs.mkdirSync(agentDir, { recursive: true });
+	fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", id: "feature", cwd: plan.childCwd })}\n`);
+	const record = await checkpointSession(plan.manifest, sessionFile);
+	await releaseManagedWorktree(plan.manifest);
+
+	command(root, ["switch", "feat/session"]);
+	fs.writeFileSync(path.join(root, "later.txt"), "later\n");
+	command(root, ["add", "later.txt"]);
+	command(root, ["commit", "-m", "feat: later"]);
+	const advancedHead = command(root, ["rev-parse", "HEAD"]);
+	const resumed = await createResumePlan(record);
+
+	assert.equal(resumed.manifest.targetBranch, "feat/session");
+	assert.equal(command(resumed.childCwd, ["rev-parse", "HEAD"]), advancedHead);
+	assert.throws(() => command(resumed.childCwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]));
+});
+
+test("does not checkpoint or release an unsafe worktree", async () => {
+	const { root, agentDir } = createRepo();
+	const plan = await createLaunchPlan(root, agentDir);
+	const sessionFile = path.join(agentDir, "dirty.jsonl");
+	fs.mkdirSync(agentDir, { recursive: true });
+	fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", id: "dirty", cwd: plan.childCwd })}\n`);
+	fs.writeFileSync(path.join(plan.childCwd, "dirty.txt"), "dirty\n");
+
+	await assert.rejects(checkpointSession(plan.manifest, sessionFile), /uncommitted changes/);
+	await assert.rejects(releaseManagedWorktree(plan.manifest), /not clean/);
+	assert.equal(fs.existsSync(plan.manifest.worktreeRoot), true);
+	assert.equal(await loadResumeRecord(sessionFile), null);
+});
+
+test("preserves worktrees containing unknown ignored files", async () => {
+	const { root, agentDir } = createRepo();
+	fs.writeFileSync(path.join(root, ".gitignore"), "cache/\n");
+	command(root, ["add", ".gitignore"]);
+	command(root, ["commit", "-m", "chore: ignore cache"]);
+	const plan = await createLaunchPlan(root, agentDir);
+	fs.mkdirSync(path.join(plan.childCwd, "cache"));
+	fs.writeFileSync(path.join(plan.childCwd, "cache", "result.bin"), "important\n");
+
+	await assert.rejects(assertWorktreeReleasable(plan.manifest), /Ignored path cache\//);
+	await assert.rejects(releaseManagedWorktree(plan.manifest), /worktree was preserved/);
+	assert.equal(fs.readFileSync(path.join(plan.childCwd, "cache", "result.bin"), "utf8"), "important\n");
+});
+
+test("checkpoints every legacy transcript that still references a released worktree", async () => {
+	const { root, agentDir } = createRepo();
+	const plan = await createLaunchPlan(root, agentDir);
+	const sessionDir = sessionDirectoryForCwd(plan.childCwd, agentDir);
+	const first = path.join(sessionDir, "first.jsonl");
+	const second = path.join(sessionDir, "second.jsonl");
+	fs.writeFileSync(first, `${JSON.stringify({ type: "session", id: "first", cwd: plan.childCwd })}\n`);
+	fs.writeFileSync(second, `${JSON.stringify({ type: "session", id: "second", cwd: plan.childCwd })}\n`);
+
+	const records = await checkpointWorktreeSessions(plan.manifest, first);
+
+	assert.equal(records.length, 2);
+	assert.notEqual(await sessionCwd(first), plan.childCwd);
+	assert.notEqual(await sessionCwd(second), plan.childCwd);
+	assert.ok(await loadResumeRecord(first));
+	assert.ok(await loadResumeRecord(second));
+});
+
+test("serializes released-session activation and active transcript ownership", async () => {
+	const { agentDir } = createRepo();
+	const sessionFile = path.join(agentDir, "leased.jsonl");
+	fs.mkdirSync(agentDir, { recursive: true });
+	fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", id: "leased", cwd: agentDir })}\n`);
+
+	const releaseClaim = await acquireResumeClaim(sessionFile);
+	await assert.rejects(acquireResumeClaim(sessionFile), /already active/);
+	await releaseClaim();
+	const releaseReplacementClaim = await acquireResumeClaim(sessionFile);
+	await releaseReplacementClaim();
+
+	const releaseLease = await acquireSessionLease(sessionFile);
+	await assert.rejects(acquireSessionLease(sessionFile), /already active/);
+	await releaseLease();
 });
