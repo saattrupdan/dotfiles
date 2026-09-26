@@ -67,12 +67,13 @@ test("creates a detached worktree without creating a branch", async () => {
 	assert.equal(fs.realpathSync(sessionDirectoryForCwd(plan.childCwd, agentDir)), hub);
 });
 
-test("copies ignored env files into the isolated worktree", async () => {
+test("copies only root-level ignored env files into the isolated worktree", async () => {
 	const { root, agentDir } = createRepo();
 	fs.writeFileSync(path.join(root, ".gitignore"), ".env*\nignored.txt\n");
 	command(root, ["add", ".gitignore"]);
 	command(root, ["commit", "-m", "chore: ignore local files"]);
 	fs.writeFileSync(path.join(root, ".env"), "ROOT_SECRET=root\n");
+	fs.writeFileSync(path.join(root, ".env.local"), "LOCAL_SECRET=local\n");
 	const nested = path.join(root, "service");
 	fs.mkdirSync(nested);
 	fs.writeFileSync(path.join(nested, ".env.local"), "SERVICE_SECRET=service\n");
@@ -81,21 +82,24 @@ test("copies ignored env files into the isolated worktree", async () => {
 
 	const plan = await createLaunchPlan(root, agentDir);
 	const copiedRootEnv = path.join(plan.manifest.worktreeRoot, ".env");
-	const copiedServiceEnv = path.join(plan.manifest.worktreeRoot, "service", ".env.local");
+	const copiedLocalEnv = path.join(plan.manifest.worktreeRoot, ".env.local");
+	const nestedEnv = path.join(plan.manifest.worktreeRoot, "service", ".env.local");
 
-	assert.deepEqual(plan.manifest.copiedEnvFiles, [".env", "service/.env.local"]);
+	assert.deepEqual(plan.manifest.copiedEnvFiles, [".env", ".env.local"]);
 	assert.equal(fs.readFileSync(copiedRootEnv, "utf8"), "ROOT_SECRET=root\n");
-	assert.equal(fs.readFileSync(copiedServiceEnv, "utf8"), "SERVICE_SECRET=service\n");
+	assert.equal(fs.readFileSync(copiedLocalEnv, "utf8"), "LOCAL_SECRET=local\n");
+	assert.equal(fs.existsSync(nestedEnv), false);
 	assert.equal(fs.existsSync(path.join(plan.manifest.worktreeRoot, ".env.link")), false);
 	assert.equal(fs.existsSync(path.join(plan.manifest.worktreeRoot, "ignored.txt")), false);
 	assert.equal(command(plan.manifest.worktreeRoot, ["status", "--porcelain"]), "");
 
 	await cleanCopiedEnvFiles(plan.manifest);
 	assert.equal(fs.existsSync(copiedRootEnv), false);
-	assert.equal(fs.existsSync(copiedServiceEnv), false);
+	assert.equal(fs.existsSync(copiedLocalEnv), false);
 	await hydrateIgnoredEnvFiles(plan.manifest);
 	assert.equal(fs.readFileSync(copiedRootEnv, "utf8"), "ROOT_SECRET=root\n");
-	assert.equal(fs.readFileSync(copiedServiceEnv, "utf8"), "SERVICE_SECRET=service\n");
+	assert.equal(fs.readFileSync(copiedLocalEnv, "utf8"), "LOCAL_SECRET=local\n");
+	assert.equal(fs.existsSync(nestedEnv), false);
 });
 
 test("creates distinct worktrees for concurrent launches without contending on the real index", async () => {

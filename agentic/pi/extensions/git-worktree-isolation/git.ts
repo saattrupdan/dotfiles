@@ -142,14 +142,17 @@ async function removeEnvFiles(worktreeRoot: string, relativePaths: string[]): Pr
 }
 
 async function copyIgnoredEnvFiles(repoRoot: string, worktreeRoot: string): Promise<string[]> {
-	const ignored = await git(repoRoot, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"]);
-	const candidates = ignored
-		.split("\0")
-		.filter(Boolean)
-		.filter((relativePath) => {
-			const basename = path.basename(relativePath);
-			return basename === ".env" || basename.startsWith(".env.");
-		});
+	const ignored = await git(repoRoot, [
+		"ls-files",
+		"--others",
+		"--ignored",
+		"--exclude-standard",
+		"-z",
+		"--",
+		":(top).env",
+		":(top,glob).env.*",
+	]);
+	const candidates = ignored.split("\0").filter(Boolean);
 	const copied: string[] = [];
 	try {
 		for (const relativePath of candidates) {
@@ -930,7 +933,12 @@ async function listWorktrees(repoRoot: string): Promise<WorktreeEntry[]> {
 }
 
 function nulPaths(output: string): Set<string> {
-	return new Set(output.split("\0").filter(Boolean));
+	return new Set(
+		output
+			.split("\0")
+			.filter(Boolean)
+			.map((relativePath) => relativePath.replace(/\/$/, "")),
+	);
 }
 
 function findPathCollision(incoming: Set<string>, existing: Set<string>): string | null {
@@ -958,7 +966,7 @@ async function checkoutTransitionProblem(
 		}
 		const added = nulPaths(await git(holderPath, ["diff", "--name-only", "--diff-filter=A", "-z", oldHead, newHead]));
 		const ignored = nulPaths(
-			await git(holderPath, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"]),
+			await git(holderPath, ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"]),
 		);
 		const ignoredCollision = findPathCollision(added, ignored);
 		return ignoredCollision ? `the incoming tracked path ${ignoredCollision} collides with an ignored path` : null;
@@ -973,9 +981,11 @@ async function checkoutTransitionProblem(
 
 	const added = nulPaths(await git(holderPath, ["diff", "--name-only", "--diff-filter=A", "-z", oldHead, newHead]));
 	if (added.size === 0) return null;
-	const untracked = nulPaths(await git(holderPath, ["ls-files", "--others", "--exclude-standard", "-z"]));
+	const untracked = nulPaths(
+		await git(holderPath, ["ls-files", "--others", "--exclude-standard", "--directory", "-z"]),
+	);
 	const ignored = nulPaths(
-		await git(holderPath, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"]),
+		await git(holderPath, ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"]),
 	);
 	const collision = findPathCollision(added, new Set([...untracked, ...ignored]));
 	return collision ? `the incoming tracked path ${collision} collides with an untracked or ignored path` : null;
