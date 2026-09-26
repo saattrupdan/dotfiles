@@ -74,7 +74,8 @@ Use these as defaults rather than rigid timers:
 
 Every report must include:
 
-- **Timestamp:** ISO 8601 with an explicit timezone.
+- **Timestamp:** ISO 8601 in Danish local time, with an explicit UTC offset and the
+  applicable `CET` or `CEST` abbreviation.
 - **Status:** A concise state such as `queued`, `running`, `stalled`, `succeeded`,
   `failed`, or `cancelled`, plus the current stage or useful detail.
 - **Progress:** A percentage when a trustworthy total exists. Prefer an authoritative
@@ -84,20 +85,24 @@ Every report must include:
   be estimated. If not, write `unknown` and briefly explain why.
 - **Next check:** The planned interval, unless this is the final report.
 
+Always convert timestamps to the `Europe/Copenhagen` timezone, including timestamps
+received from a remote service. Apply daylight-saving time for the reported date; do not
+use the agent host's timezone unless it is also `Europe/Copenhagen`.
+
 Use this compact template:
 
 ```text
-[2026-09-26T14:32:00+02:00]
+[2026-09-26T14:32:00+02:00 CEST]
 Status: running — processing batch 18 of 40
 Progress: 45% (18/40 batches)
-ETA: about 24 minutes, around 2026-09-26T14:56:00+02:00
+ETA: about 24 minutes, around 2026-09-26T14:56:00+02:00 CEST
 Next check: 5 minutes
 ```
 
 For unknown progress or ETA, retain the fields:
 
 ```text
-[2026-09-26T14:32:00+02:00]
+[2026-09-26T14:32:00+02:00 CEST]
 Status: running — waiting for the remote build stage
 Progress: unavailable — the service exposes no work total
 ETA: unknown — no completed unit or historical rate is available
