@@ -1,6 +1,5 @@
 import type { ExtensionAPI, ExtensionContext, Skill } from "@earendil-works/pi-coding-agent";
 
-import { recordAutoloadRetry } from "../no-repeat/retry.ts";
 import { discoverAutoloadSkills, readSkillContent } from "./discovery.ts";
 import { extractPathFromPartialInput, matchingAutoloadSkills, targetPathForToolCall } from "./matchers.ts";
 import { AUTOLOAD_TOOL_NAMES, type DiscoveredSkill } from "./types.ts";
@@ -110,12 +109,9 @@ export function registerAutoload(pi: ExtensionAPI): void {
 
 		if (injected.length === 0) return;
 
-		const session = syncSession(ctx);
-		const retryInput = { path: target.raw };
 		for (const { skill } of injected) {
 			markSkillLoadedForSession(ctx, skill);
 		}
-		recordAutoloadRetry(session, toolName, retryInput);
 
 		earlyAutoloadInFlight = true;
 		ctx.abort();
@@ -175,11 +171,9 @@ export function registerAutoload(pi: ExtensionAPI): void {
 
 		if (injected.length === 0) return undefined;
 
-		const session = syncSession(ctx);
 		for (const { skill } of injected) {
 			markSkillLoadedForSession(ctx, skill);
 		}
-		recordAutoloadRetry(session, event.toolName, event.input);
 
 		return {
 			block: true,

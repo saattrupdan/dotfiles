@@ -78,7 +78,6 @@ the same outline + `symbol="<heading>"` flow works on them. See the
    92      ### Web search (`web_search`, SearXNG)
    99      ### `web-browse`
   107      ### `subagent`
-  127      ### `no-repeat`
   202      ### `_outliner` (library, not a tool)
 # read again with symbol="<name>" to see a function/class body, symbol="__preamble__" for imports/constants, or use `search` to locate something specific.
 ```

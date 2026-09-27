@@ -24,7 +24,6 @@ agentic/pi/
 │   ├── subagent/      # One agent/task delegation per call
 │   ├── skill/         # Load named skill SKILL.md verbatim
 │   ├── web-browse/    # Headless browser interaction
-│   ├── no-repeat/     # Prevent duplicate tool calls
 │   ├── copy-paste/    # Clipboard operations
 │   ├── notify/        # Desktop notifications
 │   ├── question/      # User question proxy

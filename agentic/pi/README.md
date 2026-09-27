@@ -23,7 +23,7 @@ fall into three categories:
 - **Tools the agent calls** — `read`, `skill`, `search`, `code-tree`,
   `web-browse`, `web-search`, `subagent`. `web_search` uses the private local
   SearXNG service described below.
-- **Behavioural guardrails** (no tools registered) — `no-repeat`, `caffeinate`.
+- **Behavioural guardrails** (no tools registered) — `caffeinate`.
 - **Shared internal library** — `_outliner` (consumed by `read` and `search`).
 
 ### `read`
@@ -135,15 +135,6 @@ omitted, the child's normal unrestricted skill discovery remains unchanged.
 
 See [`extensions/subagent/README.md`](extensions/subagent/README.md) for the
 call fields, frontmatter, skill-scoping, refusal, and worktree semantics.
-
-### `no-repeat`
-
-Blocks consecutive duplicate tool calls and uninterrupted two-argument
-alternating loops. If the agent repeats the same call, or calls one tool with
-arguments A, B, A, B without using another tool in between, the repeated call
-is blocked with a short nudge. Catches common loop failure modes and saves
-tokens without combining calls from unrelated work later in a long session.
-Runs in both the orchestrator and each subagent process (per-process state).
 
 ### `caffeinate`
 

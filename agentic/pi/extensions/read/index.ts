@@ -55,7 +55,7 @@ async function readDocxZipEntry(docxPath: string, entryName: string): Promise<st
 	const { exec } = await import("node:child_process");
 	const { promisify } = await import("node:util");
 	const execAsync = promisify(exec);
-	
+
 	try {
 		const { stdout } = await execAsync(`unzip -p "${docxPath}" "${entryName}" 2>/dev/null`);
 		return stdout;
@@ -86,23 +86,23 @@ async function extractDocxComments(docxPath: string): Promise<DocxComment[]> {
 	if (!commentsXml) return [];
 
 	const comments: DocxComment[] = [];
-	
+
 	// Parse XML using regex-based extraction (avoiding dependencies)
 	// Match comment elements: <w:comment w:id="..." w:author="..." w:date="..." w:initials="...">...</w:comment>
 	const commentRegex = /<w:comment\s+([^>]+)>([\s\S]*?)<\/w:comment>/g;
-	
+
 	let match;
 	while ((match = commentRegex.exec(commentsXml)) !== null) {
 		const [, attrs, content] = match;
-		
+
 		// Extract attributes
 		const idMatch = attrs.match(/w:id="([^"]+)"/);
 		const authorMatch = attrs.match(/w:author="([^"]+)"/);
 		const dateMatch = attrs.match(/w:date="([^"]+)"/);
 		const initialsMatch = attrs.match(/w:initials="([^"]+)"/);
-		
+
 		if (!idMatch || !authorMatch || !dateMatch) continue;
-		
+
 		// Extract text from <w:t> elements within the comment
 		const textRegex = /<w:t[^>]*>([\s\S]*?)<\/w:t>/g;
 		const textParts: string[] = [];
@@ -110,7 +110,7 @@ async function extractDocxComments(docxPath: string): Promise<DocxComment[]> {
 		while ((textMatch = textRegex.exec(content)) !== null) {
 			textParts.push(textMatch[1]);
 		}
-		
+
 		comments.push({
 			id: idMatch[1],
 			author: authorMatch[1],
@@ -119,7 +119,7 @@ async function extractDocxComments(docxPath: string): Promise<DocxComment[]> {
 			text: textParts.join(" ").trim(),
 		});
 	}
-	
+
 	return comments;
 }
 
@@ -132,7 +132,7 @@ async function extractDocxCommentAnchors(docxPath: string, comments: DocxComment
 	if (!docXml) return new Map();
 
 	const anchorMap = new Map<string, string>();
-	
+
 	for (const comment of comments) {
 		// Find the text between commentRangeStart and commentRangeEnd for this comment id
 		const rangeRegex = new RegExp(
@@ -140,7 +140,7 @@ async function extractDocxCommentAnchors(docxPath: string, comments: DocxComment
 			"g"
 		);
 		const rangeMatch = docXml.match(rangeRegex);
-		
+
 		if (rangeMatch) {
 			// Extract text from <w:t> elements between the markers
 			const textRegex = /<w:t[^>]*>([\s\S]*?)<\/w:t>/g;
@@ -155,7 +155,7 @@ async function extractDocxCommentAnchors(docxPath: string, comments: DocxComment
 			}
 		}
 	}
-	
+
 	return anchorMap;
 }
 
@@ -174,24 +174,24 @@ function injectDocxCommentsIntoMarkdown(markdown: string, comments: DocxComment[
 	// If we have comments with anchor text, inject them after matching text
 	let result = markdown;
 	const processedCommentIds = new Set<string>();
-	
+
 	// Sort comments by anchor text length (longest first) to avoid substring matching issues
 	commentsWithAnchors.sort((a, b) => b.anchorText.length - a.anchorText.length);
-	
+
 	for (const comment of commentsWithAnchors) {
 		// Escape special regex characters in the anchor text
 		const escapedText = comment.anchorText
 			.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 			.replace(/\s+/g, "\\s+");
-		
+
 		// Find the text in the markdown and inject comments after it
 		const regex = new RegExp(`(${escapedText})`, "i");
 		const match = result.match(regex);
-		
+
 		if (match && match.index !== undefined) {
 			// Format comment
 			const commentBlock = `> 💬 **${comment.author}** (${new Date(comment.date).toLocaleDateString()}): ${comment.text}`;
-			
+
 			const injectionPoint = match.index + match[0].length;
 			result = result.slice(0, injectionPoint) + "\n\n" + commentBlock + "\n" + result.slice(injectionPoint);
 			processedCommentIds.add(comment.id);
@@ -200,7 +200,7 @@ function injectDocxCommentsIntoMarkdown(markdown: string, comments: DocxComment[
 
 	// If there are unmatched comments (no anchor found), append them at the end
 	const unmatchedComments = comments.filter(c => !processedCommentIds.has(c.id));
-	
+
 	if (unmatchedComments.length > 0) {
 		const appendSection = "\n\n---\n\n## Review Comments\n\n" +
 			unmatchedComments
@@ -361,15 +361,15 @@ async function convertToMarkdown(source: string, cacheKey: string, signal?: Abor
 	try {
 		// Use pandoc for OpenDocument formats, docling for everything else
 		const sourceLower = source.toLowerCase();
-		const isOpendocument = 
-			sourceLower.endsWith(".odt") || 
-			sourceLower.endsWith(".ods") || 
+		const isOpendocument =
+			sourceLower.endsWith(".odt") ||
+			sourceLower.endsWith(".ods") ||
 			sourceLower.endsWith(".odp");
-		
+
 		const { status, stderr } = isOpendocument
 			? await runPandoc(tmpDir, source, signal)
 			: await runDocling(tmpDir, source, signal);
-		
+
 		const mdFile = findMarkdown(tmpDir);
 		const body = mdFile ? fs.readFileSync(mdFile, "utf-8") : "";
 		if (!body) {
@@ -402,8 +402,7 @@ const SMALL_FILE_LINES = 100;
 const DIR_ENTRY_LIMIT = 200;
 
 // Footer appended to every outline. This outline IS the whole-file view, so
-// the footer steers the model to drill in (rather than re-read the path, which
-// just returns the same outline and trips the `no-repeat` guard).
+// the footer steers the model to drill in (rather than re-read the path).
 const OUTLINE_FOOTER =
 	`# This outline is the whole-file view — reading this path again returns the same outline. ` +
 	`To see content, read again with symbol="<name>" for a function/class/section body (names above), ` +
