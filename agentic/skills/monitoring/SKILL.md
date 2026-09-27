@@ -75,7 +75,7 @@ Use these as defaults rather than rigid timers:
 Every report must include:
 
 - **Timestamp:** A human-readable date and 24-hour time in Danish local time, formatted
-  as `D Mon YYYY, HH:mm CET/CEST (UTC±HH:MM)`. Do not use ISO 8601 separators such as
+  as `D Mon YYYY, HH:mm`. Do not include the timezone or use ISO 8601 separators such as
   `T`.
 - **Status:** A concise state such as `queued`, `running`, `stalled`, `succeeded`,
   `failed`, or `cancelled`, plus the current stage or useful detail.
@@ -93,17 +93,17 @@ use the agent host's timezone unless it is also `Europe/Copenhagen`.
 Use this compact template:
 
 ```text
-[26 Sep 2026, 14:32 CEST (UTC+02:00)]
+[26 Sep 2026, 14:32]
 Status: running — processing batch 18 of 40
 Progress: 45% (18/40 batches)
-ETA: about 24 minutes, around 26 Sep 2026, 14:56 CEST (UTC+02:00)
+ETA: about 24 minutes, around 26 Sep 2026, 14:56
 Next check: 5 minutes
 ```
 
 For unknown progress or ETA, retain the fields:
 
 ```text
-[26 Sep 2026, 14:32 CEST (UTC+02:00)]
+[26 Sep 2026, 14:32]
 Status: running — waiting for the remote build stage
 Progress: unavailable — the service exposes no work total
 ETA: unknown — no completed unit or historical rate is available
