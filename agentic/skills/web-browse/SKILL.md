@@ -28,7 +28,7 @@ web_browse({ command: "press @e2 Enter" })
 web_browse({ command: "close" })
 ```
 
-`open` starts headed Firefox automatically. Element refs come from the latest snapshot
+`open` starts headless Firefox automatically. Element refs come from the latest snapshot
 and may become stale after navigation or clicking; take another snapshot when needed.
 Quote text containing spaces when exact argument boundaries matter.
 
@@ -37,7 +37,7 @@ Quote text containing spaces when exact argument boundaries matter.
 | Command | Purpose |
 |---|---|
 | `help` | Show the supported command surface |
-| `start [--headed\|--headless]` | Start Firefox; headed is the default |
+| `start [--headed\|--headless]` | Start Firefox; headless is the default |
 | `status` / `close` | Inspect or stop the current session |
 | `open <https-url>` | Navigate and return a semantic snapshot |
 | `snapshot` | Return page text and interactive `@eN` refs |
@@ -67,12 +67,12 @@ This reduces accidental disclosure; it is not a cryptographic security boundary.
 browser agent with unrestricted OS or raw WebDriver access could still observe or
 exfiltrate a filled credential.
 
-## Headless mode
+## Browser mode
 
-Use `start --headless` only when no human interaction is needed. The same persistent
-profile is used, so authenticated cookies can remain available, but a locked Bitwarden
-vault cannot be interactively unlocked headlessly. Close Firefox before switching
-between headed and headless modes.
+Headless mode is the default for both `start` and `open`. The same persistent profile
+is used, so authenticated cookies and an unlocked Bitwarden vault can remain available.
+Use `start --headed` when human interaction or Bitwarden unlock is needed. Close Firefox
+before switching modes.
 
 ## Profile and environment
 

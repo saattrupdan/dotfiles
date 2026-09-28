@@ -9,7 +9,7 @@ import test from "node:test";
 import type { WebElement } from "selenium-webdriver";
 
 import { parseCommand, safeCommandPreview } from "./command.ts";
-import { acquireProfileLock, FirefoxSession, releaseProfileLock } from "./firefox-session.ts";
+import { acquireProfileLock, FirefoxSession, releaseProfileLock, requestedBrowserMode } from "./firefox-session.ts";
 import { formatSnapshot, type BrowserSnapshot } from "./snapshot.ts";
 
 test("parseCommand handles quoted and escaped arguments without a shell", () => {
@@ -29,6 +29,12 @@ test("safeCommandPreview never echoes form payloads", () => {
 	assert.equal(safeCommandPreview(`type @e4 secret`), "type @e4 [text redacted]");
 	assert.equal(safeCommandPreview(`select @e5 Private account`), "select @e5 [text redacted]");
 	assert.equal(safeCommandPreview("snapshot"), "snapshot");
+});
+
+test("Firefox defaults to headless mode", () => {
+	assert.equal(requestedBrowserMode(), "headless");
+	assert.equal(requestedBrowserMode("--headless"), "headless");
+	assert.equal(requestedBrowserMode("--headed"), "headed");
 });
 
 test("formatSnapshot marks credential fields without exposing a value", () => {
@@ -113,8 +119,8 @@ test(
 		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 		const address = server.address() as AddressInfo;
 		try {
-			await browser.start("headless");
 			const opened = await browser.execute(parseCommand(`open http://127.0.0.1:${address.port}`), async () => false);
+			assert.match(browser.status(), /running in headless mode/);
 			assert.match(opened, /@e1 textbox “Name”/);
 			assert.match(opened, /@e2 textbox “Password” \[type=password, password redacted\]/);
 			assert.match(opened, /@e3 textbox “PIN” \[password redacted\]/);

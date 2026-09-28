@@ -108,10 +108,10 @@ only as temporary rollback material.
 ### `web-browse`
 
 Drives native Firefox through Selenium/geckodriver using a dedicated persistent
-profile outside the repository. It supports headed and headless sessions, compact
-semantic snapshots with `@eN` refs, navigation, clicks, and non-secret form entry.
-Headed sessions provide a human handoff for unlocking Bitwarden and triggering
-autofill without sending the vault password through Pi.
+profile outside the repository. It defaults to headless sessions and supports explicit
+headed sessions, compact semantic snapshots with `@eN` refs, navigation, clicks, and
+non-secret form entry. Headed sessions provide a human handoff for unlocking Bitwarden
+and triggering autofill without sending the vault password through Pi.
 
 Run `help` for the command list. The tool intentionally does not expose password
 values, cookies, storage, arbitrary JavaScript, network bodies, or screenshots.

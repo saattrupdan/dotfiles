@@ -21,7 +21,7 @@ const Params = Type.Object({
 	command: Type.String({
 		description:
 			"Firefox browser command. Start with `help`. Common commands: `open <url>`, `snapshot`, `click @e1`, " +
-			"`fill @e2 <text>`, `handoff`, `start --headless`, and `close`. Session state persists between calls.",
+			"`fill @e2 <text>`, `start --headed`, `handoff`, and `close`. Headless is the default; session state persists between calls.",
 	}),
 	timeout_ms: Type.Optional(
 		Type.Integer({
@@ -95,7 +95,7 @@ export default function (pi: ExtensionAPI) {
 		label: "web browse",
 		description:
 			"Drive native Firefox through a constrained, persistent automation session. Use `help` to list commands. " +
-			"Headed mode supports a human Bitwarden unlock/autofill handoff without sending passwords through Pi; headless mode is also available. " +
+			"Headless mode is the default; use `start --headed` for human Bitwarden unlock/autofill handoff without sending passwords through Pi. " +
 			"Use for interactive flows and JS-rendered pages; prefer `read` for static pages.",
 		parameters: Params,
 		executionMode: "sequential",

@@ -15,6 +15,10 @@ import { formatSnapshot, type SnapshotElement, takeSnapshot } from "./snapshot.t
 
 export type BrowserMode = "headed" | "headless";
 
+export function requestedBrowserMode(flag?: string): BrowserMode {
+	return flag === "--headed" ? "headed" : "headless";
+}
+
 interface LockOwner {
 	pid: number;
 	token: string;
@@ -387,7 +391,7 @@ export class FirefoxSession {
 	}
 
 	private requireDriver(): WebDriver {
-		if (!this.driver) throw new Error("Firefox is not running. Use `start --headed` or `open <url>` first.");
+		if (!this.driver) throw new Error("Firefox is not running. Use `start`, `start --headed`, or `open <url>` first.");
 		return this.driver;
 	}
 
@@ -434,11 +438,11 @@ export class FirefoxSession {
 			if (args.length > 1 || (args[0] && args[0] !== "--headed" && args[0] !== "--headless")) {
 				throw new Error("usage: start [--headed|--headless]");
 			}
-			return await this.start(args[0] === "--headless" ? "headless" : "headed", signal);
+			return await this.start(requestedBrowserMode(args[0]), signal);
 		}
 		if (name === "open") {
 			if (args.length !== 1) throw new Error("usage: open <https-url>");
-			if (!this.driver) await this.start("headed", signal);
+			if (!this.driver) await this.start("headless", signal);
 			await this.requireDriver().get(parseOpenUrl(args[0]));
 			return await this.snapshot();
 		}
