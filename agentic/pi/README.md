@@ -107,11 +107,17 @@ only as temporary rollback material.
 
 ### `web-browse`
 
-Thin wrapper around the `agent-browser` CLI. Takes a single command string
-(e.g. `open https://example.com`, `click @ref-2`, `type input.search hello`)
-and returns its stdout/stderr. Session state is preserved across calls by
-`agent-browser` itself, so multi-step exploration works as a sequence of
-`web_browse` calls.
+Drives native Firefox through Selenium/geckodriver using a dedicated persistent
+profile outside the repository. It supports headed and headless sessions, compact
+semantic snapshots with `@eN` refs, navigation, clicks, and non-secret form entry.
+Headed sessions provide a human handoff for unlocking Bitwarden and triggering
+autofill without sending the vault password through Pi.
+
+Run `help` for the command list. The tool intentionally does not expose password
+values, cookies, storage, arbitrary JavaScript, network bodies, or screenshots.
+The default macOS profile is
+`~/Library/Application Support/Pi/firefox-profile`; Selenium Manager resolves
+geckodriver automatically, with `brew install geckodriver` as a fallback.
 
 ### `subagent`
 

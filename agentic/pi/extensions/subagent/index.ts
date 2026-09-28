@@ -33,6 +33,7 @@ import {
 	type QuestionItem,
 	type QuestionResponse,
 } from "../_question_protocol/protocol.ts";
+import { safeCommandPreview } from "../web-browse/command.ts";
 import { interactiveQueue } from "../_interactive_queue/queue.ts";
 import { dispatchAsk } from "../question/index.ts";
 import { getPiInvocation } from "./pi-invocation.ts";
@@ -131,9 +132,7 @@ function formatToolCall(
 			return themeFg("muted", "web_search ") + themeFg("accent", `"${preview}"`);
 		}
 		case "web_browse": {
-			const command = (args.command || "...") as string;
-			const preview = command.length > 80 ? `${command.slice(0, 80)}...` : command;
-			return themeFg("muted", "web_browse ") + themeFg("accent", preview);
+			return themeFg("muted", "web_browse ") + themeFg("accent", safeCommandPreview((args.command || "...") as string));
 		}
 		case "subagent": {
 			const agent = (args.agent || "?") as string;
