@@ -72,7 +72,9 @@ export default function (pi: ExtensionAPI) {
 			arming = true;
 			try {
 				process.env[ENV_FLAG] = "1";
-				pi.sendUserMessage(`${BANNER}\n\n${trimmed}`);
+				// Enter during streaming queues a steering message; without deliverAs,
+				// Pi rejects extension-sent messages while the agent is working.
+				pi.sendUserMessage(`${BANNER}\n\n${trimmed}`, { deliverAs: "steer" });
 			} finally {
 				// Release on the next tick so the input event for the message
 				// we just sent has already passed the listener.
