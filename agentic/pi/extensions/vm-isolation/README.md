@@ -20,20 +20,9 @@ Automatically blocks destructive commands:
 - `dd` — High risk (blocked)
 - `mkfs` — Critical (blocked)
 - `chmod -R 777` — High risk (blocked)
-- `rm file` — Medium risk (warned)
-- File truncation `>` — Low risk (warned)
+- Lower-risk commands are allowed without a footer warning.
 
-### 3. Path Protection (🗂️ Whitelist)
-- Only allows writes to:
-  - Current project directory
-  - `/tmp/`
-  - `/var/folders/` (macOS temp)
-- Warns when agent tries to access paths outside allowed directories
-
-### 4. Git-Aware Protection (📝 Tracked Files)
-- Detects when tracked files are being deleted or overwritten
-- Extra warnings for git-tracked files
-- Helps prevent accidental loss of committed work
+The blocked reason appears in the `bash` tool result, not in the footer.
 
 ## Installation
 
@@ -54,8 +43,7 @@ By default, the extension is **enabled** and protects every agent run:
 
 1. Creates APFS snapshot before agent starts
 2. Monitors all bash commands
-3. Blocks dangerous operations
-4. Shows protection status in footer
+3. Blocks dangerous operations; `/protect` commands report via temporary notifications, not footer status
 
 ### Slash Commands
 
@@ -92,15 +80,12 @@ Add to `~/.pi/agent/settings.json`:
 
 ### Before Agent Run
 1. Creates APFS snapshot via `tmutil localsnapshot`
-2. Records snapshot name for potential rollback
-3. Shows "🛡️ Protected" status
+2. Keeps the snapshot for potential rollback
 
 ### During Agent Run
 1. Intercepts every `bash` tool call
 2. Analyzes command for dangerous patterns
-3. Checks paths against whitelist
-4. Blocks critical commands, warns on risky ones
-5. Tracks modifications to git files
+3. Blocks dangerous commands and reports the reason in the tool result
 
 ### After Agent Run
 - Keeps snapshot for rollback if needed
@@ -141,23 +126,7 @@ This deletes all newer snapshots, effectively rolling back to that point.
 
 ```
 Agent: rm -rf /
-Extension: 🚫 Blocked - Critical pattern detected
-```
-
-### Agent Wants to Clean Build Artifacts
-
-```
-Agent: rm -rf ./build
-Extension: ⚠️ Medium risk - proceeding with warning
-```
-
-### Agent Modifies Config File
-
-```
-Agent: cat > .gitignore << 'EOF'
-> node_modules/
-> EOF
-Extension: ℹ️ Tracked file modified
+Tool result: BLOCKED: Critical pattern detected
 ```
 
 ### Disaster Recovery
