@@ -293,14 +293,6 @@ function sanitizeStatusText(text: string): string {
 function formatCodexQuota(theme: ExtensionContext["ui"]["theme"], quota: CodexQuota): string[] {
 	const parts: string[] = [];
 
-	// Show credits if we're on credits system (rate limited or credit-based plan)
-	if (quota.credits) {
-		const creditText = quota.credits.unlimited
-			? "∞"
-			: quota.credits.balance.toString();
-		parts.push(`${theme.fg("muted", "credits")} ${theme.fg("accent", creditText)}`);
-	}
-
 	// Show session limit
 	if (quota.session) {
 		const session = formatQuotaBucket(theme, "session", quota.session);

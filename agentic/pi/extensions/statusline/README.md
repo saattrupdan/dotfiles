@@ -11,7 +11,6 @@ terminals do not hide status details behind an ellipsis.
 - **Quota bars** — For OAuth subscription models and OpenAI Codex:
   - Session limit (typically 5h window)
   - Weekly limit (7-day window)
-  - Credits balance (when on credits-based plan)
 
 ## Quota Bar Behavior
 
