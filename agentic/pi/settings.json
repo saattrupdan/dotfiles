@@ -6,6 +6,7 @@
   "httpIdleTimeoutMs": 0,
   "hideThinkingBlock": true,
   "quietStartup": true,
+  "defaultProjectTrust": "always",
   "theme": "gruvbox",
   "terminal": {
     "clearOnShrink": true
