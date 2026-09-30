@@ -10,5 +10,6 @@
   "terminal": {
     "clearOnShrink": true
   },
-  "packages": []
+  "packages": [],
+  "extensions": ["-builtin:mcp"]
 }
