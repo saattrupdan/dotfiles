@@ -19,7 +19,7 @@ import {
 	enforceRepository,
 	findCommonGitDir,
 	findManifestForCwd,
-	hydrateIgnoredEnvFiles,
+	hydrateIgnoredPaths,
 	loadManifest,
 	loadResumeRecord,
 	releaseManagedWorktree,
@@ -186,7 +186,7 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 				fatal(error instanceof Error ? error.message : String(error));
 			}
 		}
-		await hydrateIgnoredEnvFiles(manifest);
+		await hydrateIgnoredPaths(manifest);
 		ctx.ui.setStatus("git-worktree-isolation", `🌳 ${manifest.id}`);
 	});
 

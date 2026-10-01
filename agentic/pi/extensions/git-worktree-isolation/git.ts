@@ -37,7 +37,8 @@ export interface SessionManifest {
 	launchIndexTree?: string;
 	launchIndexCommit?: string;
 	pendingSync?: PendingSync;
-	copiedEnvFiles?: string[];
+	copiedEnvFiles?: string[]; // Legacy manifests created before ignored paths were linked.
+	linkedIgnoredPaths?: string[];
 	createdAt: string;
 	manifestPath: string;
 }
@@ -141,20 +142,96 @@ async function removeEnvFiles(worktreeRoot: string, relativePaths: string[]): Pr
 	await Promise.all(relativePaths.map((relativePath) => fs.promises.rm(path.join(worktreeRoot, relativePath), { force: true })));
 }
 
-async function copyIgnoredEnvFiles(repoRoot: string, worktreeRoot: string): Promise<string[]> {
-	const ignored = await git(repoRoot, [
-		"ls-files",
-		"--others",
-		"--ignored",
-		"--exclude-standard",
-		"-z",
-		"--",
-		":(top).env",
-		":(top,glob).env.*",
-	]);
-	const candidates = ignored.split("\0").filter(Boolean);
-	const copied: string[] = [];
+function linkedPath(relativePath: string): string {
+	return relativePath.replace(/\/$/, ""); // Git prints ignored directories with a trailing slash.
+}
+
+type LinkedPaths = Pick<SessionManifest, "repoRoot" | "worktreeRoot" | "linkedIgnoredPaths">;
+
+async function verifyKnownLinks(manifest: LinkedPaths): Promise<void> {
+	// Check every path before unlinking any: replaced links and generated files belong to the session.
+	for (const relativePath of manifest.linkedIgnoredPaths ?? []) {
+		const destination = path.join(manifest.worktreeRoot, relativePath);
+		let stat: fs.Stats;
+		try {
+			stat = await fs.promises.lstat(destination);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+			throw error;
+		}
+		if (!stat.isSymbolicLink() || (await fs.promises.readlink(destination)) !== path.join(manifest.repoRoot, relativePath)) {
+			throw new Error(`Linked ignored path ${relativePath} was replaced; worktree was preserved.`);
+		}
+	}
+}
+
+async function removeKnownLinks(manifest: LinkedPaths): Promise<void> {
+	await verifyKnownLinks(manifest);
+	for (const relativePath of manifest.linkedIgnoredPaths ?? []) {
+		await fs.promises.unlink(path.join(manifest.worktreeRoot, relativePath)).catch((error: NodeJS.ErrnoException) => {
+			if (error.code !== "ENOENT") throw error;
+		});
+	}
+}
+
+function excludePattern(relativePath: string): string {
+	// Anchor to the worktree root; quote Git wildmatch metacharacters and spaces.
+	return `/${relativePath.replace(/[\\*?[\]#! ]/g, "\\$&")}\n`;
+}
+
+async function enableWorktreeConfig(repoRoot: string): Promise<void> {
+	if ((await git(repoRoot, ["config", "--local", "--get", "extensions.worktreeConfig"]).catch(() => "")) === "true") return;
+	// Repository-wide switch, but the exclusion setting itself is private to each worktree.
+	for (let attempt = 0; attempt < 10; attempt++) {
+		const result = await run(repoRoot, ["config", "--local", "extensions.worktreeConfig", "true"]);
+		if (result.code === 0) return;
+		if (!result.stderr.includes("lock") || attempt === 9) throw new Error(result.stderr);
+		await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1)));
+	}
+}
+
+async function configureLinkedExcludes(repoRoot: string, worktreeRoot: string, paths: string[]): Promise<void> {
+	await enableWorktreeConfig(repoRoot);
+	const privateGitDir = await git(worktreeRoot, ["rev-parse", "--absolute-git-dir"]);
+	const excludesFile = path.join(privateGitDir, "pi-linked-ignored-excludes");
+	// core.excludesFile replaces the user's global file; carry its patterns forward.
+	const configuredFile = await git(repoRoot, ["config", "--path", "--get", "core.excludesFile"]).catch(() => "");
+	const globalFile = configuredFile
+		? path.resolve(repoRoot, configuredFile)
+		: path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "git", "ignore");
+	const globalPatterns = await fs.promises.readFile(globalFile, "utf8").catch((error: NodeJS.ErrnoException) => {
+		if (error.code === "ENOENT") return "";
+		throw error;
+	});
+	await fs.promises.writeFile(
+		excludesFile,
+		`${globalPatterns}${globalPatterns && !globalPatterns.endsWith("\n") ? "\n" : ""}${paths.map(excludePattern).join("")}`,
+	);
+	await git(worktreeRoot, ["config", "--worktree", "core.excludesFile", excludesFile]);
+}
+
+async function listIgnoredPaths(repoRoot: string): Promise<string[]> {
+	const ignored = await git(repoRoot, ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"]);
+	const candidates: string[] = [];
+	for (const entry of ignored.split("\0").filter(Boolean)) {
+		// --directory also prints containers that merely hold ignored files. Linking
+		// those would hide future non-ignored files from the worktree's Git index.
+		if (entry.endsWith("/")) {
+			const result = await run(repoRoot, ["check-ignore", "--quiet", "--no-index", "--", entry]);
+			if (result.code === 1) continue;
+			if (result.code !== 0) throw new Error(result.stderr);
+		}
+		candidates.push(linkedPath(entry));
+	}
+	return candidates;
+}
+
+async function linkIgnoredPaths(repoRoot: string, worktreeRoot: string): Promise<string[]> {
+	const candidates = await listIgnoredPaths(repoRoot);
+	const linked: string[] = [];
 	try {
+		// Configure before linking so even directory-only ignore rules cannot expose links to Git.
+		await configureLinkedExcludes(repoRoot, worktreeRoot, candidates);
 		for (const relativePath of candidates) {
 			const source = path.join(repoRoot, relativePath);
 			const destination = path.join(worktreeRoot, relativePath);
@@ -165,26 +242,36 @@ async function copyIgnoredEnvFiles(repoRoot: string, worktreeRoot: string): Prom
 				if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
 				throw error;
 			}
-			if (!sourceStat.isFile()) continue;
+			if (!sourceStat.isFile() && !sourceStat.isDirectory() && !sourceStat.isSymbolicLink()) continue;
+			try {
+				await fs.promises.lstat(destination);
+				continue; // Never replace tracked or session-owned content.
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+			}
 			await fs.promises.mkdir(path.dirname(destination), { recursive: true });
-			await fs.promises.copyFile(source, destination);
-			copied.push(relativePath);
+			await fs.promises.symlink(source, destination);
+			linked.push(relativePath);
 		}
-		return copied;
+		return linked;
 	} catch (error) {
-		await removeEnvFiles(worktreeRoot, copied);
+		await removeKnownLinks({ repoRoot, worktreeRoot, linkedIgnoredPaths: linked });
 		throw error;
 	}
 }
 
-export async function hydrateIgnoredEnvFiles(manifest: SessionManifest): Promise<void> {
+export async function hydrateIgnoredPaths(manifest: SessionManifest): Promise<void> {
+	await removeKnownLinks(manifest);
 	await removeEnvFiles(manifest.worktreeRoot, manifest.copiedEnvFiles ?? []);
-	manifest.copiedEnvFiles = await copyIgnoredEnvFiles(manifest.repoRoot, manifest.worktreeRoot);
+	manifest.linkedIgnoredPaths = await linkIgnoredPaths(manifest.repoRoot, manifest.worktreeRoot);
+	manifest.copiedEnvFiles = [];
 	await saveManifest(manifest);
 }
 
-export async function cleanCopiedEnvFiles(manifest: SessionManifest): Promise<void> {
+export async function cleanLinkedIgnoredPaths(manifest: SessionManifest): Promise<void> {
+	await removeKnownLinks(manifest);
 	await removeEnvFiles(manifest.worktreeRoot, manifest.copiedEnvFiles ?? []);
+	manifest.linkedIgnoredPaths = [];
 	manifest.copiedEnvFiles = [];
 	await saveManifest(manifest);
 }
@@ -466,16 +553,10 @@ export async function assertWorktreeReleasable(manifest: SessionManifest): Promi
 	if (await git(manifest.worktreeRoot, ["status", "--porcelain=v1"])) {
 		throw new Error("The managed worktree is not clean.");
 	}
-	const ignored = await git(manifest.worktreeRoot, [
-		"ls-files",
-		"--others",
-		"--ignored",
-		"--exclude-standard",
-		"--directory",
-		"-z",
-	]);
-	const copiedEnvFiles = new Set(manifest.copiedEnvFiles ?? []);
-	const unknownIgnored = ignored.split("\0").find((relativePath) => relativePath && !copiedEnvFiles.has(relativePath));
+	const ignored = await listIgnoredPaths(manifest.worktreeRoot);
+	await verifyKnownLinks(manifest);
+	const ephemeral = new Set([...(manifest.copiedEnvFiles ?? []), ...(manifest.linkedIgnoredPaths ?? [])]);
+	const unknownIgnored = ignored.find((relativePath) => !ephemeral.has(relativePath));
 	if (unknownIgnored) {
 		throw new Error(`Ignored path ${unknownIgnored} is not ephemeral session configuration; worktree was preserved.`);
 	}
@@ -686,7 +767,7 @@ export async function createLaunchPlan(cwd: string, agentDir?: string): Promise<
 		await git(repoRoot, ["worktree", "add", "--detach", requestedWorktreeRoot, snapshot.startSha]);
 		worktreeAdded = true;
 		worktreeRoot = await fs.promises.realpath(requestedWorktreeRoot);
-		const copiedEnvFiles = await copyIgnoredEnvFiles(repoRoot, worktreeRoot);
+		const linkedIgnoredPaths = await linkIgnoredPaths(repoRoot, worktreeRoot);
 		await git(repoRoot, ["worktree", "lock", "--reason", "active Pi session", worktreeRoot]);
 		worktreeLocked = true;
 
@@ -711,7 +792,7 @@ export async function createLaunchPlan(cwd: string, agentDir?: string): Promise<
 						launchIndexCommit: snapshot.indexCommit,
 					}
 				: {}),
-			copiedEnvFiles,
+			linkedIgnoredPaths,
 			createdAt: new Date().toISOString(),
 			manifestPath,
 		};
@@ -786,7 +867,7 @@ export async function createResumePlan(record: SessionResumeRecord): Promise<Lau
 		await git(repoRoot, ["worktree", "add", "--detach", requestedWorktreeRoot, startSha]);
 		worktreeAdded = true;
 		worktreeRoot = await fs.promises.realpath(requestedWorktreeRoot);
-		const copiedEnvFiles = await copyIgnoredEnvFiles(repoRoot, worktreeRoot);
+		const linkedIgnoredPaths = await linkIgnoredPaths(repoRoot, worktreeRoot);
 		await git(repoRoot, ["worktree", "lock", "--reason", "active Pi session", worktreeRoot]);
 		worktreeLocked = true;
 		const manifest: SessionManifest = {
@@ -802,7 +883,7 @@ export async function createResumePlan(record: SessionResumeRecord): Promise<Lau
 			targetRef: record.targetRef,
 			baseSha: startSha,
 			publishedHead: startSha,
-			copiedEnvFiles,
+			linkedIgnoredPaths,
 			createdAt: new Date().toISOString(),
 			manifestPath,
 		};
@@ -821,7 +902,7 @@ export async function createResumePlan(record: SessionResumeRecord): Promise<Lau
 
 export async function releaseManagedWorktree(manifest: SessionManifest): Promise<void> {
 	await assertWorktreeReleasable(manifest);
-	await cleanCopiedEnvFiles(manifest);
+	await cleanLinkedIgnoredPaths(manifest);
 	await git(manifest.repoRoot, ["worktree", "unlock", manifest.worktreeRoot]);
 	try {
 		await git(manifest.repoRoot, ["worktree", "remove", "--force", manifest.worktreeRoot]);

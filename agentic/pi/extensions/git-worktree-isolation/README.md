@@ -24,17 +24,21 @@ After every settled agent run:
 When a process launches from a dirty checkout, both the working-tree state and the real
 Git index are captured automatically as separate durable checkpoint commits. This
 preserves partially staged files as well as tracked and non-ignored untracked content.
-Ignored regular files named `.env` or `.env.*` at the repository root are copied into
-the isolated worktree so local configuration remains available, but they are never
-checkpointed or published. Nested and symlinked env files are not copied. Copies are
-refreshed when a managed session starts and removed on normal session shutdown; edits
-to them are therefore ephemeral. If the launch checkout remains unchanged,
-publication updates its index under Git's lock protocol and atomically applies the
-agent's tree-to-tree patch.
-Concurrent working-file or index changes block synchronization without being
-overwritten. Other ignored files are never checkpointed or overwritten. A pending
-checkout synchronization is written to the manifest before the branch ref moves, so a
-later run can resume safely after a crash.
+Ignored files, symlinks, and fully ignored directories (including nested paths) are
+linked back to the launch checkout, never checkpointed or published. Edits through
+these links affect the original checkout immediately, including changes made inside
+linked directories; concurrent sessions share that state. Non-ignored untracked files
+remain real files in the launch snapshot so they can be committed. Git's worktree
+configuration is enabled for the repository, and each managed worktree gets a private
+exclude file so directory-only ignore rules also exclude their symlinks. The existing
+`core.excludesFile` patterns (or Git's default global ignore file) are carried into
+that file. Links are refreshed on managed session start and removed on clean
+release; a replaced link is preserved.
+If the launch checkout remains unchanged, publication updates its index under Git's
+lock protocol and atomically applies the agent's tree-to-tree patch. Concurrent
+working-file or index changes block synchronization without being overwritten. A
+pending checkout synchronization is written to the manifest before the branch ref
+moves, so a later run can resume safely after a crash.
 
 ## Release and resume
 
@@ -71,9 +75,10 @@ Active manifests live in the repository's common Git directory under
 `pi-worktree-sessions/`. Dirty work, unknown ignored files, a Git operation in
 progress, pending checkout synchronization, failed repair, or blocked
 publication prevents release and leaves the locked worktree and manifest
-recoverable. Copied `.env` files are the only ignored files treated as known
-ephemeral state. A crash or forced exit likewise retains the active worktree;
-cleanup is performed only by a graceful finalized session boundary.
+recoverable. Links created by the extension (and copied `.env` files in older
+sessions) are treated as known ephemeral state. A crash or forced exit likewise
+retains the active worktree; cleanup is performed only by a graceful finalized
+session boundary.
 
 A launch must start from a named branch so the extension has a publication
 target. Uncommitted launch-checkout changes do not require terminal interaction:

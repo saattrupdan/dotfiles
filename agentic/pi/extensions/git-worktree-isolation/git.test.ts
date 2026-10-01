@@ -11,13 +11,13 @@ import {
 	checkpointSession,
 	checkpointSessionIfPresent,
 	checkpointWorktreeSessions,
-	cleanCopiedEnvFiles,
+	cleanLinkedIgnoredPaths,
 	consumeResumeRecord,
 	createLaunchPlan,
 	createResumePlan,
 	enforceRepository,
 	findManifestForCwd,
-	hydrateIgnoredEnvFiles,
+	hydrateIgnoredPaths,
 	loadResumeRecord,
 	releaseManagedWorktree,
 	rewriteSessionCwd,
@@ -67,9 +67,9 @@ test("creates a detached worktree without creating a branch", async () => {
 	assert.equal(fs.realpathSync(sessionDirectoryForCwd(plan.childCwd, agentDir)), hub);
 });
 
-test("copies only root-level ignored env files into the isolated worktree", async () => {
+test("links ignored files, nested paths, and directories without exposing them to Git", async () => {
 	const { root, agentDir } = createRepo();
-	fs.writeFileSync(path.join(root, ".gitignore"), ".env*\nignored.txt\n");
+	fs.writeFileSync(path.join(root, ".gitignore"), ".env*\nignored.txt\ncache/\n");
 	command(root, ["add", ".gitignore"]);
 	command(root, ["commit", "-m", "chore: ignore local files"]);
 	fs.writeFileSync(path.join(root, ".env"), "ROOT_SECRET=root\n");
@@ -78,28 +78,101 @@ test("copies only root-level ignored env files into the isolated worktree", asyn
 	fs.mkdirSync(nested);
 	fs.writeFileSync(path.join(nested, ".env.local"), "SERVICE_SECRET=service\n");
 	fs.symlinkSync(".env", path.join(root, ".env.link"));
-	fs.writeFileSync(path.join(root, "ignored.txt"), "not copied\n");
+	fs.writeFileSync(path.join(root, "ignored.txt"), "ignored\n");
+	fs.mkdirSync(path.join(root, "cache"));
+	fs.writeFileSync(path.join(root, "cache", "data"), "cached\n");
 
 	const plan = await createLaunchPlan(root, agentDir);
-	const copiedRootEnv = path.join(plan.manifest.worktreeRoot, ".env");
-	const copiedLocalEnv = path.join(plan.manifest.worktreeRoot, ".env.local");
-	const nestedEnv = path.join(plan.manifest.worktreeRoot, "service", ".env.local");
-
-	assert.deepEqual(plan.manifest.copiedEnvFiles, [".env", ".env.local"]);
-	assert.equal(fs.readFileSync(copiedRootEnv, "utf8"), "ROOT_SECRET=root\n");
-	assert.equal(fs.readFileSync(copiedLocalEnv, "utf8"), "LOCAL_SECRET=local\n");
-	assert.equal(fs.existsSync(nestedEnv), false);
-	assert.equal(fs.existsSync(path.join(plan.manifest.worktreeRoot, ".env.link")), false);
-	assert.equal(fs.existsSync(path.join(plan.manifest.worktreeRoot, "ignored.txt")), false);
+	const target = (relativePath: string) => path.join(plan.manifest.worktreeRoot, relativePath);
+	assert.deepEqual(plan.manifest.linkedIgnoredPaths, [".env", ".env.link", ".env.local", "cache", "ignored.txt", "service/.env.local"]);
+	for (const relativePath of plan.manifest.linkedIgnoredPaths ?? []) {
+		assert.equal(fs.readlinkSync(target(relativePath)), path.join(fs.realpathSync(root), relativePath));
+	}
+	assert.equal(fs.readFileSync(target("cache/data"), "utf8"), "cached\n");
+	assert.equal(fs.readlinkSync(target(".env.link")), path.join(fs.realpathSync(root), ".env.link"));
 	assert.equal(command(plan.manifest.worktreeRoot, ["status", "--porcelain"]), "");
+	fs.writeFileSync(target("cache/data"), "edited\n");
+	assert.equal(fs.readFileSync(path.join(root, "cache/data"), "utf8"), "edited\n");
 
-	await cleanCopiedEnvFiles(plan.manifest);
-	assert.equal(fs.existsSync(copiedRootEnv), false);
-	assert.equal(fs.existsSync(copiedLocalEnv), false);
-	await hydrateIgnoredEnvFiles(plan.manifest);
-	assert.equal(fs.readFileSync(copiedRootEnv, "utf8"), "ROOT_SECRET=root\n");
-	assert.equal(fs.readFileSync(copiedLocalEnv, "utf8"), "LOCAL_SECRET=local\n");
-	assert.equal(fs.existsSync(nestedEnv), false);
+	await cleanLinkedIgnoredPaths(plan.manifest);
+	assert.equal(fs.existsSync(target("cache")), false);
+	assert.equal(fs.readFileSync(path.join(root, "cache/data"), "utf8"), "edited\n");
+	await hydrateIgnoredPaths(plan.manifest);
+	assert.equal(fs.readFileSync(target("cache/data"), "utf8"), "edited\n");
+	assert.equal(command(plan.manifest.worktreeRoot, ["status", "--porcelain"]), "");
+});
+
+test("releases and resumes linked ignored directories without deleting their contents", async () => {
+	const { root, agentDir } = createRepo();
+	fs.writeFileSync(path.join(root, ".gitignore"), "cache/\n");
+	command(root, ["add", ".gitignore"]);
+	command(root, ["commit", "-m", "chore: ignore cache"]);
+	fs.mkdirSync(path.join(root, "cache"));
+	fs.writeFileSync(path.join(root, "cache", "result"), "keep\n");
+	const plan = await createLaunchPlan(root, agentDir);
+	assert.equal(command(plan.childCwd, ["status", "--porcelain"]), "");
+	const sessionFile = path.join(agentDir, "resume.jsonl");
+	fs.mkdirSync(agentDir, { recursive: true });
+	fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", id: "resume", cwd: plan.childCwd })}\n`);
+	const record = await checkpointSession(plan.manifest, sessionFile);
+	await releaseManagedWorktree(plan.manifest);
+	assert.equal(fs.readFileSync(path.join(root, "cache/result"), "utf8"), "keep\n");
+	const resumed = await createResumePlan(record);
+	assert.equal(fs.readlinkSync(path.join(resumed.childCwd, "cache")), path.join(fs.realpathSync(root), "cache"));
+	assert.equal(command(resumed.childCwd, ["status", "--porcelain"]), "");
+});
+
+test("preserves a replaced ignored link rather than deleting session data", async () => {
+	const { root, agentDir } = createRepo();
+	fs.writeFileSync(path.join(root, ".gitignore"), "cache/\n");
+	command(root, ["add", ".gitignore"]);
+	command(root, ["commit", "-m", "chore: ignore cache"]);
+	fs.mkdirSync(path.join(root, "cache"));
+	const plan = await createLaunchPlan(root, agentDir);
+	fs.unlinkSync(path.join(plan.childCwd, "cache"));
+	fs.mkdirSync(path.join(plan.childCwd, "cache"));
+	fs.writeFileSync(path.join(plan.childCwd, "cache", "important"), "keep\n");
+	await assert.rejects(releaseManagedWorktree(plan.manifest), /Linked ignored path cache was replaced/);
+	assert.equal(fs.readFileSync(path.join(plan.childCwd, "cache/important"), "utf8"), "keep\n");
+});
+
+test("retains global excludes and safely quotes ignored path names", async () => {
+	const { root, agentDir } = createRepo();
+	fs.writeFileSync(path.join(root, "global-excludes"), "*.global.tmp\n");
+	command(root, ["config", "core.excludesFile", "global-excludes"]);
+	fs.writeFileSync(path.join(root, ".gitignore"), "build[1]/\n");
+	command(root, ["add", ".gitignore"]);
+	command(root, ["commit", "-m", "chore: ignore build"]);
+	fs.writeFileSync(path.join(root, "old.global.tmp"), "global\n");
+	// Gitignore brackets are escaped here to match a literal name.
+	fs.writeFileSync(path.join(root, ".gitignore"), "build\\[1\\]/\n");
+	command(root, ["add", ".gitignore"]);
+	command(root, ["commit", "-m", "chore: ignore literal build"]);
+	fs.mkdirSync(path.join(root, "build[1]"));
+	fs.writeFileSync(path.join(root, "build[1]", "artifact"), "built\n");
+	const plan = await createLaunchPlan(root, agentDir);
+	assert.equal(fs.readlinkSync(path.join(plan.childCwd, "build[1]")), path.join(fs.realpathSync(root), "build[1]"));
+	fs.writeFileSync(path.join(plan.childCwd, "new.global.tmp"), "local\n");
+	assert.equal(command(plan.childCwd, ["status", "--porcelain"]), "");
+	await assert.rejects(releaseManagedWorktree(plan.manifest), /Ignored path new.global.tmp/);
+});
+
+test("preserves Git's default XDG global ignore file", async () => {
+	const { root, agentDir } = createRepo();
+	const previousXdg = process.env.XDG_CONFIG_HOME;
+	const xdg = path.join(agentDir, "xdg");
+	fs.mkdirSync(path.join(xdg, "git"), { recursive: true });
+	fs.writeFileSync(path.join(xdg, "git", "ignore"), "*.global.tmp\n");
+	process.env.XDG_CONFIG_HOME = xdg;
+	try {
+		const plan = await createLaunchPlan(root, agentDir);
+		fs.writeFileSync(path.join(plan.childCwd, "new.global.tmp"), "local\n");
+		assert.equal(command(plan.childCwd, ["status", "--porcelain"]), "");
+		await assert.rejects(releaseManagedWorktree(plan.manifest), /Ignored path new.global.tmp/);
+	} finally {
+		if (previousXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+		else process.env.XDG_CONFIG_HOME = previousXdg;
+	}
 });
 
 test("creates distinct worktrees for concurrent launches without contending on the real index", async () => {
@@ -566,7 +639,7 @@ test("preserves worktrees containing unknown ignored files", async () => {
 	fs.mkdirSync(path.join(plan.childCwd, "cache"));
 	fs.writeFileSync(path.join(plan.childCwd, "cache", "result.bin"), "important\n");
 
-	await assert.rejects(assertWorktreeReleasable(plan.manifest), /Ignored path cache\//);
+	await assert.rejects(assertWorktreeReleasable(plan.manifest), /Ignored path cache/);
 	await assert.rejects(releaseManagedWorktree(plan.manifest), /worktree was preserved/);
 	assert.equal(fs.readFileSync(path.join(plan.childCwd, "cache", "result.bin"), "utf8"), "important\n");
 });
