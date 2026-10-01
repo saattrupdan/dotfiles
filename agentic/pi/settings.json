@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.87.1",
+  "lastChangelogVersion": "0.99.2",
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-6-sol",
   "defaultThinkingLevel": "high",
@@ -12,5 +12,7 @@
     "clearOnShrink": true
   },
   "packages": [],
-  "extensions": ["-builtin:mcp"]
+  "extensions": [
+    "-builtin:mcp"
+  ]
 }

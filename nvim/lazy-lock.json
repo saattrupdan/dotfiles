@@ -1,5 +1,5 @@
 {
-  "coc.nvim": { "branch": "release", "commit": "eda4d09170fd9bd08dd9abbe300f1f5bcaae0a20" },
+  "coc.nvim": { "branch": "release", "commit": "7d313c57656dd86a249776a2b70b0dc0bd944193" },
   "gruvbox": { "branch": "master", "commit": "180ad85971343df68be3422a5630fa84e45a9ab2" },
   "lazy.nvim": { "branch": "main", "commit": "306a05526ada86a7b30af95c5cc81ffba93fef97" },
   "llama.vim": { "branch": "master", "commit": "e1ca1cc6af9da73f4ae21f810f33909d515592e6" },
@@ -7,7 +7,7 @@
   "nvim-tree.lua": { "branch": "master", "commit": "531b807b8f0d6f75016a0ee1e0cd5ce2086e9d95" },
   "nvim-treesitter": { "branch": "main", "commit": "c82bf96f0a773d85304feeb695e1e23b2207ac35" },
   "nvim-web-devicons": { "branch": "master", "commit": "58447c1fca354bbf184425e4a8d01deecbd6f3c4" },
-  "pi-agent.nvim": { "branch": "main", "commit": "456ef66685a5020e53a41b459c5e848d7ea6755c" },
+  "pi-agent.nvim": { "branch": "main", "commit": "99f42b1635a9785c804ee6701f178730bfe29a05" },
   "plenary.nvim": { "branch": "master", "commit": "74b06c6c75e4eeb3108ec01852001636d85a932b" },
   "remote-nvim.nvim": { "branch": "main", "commit": "9992c2fb8bf4f11aca2c8be8db286b506f92efcb" },
   "ripgrep": { "branch": "master", "commit": "3fce3b5bb0236da2df6d99672afb8a719642eca7" },
