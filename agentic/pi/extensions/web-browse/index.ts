@@ -87,7 +87,7 @@ export default function (pi: ExtensionAPI) {
 	const session = new FirefoxSession();
 
 	pi.on("session_shutdown", async () => {
-		await session.close();
+		await session.shutdown();
 	});
 
 	pi.registerTool({

@@ -6,14 +6,15 @@ description: >-
   login flows, and Bitwarden-assisted sign-in. Prefer this over agent-browser for
   normal web automation. The Firefox tool uses a dedicated persistent profile and
   supports human handoff without sending passwords through Pi.
-last-updated: 2026-09-28
+last-updated: 2026-10-01
 ---
 
 # Firefox web browsing
 
-Pi's `web_browse` tool drives native Firefox through Selenium/geckodriver. It keeps one
-persistent, dedicated profile across tool calls and Pi sessions. Start with `help` if
-the exact command surface is unclear.
+Pi's `web_browse` tool drives native Firefox through Selenium/geckodriver. The first
+session uses a persistent, dedicated profile; simultaneous agents get isolated profiles
+seeded with saved login state from a stopped primary browser. Start with `help` if the
+exact command surface is unclear.
 
 For static pages, use `read` instead. It is faster and returns cleaner Markdown.
 
@@ -88,9 +89,20 @@ Overrides:
 - `PI_FIREFOX_BIN` — Firefox executable
 - `PI_GECKODRIVER_BIN` — geckodriver executable
 
-Only one Pi process may control the profile. The tool never removes Firefox's native
-profile lock. Selenium Manager locates/downloads geckodriver when possible; on macOS,
-`brew install geckodriver` is the manual fallback.
+Only one process controls each profile. When another Pi agent is browsing, a new agent
+uses a private clone of a **quiescent** seed, not the live Firefox profile. The seed is
+refreshed before the primary starts and after it closes; secondary profiles are removed
+on normal session shutdown. Persistent cookies, saved logins and Bitwarden data may be
+copied, but session-only cookies and locked vault state may not survive cloning. These
+private directories contain sensitive login material: do not share or back them up.
+Logging out in one browser does not log out already-running clones; a crashed agent can
+also leave a private profile behind under `<primary>.pi-agents/`. Close those browsers
+and remove abandoned clones if necessary. If the primary is already open and no seed
+exists yet, close it once and retry. A Pi
+process may automatically close a *verified orphaned* Firefox holding its profile;
+active or uncertain owners are left alone. Unsaved tabs in an orphan can be lost.
+The tool never deletes Firefox's native profile lock. Selenium Manager locates/downloads
+geckodriver when possible; on macOS, `brew install geckodriver` is the manual fallback.
 
 ## Limits
 
