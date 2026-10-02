@@ -68,6 +68,21 @@ test("updates the title after every user message with bounded context", async ()
 	assert.deepEqual(app.names, ["Fixing Conversation Title", "Updating Latest Topic"]);
 });
 
+test("frames a follow-up bug fix within the existing feature task", async () => {
+	const app = harness("Implementing Search Feature");
+	await app.message("Fix the filter bug from the search implementation");
+	assert.equal(app.responses.length, 1);
+	assert.match(app.prompts[0], /using both the current title and latest user message/);
+	assert.match(app.prompts[0], /overarching task, not only the latest step/);
+	assert.match(app.prompts[0], /small bug fixes, tests, or refinements/);
+	assert.match(app.prompts[0], /Only change the topic when the user starts a genuinely different task/);
+	assert.match(app.prompts[0], /Current session title: Implementing Search Feature/);
+	assert.match(app.prompts[0], /Latest user message: Fix the filter bug from the search implementation/);
+	app.responses.shift()?.({ code: 0, stdout: "Implementing Search Feature" });
+	await flush();
+	assert.equal(app.name, "Implementing Search Feature");
+});
+
 test("only applies the newest message when naming calls overlap", async () => {
 	const app = harness("Old Topic");
 	await app.message("First change");

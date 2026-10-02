@@ -175,8 +175,11 @@ async function generateNameWithModel(
 
 	for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
 		const instruction =
-		`Update the session title (max 30 chars) based on the latest user message.\n` +
-		`Keep the existing topic when the message is just a follow-up; change it when the focus shifts.\n\n` +
+		`Update the session title (max 30 chars) using both the current title and latest user message.\n` +
+		`The title describes the conversation's overarching task, not only the latest step.\n` +
+		`Keep the existing topic when the message continues that task, including small bug fixes, tests, or refinements to a feature being implemented.\n` +
+		`Only change the topic when the user starts a genuinely different task.\n` +
+		`For example, current title "Implementing Search Feature" + message "Fix the filter bug from the search implementation" -> "Implementing Search Feature", not "Fixing Filter Bug".\n\n` +
 		`Format: Use a noun phrase or gerund + object pattern. Examples:\n` +
 		`- "Fixing conversation naming"\n` +
 		`- "Debugging extension triggers"\n` +
