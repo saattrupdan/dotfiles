@@ -26,9 +26,8 @@
  * (that's the whole point — macOS surfaces it system-wide). In iTerm2, the
  * terminal-notifier helper makes alerts clickable: a click runs AppleScript
  * that reveals the originating window, tab, and pane. Alerts are suppressed
- * when that iTerm2 tab is already visible and iTerm2 is frontmost. Other
- * terminals, or an unavailable helper, use AppleScript notifications as a
- * fallback.
+ * when that iTerm2 tab is already visible and iTerm2 is frontmost. No
+ * notification is sent outside iTerm2 or if terminal-notifier is unavailable.
  *
  * Orchestrator-only: subagent processes never have a UI and their question
  * dialogs are bridged to the parent — the parent's own listeners already
@@ -64,30 +63,12 @@ let lastNotifyAt = 0;
 let hasUI = false;
 let sessionManager: { getSessionName(): string | undefined } | undefined;
 
-function escapeForAppleScript(s: string): string {
-	return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-}
-
 function getSessionName(): string {
 	if (!sessionManager) return "";
 	try {
 		return sessionManager.getSessionName() || "";
 	} catch {
 		return "";
-	}
-}
-
-function notifyViaAppleScript(title: string, body: string, sound: string): void {
-	const script =
-		`display notification "${escapeForAppleScript(body)}" ` +
-		`with title "${escapeForAppleScript(title)}" ` +
-		`sound name "${escapeForAppleScript(sound)}"`;
-	try {
-		const p = spawn("osascript", ["-e", script], { stdio: "ignore", detached: true });
-		p.on("error", () => {});
-		p.unref();
-	} catch {
-		// best-effort, never throw out of an event handler
 	}
 }
 
@@ -148,10 +129,10 @@ function isOriginatingITermTabFocused(sessionID: string, callback: (focused: boo
 	}
 }
 
-function notifyViaITerm(title: string, body: string, sound: string): boolean {
-	if (process.env.TERM_PROGRAM !== "iTerm.app") return false;
+function notifyViaITerm(title: string, body: string, sound: string): void {
+	if (process.env.TERM_PROGRAM !== "iTerm.app") return;
 	const rawSessionID = process.env.ITERM_SESSION_ID;
-	if (!rawSessionID) return false;
+	if (!rawSessionID) return;
 	const sessionID = rawSessionID.slice(rawSessionID.indexOf(":") + 1);
 
 	const focusScript = `
@@ -176,13 +157,6 @@ function notifyViaITerm(title: string, body: string, sound: string): boolean {
 	`.trim();
 	const clickCommand = `/usr/bin/osascript -e ${quoteForShell(focusScript)} ${quoteForShell(sessionID)}`;
 
-	let usedFallback = false;
-	const fallback = () => {
-		if (usedFallback) return;
-		usedFallback = true;
-		notifyViaAppleScript(title, body, sound);
-	};
-
 	const sendNotification = () => {
 		try {
 			// terminal-notifier treats leading JSON/quote/bracket characters as
@@ -193,13 +167,10 @@ function notifyViaITerm(title: string, body: string, sound: string): boolean {
 				["-title", title, "-message", message, "-sound", sound, "-execute", clickCommand],
 				{ stdio: "ignore", detached: true },
 			);
-			p.on("error", fallback);
-			p.on("exit", (code) => {
-				if (code !== 0) fallback();
-			});
+			p.on("error", () => {});
 			p.unref();
 		} catch {
-			fallback();
+			// Best-effort: don't fail the agent when terminal-notifier is unavailable.
 		}
 	};
 
@@ -208,20 +179,19 @@ function notifyViaITerm(title: string, body: string, sound: string): boolean {
 	isOriginatingITermTabFocused(sessionID, (focused) => {
 		if (!focused) sendNotification();
 	});
-	return true;
 }
 
 function notify(title: string, body: string, sound: string): void {
 	if (!IS_MACOS) return;
 	if (!hasUI) return;
+	if (process.env.TERM_PROGRAM !== "iTerm.app" || !process.env.ITERM_SESSION_ID) return;
 	const now = Date.now();
 	if (now - lastNotifyAt < MIN_GAP_MS) return;
 	lastNotifyAt = now;
 	// Prefix the title with the session name if available (format: "Session — Title")
 	const name = getSessionName();
 	const fullTitle = name ? `${name} — ${title}` : title;
-	if (notifyViaITerm(fullTitle, body, sound)) return;
-	notifyViaAppleScript(fullTitle, body, sound);
+	notifyViaITerm(fullTitle, body, sound);
 }
 
 function truncate(s: string, max = 120): string {
