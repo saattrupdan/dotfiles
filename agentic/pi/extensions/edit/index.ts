@@ -46,7 +46,7 @@ import {
 	createEditToolDefinition,
 	type EditToolDetails,
 	type ExtensionAPI,
-	type ExtensionContext,
+	type ExtensionToolContext,
 } from "@earendil-works/pi-coding-agent";
 
 import { collapseAutoloadResult } from "../skill/types.ts";
@@ -225,7 +225,7 @@ export default function (pi: ExtensionAPI) {
 			" oldText is matched tolerantly: differences in whitespace/newlines/indentation, straight-vs-smart" +
 			" quotes, and hyphen-vs-Unicode-dashes are ignored, so dense or reflowed text need not be reproduced" +
 			" byte-for-byte. A unique exact match always wins; a tolerant match must itself be unique.",
-		async execute(toolCallId, input, signal, onUpdate, ctx: ExtensionContext) {
+		async execute(toolCallId, input, signal, onUpdate, ctx: ExtensionToolContext) {
 			const cwd = ctx?.cwd ?? process.cwd();
 			const base = baseFor(cwd);
 			const { input: resolved, rewritten } = robustifyEdits(input, cwd);
