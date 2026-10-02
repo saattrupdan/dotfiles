@@ -46,6 +46,16 @@ const CELL_W = 6;
 const CELL_H = 3;
 const BLOCK = "█";
 const LOGO_W = GRID[0]!.length * CELL_W;
+// Fullscreen Pi keeps the editor in a bottom dock. Reserve space on both sides
+// of the splash stack so the dock fills the viewport instead of hugging the bottom.
+const SPLASH_CHROME_H = GRID.length * CELL_H + 1 + 3 + 2 + 1 + 1;
+
+function splashPadding(rows: number): { above: number; below: number } {
+	if (!Number.isFinite(rows) || rows <= 0) return { above: 0, below: 0 };
+	const free = Math.max(0, rows - SPLASH_CHROME_H);
+	const above = Math.floor(free * 0.45);
+	return { above, below: free - above };
+}
 
 
 function renderLogo(theme: Theme, width: number): string[] {
@@ -349,24 +359,9 @@ function installSplash(pi: ExtensionAPI, ctx: ExtensionContext, clearScreen: boo
 		LOGO_KEY,
 		(tui: TUI, theme: Theme): Component => ({
 			render(width: number): string[] {
-				// Vertically centre the (logo + editor) stack. Layout is
-				// top-anchored, so prepend blank lines above the logo to
-				// push the (logo + editor) pair down to the screen midline.
-				// Logo widget contributes LOGO_H + trailing spacer rows;
-				// the editor below is ~3 rows.
-				const rows = Number(tui.terminal?.rows);
 				const logoLines = renderLogo(theme, Math.max(width, LOGO_W));
-				if (!Number.isFinite(rows) || rows <= 0) return logoLines;
-				const editorH = 3;
-				const stackH = logoLines.length + editorH;
-				// 0.35 of the free space goes above (0.5 = dead-centre); using a
-				// smaller fraction lifts the stack toward the upper third, which
-				// reads better against an empty screen below.
-				const padLines = Math.max(0, Math.floor((rows - stackH) * 0.45));
-				const out: string[] = [];
-				for (let i = 0; i < padLines; i++) out.push("");
-				out.push(...logoLines);
-				return out;
+				const { above } = splashPadding(Number(tui.terminal?.rows));
+				return [...Array<string>(above).fill(""), ...logoLines];
 			},
 			invalidate() {},
 		}),
@@ -386,6 +381,20 @@ function installSplash(pi: ExtensionAPI, ctx: ExtensionContext, clearScreen: boo
 				const targetW = Math.max(20, Math.floor(width * EDITOR_WIDTH_FRACTION));
 				const leftPad = " ".repeat(Math.max(0, Math.floor((width - targetW) / 2)));
 				return ["", leftPad + theme.fg("dim", line)];
+			},
+			invalidate() {},
+		}),
+		{ placement: "belowEditor" },
+	);
+
+	// In the fullscreen viewport, widgets and editor live in a bottom-anchored
+	// dock. Blank rows after the pseudo-footer lift the splash off the bottom.
+	// A component factory avoids Pi's 10-line cap on string-array widgets.
+	ctx.ui.setWidget(
+		PAD_KEY,
+		(tui: TUI): Component => ({
+			render(): string[] {
+				return Array<string>(splashPadding(Number(tui.terminal?.rows)).below).fill("");
 			},
 			invalidate() {},
 		}),
