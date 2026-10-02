@@ -185,9 +185,12 @@ function notifyViaITerm(title: string, body: string, sound: string): boolean {
 
 	const sendNotification = () => {
 		try {
+			// terminal-notifier treats leading JSON/quote/bracket characters as
+			// argument syntax unless escaped (e.g. {"detail":"Rate limit exceeded"}).
+			const message = /^[{[('"]/.test(body) ? `\\${body}` : body;
 			const p = spawn(
 				"terminal-notifier",
-				["-title", title, "-message", body, "-sound", sound, "-execute", clickCommand],
+				["-title", title, "-message", message, "-sound", sound, "-execute", clickCommand],
 				{ stdio: "ignore", detached: true },
 			);
 			p.on("error", fallback);
