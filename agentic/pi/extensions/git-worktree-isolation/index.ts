@@ -129,22 +129,6 @@ function registerReleasedSessionStartup(pi: ExtensionAPI): void {
 	});
 }
 
-function isBareDone(message: unknown): boolean {
-	if (!message || typeof message !== "object") return false;
-	const candidate = message as { role?: string; content?: unknown };
-	if (candidate.role !== "assistant" || !Array.isArray(candidate.content)) return false;
-	const text = candidate.content
-		.map((part) =>
-			part && typeof part === "object" && (part as { type?: string }).type === "text"
-				? String((part as { text?: unknown }).text ?? "")
-				: "",
-		)
-		.join("")
-		.trim()
-		.toLowerCase();
-	return text === "done" || text === "done.";
-}
-
 function forkChildArgs(sessionFile: string): string[] {
 	const args = cliArgs();
 	const result: string[] = [];
@@ -162,7 +146,6 @@ function forkChildArgs(sessionFile: string): string[] {
 
 function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): void {
 	let repairTurns = 0;
-	let repairMessageActive = false;
 	let enforcementRunning = false;
 	let releaseSessionLease: (() => Promise<void>) | null = null;
 
@@ -244,11 +227,10 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 				return;
 			}
 			repairTurns++;
-			repairMessageActive = true;
 			pi.sendMessage(
 				{
 					customType: CUSTOM_TYPE,
-					content: `${result.prompt}\n\nThis is an automatic repository-finalization turn. Perform the Git work, verify the repository state, then reply exactly \`done\`.`,
+					content: `${result.prompt}\n\nThis is an automatic repository-finalization turn, not a replacement for the user's request. Check whether the original request has unfinished work and complete it before wrapping up. Perform the Git work, verify the repository state, and give the user a brief, meaningful status update (including anything still incomplete). Do not reply with only \`done\`.`,
 					display: false,
 				},
 				{ triggerTurn: true },
@@ -261,14 +243,6 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 		} finally {
 			enforcementRunning = false;
 		}
-	});
-
-	pi.on("message_end", (event) => {
-		if (!repairMessageActive) return;
-		if (!event.message || typeof event.message !== "object" || (event.message as { role?: string }).role !== "assistant") return;
-		repairMessageActive = false;
-		if (!isBareDone(event.message)) return;
-		return { message: { ...event.message, content: [{ type: "text", text: "" }] } };
 	});
 
 	pi.on("session_before_switch", async (event, ctx) => {
