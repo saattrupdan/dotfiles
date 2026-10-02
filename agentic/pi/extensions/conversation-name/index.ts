@@ -1,16 +1,17 @@
 /**
  * Conversation name generator.
  *
- * On the first user message in a session, asks the model (via a lightweight
- * `pi -p` sub-invocation) for a concise, descriptive title for the conversation
- * and applies it via Pi's built-in setSessionName(). Pi persists it as a
+ * After each user message, asks the model (via a lightweight `pi -p`
+ * sub-invocation) to update the concise title using the current name and latest
+ * message. Applies it via Pi's built-in setSessionName(). Pi persists it as a
  * session_info entry in the session file, where it shows up in Pi's session
  * selector and is read by the pi-agent.nvim plugin for the window title.
  *
  * The naming call runs fire-and-forget so it never delays the agent's reply;
  * the name is filled in a few seconds later. If the model call fails, we fall
- * back to a mechanical title derived from the prompt. Only the first user
- * message in a session is named (dedup via the persisted session name).
+ * back to a mechanical title for an unnamed session, or retain its current
+ * title if it has one. Naming calls
+ * are serialized per session; newer messages supersede an unfinished result.
  *
  * Subagents are the exception: they are named by their parent, which passes the
  * label down in PI_SUBAGENT_SESSION_NAME (see extensions/subagent/session-label.ts).
@@ -23,6 +24,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 const MAX_NAME_LENGTH = 30;
 const NAMING_TIMEOUT_MS = 30_000;
 const MAX_RETRIES = 2;
+const MESSAGE_LIMIT = 1_000;
+const CURRENT_NAME_LIMIT = 100;
 
 /** How much of the prompt the mechanical extractor is allowed to look at. A
  *  title always comes out of the opening of a prompt, so scanning further buys
@@ -33,10 +36,20 @@ const TITLE_SCAN_LIMIT = 1_000;
 const SUBAGENT_SESSION_NAME_ENV = "PI_SUBAGENT_SESSION_NAME";
 
 export default function (pi: ExtensionAPI) {
-	// Sessions for which a naming call is in flight. Guards against spawning a
-	// second `pi -p` if another user message arrives before the async naming
-	// call resolves and sets the persisted name.
-	const namingInFlight = new Set<string>();
+	// Keep only the newest pending message while a naming call is running.
+	const namingInFlight = new Map<string, { pending?: string }>();
+	let sessionGeneration = 0;
+	const invalidateNaming = () => {
+		sessionGeneration++;
+		namingInFlight.clear();
+	};
+	// Session contexts become invalid after a switch/reload/shutdown; never
+	// apply a late result to the next session (or to a closing Pi process).
+	pi.on("session_start", invalidateNaming);
+	pi.on("session_shutdown", invalidateNaming);
+	pi.on("session_before_switch", invalidateNaming);
+	pi.on("session_before_fork", invalidateNaming);
+	pi.on("session_before_tree", invalidateNaming);
 
 	// Listen for message_end events - this fires for both user and assistant messages.
 	// Note: the ExtensionContext is the SECOND handler argument, not event.context.
@@ -48,17 +61,6 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 
-		// Only name a session once: skip if it already has a session name. This
-		// also dedups across the whole session lifetime (and survives reloads),
-		// since the name persists as a session_info entry in the session file.
-		try {
-			if (ctx.sessionManager.getSessionName()) {
-				return;
-			}
-		} catch {
-			// getSessionName unavailable - fall through and try to set it anyway
-		}
-
 		// We are a subagent: the parent already named us, e.g. `builder2: Fix the
 		// parser` (see extensions/subagent/session-label.ts). Apply that label and
 		// return before any model call or mechanical fallback — a child must never
@@ -68,7 +70,9 @@ export default function (pi: ExtensionAPI) {
 		const inheritedName = process.env[SUBAGENT_SESSION_NAME_ENV]?.trim();
 		if (inheritedName) {
 			try {
-				pi.setSessionName(inheritedName);
+				if (ctx.sessionManager.getSessionName() !== inheritedName) {
+					pi.setSessionName(inheritedName);
+				}
 			} catch (error) {
 				// Subagents run with --no-session, so there may be nowhere to write
 				// the name. Degrade quietly; the parent's UI still shows the label.
@@ -78,61 +82,72 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 
-		// One naming call per session at a time.
-		let sessionId = "";
-		try {
-			sessionId = ctx.sessionManager.getSessionId();
-		} catch {
-			// ignore
-		}
-		if (sessionId && namingInFlight.has(sessionId)) {
-			return;
-		}
-
-		// Extract the first prompt text. User content may be a plain string or
-		// an array of content parts.
+		const sessionManager = ctx.sessionManager;
+		const sessionId = sessionManager.getSessionId();
+		const cwd = ctx.cwd;
+		const generation = sessionGeneration;
 		const content = (msg as { content?: unknown }).content;
-		let firstPrompt = "";
+		let latestMessage = "";
 		if (typeof content === "string") {
-			firstPrompt = content;
+			latestMessage = content.slice(0, MESSAGE_LIMIT);
 		} else if (Array.isArray(content)) {
 			for (const part of content) {
 				if (part?.type === "text" && typeof part.text === "string") {
-					firstPrompt = part.text;
-					break;
+					const remaining = MESSAGE_LIMIT - latestMessage.length;
+					latestMessage += `${latestMessage ? " " : ""}${part.text.slice(0, remaining)}`;
+					if (latestMessage.length >= MESSAGE_LIMIT) {
+						break;
+					}
 				}
 			}
 		}
-
-		firstPrompt = firstPrompt.trim();
-
-		if (!firstPrompt) {
+		latestMessage = latestMessage.trim();
+		if (!latestMessage) {
 			return;
 		}
 
-		if (sessionId) {
-			namingInFlight.add(sessionId);
+		const running = namingInFlight.get(sessionId);
+		if (running) {
+			running.pending = latestMessage;
+			return;
 		}
+		const state: { pending?: string } = {};
+		namingInFlight.set(sessionId, state);
 
-		// Generate and apply the name in the background so we never block the
-		// agent's reply (this handler is awaited before the assistant runs).
+		// Run in the background so the agent's reply is never blocked.
 		void (async () => {
-			let name = "";
+			let message: string | undefined = latestMessage;
 			try {
-				name = await generateNameWithModel(pi, firstPrompt, ctx.cwd);
-			} catch {
-				// fall through to the mechanical fallback
-			}
-			if (!name) {
-				name = generateConversationNameFallback(firstPrompt);
-			}
-			try {
-				pi.setSessionName(name);
-			} catch (error) {
-				const errorMessage = error instanceof Error ? error.message : String(error);
-				console.error(`[conversation-name] Failed to set session name: ${errorMessage}`);
+				while (message && generation === sessionGeneration && sessionManager.getSessionId() === sessionId) {
+					const currentName = sessionManager.getSessionName() ?? "";
+					let name = "";
+					try {
+						name = await generateNameWithModel(pi, message, currentName, cwd);
+					} catch {
+						// Fall through to the mechanical fallback.
+					}
+					if (!name) {
+						// A failed refresh must not replace a useful title with a vague
+						// mechanical title for a short follow-up (e.g. "what about it?").
+						name = currentName || generateConversationNameFallback(message);
+					}
+					// Never apply a stale result to a newer message or a different session.
+					if (generation !== sessionGeneration || sessionManager.getSessionId() !== sessionId) {
+						break;
+					}
+					if (!state.pending && name && name !== sessionManager.getSessionName()) {
+						try {
+							pi.setSessionName(name);
+						} catch (error) {
+							const errorMessage = error instanceof Error ? error.message : String(error);
+							console.error(`[conversation-name] Failed to set session name: ${errorMessage}`);
+						}
+					}
+					message = state.pending;
+					state.pending = undefined;
+				}
 			} finally {
-				if (sessionId) {
+				if (namingInFlight.get(sessionId) === state) {
 					namingInFlight.delete(sessionId);
 				}
 			}
@@ -151,14 +166,17 @@ export default function (pi: ExtensionAPI) {
 async function generateNameWithModel(
 	pi: ExtensionAPI,
 	prompt: string,
+	currentName: string,
 	cwd: string,
 ): Promise<string> {
 	// Keep the input bounded - a title only needs the gist of the request.
-	const request = prompt.slice(0, 1000);
+	const request = prompt.slice(0, MESSAGE_LIMIT);
+	const previousTitle = currentName.slice(0, CURRENT_NAME_LIMIT);
 
 	for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
 		const instruction =
-		`Generate a concise session title (max 30 chars) for this request.\n\n` +
+		`Update the session title (max 30 chars) based on the latest user message.\n` +
+		`Keep the existing topic when the message is just a follow-up; change it when the focus shifts.\n\n` +
 		`Format: Use a noun phrase or gerund + object pattern. Examples:\n` +
 		`- "Fixing conversation naming"\n` +
 		`- "Debugging extension triggers"\n` +
@@ -172,7 +190,8 @@ async function generateNameWithModel(
 		`- No trailing punctuation\n` +
 		`- Do NOT truncate mid-word or use ellipses\n` +
 		`- Be specific: include key nouns/verbs from the request\n\n` +
-		`Request: ${request}`;
+		`Current session title: ${previousTitle || "(none)"}\n` +
+		`Latest user message: ${request}`;
 
 		const result = await pi.exec("pi", ["-p", "--no-extensions", "--no-session", instruction], {
 			cwd,
