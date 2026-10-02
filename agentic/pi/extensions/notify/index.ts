@@ -326,7 +326,7 @@ export default function (pi: ExtensionAPI) {
 
 			// Skip notifications for transient/retryable errors:
 			// - "terminated" = Node.js version mismatch (Node 26 undici bug), auto-recovers
-			// - 429 = rate limit, Pi retries automatically
+			// - rate-limit errors (with or without HTTP 429), Pi retries automatically
 			// - tool_call_timeout = tool call timed out, Pi retries automatically
 			// - http_error = transient network errors, Pi retries automatically
 			// Only notify for blocking errors where no retries are attempted.
@@ -334,6 +334,10 @@ export default function (pi: ExtensionAPI) {
 			if (
 				msg === "terminated" ||
 				msg.includes("429") ||
+				msg.includes("rate limit") ||
+				msg.includes("rate-limited") ||
+				msg.includes("rate_limited") ||
+				msg.includes("too many requests") ||
 				msg.includes("tool_call_timeout") ||
 				msg.includes("http_error")
 			)
