@@ -48,13 +48,19 @@ const BLOCK = "█";
 const LOGO_W = GRID[0]!.length * CELL_W;
 // Fullscreen Pi keeps the editor in a bottom dock. Reserve space on both sides
 // of the splash stack so the dock fills the viewport instead of hugging the bottom.
-const SPLASH_CHROME_H = GRID.length * CELL_H + 1 + 3 + 2 + 1 + 1;
+const BASE_EDITOR_H = 3; // top rule, one content row, bottom rule
+const SPLASH_CHROME_H = GRID.length * CELL_H + 1 + BASE_EDITOR_H + 2 + 1 + 1;
+let splashEditorHeight = BASE_EDITOR_H;
+let splashAbovePadding = 0;
 
-function splashPadding(rows: number): { above: number; below: number } {
+function splashPadding(rows: number, reservedAbove?: number): { above: number; below: number } {
 	if (!Number.isFinite(rows) || rows <= 0) return { above: 0, below: 0 };
-	const free = Math.max(0, rows - SPLASH_CHROME_H);
+	// Give growing input rows space before the fullscreen dock can shrink the
+	// editor and clip its bottom border. The logo renders before the editor, so
+	// the footer must account for the padding the logo actually used this frame.
+	const free = Math.max(0, rows - SPLASH_CHROME_H - Math.max(0, splashEditorHeight - BASE_EDITOR_H));
 	const above = Math.floor(free * 0.45);
-	return { above, below: free - above };
+	return { above, below: Math.max(0, free - (reservedAbove ?? above)) };
 }
 
 
@@ -272,6 +278,12 @@ function createSplashEditorFactory(): SplashEditorFactory {
 			for (let i = bottomIdx + 1; i < innerLines.length; i++) {
 				out.push(leftPad + innerPad + innerLines[i]!);
 			}
+			if (splashEditorHeight !== out.length) {
+				splashEditorHeight = out.length;
+				// Re-render the logo with the new height even when a single paste
+				// adds several rows at once (there may be no subsequent keypress).
+				tui.requestRender();
+			}
 			return out;
 		};
 		return inner;
@@ -333,6 +345,8 @@ function installSplash(pi: ExtensionAPI, ctx: ExtensionContext, clearScreen: boo
 	splashActive = true;
 	splashDismissed = false;
 	splashSessionKey = sessionKey(ctx);
+	splashEditorHeight = BASE_EDITOR_H;
+	splashAbovePadding = 0;
 
 	// Give the shared PTT editor a context so hold-to-talk works on the splash.
 	setLiveCtx(pi, ctx);
@@ -359,8 +373,15 @@ function installSplash(pi: ExtensionAPI, ctx: ExtensionContext, clearScreen: boo
 		LOGO_KEY,
 		(tui: TUI, theme: Theme): Component => ({
 			render(width: number): string[] {
-				const logoLines = renderLogo(theme, Math.max(width, LOGO_W));
-				const { above } = splashPadding(Number(tui.terminal?.rows));
+				const rows = Number(tui.terminal?.rows);
+				const extra = Math.max(0, splashEditorHeight - BASE_EDITOR_H);
+				// On short terminals, shed logo rows before letting the dock
+				// shrink the editor and hide its closing border.
+				const overflow = Number.isFinite(rows) ? Math.max(0, SPLASH_CHROME_H + extra - rows) : 0;
+				const logoHeight = Math.max(0, GRID.length * CELL_H + 1 - overflow);
+				const logoLines = logoHeight ? renderLogo(theme, Math.max(width, LOGO_W)).slice(-logoHeight) : [];
+				const { above } = splashPadding(rows);
+				splashAbovePadding = above;
 				return [...Array<string>(above).fill(""), ...logoLines];
 			},
 			invalidate() {},
@@ -394,7 +415,7 @@ function installSplash(pi: ExtensionAPI, ctx: ExtensionContext, clearScreen: boo
 		PAD_KEY,
 		(tui: TUI): Component => ({
 			render(): string[] {
-				return Array<string>(splashPadding(Number(tui.terminal?.rows)).below).fill("");
+				return Array<string>(splashPadding(Number(tui.terminal?.rows), splashAbovePadding).below).fill("");
 			},
 			invalidate() {},
 		}),
