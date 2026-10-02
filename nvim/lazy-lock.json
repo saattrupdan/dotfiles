@@ -1,5 +1,5 @@
 {
-  "coc.nvim": { "branch": "release", "commit": "7d313c57656dd86a249776a2b70b0dc0bd944193" },
+  "coc.nvim": { "branch": "release", "commit": "0ab39f2ab540676d413431fee65ec0ad9c2829ac" },
   "gruvbox": { "branch": "master", "commit": "180ad85971343df68be3422a5630fa84e45a9ab2" },
   "lazy.nvim": { "branch": "main", "commit": "306a05526ada86a7b30af95c5cc81ffba93fef97" },
   "llama.vim": { "branch": "master", "commit": "e1ca1cc6af9da73f4ae21f810f33909d515592e6" },
@@ -17,6 +17,6 @@
   "vim-merginal": { "branch": "develop", "commit": "3dca10fd8bce10edbc2024651db4ffb6dd2d89de" },
   "vim-numbertoggle": { "branch": "main", "commit": "075b7478777e694fbac330ee34a74590dad0fee1" },
   "vim-table-mode": { "branch": "master", "commit": "bb025308a45c67c7c8f0763ba37bc2ee3f534df0" },
-  "vimtex": { "branch": "master", "commit": "16a5609d17a436db7f48046d91747fd6a9d75c74" },
+  "vimtex": { "branch": "master", "commit": "bbfa1501287b65e8803d5cc1007db2c2351c4453" },
   "worktrees.nvim": { "branch": "main", "commit": "9682494e33b375feccf93412adf807eb15f36c1e" }
 }
