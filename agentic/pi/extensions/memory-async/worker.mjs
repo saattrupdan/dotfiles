@@ -37,6 +37,7 @@ const DONE = path.join(ROOT, "done");
 const FAILED = path.join(ROOT, "failed");
 const LOG_FILE = path.join(ROOT, "worker.log");
 const PID_FILE = path.join(ROOT, "worker.pid");
+const PAUSE_FILE = path.join(ROOT, "paused");
 
 const MCP_URL = process.env.UNDERSTORY_MCP_URL ?? "http://localhost:3800/mcp";
 const MAX_ATTEMPTS = Number(process.env.MEMORY_ASYNC_MAX_ATTEMPTS ?? 3);
@@ -264,6 +265,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function main() {
 	ensureDirs();
+	if (fs.existsSync(PAUSE_FILE)) {
+		log("paused", "-", "-", "worker not started while writes are paused");
+		return;
+	}
 	if (!acquireLock()) {
 		log("skip", "-", "-", "another worker holds the queue");
 		return;
@@ -272,6 +277,10 @@ async function main() {
 	let idleSince = null;
 
 	for (;;) {
+		if (fs.existsSync(PAUSE_FILE)) {
+			log("paused", "-", "-", "drain paused after current write");
+			break;
+		}
 		if (Date.now() - startedAt > MAX_LIFETIME_MS) {
 			log("exit", "-", "-", "max lifetime reached");
 			break;
@@ -282,6 +291,7 @@ async function main() {
 		let waitMs = 0;
 
 		for (const entry of jobs) {
+			if (fs.existsSync(PAUSE_FILE)) break;
 			const notBefore = entry.job.notBefore ?? 0;
 			if (notBefore > Date.now()) {
 				// Strict FIFO: never apply a later write ahead of a retried one,
@@ -335,10 +345,9 @@ async function main() {
 }
 
 /**
- * Re-queue jobs left in inflight/ by a worker that was killed mid-write. A
- * mutation can run 14min, so the cutoff is generous; re-applying an
- * already-applied write is acceptable because the librarian merges into
- * existing concepts rather than blindly appending.
+ * Quarantine jobs left in inflight/ by a worker that was killed mid-write. A
+ * mutation can run 14min, so the cutoff is generous. Its outcome is unknown:
+ * quarantine it instead of risking a duplicate or contradictory write.
  */
 function reclaimStaleInflight() {
 	for (const name of readdirOrEmpty(INFLIGHT)) {
@@ -346,9 +355,11 @@ function reclaimStaleInflight() {
 		try {
 			if (Date.now() - fs.statSync(file).mtimeMs < STALE_INFLIGHT_MS) continue;
 			const job = JSON.parse(fs.readFileSync(file, "utf-8"));
-			requeue(job, name);
-			fs.unlinkSync(file);
-			log("reclaim", name.replace(/\.json$/, ""), job.tool, "recovered from a dead worker");
+			job.unknownOutcome = true;
+			job.error = "Worker stopped during a mutation; verify the outcome before retrying";
+			fs.writeFileSync(file, JSON.stringify(job), "utf-8");
+			fs.renameSync(file, path.join(FAILED, name));
+			log("uncertain", name.replace(/\.json$/, ""), job.tool, "interrupted mutation quarantined; not retried");
 		} catch { /* another worker won the race */ }
 	}
 }

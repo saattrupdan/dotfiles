@@ -50,6 +50,7 @@ const DONE_DIR = path.join(ROOT, "done");
 const FAILED_DIR = path.join(ROOT, "failed");
 const LOG_FILE = path.join(ROOT, "worker.log");
 const PID_FILE = path.join(ROOT, "worker.pid");
+const PAUSE_FILE = path.join(ROOT, "paused");
 const WORKER = path.join(path.dirname(fileURLToPath(import.meta.url)), "worker.mjs");
 
 const AddParams = Type.Object({
@@ -88,7 +89,7 @@ function workerIsAlive(): boolean {
 
 /** Start the drain worker unless one already owns the queue. Never blocks. */
 function ensureWorker(): void {
-	if (workerIsAlive()) return;
+	if (fs.existsSync(PAUSE_FILE) || workerIsAlive()) return;
 	try {
 		const child = spawn(process.execPath, [WORKER], {
 			stdio: "ignore",
@@ -129,9 +130,12 @@ function tailLog(lines: number): string[] {
 function queueSummary(): { pending: number; ahead: number; failed: number; failedNote: string } {
 	const pending = listDir(QUEUE_DIR).length;
 	const failed = listDir(FAILED_DIR).length;
-	const failedNote = failed
-		? ` WARNING: ${failed} background write(s) previously failed permanently — run /memory-queue retry.`
-		: "";
+	const paused = fs.existsSync(PAUSE_FILE);
+	const failedNote = paused
+		? ` WARNING: background writes are PAUSED; ${pending} queued and ${failed} failed. Do not assume this write has been applied. Use /memory-queue status.`
+		: failed
+			? ` WARNING: ${failed} background write(s) previously failed permanently — inspect /memory-queue status before retrying.`
+			: "";
 	return { pending, ahead: Math.max(0, pending - 1), failed, failedNote };
 }
 
@@ -226,7 +230,9 @@ function registerWriteTool(
 						type: "text",
 						text:
 							`Queued ${name} as background job ${id}.${backlog}${failedNote}\n` +
-							"The write is applied by the background worker; nothing further is needed from this turn.",
+							(fs.existsSync(PAUSE_FILE)
+								? "The worker is paused; this write will not be applied until it is resumed. Tell the user."
+								: "The write is applied by the background worker; nothing further is needed from this turn."),
 					},
 				],
 				details: undefined,
@@ -267,7 +273,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("memory-queue", {
-		description: "Show background memory writes (status | retry | drop)",
+		description: "Show or control background memory writes (status | pause | resume | retry | drop)",
 		handler: async (args, ctx) => {
 			// `args` is pi's raw argument STRING, not an array of tokens — indexing
 			// it yields a single character, so `args[0]` on "retry" was "r" and every
@@ -276,13 +282,33 @@ export default function (pi: ExtensionAPI) {
 			const queued = listDir(QUEUE_DIR);
 			const done = listDir(DONE_DIR);
 			const failed = listDir(FAILED_DIR);
+			const inflight = listDir(path.join(ROOT, "inflight"));
+
+			if (sub === "pause") {
+				fs.mkdirSync(ROOT, { recursive: true });
+				fs.writeFileSync(PAUSE_FILE, "paused\n", "utf-8");
+				ctx.ui.notify("Memory writes paused after the current in-flight request. Existing queued and failed jobs are preserved.", "warning");
+				return;
+			}
+			if (sub === "resume") {
+				if (inflight.length > 0) {
+					ctx.ui.notify(`${inflight.length} request(s) have an uncertain outcome after interruption. Resolve these before resuming the queue.`, "warning");
+					return;
+				}
+				try { fs.unlinkSync(PAUSE_FILE); } catch { /* already running */ }
+				if (queued.length > 0) ensureWorker();
+				ctx.ui.notify("Memory write worker resumed.", "info");
+				return;
+			}
 
 			if (sub === "retry") {
 				let n = 0;
+				let uncertain = 0;
 				for (const name of failed) {
 					try {
 						const file = path.join(FAILED_DIR, name);
 						const job = JSON.parse(fs.readFileSync(file, "utf-8"));
+						if (job.unknownOutcome) { uncertain++; continue; }
 						delete job.error;
 						fs.writeFileSync(path.join(QUEUE_DIR, name), JSON.stringify(job), "utf-8");
 						fs.unlinkSync(file);
@@ -290,7 +316,7 @@ export default function (pi: ExtensionAPI) {
 					} catch { /* leave it failed */ }
 				}
 				if (n > 0) ensureWorker();
-				ctx.ui.notify(n ? `Requeued ${n} failed write(s).` : "No failed writes to retry.", "info");
+				ctx.ui.notify(`Requeued ${n} failed write(s); ${uncertain} uncertain outcome(s) held back.${fs.existsSync(PAUSE_FILE) ? " Worker remains paused." : ""}`, "info");
 				return;
 			}
 
@@ -306,9 +332,10 @@ export default function (pi: ExtensionAPI) {
 
 			const lines = [
 				`Queued: ${queued.length}${queued.length ? ` (${queued.slice(-3).join(", ")})` : ""}`,
-				`Worker: ${workerIsAlive() ? "running" : "idle"}`,
+				`Worker: ${fs.existsSync(PAUSE_FILE) ? "PAUSED" : workerIsAlive() ? "running" : "idle"}`,
+				`In-flight: ${inflight.length}${inflight.length && fs.existsSync(PAUSE_FILE) ? " (outcome uncertain; do not blindly replay)" : ""}`,
 				`Applied: ${done.length} (last 3 days)`,
-				`Failed: ${failed.length}${failed.length ? " — run /memory-queue retry" : ""}`,
+				`Failed: ${failed.length}${failed.length ? " — inspect cause before retrying" : ""}`,
 				"Recent:",
 				...tailLog(6).map((l) => `  ${l}`),
 			];
