@@ -313,9 +313,13 @@ async function main() {
 				fs.renameSync(claimed.file, path.join(DONE, claimed.name));
 				log("ok", id, job.tool, text.replace(/\s+/g, " ").slice(0, 200));
 			} catch (err) {
-				const note = String(err?.message ?? err).replace(/\s+/g, " ").slice(0, 300);
+				const message = String(err?.message ?? err);
+				const note = message.replace(/\s+/g, " ").slice(0, 300);
 				const attempts = (job.attempts ?? 0) + 1;
-				if (err instanceof UnknownOutcomeError || err instanceof PartialMutationError || attempts >= MAX_ATTEMPTS) {
+				// These are deliberate fail-closed decisions, not transient transport
+				// faults. Repeating them blocks fresh writes behind futile retries.
+				const deterministicRejection = /\bStaged mutation (?:deferred|rejected):/.test(message);
+				if (err instanceof UnknownOutcomeError || err instanceof PartialMutationError || deterministicRejection || attempts >= MAX_ATTEMPTS) {
 					job.unknownOutcome = err instanceof UnknownOutcomeError || err instanceof PartialMutationError;
 					job.attempts = attempts;
 					job.error = note;
