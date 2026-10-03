@@ -23,6 +23,7 @@ function isRetryableError(error: string | undefined): boolean {
 }
 
 function retryLabel(attempt: number): string {
+	if (attempt === 1) return "Retrying...";
 	const suffix = attempt % 100 >= 11 && attempt % 100 <= 13
 		? "th"
 		: attempt % 10 === 1 ? "st" : attempt % 10 === 2 ? "nd" : attempt % 10 === 3 ? "rd" : "th";
@@ -69,6 +70,14 @@ export default function (pi: ExtensionAPI, wait = waitForRetry) {
 			message.stopReason = "pending";
 			message.errorMessage = undefined;
 		}
+	});
+
+	pi.on("message_update", (event) => {
+		if (retryCount === 0 || event.message.role !== "assistant") return;
+		// A bare stream start can still be followed immediately by another 429.
+		// Restore the normal phase label once actual output starts arriving.
+		const type = event.assistantMessageEvent.type;
+		if (type === "thinking_delta" || type === "text_delta" || type === "toolcall_delta") clearRetry();
 	});
 
 	pi.on("message_end", (event) => {

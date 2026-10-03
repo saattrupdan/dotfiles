@@ -70,7 +70,9 @@ test("masks rate-limit errors, keeps one run, counts each retry and resets on su
 		const masked = await run.emit("message_end", rateLimited()) as { message: { stopReason: string; errorMessage?: string } };
 		assert.equal(masked.message.stopReason, "stop");
 		assert.equal(masked.message.errorMessage, undefined);
-		assert.equal(run.workingLabels.at(-1), `Retrying for the ${n}${["st", "nd", "rd"][n - 1] ?? "th"} time...`);
+		assert.equal(run.workingLabels.at(-1), n === 1 ? "Retrying..." : `Retrying for the ${n}${["st", "nd", "rd"][n - 1] ?? "th"} time...`);
+		await run.emit("message_update", { message: { role: "assistant" }, assistantMessageEvent: { type: "start" } });
+		assert.equal(run.workingLabels.at(-1), n === 1 ? "Retrying..." : `Retrying for the ${n}${["st", "nd", "rd"][n - 1] ?? "th"} time...`);
 		const result = await run.emit("turn_end") as { continue: boolean; entries: Array<{ display: boolean }> };
 		assert.equal(result.continue, true);
 		assert.equal(result.entries[0].display, false);
@@ -81,7 +83,21 @@ test("masks rate-limit errors, keeps one run, counts each retry and resets on su
 	assert.equal(run.workingLabels.at(-1), undefined);
 	assert.equal(await run.emit("turn_end"), undefined);
 	await run.emit("message_end", rateLimited());
-	assert.equal(run.workingLabels.at(-1), "Retrying for the 1st time...");
+	assert.equal(run.workingLabels.at(-1), "Retrying...");
+});
+
+test("first real streamed output ends the retry state before message_end", async () => {
+	for (const type of ["text_delta", "thinking_delta", "toolcall_delta"]) {
+		const run = harness();
+		await run.emit("message_end", rateLimited());
+		assert.equal(run.workingLabels.at(-1), "Retrying...");
+		await run.emit("turn_end");
+		await run.emit("message_update", { message: { role: "assistant" }, assistantMessageEvent: { type } });
+		assert.equal(run.workingLabels.at(-1), undefined);
+		assert.equal(await run.emit("turn_end"), undefined);
+		await run.emit("message_end", rateLimited());
+		assert.equal(run.workingLabels.at(-1), "Retrying...", "retries after recovery start at one again");
+	}
 });
 
 test("empty transient transport errors retry until connectivity returns", async () => {
@@ -152,10 +168,14 @@ test("retry replaces the working spinner even when reasoning resumes", async () 
 	await emit("message_update", { message: { content: [{ type: "thinking" }] } });
 	assert.equal(label, "Thinking...");
 	await emit("message_end", rateLimited());
-	assert.equal(label, "Retrying for the 1st time...");
+	assert.equal(label, "Retrying...");
 	assert.equal(visible, true);
-	await emit("message_update", { message: { content: [{ type: "thinking" }] } });
-	assert.equal(label, "Retrying for the 1st time...");
+	await emit("message_update", { message: { role: "assistant", content: [] }, assistantMessageEvent: { type: "start" } });
+	assert.equal(label, "Retrying...", "a stream start alone is not proof of recovery");
+	await emit("message_update", { message: { role: "assistant", content: [{ type: "thinking" }] }, assistantMessageEvent: { type: "thinking_delta" } });
+	assert.equal(label, "Thinking...", "the phase label returns on the first streamed output");
+	await emit("message_update", { message: { role: "assistant", content: [{ type: "text" }] }, assistantMessageEvent: { type: "text_delta" } });
+	assert.equal(label, undefined, "the normal working label returns for text streaming");
 	await emit("message_end", success());
-	assert.equal(label, undefined, "the normal working label is restored after recovery");
+	assert.equal(label, undefined);
 });
