@@ -38,6 +38,7 @@ const FAILED = path.join(ROOT, "failed");
 const LOG_FILE = path.join(ROOT, "worker.log");
 const PID_FILE = path.join(ROOT, "worker.pid");
 const PAUSE_FILE = path.join(ROOT, "paused");
+const CANARY_ONCE_FILE = path.join(ROOT, "canary-once");
 
 const MCP_URL = process.env.UNDERSTORY_MCP_URL ?? "http://localhost:3800/mcp";
 const MAX_ATTEMPTS = Number(process.env.MEMORY_ASYNC_MAX_ATTEMPTS ?? 3);
@@ -326,6 +327,14 @@ async function main() {
 					fs.unlinkSync(claimed.file); // the queue copy owns it now; a leftover would be reclaimed and applied twice
 					log("retry", id, job.tool, `attempt ${attempts}: ${note}`);
 				}
+			}
+			// A canary performs exactly one MCP attempt, even when that attempt
+			// failed and was requeued. Never let a test silently drain the backlog.
+			if (fs.existsSync(CANARY_ONCE_FILE)) {
+				fs.writeFileSync(PAUSE_FILE, "paused\n", "utf-8");
+				fs.unlinkSync(CANARY_ONCE_FILE);
+				log("paused", id, job.tool, "one-job canary finished; queue paused");
+				break;
 			}
 		}
 
