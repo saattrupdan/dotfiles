@@ -56,7 +56,7 @@ const WORKER = path.join(path.dirname(fileURLToPath(import.meta.url)), "worker.m
 const AddParams = Type.Object({
 	content: Type.String({ description: "The knowledge to record, in any prose form" }),
 	suggested_path: Type.Optional(
-		Type.String({ description: 'Optional existing owner path when known (or new concept path), e.g. "/apis/payments.md"; the service verifies it against search results' }),
+		Type.String({ description: 'Optional existing owner path when known (or new concept path), e.g. "/apis/payments.md"; the service reads and checks it before any edit' }),
 	),
 });
 
