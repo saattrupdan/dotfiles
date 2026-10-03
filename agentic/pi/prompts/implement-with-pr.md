@@ -3,7 +3,7 @@ description:
   Full implementation flow with branch switch, optional review, and PR creation.
 ---
 
-1. **Load `gh` skill.** Call `skill` with `name: "gh"` to load the GitHub CLI skill.
+1. **Load `github` skill.** Call `skill` with `name: "github"` to load the GitHub skill.
 2. **Switch branch.** Come up with a suitable branch name. Call `bash` to create and
    checkout that branch: `git checkout -b <branch-name>`. Confirm the branch switch
    succeeded before proceeding.
@@ -36,7 +36,7 @@ description:
 8. **Push and PR.** Once implementation and any warranted review or fixes are complete:
    - Push: `git push -u origin <branch-name>`
    - Generate PR title from commit subject (first commit or latest)
-   - Generate PR body from commit messages, following the gh skill's PR description
+   - Generate PR body from commit messages, following the github skill's PR description
      style: **What** (one paragraph on core change), **Key features** (bullet list),
      **Examples** (CLI examples if applicable), **Why it helps** (optional motivation).
    - Create PR: `gh pr create --base <base-branch> --title "<title>" --body "<body>"`

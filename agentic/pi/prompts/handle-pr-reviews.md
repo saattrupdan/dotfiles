@@ -2,7 +2,7 @@
 description: Handle PR review comments — Copilot vs human reviewers.
 ---
 
-1. **Load `gh` skill.** Call `skill` with `name: "gh"`.
+1. **Load `github` skill.** Call `skill` with `name: "github"`.
 
 2. **Follow the "Review cycle" section in the skill.** It covers:
    - Identifying Copilot vs human reviewers

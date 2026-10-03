@@ -1,12 +1,12 @@
 ---
-name: gh
+name: github
 description:
-  GitHub CLI (gh) — the official command-line interface to GitHub. Use when the user
-  needs to create or manage pull requests, issues, repositories, GitHub Actions, gists,
-  API calls, authentication, or any other GitHub workflow from the terminal. Also use
-  for scripting GitHub automation, querying the GraphQL/REST API, managing forks/clones,
-  and viewing workflow run logs. Prefer gh over web browsing or the raw REST API.
-tagline: Official GitHub CLI for PRs, issues, repos, Actions, API, and more
+  Use for anything GitHub-related: repositories, pull requests, issues, reviews,
+  GitHub Actions, releases, gists, authentication, API queries, automation, and
+  GitHub settings or workflows. Covers reading, creating, and managing GitHub
+  resources. Prefer the official GitHub CLI (gh) over web browsing or raw API
+  requests when it supports the task.
+tagline: GitHub workflows, resources, and the official gh CLI
 triggers:
   - pattern: "(create|make|open|submit|push|get|prepare)\\s+(a|an|the\\s+)?(pr|pull\\s*request|pull-request)"
     description: "PR creation/opening requests"
