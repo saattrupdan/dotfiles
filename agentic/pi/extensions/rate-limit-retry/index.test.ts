@@ -4,12 +4,23 @@ import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import rateLimitRetry from "./index.ts";
 
-type Handler = (event?: unknown) => void;
+type Handler = (event: unknown, ctx: unknown) => unknown;
 
-function harness() {
+function harness(wait: (delay: number, signal: AbortSignal | undefined) => Promise<boolean> = async () => true) {
 	const handlers = new Map<string, Handler>();
+	const statuses = new Map<string, string>();
+	const delays: number[] = [];
 	const messages: Array<{ customType: string; content: string; display: boolean }> = [];
-	let command: ((args: string) => void) | undefined;
+	let command: ((args: string, ctx: unknown) => void) | undefined;
+	const ctx = {
+		signal: new AbortController().signal,
+		ui: {
+			setStatus: (key: string, text: string | undefined) => {
+				if (text === undefined) statuses.delete(key);
+				else statuses.set(key, text);
+			},
+		},
+	};
 	const pi = {
 		on: (name: string, handler: Handler) => {
 			handlers.set(name, handler);
@@ -17,74 +28,77 @@ function harness() {
 		sendMessage: (message: { customType: string; content: string; display: boolean }) => {
 			messages.push(message);
 		},
-		registerCommand: (_name: string, options: { handler: (args: string) => void }) => {
+		registerCommand: (_name: string, options: { handler: (args: string, ctx: unknown) => void }) => {
 			command = options.handler;
 		},
 	} as unknown as ExtensionAPI;
-	rateLimitRetry(pi);
+	rateLimitRetry(pi, async (delay, signal) => {
+		delays.push(delay);
+		return wait(delay, signal);
+	});
 	return {
+		statuses,
+		delays,
 		messages,
-		emit: (name: string, event?: unknown) => {
+		emit: async (name: string, event: unknown = {}) => {
 			const handler = handlers.get(name);
 			assert.ok(handler, `Missing ${name} handler`);
-			handler(event);
+			return await handler(event, ctx);
 		},
 		command: (args: string) => {
 			assert.ok(command);
-			command(args);
+			command(args, ctx);
 		},
 	};
 }
 
-const rateLimited = { messages: [{ role: "assistant", stopReason: "error", errorMessage: "HTTP 429" }] };
-const success = { messages: [{ role: "assistant", stopReason: "stop" }] };
-const otherError = { messages: [{ role: "assistant", stopReason: "error", errorMessage: "HTTP 500" }] };
+const rateLimited = () => ({
+	message: { role: "assistant", stopReason: "error", errorMessage: '{"detail":"Rate limit exceeded"}', content: [] },
+});
+const success = () => ({ message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Done" }] } });
 
-test("waits for settlement after built-in attempts, then retries every exhausted 429", () => {
+test("masks rate-limit errors, keeps one run, counts each retry and resets on success", async () => {
 	const run = harness();
-	run.emit("agent_start");
-	for (let i = 0; i < 4; i++) run.emit("agent_end", rateLimited);
-	assert.equal(run.messages.length, 0);
-	run.emit("agent_before_settle", { outcome: "error" });
-	run.emit("agent_settled");
-	assert.equal(run.messages.length, 1);
-	assert.equal(run.messages[0].display, false);
-
-	for (let i = 0; i < 5; i++) {
-		run.emit("agent_start");
-		run.emit("agent_end", rateLimited);
-		run.emit("agent_before_settle", { outcome: "error" });
-		run.emit("agent_settled");
+	await run.emit("session_start");
+	for (let n = 1; n <= 6; n++) {
+		const start = rateLimited();
+		await run.emit("message_start", start);
+		assert.equal(start.message.stopReason, "pending", "the initial TUI frame must not flash the error");
+		assert.equal(start.message.errorMessage, undefined);
+		const masked = await run.emit("message_end", rateLimited()) as { message: { stopReason: string; errorMessage?: string } };
+		assert.equal(masked.message.stopReason, "stop");
+		assert.equal(masked.message.errorMessage, undefined);
+		assert.equal(run.statuses.get("rate-limit-retry"), `Retrying for the ${n}${["st", "nd", "rd"][n - 1] ?? "th"} time...`);
+		const result = await run.emit("turn_end") as { continue: boolean; entries: Array<{ display: boolean }> };
+		assert.equal(result.continue, true);
+		assert.equal(result.entries[0].display, false);
 	}
-	assert.equal(run.messages.length, 6);
-	run.emit("agent_start");
-	run.emit("agent_end", success);
-	run.emit("agent_before_settle", { outcome: "completed" });
-	run.emit("agent_settled");
-	assert.equal(run.messages.length, 6);
+	assert.deepEqual(run.delays, [2000, 4000, 8000, 16000, 32000, 60000]);
+	assert.equal(run.messages.length, 0, "no standalone retry turns or displayed prompts");
+	await run.emit("message_end", success());
+	assert.equal(run.statuses.has("rate-limit-retry"), false);
+	assert.equal(await run.emit("turn_end"), undefined);
+	await run.emit("message_end", rateLimited());
+	assert.equal(run.statuses.get("rate-limit-retry"), "Retrying for the 1st time...");
 });
 
-test("only the final outcome matters; other errors and the off switch do not retry", () => {
+test("other errors and partial rate-limit responses keep Pi's normal rendering", async () => {
 	const run = harness();
-	run.emit("agent_start");
-	run.emit("agent_end", rateLimited);
-	run.emit("agent_end", otherError);
-	run.emit("agent_before_settle", { outcome: "error" });
-	run.emit("agent_settled");
-	assert.equal(run.messages.length, 0);
-	run.emit("agent_start");
-	run.emit("agent_end", rateLimited);
-	run.emit("agent_before_settle", { outcome: "error" });
+	const otherError = { message: { role: "assistant", stopReason: "error", errorMessage: "HTTP 500", content: [] } };
+	assert.equal(await run.emit("message_end", otherError), undefined);
+	assert.equal(await run.emit("turn_end"), undefined);
+	const partial = { message: { ...rateLimited().message, content: [{ type: "text", text: "partial" }] } };
+	assert.equal(await run.emit("message_end", partial), undefined);
+	assert.equal(await run.emit("turn_end"), undefined);
+	assert.equal(run.statuses.size, 0);
+});
+
+test("off and abort cancel pending retries", async () => {
+	const run = harness(async () => false);
+	await run.emit("message_end", rateLimited());
+	assert.equal(await run.emit("turn_end"), undefined);
+	assert.equal(run.statuses.size, 0);
 	run.command("off");
-	run.emit("agent_settled");
-	assert.equal(run.messages.filter((message) => message.customType === "rate-limit-retry:continue").length, 0);
-});
-
-test("aborting during the built-in retry wait does not start another run", () => {
-	const run = harness();
-	run.emit("agent_start");
-	run.emit("agent_end", rateLimited);
-	// Abort skips the pre-settlement boundary.
-	run.emit("agent_settled");
-	assert.equal(run.messages.length, 0);
+	assert.equal(await run.emit("message_end", rateLimited()), undefined);
+	assert.equal(run.statuses.size, 0);
 });

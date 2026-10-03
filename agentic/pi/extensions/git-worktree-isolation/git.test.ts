@@ -4,6 +4,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, test } from "node:test";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { recoveredFromRateLimit } from "./index.ts";
 import {
 	acquireResumeClaim,
 	acquireSessionLease,
@@ -25,6 +27,17 @@ import {
 	sessionCwd,
 	sessionDirectoryForCwd,
 } from "./git.ts";
+
+test("detects a rate-limit retry only in the current user request", () => {
+	const entries = [
+		{ type: "custom_message", customType: "rate-limit-retry:continue" },
+		{ type: "message", message: { role: "assistant" } },
+	];
+	const ctx = { sessionManager: { getBranch: () => [...entries] } } as unknown as ExtensionContext;
+	assert.equal(recoveredFromRateLimit(ctx), true);
+	entries.push({ type: "message", message: { role: "user" } });
+	assert.equal(recoveredFromRateLimit(ctx), false);
+});
 
 const temporaryRoots: string[] = [];
 

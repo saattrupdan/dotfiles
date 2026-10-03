@@ -31,7 +31,17 @@ import {
 const CHILD_MANIFEST_ENV = "PI_WORKTREE_SESSION_MANIFEST";
 const DISABLE_ENV = "PI_WORKTREE_ISOLATION_DISABLE";
 const CUSTOM_TYPE = "git-worktree-isolation:finalize";
+const RATE_LIMIT_RETRY_TYPE = "rate-limit-retry:continue";
 const MAX_REPAIR_TURNS = 6;
+
+/** Was this run resumed from a rate limit since the last genuine user message? */
+export function recoveredFromRateLimit(ctx: ExtensionContext): boolean {
+	for (const entry of ctx.sessionManager.getBranch().reverse()) {
+		if (entry.type === "custom_message" && entry.customType === RATE_LIMIT_RETRY_TYPE) return true;
+		if (entry.type === "message" && entry.message.role === "user") return false;
+	}
+	return false;
+}
 
 const SYSTEM_INSTRUCTION = `You are running in a detached, isolated Git worktree managed by Pi.
 Before concluding any turn that changes files, commit all intended changes and leave the worktree clean.
@@ -211,7 +221,12 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 			const result = await enforceRepository(manifest);
 			if (result.kind === "ok") {
 				repairTurns = 0;
-				if (result.message && ctx.hasUI) ctx.ui.notify(result.message, "info");
+				// Git finalization must still run, but the benign contained-commit
+				// notice is noise after quiet rate-limit recovery.
+				if (
+					result.message && ctx.hasUI &&
+					!(result.message.includes("is already contained in") && recoveredFromRateLimit(ctx))
+				) ctx.ui.notify(result.message, "info");
 				return;
 			}
 			if (result.kind === "blocked") {
