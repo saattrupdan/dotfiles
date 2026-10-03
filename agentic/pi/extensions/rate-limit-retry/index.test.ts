@@ -2,26 +2,28 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import thinkingStatus from "../thinking-status/index.ts";
 import rateLimitRetry from "./index.ts";
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
 
 function harness(wait: (delay: number, signal: AbortSignal | undefined) => Promise<boolean> = async () => true) {
 	const handlers = new Map<string, Handler>();
-	const statuses = new Map<string, string>();
+	const workingLabels: Array<string | undefined> = [];
 	const delays: number[] = [];
 	const messages: Array<{ customType: string; content: string; display: boolean }> = [];
 	let command: ((args: string, ctx: unknown) => void) | undefined;
 	const ctx = {
 		signal: new AbortController().signal,
-		ui: {
-			setStatus: (key: string, text: string | undefined) => {
-				if (text === undefined) statuses.delete(key);
-				else statuses.set(key, text);
-			},
-		},
+		ui: {},
 	};
 	const pi = {
+		events: {
+			emit: (name: string, data: { label?: string }) => {
+				assert.equal(name, "thinking-status:override");
+				workingLabels.push(data.label);
+			},
+		},
 		on: (name: string, handler: Handler) => {
 			handlers.set(name, handler);
 		},
@@ -37,7 +39,7 @@ function harness(wait: (delay: number, signal: AbortSignal | undefined) => Promi
 		return wait(delay, signal);
 	});
 	return {
-		statuses,
+		workingLabels,
 		delays,
 		messages,
 		emit: async (name: string, event: unknown = {}) => {
@@ -68,7 +70,7 @@ test("masks rate-limit errors, keeps one run, counts each retry and resets on su
 		const masked = await run.emit("message_end", rateLimited()) as { message: { stopReason: string; errorMessage?: string } };
 		assert.equal(masked.message.stopReason, "stop");
 		assert.equal(masked.message.errorMessage, undefined);
-		assert.equal(run.statuses.get("rate-limit-retry"), `Retrying for the ${n}${["st", "nd", "rd"][n - 1] ?? "th"} time...`);
+		assert.equal(run.workingLabels.at(-1), `Retrying for the ${n}${["st", "nd", "rd"][n - 1] ?? "th"} time...`);
 		const result = await run.emit("turn_end") as { continue: boolean; entries: Array<{ display: boolean }> };
 		assert.equal(result.continue, true);
 		assert.equal(result.entries[0].display, false);
@@ -76,10 +78,10 @@ test("masks rate-limit errors, keeps one run, counts each retry and resets on su
 	assert.deepEqual(run.delays, [2000, 4000, 8000, 16000, 32000, 60000]);
 	assert.equal(run.messages.length, 0, "no standalone retry turns or displayed prompts");
 	await run.emit("message_end", success());
-	assert.equal(run.statuses.has("rate-limit-retry"), false);
+	assert.equal(run.workingLabels.at(-1), undefined);
 	assert.equal(await run.emit("turn_end"), undefined);
 	await run.emit("message_end", rateLimited());
-	assert.equal(run.statuses.get("rate-limit-retry"), "Retrying for the 1st time...");
+	assert.equal(run.workingLabels.at(-1), "Retrying for the 1st time...");
 });
 
 test("other errors and partial rate-limit responses keep Pi's normal rendering", async () => {
@@ -90,15 +92,53 @@ test("other errors and partial rate-limit responses keep Pi's normal rendering",
 	const partial = { message: { ...rateLimited().message, content: [{ type: "text", text: "partial" }] } };
 	assert.equal(await run.emit("message_end", partial), undefined);
 	assert.equal(await run.emit("turn_end"), undefined);
-	assert.equal(run.statuses.size, 0);
+	assert.equal(run.workingLabels.length, 0);
 });
 
 test("off and abort cancel pending retries", async () => {
 	const run = harness(async () => false);
 	await run.emit("message_end", rateLimited());
 	assert.equal(await run.emit("turn_end"), undefined);
-	assert.equal(run.statuses.size, 0);
+	assert.equal(run.workingLabels.at(-1), undefined);
 	run.command("off");
 	assert.equal(await run.emit("message_end", rateLimited()), undefined);
-	assert.equal(run.statuses.size, 0);
+	assert.equal(run.workingLabels.at(-1), undefined);
+});
+
+test("retry replaces the working spinner even when reasoning resumes", async () => {
+	const handlers = new Map<string, Handler[]>();
+	const listeners = new Map<string, (data: unknown) => void>();
+	let label: string | undefined;
+	let visible = false;
+	const ctx = {
+		signal: new AbortController().signal,
+		ui: {
+			setHiddenThinkingLabel: (_label: string) => {},
+			setWorkingVisible: (value: boolean) => { visible = value; },
+			setWorkingMessage: (value?: string) => { label = value; },
+		},
+	};
+	const pi = {
+		on: (name: string, handler: Handler) => handlers.set(name, [...(handlers.get(name) ?? []), handler]),
+		events: {
+			on: (name: string, listener: (data: unknown) => void) => listeners.set(name, listener),
+			emit: (name: string, data: unknown) => listeners.get(name)?.(data),
+		},
+		registerCommand: () => {},
+	} as unknown as ExtensionAPI;
+	thinkingStatus(pi);
+	rateLimitRetry(pi, async () => true);
+	const emit = async (name: string, event: unknown = {}) => {
+		for (const handler of handlers.get(name) ?? []) await handler(event, ctx);
+	};
+	await emit("session_start");
+	await emit("message_update", { message: { content: [{ type: "thinking" }] } });
+	assert.equal(label, "Thinking...");
+	await emit("message_end", rateLimited());
+	assert.equal(label, "Retrying for the 1st time...");
+	assert.equal(visible, true);
+	await emit("message_update", { message: { content: [{ type: "thinking" }] } });
+	assert.equal(label, "Retrying for the 1st time...");
+	await emit("message_end", success());
+	assert.equal(label, undefined, "the normal working label is restored after recovery");
 });

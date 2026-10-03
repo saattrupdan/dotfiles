@@ -8,9 +8,9 @@
  * Other errors and responses containing partial output keep Pi's normal path.
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-const STATUS_KEY = "rate-limit-retry";
+const WORKING_OVERRIDE = "thinking-status:override";
 const CUSTOM_TYPE = "rate-limit-retry:continue";
 const PROMPT = "The previous model request was rate-limited. Resume the user's task.";
 const BASE_DELAY_MS = 2_000;
@@ -47,13 +47,13 @@ export default function (pi: ExtensionAPI, wait = waitForRetry) {
 	let pendingRateLimit = false;
 	let retryCount = 0;
 
-	const clearRetry = (ctx: ExtensionContext) => {
+	const clearRetry = () => {
 		pendingRateLimit = false;
 		retryCount = 0;
-		ctx.ui.setStatus(STATUS_KEY, undefined);
+		pi.events.emit(WORKING_OVERRIDE, { label: undefined });
 	};
 
-	pi.on("session_start", (_event, ctx) => clearRetry(ctx));
+	pi.on("session_start", () => clearRetry());
 
 	pi.on("message_start", (event) => {
 		// Some providers emit no stream-start event on a 429. Pi then starts
@@ -70,7 +70,7 @@ export default function (pi: ExtensionAPI, wait = waitForRetry) {
 		}
 	});
 
-	pi.on("message_end", (event, ctx) => {
+	pi.on("message_end", (event) => {
 		const message = event.message;
 		if (message.role !== "assistant") return;
 		if (
@@ -78,14 +78,16 @@ export default function (pi: ExtensionAPI, wait = waitForRetry) {
 			!isRateLimitError(message.errorMessage) || message.content.length > 0
 		) {
 			// Only an empty rate-limit response is masked. Leave other responses
-			// untouched, but clear stale retry status if recovery has ended.
-			if (retryCount > 0) clearRetry(ctx);
+			// untouched, but restore the working label if recovery has ended.
+			if (retryCount > 0) clearRetry();
 			return;
 		}
 
 		pendingRateLimit = true;
 		retryCount++;
-		ctx.ui.setStatus(STATUS_KEY, retryLabel(retryCount));
+		// The working spinner is shared with thinking-status; overriding it
+		// replaces "Thinking..." rather than adding a separate footer item.
+		pi.events.emit(WORKING_OVERRIDE, { label: retryLabel(retryCount) });
 		// The replacement is applied in-place before the TUI receives message_end
 		// and before Pi decides whether to use its three-attempt retry policy.
 		return { message: { ...message, stopReason: "stop" as const, errorMessage: undefined } };
@@ -96,7 +98,7 @@ export default function (pi: ExtensionAPI, wait = waitForRetry) {
 		pendingRateLimit = false;
 		const delay = Math.min(BASE_DELAY_MS * 2 ** Math.min(retryCount - 1, 20), MAX_DELAY_MS);
 		if (!(await wait(delay, ctx.signal)) || !sessionEnabled) {
-			clearRetry(ctx);
+			clearRetry();
 			return;
 		}
 		// A hidden user-context message makes the boundary runnable without
@@ -110,11 +112,11 @@ export default function (pi: ExtensionAPI, wait = waitForRetry) {
 
 	pi.registerCommand("rate-limit-retry", {
 		description: "Toggle indefinite quiet 429 retry for this session",
-		handler: async (args, ctx) => {
+		handler: async (args) => {
 			const arg = args.trim().toLowerCase();
 			if (arg === "off") {
 				sessionEnabled = false;
-				clearRetry(ctx);
+				clearRetry();
 			} else if (arg === "on") {
 				sessionEnabled = true;
 			} else if (arg !== "" && arg !== "status") {
