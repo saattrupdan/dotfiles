@@ -39,6 +39,8 @@ const LOG_FILE = path.join(ROOT, "worker.log");
 const PID_FILE = path.join(ROOT, "worker.pid");
 const PAUSE_FILE = path.join(ROOT, "paused");
 const CANARY_ONCE_FILE = path.join(ROOT, "canary-once");
+const RECOVERY_CUTOFF_FILE = path.join(ROOT, "recovery-cutoff");
+const RECOVERY_CANARY_ID = process.env.MEMORY_ASYNC_RECOVERY_JOB_ID ?? "";
 
 const MCP_URL = process.env.UNDERSTORY_MCP_URL ?? "http://localhost:3800/mcp";
 const MAX_ATTEMPTS = Number(process.env.MEMORY_ASYNC_MAX_ATTEMPTS ?? 3);
@@ -225,6 +227,11 @@ function readdirOrEmpty(dir) {
 
 function pendingJobs() {
 	const names = readdirOrEmpty(QUEUE).filter((n) => n.endsWith(".json")).sort();
+	const cutoff = fs.existsSync(RECOVERY_CUTOFF_FILE)
+		? Number(fs.readFileSync(RECOVERY_CUTOFF_FILE, "utf-8").trim()) : 0;
+	if (fs.existsSync(RECOVERY_CUTOFF_FILE) && (!Number.isFinite(cutoff) || cutoff <= 0)) {
+		throw new Error("Invalid recovery cutoff; refusing to process queued writes");
+	}
 	const jobs = [];
 	for (const name of names) {
 		const file = path.join(QUEUE, name);
@@ -237,6 +244,13 @@ function pendingJobs() {
 				fs.renameSync(file, path.join(FAILED, `${name}.unparsable`));
 			} catch { /* someone else moved it */ }
 			log("unparsable", name, "-", String(err?.message ?? err));
+			continue;
+		}
+		const queuedAt = Date.parse(job.queuedAt ?? "");
+		const explicitCanary = name.replace(/\.json$/, "") === RECOVERY_CANARY_ID && fs.existsSync(CANARY_ONCE_FILE);
+		if (cutoff > 0 && (!Number.isFinite(queuedAt) || queuedAt <= cutoff) && !explicitCanary) {
+			// Jobs from before the fresh-write rollout remain untouched even if an
+			// older in-memory /memory-queue retry handler requeues them.
 			continue;
 		}
 		jobs.push({ name, file, job });
