@@ -135,6 +135,7 @@ function parseRpcBody(text, contentType) {
  * so it must not be retried blindly.
  */
 class UnknownOutcomeError extends Error {}
+class PartialMutationError extends Error {}
 
 let rpcId = 0;
 
@@ -193,7 +194,9 @@ function callTool(tool, args) {
 					}
 					const text = (msg.result?.content ?? []).map((c) => c?.text ?? "").join("\n");
 					if (msg.result?.isError) {
-						finish(reject, new Error(`tool error: ${text.slice(0, 300)}`));
+						const message = `tool error: ${text.slice(0, 300)}`;
+						finish(reject, text.startsWith("⚠ Partial mutation:")
+							? new PartialMutationError(message) : new Error(message));
 						return;
 					}
 					finish(resolve, { text });
@@ -311,8 +314,8 @@ async function main() {
 			} catch (err) {
 				const note = String(err?.message ?? err).replace(/\s+/g, " ").slice(0, 300);
 				const attempts = (job.attempts ?? 0) + 1;
-				if (err instanceof UnknownOutcomeError || attempts >= MAX_ATTEMPTS) {
-					job.unknownOutcome = err instanceof UnknownOutcomeError;
+				if (err instanceof UnknownOutcomeError || err instanceof PartialMutationError || attempts >= MAX_ATTEMPTS) {
+					job.unknownOutcome = err instanceof UnknownOutcomeError || err instanceof PartialMutationError;
 					job.attempts = attempts;
 					job.error = note;
 					fs.writeFileSync(claimed.file, JSON.stringify(job), "utf-8");
