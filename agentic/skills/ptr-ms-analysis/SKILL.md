@@ -1,1 +1,0 @@
-../../../../ptr-ms-analysis/SKILL.md
