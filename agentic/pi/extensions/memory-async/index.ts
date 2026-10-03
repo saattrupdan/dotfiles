@@ -334,7 +334,7 @@ export default function (pi: ExtensionAPI) {
 				`Queued: ${queued.length}${queued.length ? ` (${queued.slice(-3).join(", ")})` : ""}`,
 				`Worker: ${fs.existsSync(PAUSE_FILE) ? "PAUSED" : workerIsAlive() ? "running" : "idle"}`,
 				`In-flight: ${inflight.length}${inflight.length && fs.existsSync(PAUSE_FILE) ? " (outcome uncertain; do not blindly replay)" : ""}`,
-				`Applied: ${done.length} (last 3 days)`,
+				`Completed: ${done.length} (last 3 days; older worker versions also marked partial writes complete)`,
 				`Failed: ${failed.length}${failed.length ? " — inspect cause before retrying" : ""}`,
 				"Recent:",
 				...tailLog(6).map((l) => `  ${l}`),
