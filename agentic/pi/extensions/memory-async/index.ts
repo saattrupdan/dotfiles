@@ -56,7 +56,7 @@ const WORKER = path.join(path.dirname(fileURLToPath(import.meta.url)), "worker.m
 const AddParams = Type.Object({
 	content: Type.String({ description: "The knowledge to record, in any prose form" }),
 	suggested_path: Type.Optional(
-		Type.String({ description: 'Optional bundle path hint, e.g. "/apis/payments.md"' }),
+		Type.String({ description: 'Optional existing owner path when known (or new concept path), e.g. "/apis/payments.md"; the service verifies it against search results' }),
 	),
 });
 
@@ -200,6 +200,7 @@ function registerWriteTool(
 		promptGuidelines: [
 			"memory_add and memory_update return as soon as the write is queued — do not re-call them to confirm, and do not wait for the write to land before finishing your reply.",
 			"Name the entity the knowledge belongs to (e.g. \"Dan prefers X\", not \"prefers X\") so the background librarian can attach it to the right concept; the write happens later, so you cannot correct it in this turn.",
+			"If a prior memory_query already identified an existing owner concept path, pass it as suggested_path. The service checks that path against search evidence; do not guess a path.",
 			"Use /memory-queue to inspect or requeue background writes if a write matters.",
 		],
 		parameters,
