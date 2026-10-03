@@ -38,9 +38,11 @@ detached does **not** mean the pane should run a non-interactive shell.
    ```
 
    Prefer a direct command to an opaque wrapper. If a compatibility wrapper is genuinely
-   needed, type its complete invocation directly into the normal shell. Keep credentials
-   out of command history; use an existing secure environment or credential store rather
-   than typing secrets into the pane.
+   needed, type its complete invocation directly into the normal shell. An agent may
+   send commands into a pane the user is attached to; first check that the shell is idle
+   and do not overwrite a partially typed command or interrupt an editor. Keep
+   credentials out of command history; use an existing secure environment or credential
+   store rather than typing secrets into the pane.
 
 4. Verify the actual process and output, not just `tmux has-session`. A tmux session can
    exist with an idle shell after its job has failed:
