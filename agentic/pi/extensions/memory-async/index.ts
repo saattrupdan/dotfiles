@@ -46,6 +46,7 @@ import { Type } from "typebox";
 
 const ROOT = process.env.MEMORY_ASYNC_DIR ?? path.join(os.homedir(), ".pi", "agent", "memory-async");
 const QUEUE_DIR = path.join(ROOT, "queue");
+const HELD_DIR = path.join(ROOT, "held"); // historical jobs awaiting individual reconciliation
 const DONE_DIR = path.join(ROOT, "done");
 const FAILED_DIR = path.join(ROOT, "failed");
 const LOG_FILE = path.join(ROOT, "worker.log");
@@ -129,13 +130,16 @@ function tailLog(lines: number): string[] {
 
 function queueSummary(): { pending: number; ahead: number; failed: number; failedNote: string } {
 	const pending = listDir(QUEUE_DIR).length;
+	const held = listDir(HELD_DIR).length;
 	const failed = listDir(FAILED_DIR).length;
 	const paused = fs.existsSync(PAUSE_FILE);
 	const failedNote = paused
-		? ` WARNING: background writes are PAUSED; ${pending} queued and ${failed} failed. Do not assume this write has been applied. Use /memory-queue status.`
-		: failed
-			? ` WARNING: ${failed} background write(s) previously failed permanently — inspect /memory-queue status before retrying.`
-			: "";
+		? ` WARNING: background writes are PAUSED; ${pending} queued, ${held} held and ${failed} failed. Do not assume this write has been applied. Use /memory-queue status.`
+		: held
+			? ` WARNING: ${held} historical write(s) are held for individual reconciliation and ${failed} previously failed; this new write is not applied until its job completes.`
+			: failed
+				? ` WARNING: ${failed} background write(s) previously failed permanently — inspect /memory-queue status before retrying.`
+				: "";
 	return { pending, ahead: Math.max(0, pending - 1), failed, failedNote };
 }
 
@@ -281,6 +285,7 @@ export default function (pi: ExtensionAPI) {
 			// subcommand silently fell through to the status branch.
 			const sub = args.trim().split(/\s+/)[0] || "status";
 			const queued = listDir(QUEUE_DIR);
+			const held = listDir(HELD_DIR);
 			const done = listDir(DONE_DIR);
 			const failed = listDir(FAILED_DIR);
 			const inflight = listDir(path.join(ROOT, "inflight"));
@@ -303,6 +308,10 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			if (sub === "retry") {
+				if (held.length > 0) {
+					ctx.ui.notify(`${held.length} historical jobs are held for individual reconciliation. Bulk retry is disabled until they are resolved; do not replay failed or uncertain writes blindly.`, "warning");
+					return;
+				}
 				let n = 0;
 				let uncertain = 0;
 				for (const name of failed) {
@@ -333,6 +342,7 @@ export default function (pi: ExtensionAPI) {
 
 			const lines = [
 				`Queued: ${queued.length}${queued.length ? ` (${queued.slice(-3).join(", ")})` : ""}`,
+				`Held: ${held.length} historical job(s) — preserved but not scheduled; reconcile individually`,
 				`Worker: ${fs.existsSync(PAUSE_FILE) ? "PAUSED" : workerIsAlive() ? "running" : "idle"}`,
 				`In-flight: ${inflight.length}${inflight.length && fs.existsSync(PAUSE_FILE) ? " (outcome uncertain; do not blindly replay)" : ""}`,
 				`Completed: ${done.length} (last 3 days; older worker versions also marked partial writes complete)`,
@@ -340,7 +350,7 @@ export default function (pi: ExtensionAPI) {
 				"Recent:",
 				...tailLog(6).map((l) => `  ${l}`),
 			];
-			ctx.ui.notify(lines.join("\n"), failed.length ? "warning" : "info");
+			ctx.ui.notify(lines.join("\n"), failed.length || held.length ? "warning" : "info");
 		},
 	});
 }
