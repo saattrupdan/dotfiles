@@ -1,24 +1,25 @@
 /**
- * Quiet, unbounded rate-limit recovery for model requests.
+ * Quiet, unbounded recovery for rate-limited and transiently disconnected model requests.
  *
  * Pi renders every failed assistant message and reports when its built-in retry
- * budget expires. Mask only empty 429 responses in message_end, then continue
- * at turn_end with an invisible context message. This keeps the attempts in one
- * agent run, so git-worktree finalization only runs after an actual result.
- * Other errors and responses containing partial output keep Pi's normal path.
+ * budget expires. Mask only empty, retryable responses in message_end, then
+ * continue at turn_end with an invisible context message. This keeps attempts
+ * in one agent run. Partial responses and non-transport errors keep Pi's normal path.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const WORKING_OVERRIDE = "thinking-status:override";
 const CUSTOM_TYPE = "rate-limit-retry:continue";
-const PROMPT = "The previous model request was rate-limited. Resume the user's task.";
+const PROMPT = "The previous model request failed transiently. Resume the user's task.";
 const BASE_DELAY_MS = 2_000;
 const MAX_DELAY_MS = 60_000;
 
-function isRateLimitError(error: string | undefined): boolean {
+function isRetryableError(error: string | undefined): boolean {
 	const text = (error ?? "").toLowerCase();
-	return /\b429\b/.test(text) || /rate[ _-]?limit/.test(text) || text.includes("too many requests");
+	return /\b429\b/.test(text) || /rate[ _-]?limit/.test(text) || text.includes("too many requests") ||
+		/\b(econnreset|econnrefused|etimedout|enotfound|eai_again|enetunreach|ehostunreach)\b/.test(text) ||
+		/\b(fetch failed|network error|socket hang up|connection (?:reset|refused|timed out)|no route to host|temporary failure in name resolution)\b/.test(text);
 }
 
 function retryLabel(attempt: number): string {
@@ -44,11 +45,11 @@ function waitForRetry(delayMs: number, signal: AbortSignal | undefined): Promise
 
 export default function (pi: ExtensionAPI, wait = waitForRetry) {
 	let sessionEnabled = true;
-	let pendingRateLimit = false;
+	let pendingRetry = false;
 	let retryCount = 0;
 
 	const clearRetry = () => {
-		pendingRateLimit = false;
+		pendingRetry = false;
 		retryCount = 0;
 		pi.events.emit(WORKING_OVERRIDE, { label: undefined });
 	};
@@ -62,7 +63,7 @@ export default function (pi: ExtensionAPI, wait = waitForRetry) {
 		const message = event.message;
 		if (
 			sessionEnabled && message.role === "assistant" &&
-			message.stopReason === "error" && isRateLimitError(message.errorMessage) &&
+			message.stopReason === "error" && isRetryableError(message.errorMessage) &&
 			message.content.length === 0
 		) {
 			message.stopReason = "pending";
@@ -75,15 +76,15 @@ export default function (pi: ExtensionAPI, wait = waitForRetry) {
 		if (message.role !== "assistant") return;
 		if (
 			!sessionEnabled || message.stopReason !== "error" ||
-			!isRateLimitError(message.errorMessage) || message.content.length > 0
+			!isRetryableError(message.errorMessage) || message.content.length > 0
 		) {
-			// Only an empty rate-limit response is masked. Leave other responses
+			// Only empty retryable responses are masked. Leave other responses
 			// untouched, but restore the working label if recovery has ended.
 			if (retryCount > 0) clearRetry();
 			return;
 		}
 
-		pendingRateLimit = true;
+		pendingRetry = true;
 		retryCount++;
 		// The working spinner is shared with thinking-status; overriding it
 		// replaces "Thinking..." rather than adding a separate footer item.
@@ -94,15 +95,15 @@ export default function (pi: ExtensionAPI, wait = waitForRetry) {
 	});
 
 	pi.on("turn_end", async (_event, ctx) => {
-		if (!pendingRateLimit || !sessionEnabled) return;
-		pendingRateLimit = false;
+		if (!pendingRetry || !sessionEnabled) return;
+		pendingRetry = false;
 		const delay = Math.min(BASE_DELAY_MS * 2 ** Math.min(retryCount - 1, 20), MAX_DELAY_MS);
 		if (!(await wait(delay, ctx.signal)) || !sessionEnabled) {
 			clearRetry();
 			return;
 		}
 		// A hidden user-context message makes the boundary runnable without
-		// printing a prompt or starting a separate agent run. Only rate-limit
+		// printing a prompt or starting a separate agent run. Only retryable
 		// attempts get this continuation; all other outcomes settle normally.
 		return {
 			entries: [{ type: "custom_message" as const, customType: CUSTOM_TYPE, content: PROMPT, display: false }],
@@ -111,7 +112,7 @@ export default function (pi: ExtensionAPI, wait = waitForRetry) {
 	});
 
 	pi.registerCommand("rate-limit-retry", {
-		description: "Toggle indefinite quiet 429 retry for this session",
+		description: "Toggle quiet retry of rate limits and transient model network errors",
 		handler: async (args) => {
 			const arg = args.trim().toLowerCase();
 			if (arg === "off") {
@@ -131,8 +132,8 @@ export default function (pi: ExtensionAPI, wait = waitForRetry) {
 			pi.sendMessage({
 				customType: "rate-limit-retry:status",
 				content: sessionEnabled
-					? "Rate-limit retry: armed — 429 errors retry quietly until success."
-					: "Rate-limit retry: off for this session (`/rate-limit-retry on` to re-enable).",
+					? "Model retry: armed — 429 and transient network errors retry quietly until success."
+					: "Model retry: off for this session (`/rate-limit-retry on` to re-enable).",
 				display: true,
 			});
 		},

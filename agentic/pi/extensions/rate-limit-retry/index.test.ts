@@ -84,14 +84,31 @@ test("masks rate-limit errors, keeps one run, counts each retry and resets on su
 	assert.equal(run.workingLabels.at(-1), "Retrying for the 1st time...");
 });
 
-test("other errors and partial rate-limit responses keep Pi's normal rendering", async () => {
+test("empty transient transport errors retry until connectivity returns", async () => {
+	const run = harness();
+	for (const error of ["fetch failed", "connect ETIMEDOUT 1.2.3.4:443", "getaddrinfo EAI_AGAIN example.com", "socket hang up"]) {
+		const failed = { message: { role: "assistant", stopReason: "error", errorMessage: error, content: [] } };
+		await run.emit("message_start", failed);
+		assert.equal(failed.message.stopReason, "pending");
+		const result = await run.emit("message_end", { message: { ...failed.message, stopReason: "error", errorMessage: error } }) as { message: { stopReason: string } };
+		assert.equal(result.message.stopReason, "stop");
+		assert.equal((await run.emit("turn_end") as { continue: boolean }).continue, true);
+	}
+	assert.deepEqual(run.delays, [2000, 4000, 8000, 16000]);
+	await run.emit("message_end", success());
+	assert.equal(await run.emit("turn_end"), undefined);
+});
+
+test("other errors and partial retryable responses keep Pi's normal rendering", async () => {
 	const run = harness();
 	const otherError = { message: { role: "assistant", stopReason: "error", errorMessage: "HTTP 500", content: [] } };
 	assert.equal(await run.emit("message_end", otherError), undefined);
 	assert.equal(await run.emit("turn_end"), undefined);
-	const partial = { message: { ...rateLimited().message, content: [{ type: "text", text: "partial" }] } };
-	assert.equal(await run.emit("message_end", partial), undefined);
-	assert.equal(await run.emit("turn_end"), undefined);
+	for (const error of [rateLimited().message.errorMessage, "fetch failed"]) {
+		const partial = { message: { ...rateLimited().message, errorMessage: error, content: [{ type: "text", text: "partial" }] } };
+		assert.equal(await run.emit("message_end", partial), undefined);
+		assert.equal(await run.emit("turn_end"), undefined);
+	}
 	assert.equal(run.workingLabels.length, 0);
 });
 
