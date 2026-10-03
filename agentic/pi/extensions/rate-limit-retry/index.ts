@@ -6,9 +6,9 @@
  * that to indefinite retries for rate limits specifically — since 429s are bound
  * to clear eventually, there's no point giving up.
  *
- * When agent_end fires with a 429 error, we inject a hidden prompt asking the model
- * to continue. The model picks up where it left off and retries the request. This
- * repeats until the rate limit clears.
+ * After Pi finishes its built-in retries and the agent fully settles with a 429,
+ * we inject a hidden prompt asking the model to continue. This repeats until the
+ * rate limit clears.
  *
  * Invisibility & the assistant-role gotcha:
  *   The nudge is a `display: false` custom message sent with `{ triggerTurn: true }`
@@ -20,25 +20,16 @@
  *   "Cannot continue from message role: assistant". `sendMessage(..., { triggerTurn })`
  *   goes straight to the agent prompt and skips that path.
  *
- * Looping until the limit clears:
- *   `retrying429` is true for the lifetime of an injected retry loop. When an
- *   injected turn ends, we re-inspect its outcome: if it 429'd again we inject
- *   once more, and keep going until the turn ends as anything other than a 429
- *   (the limit cleared, or some unrelated stop). Each cycle is naturally paced —
- *   the built-in retry runs its full exponential backoff (~14s across 3 attempts)
- *   inside every turn before agent_end fires, so this never busy-spins.
- *
- * Loop safety:
- *   - `retrying429` stays true across the whole loop, so injected turns' own
- *     agent_start never re-arms a "genuine run" and the loop owns every agent_end
- *     until it clears the flag itself.
- *   - A genuine user turn gets at most one initial injection (guarded by `armed`).
- *
- * Non-interactive mode: suppressed in print/headless mode (-p) to avoid delaying
- * scripted/CI contexts.
+ * Pi emits agent_end for each built-in retry attempt, while the session is still
+ * busy. Remember only the latest outcome, confirm it before final settlement,
+ * then act on agent_settled after retries and queued continuations have finished.
+ * Aborted runs never reach the pre-settlement boundary and are not restarted.
+ * A new hidden turn gets the same treatment until it succeeds or stops for a
+ * reason other than a rate limit. This applies to interactive and print modes;
+ * the session switch /rate-limit-retry off cancels further retries.
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 /**
  * Minimal view of an agent message — just the fields we read.
@@ -58,13 +49,6 @@ const PROMPT =
 	"clear shortly. Please retry the request that failed and continue with your task. You do not\n" +
 	"need to mention the rate limit to the user — just proceed with the work.\n\n" +
 	"(This is an automated retry trigger, not a message from the user.)";
-
-/** True when we're inside an injected 429-retry loop. */
-let retrying429 = false;
-/** User-facing kill switch for the session. Defaults on. */
-let sessionEnabled = true;
-/** Track whether the current turn already had a 429 retry injected. */
-let armed = false;
 
 /** Check if the last assistant message indicates a 429 error. */
 function is429Error(messages: readonly MessageLike[]): boolean {
@@ -95,64 +79,36 @@ function is429Error(messages: readonly MessageLike[]): boolean {
 	);
 }
 
-let hasUI = false;
-
 export default function (pi: ExtensionAPI) {
-	// Detect if we're in interactive mode (has a UI)
-	pi.on("session_start", (_event, ctx) => {
-		hasUI = !!ctx.ui;
+	let sessionEnabled = true;
+	let lastOutcomeWas429 = false;
+	let readyToRetry = false;
+
+	pi.on("agent_start", () => {
+		lastOutcomeWas429 = false;
+		readyToRetry = false;
 	});
 
-	// Arm on the start of a genuine run; the injected loop's own start is
-	// skipped so it can never re-arm.
-	pi.on("agent_start", async () => {
-		if (!retrying429) armed = true;
+	pi.on("agent_end", (event) => {
+		// Pi emits this once per built-in retry attempt. Only the final
+		// agent_end before settlement determines whether to continue.
+		lastOutcomeWas429 = is429Error((event.messages ?? []) as MessageLike[]);
 	});
 
-	// Defer a hidden retry nudge until the session is idle, then fire it.
-	// Keeps `retrying429` true on success so the loop owns the next agent_end;
-	// clears it (ending the loop) if the session isn't idle to receive it.
-	const scheduleRetry = (ctx: ExtensionContext) => {
-		setImmediate(() => {
-			if (!ctx.isIdle()) {
-				retrying429 = false;
-				return;
-			}
-			pi.sendMessage(
-				{ customType: CUSTOM_TYPE, content: PROMPT, display: false },
-				{ triggerTurn: true },
-			);
-		});
-	};
+	pi.on("agent_before_settle", (event) => {
+		// Not emitted when the user aborts during Pi's own retry wait.
+		readyToRetry = event.outcome === "error" && lastOutcomeWas429;
+	});
 
-	pi.on("agent_end", async (event, ctx: ExtensionContext) => {
-		const messages = (event.messages ?? []) as MessageLike[];
-
-		// Inside the retry loop: keep going while turns still 429, otherwise the
-		// limit has cleared (or the turn ended some other way) — stop.
-		if (retrying429) {
-			if (sessionEnabled && is429Error(messages)) {
-				scheduleRetry(ctx);
-			} else {
-				retrying429 = false;
-			}
-			return;
-		}
-
-		// Only the first end of a genuine run is eligible, and only once.
-		if (!armed) return;
-		armed = false;
-
-		if (!sessionEnabled) return;
-		if (!hasUI) return;
-
-		// Only trigger when the run ended with a 429 error.
-		if (!is429Error(messages)) return;
-
-		// Enter the retry loop. Set the flag now so the injected loop's
-		// agent_start is recognised and doesn't re-arm.
-		retrying429 = true;
-		scheduleRetry(ctx);
+	pi.on("agent_settled", () => {
+		if (!sessionEnabled || !readyToRetry) return;
+		readyToRetry = false;
+		// Pi defers triggerTurn messages sent during agent_settled until after
+		// settlement, so this cannot race with its own built-in retries.
+		pi.sendMessage(
+			{ customType: CUSTOM_TYPE, content: PROMPT, display: false },
+			{ triggerTurn: true },
+		);
 	});
 
 	pi.registerCommand("rate-limit-retry", {
