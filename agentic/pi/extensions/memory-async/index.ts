@@ -200,11 +200,11 @@ function registerWriteTool(
 		label: name,
 		description,
 		promptSnippet:
-			"Queue a memory write and return immediately; the write is applied in the background by a detached worker.",
+			"Queue a memory write and return immediately; a detached worker attempts it afterward. A queued receipt is not proof of application.",
 		promptGuidelines: [
 			"memory_add and memory_update return as soon as the write is queued — do not re-call them to confirm, and do not wait for the write to land before finishing your reply.",
 			"Name the entity the knowledge belongs to (e.g. \"Dan prefers X\", not \"prefers X\") so the background librarian can attach it to the right concept; the write happens later, so you cannot correct it in this turn.",
-			"If a prior memory_query already identified an existing owner concept path, pass it as suggested_path. The service checks that path against search evidence; do not guess a path.",
+			"If a prior memory_query identified an existing owner concept path, pass it as suggested_path. The service reads the complete owner and checks consistency; do not guess a path.",
 			"Use /memory-queue to inspect or requeue background writes if a write matters.",
 		],
 		parameters,
@@ -237,7 +237,7 @@ function registerWriteTool(
 							`Queued ${name} as background job ${id}.${backlog}${failedNote}\n` +
 							(fs.existsSync(PAUSE_FILE)
 								? "The worker is paused; this write will not be applied until it is resumed. Tell the user."
-								: "The write is applied by the background worker; nothing further is needed from this turn."),
+								: "The worker will attempt the write. This queued receipt does not prove it was applied; check the job outcome before relying on it."),
 					},
 				],
 				details: undefined,
