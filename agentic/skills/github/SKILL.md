@@ -1,6 +1,6 @@
 ---
 name: github
-description:
+description: >-
   Use for anything GitHub-related: repositories, pull requests, issues, reviews,
   GitHub Actions, releases, gists, authentication, API queries, automation, and
   GitHub settings or workflows. Covers reading, creating, and managing GitHub
