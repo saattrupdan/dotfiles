@@ -34,7 +34,7 @@ test("checker verdict is strict and needs evidence", () => {
 type Handler = (event: unknown, ctx: ExtensionContext) => unknown;
 function harness(
 	check?: (condition: string, output: string, ctx: ExtensionContext, signal: AbortSignal) => Promise<Verdict>,
-	options: { mode?: "tui" | "rpc" | "print"; autoStart?: boolean } = {},
+	options: { mode?: "tui" | "rpc" | "print"; autoStart?: boolean; compact?: "complete" | "small" | "fail" | "pending"; contextTokens?: number } = {},
 ) {
 	const handlers = new Map<string, Handler>();
 	const sent: string[] = [];
@@ -43,6 +43,8 @@ function harness(
 	let nextTimer = 0;
 	let busy = false;
 	let pending = false;
+	let compactions = 0;
+	let finishCompaction: (() => void) | undefined;
 	let handler: ((args: string, ctx: ExtensionContext) => Promise<void>) | undefined;
 	const ctx = {
 		mode: options.mode ?? "tui",
@@ -50,8 +52,19 @@ function harness(
 		ui: { setStatus: () => {} },
 		isIdle: () => !busy,
 		hasPendingMessages: () => pending,
+		getContextUsage: () => options.contextTokens === undefined ? undefined : {
+			tokens: options.contextTokens, contextWindow: 128_000, percent: options.contextTokens / 1_280,
+		},
+		compact: (callbacks: { onComplete?: () => void; onError?: (error: Error) => void }) => {
+			compactions++;
+			if (options.compact === "small") callbacks.onError?.(new Error("Nothing to compact (session too small)"));
+			else if (options.compact === "fail") callbacks.onError?.(new Error("provider failed"));
+			else if (options.compact === "pending") finishCompaction = () => callbacks.onComplete?.();
+			else callbacks.onComplete?.();
+		},
 	} as unknown as ExtensionContext;
 	const pi = {
+		getSettings: () => ({ compaction: { keepRecentTokens: 20_000 } }),
 		on: (name: string, callback: Handler) => { handlers.set(name, callback); },
 		registerCommand: (name: string, options: { handler: (args: string, ctx: ExtensionContext) => Promise<void> }) => {
 			assert.equal(name, "loop");
@@ -75,6 +88,8 @@ function harness(
 	});
 	return {
 		sent, notices, timers,
+		compactions: () => compactions,
+		finishCompaction: () => finishCompaction?.(),
 		setBusy: (value: boolean) => { busy = value; },
 		setPending: (value: boolean) => { pending = value; },
 		command: async (args: string) => { assert.ok(handler); await handler(args, ctx); },
@@ -104,7 +119,10 @@ test("runs immediately, waits until settled, then schedules next run without dur
 	assert.deepEqual(h.sent, ["fix errors"]);
 	assert.equal(h.timers.size, 0);
 	await h.finish();
-	assert.equal(h.tick(), 0);
+	assert.equal(h.tick(), 0); // compact after the first run
+	assert.deepEqual(h.sent, ["fix errors"]);
+	assert.equal(h.compactions(), 1);
+	assert.equal(h.tick(), 0); // next run follows compaction
 	assert.deepEqual(h.sent, ["fix errors", "fix errors"]);
 	await h.finish();
 	assert.equal(h.timers.size, 0);
@@ -123,6 +141,8 @@ test("duration applies after settled and defers while another turn is busy", asy
 	assert.equal(h.tick(), 1_000);
 	h.setPending(false);
 	assert.equal(h.tick(), 1_000);
+	assert.equal(h.compactions(), 1);
+	assert.equal(h.tick(), 0);
 	assert.equal(h.sent.length, 2);
 	await h.command("stop");
 	assert.equal(h.timers.size, 0);
@@ -137,10 +157,51 @@ test("until checker sees final response and stops only on done", async () => {
 	await h.command("fix errors --until tests pass");
 	await h.finish("first result");
 	assert.equal(h.tick(), 0);
+	assert.equal(h.tick(), 0);
 	await h.finish("second result");
 	assert.deepEqual(calls, ["tests pass: first result", "tests pass: second result"]);
 	assert.equal(h.timers.size, 0);
 	assert.match(h.notices.at(-1) ?? "", /Loop complete after 2 run/);
+});
+
+test("small context skips unnecessary compaction attempts", async () => {
+	const h = harness(undefined, { contextTokens: 2_000 });
+	await h.command("--max-runs 2 work");
+	await h.finish();
+	assert.equal(h.tick(), 0);
+	assert.equal(h.compactions(), 0);
+	assert.equal(h.tick(), 0);
+	assert.equal(h.sent.length, 2);
+	await h.finish();
+});
+
+test("too-small compaction is skipped; other failures stop the loop", async () => {
+	const small = harness(undefined, { compact: "small" });
+	await small.command("--max-runs 2 work");
+	await small.finish();
+	assert.equal(small.tick(), 0);
+	assert.equal(small.tick(), 0);
+	assert.equal(small.sent.length, 2);
+	await small.finish();
+
+	const failed = harness(undefined, { compact: "fail" });
+	await failed.command("work");
+	await failed.finish();
+	failed.tick();
+	assert.equal(failed.sent.length, 1);
+	assert.equal(failed.timers.size, 0);
+	assert.match(failed.notices.at(-1) ?? "", /compaction failed/);
+});
+
+test("stop during compaction invalidates its eventual callback", async () => {
+	const h = harness(undefined, { compact: "pending" });
+	await h.command("work");
+	await h.finish();
+	h.tick();
+	await h.command("stop");
+	h.finishCompaction();
+	assert.equal(h.timers.size, 0);
+	assert.equal(h.sent.length, 1);
 });
 
 test("checker error and aborted iteration fail closed", async () => {

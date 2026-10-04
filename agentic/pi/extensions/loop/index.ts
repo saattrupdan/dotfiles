@@ -6,6 +6,9 @@ import { checkCondition, type Verdict } from "./checker.ts";
 const STATUS_KEY = "loop";
 const MAX_DURATION_MS = 24 * 60 * 60 * 1_000;
 const DEFAULT_UNTIL_CAP = 20;
+const COMPACTION_INSTRUCTIONS =
+	"Summarize this loop's goal, constraints, work completed, failed attempts, current file state, " +
+	"and the next concrete step. Keep the summary brief but retain information needed by the next iteration.";
 const USAGE = "Usage: /loop [1h2m3s] [--max-runs N] <prompt> [--until <condition>] | /loop status | /loop stop";
 
 export interface LoopOptions {
@@ -67,7 +70,8 @@ interface Dependencies {
 }
 interface ActiveLoop extends LoopOptions {
 	runs: number;
-	phase: "running" | "checking" | "waiting";
+	phase: "running" | "checking" | "waiting" | "compacting";
+	compacted: boolean;
 	lastOutput?: string;
 	failed?: boolean;
 	generation: number;
@@ -103,9 +107,19 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 		if (old) updateStatus(old.ctx);
 		if (reason && old) say(reason);
 	}
+	function hasEnoughContextToCompact(loop: ActiveLoop): boolean {
+		const tokens = loop.ctx.getContextUsage()?.tokens;
+		if (tokens === null || tokens === undefined) return true;
+		const settings = pi.getSettings().compaction;
+		const modelKey = loop.ctx.model ? `${loop.ctx.model.provider}/${loop.ctx.model.id}` : undefined;
+		const keepRecent = (modelKey ? settings?.modelOverrides?.[modelKey]?.keepRecentTokens : undefined)
+			?? settings?.keepRecentTokens ?? 20_000;
+		return tokens > keepRecent;
+	}
 	function schedule(loop: ActiveLoop) {
 		if (active !== loop) return;
 		loop.phase = "waiting";
+		loop.compacted = false;
 		updateStatus(loop.ctx);
 		const token = loop.generation;
 		const tick = () => {
@@ -113,6 +127,40 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 			if (active !== loop || generation !== token) return;
 			if (!loop.ctx.isIdle() || loop.ctx.hasPendingMessages()) {
 				timer = setTimer(tick, 1_000);
+				return;
+			}
+			if (!loop.compacted) {
+				// Pi cannot summarize entries wholly within its keep-recent window.
+				// Avoid a noisy "session too small" error on every short iteration.
+				if (!hasEnoughContextToCompact(loop)) {
+					loop.compacted = true;
+					timer = setTimer(tick, 0);
+					return;
+				}
+				loop.phase = "compacting";
+				updateStatus(loop.ctx);
+				const resume = () => {
+					if (active !== loop || generation !== token) return;
+					loop.compacted = true;
+					loop.phase = "waiting";
+					updateStatus(loop.ctx);
+					// Run on a later tick: the compaction callback can fire while Pi
+					// is still completing its own cleanup and idle transition.
+					timer = setTimer(tick, 0);
+				};
+				try {
+					loop.ctx.compact({
+						customInstructions: COMPACTION_INSTRUCTIONS,
+						onComplete: resume,
+						onError: (error) => {
+							if (active !== loop || generation !== token) return;
+							if (/^(Nothing to compact \(session too small\)|Already compacted)$/.test(error.message)) resume();
+							else stop(`Loop stopped: compaction failed (${error.message}).`);
+						},
+					});
+				} catch (error) {
+					stop(`Loop stopped: compaction failed (${String(error)}).`);
+				}
 				return;
 			}
 			run(loop);
@@ -171,7 +219,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 				say(String(error instanceof Error ? error.message : error));
 				return;
 			}
-			active = { ...options, runs: 0, phase: "running", generation: ++generation, ctx };
+			active = { ...options, runs: 0, phase: "running", compacted: false, generation: ++generation, ctx };
 			run(active);
 		},
 	});
