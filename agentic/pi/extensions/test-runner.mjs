@@ -15,6 +15,7 @@ await jiti.import(path.join(root, "_voice-input", "syv.test.ts"), { default: fal
 await jiti.import(path.join(root, "search", "index-store.test.ts"), { default: false });
 await jiti.import(path.join(root, "mcp-collapse", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "rate-limit-retry", "index.test.ts"), { default: false });
+await jiti.import(path.join(root, "loop", "index.test.ts"), { default: false });
 await import(path.join(root, "non-interactive", "test.mjs"));
 await jiti.import(path.join(root, "git-worktree-isolation", "git.test.ts"), { default: false });
 await jiti.import(path.join(root, "read", "heic.test.ts"), { default: false });
