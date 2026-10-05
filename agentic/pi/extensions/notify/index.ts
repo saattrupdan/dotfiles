@@ -14,7 +14,7 @@
  *  - The "finished" notification is suppressed if any tool errors occurred
  *    during the turn, even if the agent recovered and finished anyway.
  *  - The "failed" notification is suppressed for transient/retryable errors
- *    (rate limits, tool timeouts, network errors, Node version mismatches)
+ *    (rate limits, Codex overloads, tool timeouts, network errors, Node version mismatches)
  *    that Pi automatically recovers from.
  *  - Notifications fire only on `agent_end`, not on intermediate `turn_end`
  *    events within multi-step workflows (e.g., planner → builders → reviewer).
@@ -295,7 +295,7 @@ export default function (pi: ExtensionAPI) {
 
 			// Skip notifications for transient/retryable errors:
 			// - "terminated" = Node.js version mismatch (Node 26 undici bug), auto-recovers
-			// - rate-limit errors (with or without HTTP 429), Pi retries automatically
+			// - rate-limit and Codex overload errors, Pi retries automatically
 			// - tool_call_timeout = tool call timed out, Pi retries automatically
 			// - http_error = transient network errors, Pi retries automatically
 			// Only notify for blocking errors where no retries are attempted.
@@ -307,6 +307,7 @@ export default function (pi: ExtensionAPI) {
 				msg.includes("rate-limited") ||
 				msg.includes("rate_limited") ||
 				msg.includes("too many requests") ||
+				msg.includes("our servers are currently overloaded. please try again later.") ||
 				msg.includes("tool_call_timeout") ||
 				msg.includes("http_error")
 			)
