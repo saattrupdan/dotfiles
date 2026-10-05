@@ -9,7 +9,7 @@
   "defaultProjectTrust": "always",
   "theme": "gruvbox",
   "terminal": {
-    "clearOnShrink": true
+    "clearOnShrink": false
   },
   "packages": [],
   "extensions": [
