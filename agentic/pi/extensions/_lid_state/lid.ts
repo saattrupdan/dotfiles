@@ -24,7 +24,7 @@ export function isLidClosed(): boolean {
 	try {
 		// AppleClamshellState: Yes = closed, No = open
 		const output = execSync(
-			"ioreg -r -l -n AppleClamshellState 2>/dev/null",
+			"ioreg -r -l -k AppleClamshellState 2>/dev/null",
 			{ encoding: "utf8", maxBuffer: 10 * 1024 }
 		);
 		// Look for "AppleClamshellState" = Yes (case-insensitive for robustness)
@@ -44,7 +44,7 @@ export function getLidState(): "closed" | "open" | "unknown" {
 
 	try {
 		const output = execSync(
-			"ioreg -r -l -n AppleClamshellState 2>/dev/null",
+			"ioreg -r -l -k AppleClamshellState 2>/dev/null",
 			{ encoding: "utf8", maxBuffer: 10 * 1024 }
 		);
 		if (/AppleClamshellState.*=\s*Yes/i.test(output)) {

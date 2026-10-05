@@ -17,6 +17,16 @@ for example `1h2m3s`. The maximum duration is 24 hours. Omit the duration to
 start the next run immediately after the previous run (and check) settles. The
 first run always starts immediately. There is one active loop per Pi session.
 
+Starting a loop automatically enables non-interactive mode for its full lifetime:
+iterations are instructed not to ask questions, and the `question` tool is
+blocked in the orchestrator and its subagents. The mode ends when the loop stops.
+On macOS, caffeinate treats the whole loop (including delays, compaction, and
+completion checks) as a live session, so a shut lid does not put the laptop to
+sleep between runs when caffeinate is configured and enabled. If the loop ends
+with the lid closed, the Mac stays awake until the lid opens; `/caffeinate off`
+or session shutdown releases it sooner, and the thermal safety cutoff still
+applies. Keeping the lid shut after completion consumes battery power.
+
 Each working run gets the same prompt in the **same Pi session**. Before each
 subsequent run, the extension compacts earlier conversation into a short
 progress summary **when Pi has enough history to compact**. The next run then

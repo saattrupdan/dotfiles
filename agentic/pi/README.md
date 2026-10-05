@@ -144,16 +144,19 @@ call fields, frontmatter, skill-scoping, refusal, and worktree semantics.
 
 ### `caffeinate`
 
-Keeps the Mac awake **while an agent run is in progress** — even with the lid
-closed — so you can kick off a long run, shut the laptop, and let it finish.
-When the run ends, normal sleep behaviour is restored: if the lid is closed at
-that point the Mac sleeps immediately; if it's open nothing changes.
+Keeps the Mac awake **while an agent run or `/loop` is in progress** — even
+with the lid closed. A loop stays awake between runs, during compaction, and
+while checking its completion condition. After a loop ends with the lid shut,
+the Mac stays awake until the lid reopens (or `/caffeinate off`/shutdown), so
+finishing a loop does not trigger clamshell sleep. This consumes battery power.
+For ordinary runs, normal sleep behaviour returns when the run ends.
 
 - `agent_start` → spawns `caffeinate -dimsu` (no idle/display/disk/system sleep)
   and asks a session-lived watcher to set `pmset -a disablesleep 1` (the only
   switch that defeats lid-close sleep).
-- `agent_end` → tells the watcher to set `pmset -a disablesleep 0` and kills the
-  `caffeinate` process.
+- `agent_end` → releases the watcher and `caffeinate` process unless a loop is
+  active; a stopped loop waits for any current run to finish, then releases when
+  the lid is open.
 
 `pmset disablesleep` needs root. The extension **never prompts for a password** —
 it only activates when passwordless access to `pmset` is already configured.

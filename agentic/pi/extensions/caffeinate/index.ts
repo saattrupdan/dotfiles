@@ -1,12 +1,13 @@
 /**
- * Keep the Mac awake *while an agent run is in progress* — even with the lid
- * closed — then let it sleep normally once the run finishes.
+ * Keep the Mac awake while an agent run or a /loop is active — even with the
+ * lid closed. After a loop finishes with the lid shut, hold until it reopens.
  *
  *   • agent_start → the Mac stays awake; closing the lid no longer sleeps it,
  *                   so a long run keeps going while you walk away.
- *   • agent_end   → normal sleep behaviour is restored. If the lid is shut at
- *                   that point the Mac sleeps right away; if it's open nothing
- *                   changes (the usual idle timer applies).
+ *   • agent_end   → normal sleep behaviour is restored unless /loop is still
+ *                   active (including its wait and completion check). A stopped
+ *                   loop keeps power held until any current run finishes. If
+ *                   its lid is still shut, keep holding until it opens.
  *
  * Two macOS mechanisms, combined, because neither is sufficient alone:
  *
@@ -28,7 +29,7 @@
  *
  * When it is active, a session-lived watcher process holds the privilege for
  * the whole session and toggles `disablesleep` 1/0 from a tiny state file that
- * pi writes at agent_start / agent_end — so the lid switch tracks the run
+ * pi writes as runs and loops start/end — so the lid switch tracks the work
  * without pi itself needing root. The watcher also restores `disablesleep 0`
  * and exits if this pi process dies, so a crash never leaves the Mac unable to
  * sleep.
@@ -44,6 +45,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { isLoopActive, onLoopChange } from "../_loop_state/state.ts";
+import { isLidClosed } from "../_lid_state/lid.ts";
+import { PowerLifecycle } from "./lifecycle.ts";
 
 const IS_MACOS = os.platform() === "darwin";
 
@@ -85,7 +89,7 @@ function installCommand(user: string): string {
 let piApi: ExtensionAPI | null = null;
 // User-facing kill switch for the session (`/caffeinate off`). Defaults on.
 let sessionEnabled = true;
-// Whether a run is currently being held awake.
+// Whether a run or loop is currently being held awake.
 let engaged = false;
 // Tri-state cache of the passwordless-sudo probe: null = not yet checked.
 let sudoOk: boolean | null = null;
@@ -94,7 +98,7 @@ let sudoOk: boolean | null = null;
 let watcherStarted = false;
 // Show the "set up sudoers" nudge at most once per session.
 let nudged = false;
-// The per-run `caffeinate` assertion process.
+// The per-run or per-loop `caffeinate` assertion process.
 let caffeinateChild: ChildProcess | null = null;
 // Interval handle for the battery-hot marker poller.
 let hotCheckRef: ReturnType<typeof setInterval> | null = null;
@@ -207,7 +211,8 @@ function startWatcher(): void {
 
 function engage(ctx: ExtensionContext): void {
 	if (!IS_MACOS || !sessionEnabled || engaged) return;
-	if (!ctx.hasUI) return;
+	// RPC loops are live sessions too, even though RPC has no TUI.
+	if (!ctx.hasUI && !isLoopActive()) return;
 
 	// Clean up any stale hot-marker left from a prior crashed session.
 	fs.rmSync(HOT_MARKER_PATH, { force: true });
@@ -224,7 +229,7 @@ function engage(ctx: ExtensionContext): void {
 	writeState("1");
 	startWatcher();
 
-	// Idle/display/system assertions for the duration of the run. Dies with us
+	// Idle/display/system assertions for the duration of the work. Dies with us
 	// as an extra backstop even if the watcher is somehow lost.
 	try {
 		const p = spawn("caffeinate", ["-dimsu"], { stdio: "ignore", detached: true });
@@ -290,6 +295,7 @@ export default function (pi: ExtensionAPI) {
 	if (process.env.PI_SUBAGENT_CHILD === "1") return;
 
 	piApi = pi;
+	const lifecycle = new PowerLifecycle<ExtensionContext>(engage, release, () => engaged, isLidClosed);
 
 	// Surface the setup hint right when Pi opens, before any message is sent, so
 	// it's discoverable. Only when unconfigured, and only once per session.
@@ -298,18 +304,15 @@ export default function (pi: ExtensionAPI) {
 		if (!hasPasswordlessPmset()) nudge();
 	});
 
-	// Engage for the lifetime of each agent run, release when it ends.
-	pi.on("agent_start", async (_event, ctx) => {
-		engage(ctx);
-	});
-	pi.on("agent_end", async (_event, ctx) => {
-		release(ctx);
-	});
+	// Hold power across the entire loop, including delays and checker calls.
+	onLoopChange("caffeinate", (active, ctx) => lifecycle.loopChanged(active, ctx));
+	pi.on("agent_start", async (_event, ctx) => lifecycle.agentStarted(ctx));
+	pi.on("agent_end", async (_event, ctx) => lifecycle.agentEnded(ctx));
 
 	// Teardown: drop the state file and kill caffeinate. The watcher restores
 	// `disablesleep 0` either on the missing state or on this pid dying.
 	pi.on("session_shutdown", async (_event, ctx) => {
-		release(ctx);
+		lifecycle.stop(ctx);
 		try {
 			fs.rmSync(STATE_PATH, { force: true });
 		} catch {
@@ -324,7 +327,7 @@ export default function (pi: ExtensionAPI) {
 			const arg = args.trim().toLowerCase();
 			if (arg === "off") {
 				sessionEnabled = false;
-				release(ctx);
+				lifecycle.stop(ctx);
 			} else if (arg === "on") {
 				sessionEnabled = true;
 			} else if (arg !== "" && arg !== "status") {
@@ -346,7 +349,9 @@ export default function (pi: ExtensionAPI) {
 					"off — needs passwordless pmset. Run this once in a terminal:\n    " +
 					installCommand(currentUser());
 			} else if (engaged) {
-				state = "active — this run keeps the Mac awake, even with the lid closed.";
+				state = lifecycle.waitingForLid
+					? "active — loop finished with the lid shut; staying awake until it opens."
+					: "active — this run or loop keeps the Mac awake, even with the lid closed.";
 			} else {
 				state = "armed — runs will keep the Mac awake (lid-close included) while in progress.";
 			}

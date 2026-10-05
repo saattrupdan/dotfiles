@@ -3,6 +3,8 @@ import { test } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import loopExtension, { parseDuration, parseLoopArgs } from "./index.ts";
 import { parseVerdict, type Verdict } from "./checker.ts";
+import { isLoopActive, onLoopChange } from "../_loop_state/state.ts";
+import { NON_INTERACTIVE_BANNER } from "../non-interactive/prompt.ts";
 
 test("duration accepts ordered h/m/s components and rejects invalid values", () => {
 	assert.equal(parseDuration("1h2m3s"), 3_723_000);
@@ -38,6 +40,7 @@ function harness(
 ) {
 	const handlers = new Map<string, Handler>();
 	const sent: string[] = [];
+	const rawSent: string[] = [];
 	const notices: string[] = [];
 	const timers = new Map<number, { callback: () => void; delay: number }>();
 	let nextTimer = 0;
@@ -71,7 +74,8 @@ function harness(
 			handler = options.handler;
 		},
 		sendUserMessage: (prompt: string) => {
-			sent.push(prompt);
+			rawSent.push(prompt);
+			sent.push(prompt.replace(`${NON_INTERACTIVE_BANNER}\n\n`, ""));
 			busy = true;
 			if (options.autoStart !== false) void handlers.get("agent_start")?.({}, ctx);
 		},
@@ -87,7 +91,7 @@ function harness(
 		clearTimer: (id) => { timers.delete(id as unknown as number); },
 	});
 	return {
-		sent, notices, timers,
+		sent, rawSent, notices, timers,
 		compactions: () => compactions,
 		finishCompaction: () => finishCompaction?.(),
 		setBusy: (value: boolean) => { busy = value; },
@@ -112,6 +116,23 @@ function harness(
 		},
 	};
 }
+
+test("loop signals its entire lifetime and instructs each iteration not to ask questions", async () => {
+	const transitions: boolean[] = [];
+	onLoopChange("loop-test", (active) => transitions.push(active));
+	const h = harness();
+	await h.command("--max-runs 2 fix errors");
+	assert.equal(isLoopActive(), true);
+	assert.equal(h.rawSent[0], `${NON_INTERACTIVE_BANNER}\n\nfix errors`);
+	await h.finish();
+	assert.equal(isLoopActive(), true); // still live while waiting and compacting
+	h.tick();
+	h.tick();
+	assert.equal(h.rawSent[1], `${NON_INTERACTIVE_BANNER}\n\nfix errors`);
+	await h.finish();
+	assert.equal(isLoopActive(), false);
+	assert.deepEqual(transitions, [true, false]);
+});
 
 test("runs immediately, waits until settled, then schedules next run without duration", async () => {
 	const h = harness();
@@ -230,6 +251,15 @@ test("stop, new input and session shutdown invalidate timers", async () => {
 	await h.finish();
 	await h.emit("session_shutdown");
 	assert.equal(h.timers.size, 0);
+});
+
+test("session startup clears a loop signal left by a reloaded extension", async () => {
+	const h = harness();
+	await h.command("work");
+	const reloaded = harness();
+	await reloaded.emit("session_start");
+	assert.equal(isLoopActive(), false);
+	await h.command("stop");
 });
 
 test("a turn that never starts stops instead of leaving the loop armed", async () => {

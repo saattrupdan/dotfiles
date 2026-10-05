@@ -10,6 +10,7 @@ const require = createRequire(path.join(root, "..", "_outliner", "package.json")
 const { createJiti } = require("jiti");
 const jiti = createJiti(import.meta.url, { moduleCache: false });
 const { default: nonInteractive } = await jiti.import(path.join(root, "index.ts"), { default: false });
+const { setLoopActive } = await jiti.import(path.join(root, "..", "_loop_state", "state.ts"), { default: false });
 
 test("/non-interactive queues during streaming and enables mode for the message", async () => {
 	const previous = process.env.PI_NON_INTERACTIVE;
@@ -40,6 +41,49 @@ test("/non-interactive queues during streaming and enables mode for the message"
 	} finally {
 		if (previous === undefined) delete process.env.PI_NON_INTERACTIVE;
 		else process.env.PI_NON_INTERACTIVE = previous;
+	}
+});
+
+test("loop keeps non-interactive mode through turns and clears it when stopped", async () => {
+	const previous = process.env.PI_NON_INTERACTIVE;
+	const listeners = new Map();
+	const pi = {
+		registerCommand() {},
+		on(event, listener) { listeners.set(event, listener); },
+	};
+	try {
+		nonInteractive(pi);
+		setLoopActive(true, {});
+		assert.equal(process.env.PI_NON_INTERACTIVE, "1");
+		await listeners.get("input")({ source: "extension" });
+		await listeners.get("agent_start")();
+		await listeners.get("agent_end")();
+		assert.equal(process.env.PI_NON_INTERACTIVE, "1");
+		setLoopActive(false, {});
+		assert.equal(process.env.PI_NON_INTERACTIVE, undefined);
+	} finally {
+		setLoopActive(false, {});
+		if (previous === undefined) delete process.env.PI_NON_INTERACTIVE;
+		else process.env.PI_NON_INTERACTIVE = previous;
+	}
+});
+
+test("subagents keep the inherited question guard", () => {
+	const priorChild = process.env.PI_SUBAGENT_CHILD;
+	const priorFlag = process.env.PI_NON_INTERACTIVE;
+	try {
+		process.env.PI_SUBAGENT_CHILD = "1";
+		process.env.PI_NON_INTERACTIVE = "1";
+		nonInteractive({
+			registerCommand() { throw new Error("child must not register command"); },
+			on() { throw new Error("child must not clear inherited mode"); },
+		});
+		assert.equal(process.env.PI_NON_INTERACTIVE, "1");
+	} finally {
+		if (priorChild === undefined) delete process.env.PI_SUBAGENT_CHILD;
+		else process.env.PI_SUBAGENT_CHILD = priorChild;
+		if (priorFlag === undefined) delete process.env.PI_NON_INTERACTIVE;
+		else process.env.PI_NON_INTERACTIVE = priorFlag;
 	}
 });
 

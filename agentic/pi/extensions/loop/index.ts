@@ -2,6 +2,8 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { checkCondition, type Verdict } from "./checker.ts";
+import { setLoopActive } from "../_loop_state/state.ts";
+import { NON_INTERACTIVE_BANNER } from "../non-interactive/prompt.ts";
 
 const STATUS_KEY = "loop";
 const MAX_DURATION_MS = 24 * 60 * 60 * 1_000;
@@ -104,7 +106,10 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 		checker = undefined;
 		const old = active;
 		active = undefined;
-		if (old) updateStatus(old.ctx);
+		if (old) {
+			setLoopActive(false, old.ctx);
+			updateStatus(old.ctx);
+		}
 		if (reason && old) say(reason);
 	}
 	function hasEnoughContextToCompact(loop: ActiveLoop): boolean {
@@ -181,7 +186,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 			if (active === loop && loop.phase === "running") stop("Loop stopped: the next turn did not start (check Pi errors/authentication).");
 		}, 60_000);
 		try {
-			pi.sendUserMessage(loop.prompt);
+			pi.sendUserMessage(`${NON_INTERACTIVE_BANNER}\n\n${loop.prompt}`);
 		} catch (error) {
 			stop(`Loop stopped: unable to send prompt (${String(error)}).`);
 		}
@@ -220,6 +225,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 				return;
 			}
 			active = { ...options, runs: 0, phase: "running", compacted: false, generation: ++generation, ctx };
+			setLoopActive(true, ctx);
 			run(active);
 		},
 	});
@@ -284,7 +290,13 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 		}
 		nextOrStop(loop);
 	});
-	pi.on("session_shutdown", () => stop());
-	pi.on("session_start", () => stop());
-	pi.on("session_tree", () => stop());
+	function reset(ctx: ExtensionContext) {
+		stop();
+		// A reload may recreate this extension while the process-wide signal
+		// still belongs to the old instance, which no longer has an active loop.
+		setLoopActive(false, ctx);
+	}
+	pi.on("session_shutdown", (_event, ctx) => reset(ctx));
+	pi.on("session_start", (_event, ctx) => reset(ctx));
+	pi.on("session_tree", (_event, ctx) => reset(ctx));
 }
