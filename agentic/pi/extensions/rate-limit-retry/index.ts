@@ -1,5 +1,5 @@
 /**
- * Quiet, unbounded recovery for rate-limited and transiently disconnected model requests.
+ * Quiet, unbounded recovery for rate-limited, overloaded, and transiently disconnected model requests.
  *
  * Pi renders every failed assistant message and reports when its built-in retry
  * budget expires. Mask only empty, retryable responses in message_end, then
@@ -18,6 +18,7 @@ const MAX_DELAY_MS = 60_000;
 function isRetryableError(error: string | undefined): boolean {
 	const text = (error ?? "").toLowerCase();
 	return /\b429\b/.test(text) || /rate[ _-]?limit/.test(text) || text.includes("too many requests") ||
+		/\b(?:servers?|service) (?:is|are) (?:currently )?overloaded\b/.test(text) ||
 		/\b(econnreset|econnrefused|etimedout|enotfound|eai_again|enetunreach|ehostunreach)\b/.test(text) ||
 		/\b(fetch failed|network error|socket hang up|connection (?:reset|refused|timed out)|no route to host|temporary failure in name resolution)\b/.test(text);
 }
@@ -121,7 +122,7 @@ export default function (pi: ExtensionAPI, wait = waitForRetry) {
 	});
 
 	pi.registerCommand("rate-limit-retry", {
-		description: "Toggle quiet retry of rate limits and transient model network errors",
+		description: "Toggle quiet retry of rate limits, server overloads, and transient model network errors",
 		handler: async (args) => {
 			const arg = args.trim().toLowerCase();
 			if (arg === "off") {
@@ -141,7 +142,7 @@ export default function (pi: ExtensionAPI, wait = waitForRetry) {
 			pi.sendMessage({
 				customType: "rate-limit-retry:status",
 				content: sessionEnabled
-					? "Model retry: armed — 429 and transient network errors retry quietly until success."
+					? "Model retry: armed — 429, server overload, and transient network errors retry quietly until success."
 					: "Model retry: off for this session (`/rate-limit-retry on` to re-enable).",
 				display: true,
 			});

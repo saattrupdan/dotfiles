@@ -115,12 +115,33 @@ test("empty transient transport errors retry until connectivity returns", async 
 	assert.equal(await run.emit("turn_end"), undefined);
 });
 
+test("empty server overload errors retry quietly until recovery", async () => {
+	const run = harness();
+	for (const error of [
+		"Error: Codex error: Our servers are currently overloaded. Please try again later.",
+		"Service is overloaded. Please try again later.",
+	]) {
+		const failed = { message: { role: "assistant", stopReason: "error", errorMessage: error, content: [] } };
+		await run.emit("message_start", failed);
+		assert.equal(failed.message.stopReason, "pending");
+		assert.equal(failed.message.errorMessage, undefined);
+		const masked = await run.emit("message_end", { message: { ...failed.message, stopReason: "error", errorMessage: error } }) as { message: { stopReason: string; errorMessage?: string } };
+		assert.equal(masked.message.stopReason, "stop");
+		assert.equal(masked.message.errorMessage, undefined);
+		assert.equal((await run.emit("turn_end") as { continue: boolean }).continue, true);
+	}
+	assert.deepEqual(run.delays, [2000, 4000]);
+	assert.equal(run.workingLabels.at(-1), "Retrying for the 2nd time...");
+	await run.emit("message_end", success());
+	assert.equal(await run.emit("turn_end"), undefined);
+});
+
 test("other errors and partial retryable responses keep Pi's normal rendering", async () => {
 	const run = harness();
 	const otherError = { message: { role: "assistant", stopReason: "error", errorMessage: "HTTP 500", content: [] } };
 	assert.equal(await run.emit("message_end", otherError), undefined);
 	assert.equal(await run.emit("turn_end"), undefined);
-	for (const error of [rateLimited().message.errorMessage, "fetch failed"]) {
+	for (const error of [rateLimited().message.errorMessage, "fetch failed", "Our servers are currently overloaded. Please try again later."]) {
 		const partial = { message: { ...rateLimited().message, errorMessage: error, content: [{ type: "text", text: "partial" }] } };
 		assert.equal(await run.emit("message_end", partial), undefined);
 		assert.equal(await run.emit("turn_end"), undefined);
