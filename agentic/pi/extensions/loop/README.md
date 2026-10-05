@@ -45,10 +45,13 @@ as success. The checker is instructed not to modify files, but its shell tool is
 its work as you would any other agent action.
 
 `--until` loops default to 20 runs unless `--max-runs N` overrides the cap.
-Plain loops have no default cap. `/loop stop` prevents future runs and cancels
-an active checker; it does not abort an already-running working turn. Starting
-another user task (interactive or RPC) stops the loop. Session changes,
-reloads, and shutdowns clear its timer. The loop is in-memory only, requires an
+Plain loops have no default cap. `/loop stop` is the explicit way to stop a
+loop: it prevents future runs and cancels an active checker, but does not abort
+an already-running working turn. Sending a user message (interactive or RPC)
+does not stop the loop; the next run waits until Pi is idle and pending messages
+have settled. Loops can also end automatically when a completion condition or
+run cap is reached, or on an error. Session changes, reloads, and shutdowns
+clear the loop. The loop is in-memory only, requires an
 interactive Pi session (TUI or RPC), and does not survive a restart. Print/JSON
 mode cannot keep an extension-started turn alive and is not supported. The interval is measured from the end of the
 working run and any completion check; compaction happens after the delay and

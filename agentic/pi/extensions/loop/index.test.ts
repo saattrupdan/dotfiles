@@ -97,6 +97,9 @@ function harness(
 		setBusy: (value: boolean) => { busy = value; },
 		setPending: (value: boolean) => { pending = value; },
 		command: async (args: string) => { assert.ok(handler); await handler(args, ctx); },
+		input: async (source: "interactive" | "rpc", text: string) => {
+			await handlers.get("input")?.({ source, text }, ctx);
+		},
 		emit: async (name: string, event: unknown = {}) => {
 			const callback = handlers.get(name);
 			assert.ok(callback, name);
@@ -237,15 +240,30 @@ test("checker error and aborted iteration fail closed", async () => {
 	assert.match(h.notices.at(-1) ?? "", /iteration failed/);
 });
 
-test("stop, new input and session shutdown invalidate timers", async () => {
+test("user messages do not stop a running or waiting loop", async () => {
+	for (const source of ["interactive", "rpc"] as const) {
+		const h = harness(undefined, { contextTokens: 2_000 });
+		await h.command("1m work");
+		await h.input(source, "additional instructions");
+		await h.finish();
+		assert.equal(h.timers.size, 1);
+		await h.input(source, "a new task");
+		h.setPending(true);
+		assert.equal(h.tick(), 60_000);
+		h.setPending(false);
+		assert.equal(h.tick(), 1_000);
+		assert.equal(h.tick(), 0);
+		assert.deepEqual(h.sent, ["work", "work"]);
+		await h.command("stop");
+		assert.equal(h.timers.size, 0);
+	}
+});
+
+test("stop and session shutdown invalidate timers", async () => {
 	const h = harness();
 	await h.command("work");
 	await h.finish();
 	await h.command("stop");
-	assert.equal(h.timers.size, 0);
-	await h.command("work");
-	await h.emit("input", { source: "rpc", text: "a new task" });
-	await h.finish();
 	assert.equal(h.timers.size, 0);
 	await h.command("work");
 	await h.finish();

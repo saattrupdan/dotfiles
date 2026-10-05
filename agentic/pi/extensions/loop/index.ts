@@ -230,9 +230,6 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 		},
 	});
 
-	pi.on("input", (event) => {
-		if (active && event.source !== "extension") stop("Loop stopped: new user input.");
-	});
 	pi.on("agent_start", () => {
 		if (startWatchdog !== undefined) clearTimer(startWatchdog);
 		startWatchdog = undefined;
