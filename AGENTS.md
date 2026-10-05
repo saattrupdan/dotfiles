@@ -34,9 +34,8 @@ use the project-local `tsc`/`eslint`):
 ```sh
 cd agentic/pi/extensions
 
-# Typecheck — the trailing filter drops errors from third-party TypeScript
-# sources (pi-mcp-adapter ships .ts, which mcp-collapse imports).
-./node_modules/.bin/tsc -p tsconfig.json --noEmit 2>&1 | grep "error TS" | grep -v node_modules
+# Typecheck
+./node_modules/.bin/tsc -p tsconfig.json --noEmit
 
 # Lint — eslint.config.mjs already ignores **/node_modules/**.
 ./node_modules/.bin/eslint .
@@ -44,6 +43,9 @@ cd agentic/pi/extensions
 
 A clean typecheck prints nothing and a clean lint reports 0 errors (the ~26
 `no-explicit-any` warnings are pre-existing style noise, not failures).
+`pi-mcp-adapter` publishes raw TypeScript as its type entry. `tsconfig.json` maps
+that import to `_types/pi-mcp-adapter.d.ts`, which declares the default factory
+used by `mcp-collapse` without checking the dependency's entire source tree.
 
 **How `@earendil-works/*` resolves for the typecheck.** `tsconfig.json` maps
 those specifiers and `typebox` onto `extensions/node_modules`, and `setup.sh`
