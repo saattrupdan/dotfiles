@@ -26,7 +26,7 @@
  * (that's the whole point — macOS surfaces it system-wide). In iTerm2, the
  * terminal-notifier helper makes alerts clickable: a click runs AppleScript
  * that reveals the originating window, tab, and pane. Alerts are suppressed
- * when that iTerm2 tab is already visible and iTerm2 is frontmost. No
+ * when that iTerm2 pane is already active and iTerm2 is frontmost. No
  * notification is sent outside iTerm2 or if terminal-notifier is unavailable.
  *
  * Orchestrator-only: subagent processes never have a UI and their question
@@ -76,7 +76,7 @@ function quoteForShell(value: string): string {
 	return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
-function isOriginatingITermTabFocused(sessionID: string, callback: (focused: boolean) => void): void {
+function isOriginatingITermPaneFocused(sessionID: string, callback: (focused: boolean) => void): void {
 	const script = `
 		on run argv
 			set targetID to item 1 of argv
@@ -86,10 +86,7 @@ function isOriginatingITermTabFocused(sessionID: string, callback: (focused: boo
 			end tell
 			tell application "iTerm2"
 				try
-					set activeTab to current tab of current window
-					repeat with aSession in sessions of activeTab
-						if id of aSession is targetID then return "true"
-					end repeat
+					if id of current session of current window is targetID then return "true"
 				end try
 			end tell
 			return "false"
@@ -143,10 +140,12 @@ function notifyViaITerm(title: string, body: string, sound: string): void {
 					repeat with aTab in tabs of aWindow
 						repeat with aSession in sessions of aTab
 							if id of aSession is targetID then
-								select aSession
-								select aTab
-								select aWindow
 								activate
+								select aTab
+								select aSession
+								-- Selecting the window last gives it keyboard focus.
+								-- Selecting a session alone only activates its pane within the tab.
+								select aWindow
 								return
 							end if
 						end repeat
@@ -176,7 +175,7 @@ function notifyViaITerm(title: string, body: string, sound: string): void {
 
 	// Treat the focus check as best-effort. If AppleScript fails or times out,
 	// show the notification rather than risk silently losing an alert.
-	isOriginatingITermTabFocused(sessionID, (focused) => {
+	isOriginatingITermPaneFocused(sessionID, (focused) => {
 		if (!focused) sendNotification();
 	});
 }
