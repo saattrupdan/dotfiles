@@ -27,12 +27,11 @@
  * haven't, the extension stays completely inert and, on the first run, prints a
  * one-time hint showing the exact line to add. No prompts, no half-measures.
  *
- * When it is active, a session-lived watcher process holds the privilege for
- * the whole session and toggles `disablesleep` 1/0 from a tiny state file that
- * pi writes as runs and loops start/end — so the lid switch tracks the work
- * without pi itself needing root. The watcher also restores `disablesleep 0`
- * and exits if this pi process dies, so a crash never leaves the Mac unable to
- * sleep.
+ * A session-lived watcher reconciles the global sleep switch from all live
+ * Pi state files under a shared lock. This keeps one session's cleanup from
+ * releasing another's hold, and restores normal sleep after the last active
+ * session ends or dies. It rechecks the actual pmset setting each second in
+ * case another process or a power transition changed it.
  *
  * macOS-only and orchestrator-only: subagents share the parent's machine and
  * the parent's run already brackets their work, so they never touch power. On
@@ -48,6 +47,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { isLoopActive, onLoopChange } from "../_loop_state/state.ts";
 import { isLidClosed } from "../_lid_state/lid.ts";
 import { PowerLifecycle } from "./lifecycle.ts";
+import { watcherShell } from "./watcher.ts";
 
 const IS_MACOS = os.platform() === "darwin";
 
@@ -139,6 +139,15 @@ function hasPasswordlessPmset(): boolean {
 	return sudoOk;
 }
 
+function isSleepDisabled(): boolean {
+	try {
+		const result = spawnSync("/usr/bin/pmset", ["-g", "custom"], { encoding: "utf8", timeout: 2000 });
+		return result.status === 0 && /^\s*(?:SleepDisabled|disablesleep)\s+1\s*$/im.test(result.stdout);
+	} catch {
+		return false;
+	}
+}
+
 /**
  * One-time hint telling the user how to enable the extension. Posted as a
  * displayed message (not a transient toast) so it persists in the transcript
@@ -159,44 +168,12 @@ function nudge(): void {
 	});
 }
 
-/**
- * The watcher loop: poll the state file every second, mirror it into
- * `disablesleep` via `sudo -n` (passwordless, already verified), and restore
- * `disablesleep 0` when either the state file is removed or this pi process
- * exits.
- */
-function watcherShell(): string {
-	const state = STATE_PATH.replace(/'/g, `'\\''`);
-	const pmset = "sudo -n /usr/bin/pmset";
-	const hotMarker = HOT_MARKER_PATH.replace(/'/g, `'\\''`);
-
-	// Keep this as a real multi-line shell script: in a one-liner, any inline
-	// `#` comment eats the rest of the watcher and prevents the restore path.
-	return [
-		`prev=; hot=`,
-		`cleanup() { ${pmset} -a disablesleep 0 2>/dev/null; /bin/rm -f '${state}' '${hotMarker}'; }`,
-		`trap cleanup EXIT`,
-		`trap 'exit 0' HUP INT TERM`,
-		`while /bin/kill -0 ${process.pid} 2>/dev/null; do`,
-		`\tif [ -f '${state}' ]; then s=$(/bin/cat '${state}'); else s=0; fi`,
-		`\tcase "$s" in 1) ;; *) s=0 ;; esac`,
-		`\tif [ "$s" != "$prev" ]; then ${pmset} -a disablesleep "$s" 2>/dev/null; prev="$s"; fi`,
-		`\ttmp=$(ioreg -rn AppleSmartBattery 2>/dev/null | grep -i Temperature | grep -o '[0-9]\\+' | head -n 1)`,
-		`\tif [ -n "$tmp" ] && [ "$tmp" -ge 3500 ] 2>/dev/null; then`,
-		`\t\ts=0; prev=0; ${pmset} -a disablesleep 0 2>/dev/null`,
-		`\t\tif [ -z "$hot" ]; then touch '${hotMarker}'; hot=1; fi`,
-		`\tfi`,
-		`\t/bin/sleep 1`,
-		`done`,
-	].join("\n");
-}
-
 /** Launch the session-lived watcher exactly once. */
 function startWatcher(): void {
 	if (watcherStarted) return;
 	watcherStarted = true;
 	try {
-		const child = spawn("sh", ["-c", watcherShell()], { stdio: "ignore", detached: true });
+		const child = spawn("sh", ["-c", watcherShell(process.pid, STATE_PATH, HOT_MARKER_PATH)], { stdio: "ignore", detached: true });
 		child.on("error", () => {
 			watcherStarted = false;
 		});
@@ -268,8 +245,8 @@ function release(ctx: ExtensionContext): void {
 	if (!engaged) return;
 	engaged = false;
 
-	// Let the lid sleep again. The watcher sees "0" within ~1s and runs
-	// `pmset disablesleep 0`; if the lid is shut, the Mac sleeps then.
+	// The watcher reconciles all live sessions within ~1s; when this was the
+	// last hold and the lid is shut, the Mac sleeps then.
 	writeState("0");
 
 	if (caffeinateChild) {
@@ -309,8 +286,8 @@ export default function (pi: ExtensionAPI) {
 	pi.on("agent_start", async (_event, ctx) => lifecycle.agentStarted(ctx));
 	pi.on("agent_end", async (_event, ctx) => lifecycle.agentEnded(ctx));
 
-	// Teardown: drop the state file and kill caffeinate. The watcher restores
-	// `disablesleep 0` either on the missing state or on this pid dying.
+	// Teardown: drop the state file and kill caffeinate. The watcher reconciles
+	// the global sleep setting on missing state or this pid dying.
 	pi.on("session_shutdown", async (_event, ctx) => {
 		lifecycle.stop(ctx);
 		try {
@@ -348,6 +325,8 @@ export default function (pi: ExtensionAPI) {
 				state =
 					"off — needs passwordless pmset. Run this once in a terminal:\n    " +
 					installCommand(currentUser());
+			} else if (engaged && !isSleepDisabled()) {
+				state = "run active, but lid-close protection is off — check battery temperature or power settings.";
 			} else if (engaged) {
 				state = lifecycle.waitingForLid
 					? "active — loop finished with the lid shut; staying awake until it opens."

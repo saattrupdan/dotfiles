@@ -173,9 +173,11 @@ This writes a scoped drop-in (the grant covers `/usr/bin/pmset` and nothing
 else), locks its permissions, and validates the syntax so a typo can't break
 sudo. Remove it any time with `sudo rm /etc/sudoers.d/pi-caffeinate`. With it in
 place, a session-lived watcher shells out with `sudo -n /usr/bin/pmset` (no
-prompt, ever) and toggles `disablesleep` 1/0 from a tiny state file pi writes at
-run start/end. The watcher also restores `disablesleep 0` and exits if pi dies,
-so a crash never leaves the Mac unable to sleep.
+prompt, ever). Watchers coordinate through a shared lock and reconcile the
+global `disablesleep` setting from all live Pi sessions. Ending one session
+cannot release another's hold; when the last session ends or dies, normal sleep
+returns. Each watcher also checks the actual setting every second, including
+after a power-source change. The existing 35 °C battery cutoff still applies.
 
 If the drop-in is missing, the extension stays completely inert and prints a
 one-time hint on the first run — the same command above, with your username
