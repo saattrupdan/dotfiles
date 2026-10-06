@@ -146,6 +146,10 @@ function linkedPath(relativePath: string): string {
 	return relativePath.replace(/\/$/, ""); // Git prints ignored directories with a trailing slash.
 }
 
+function isDisposableCoverage(relativePath: string): boolean {
+	return path.basename(relativePath) === ".coverage";
+}
+
 type LinkedPaths = Pick<SessionManifest, "repoRoot" | "worktreeRoot" | "linkedIgnoredPaths">;
 
 async function verifyKnownLinks(manifest: LinkedPaths): Promise<void> {
@@ -160,6 +164,8 @@ async function verifyKnownLinks(manifest: LinkedPaths): Promise<void> {
 			throw error;
 		}
 		if (!stat.isSymbolicLink() || (await fs.promises.readlink(destination)) !== path.join(manifest.repoRoot, relativePath)) {
+			// Older sessions linked .coverage; coverage tools replace that link with a disposable file.
+			if (isDisposableCoverage(relativePath) && stat.isFile()) continue;
 			throw new Error(`Linked ignored path ${relativePath} was replaced; worktree was preserved.`);
 		}
 	}
@@ -171,6 +177,15 @@ async function removeKnownLinks(manifest: LinkedPaths): Promise<void> {
 		await fs.promises.unlink(path.join(manifest.worktreeRoot, relativePath)).catch((error: NodeJS.ErrnoException) => {
 			if (error.code !== "ENOENT") throw error;
 		});
+	}
+}
+
+async function removeDisposableCoverage(manifest: SessionManifest): Promise<void> {
+	for (const relativePath of await listIgnoredPaths(manifest.worktreeRoot)) {
+		if (!isDisposableCoverage(relativePath) || (manifest.linkedIgnoredPaths ?? []).includes(relativePath)) continue;
+		const destination = path.join(manifest.worktreeRoot, relativePath);
+		const stat = await fs.promises.lstat(destination);
+		if (stat.isFile()) await fs.promises.unlink(destination);
 	}
 }
 
@@ -227,7 +242,7 @@ async function listIgnoredPaths(repoRoot: string): Promise<string[]> {
 }
 
 async function linkIgnoredPaths(repoRoot: string, worktreeRoot: string): Promise<string[]> {
-	const candidates = await listIgnoredPaths(repoRoot);
+	const candidates = (await listIgnoredPaths(repoRoot)).filter((relativePath) => !isDisposableCoverage(relativePath));
 	const linked: string[] = [];
 	try {
 		// Configure before linking so even directory-only ignore rules cannot expose links to Git.
@@ -270,6 +285,7 @@ export async function hydrateIgnoredPaths(manifest: SessionManifest): Promise<vo
 
 export async function cleanLinkedIgnoredPaths(manifest: SessionManifest): Promise<void> {
 	await removeKnownLinks(manifest);
+	await removeDisposableCoverage(manifest);
 	await removeEnvFiles(manifest.worktreeRoot, manifest.copiedEnvFiles ?? []);
 	manifest.linkedIgnoredPaths = [];
 	manifest.copiedEnvFiles = [];
@@ -556,9 +572,13 @@ export async function assertWorktreeReleasable(manifest: SessionManifest): Promi
 	const ignored = await listIgnoredPaths(manifest.worktreeRoot);
 	await verifyKnownLinks(manifest);
 	const ephemeral = new Set([...(manifest.copiedEnvFiles ?? []), ...(manifest.linkedIgnoredPaths ?? [])]);
-	const unknownIgnored = ignored.find((relativePath) => !ephemeral.has(relativePath));
-	if (unknownIgnored) {
-		throw new Error(`Ignored path ${unknownIgnored} is not ephemeral session configuration; worktree was preserved.`);
+	for (const relativePath of ignored) {
+		if (ephemeral.has(relativePath)) continue;
+		if (isDisposableCoverage(relativePath)) {
+			const stat = await fs.promises.lstat(path.join(manifest.worktreeRoot, relativePath));
+			if (stat.isFile()) continue;
+		}
+		throw new Error(`Ignored path ${relativePath} is not ephemeral session configuration; worktree was preserved.`);
 	}
 }
 

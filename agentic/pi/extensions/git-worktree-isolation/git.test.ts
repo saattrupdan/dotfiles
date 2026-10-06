@@ -135,6 +135,41 @@ test("releases and resumes linked ignored directories without deleting their con
 	assert.equal(command(resumed.childCwd, ["status", "--porcelain"]), "");
 });
 
+test("keeps ignored coverage local and discards generated coverage on release", async () => {
+	const { root, agentDir } = createRepo();
+	fs.writeFileSync(path.join(root, ".gitignore"), ".coverage\n");
+	command(root, ["add", ".gitignore"]);
+	command(root, ["commit", "-m", "chore: ignore coverage"]);
+	fs.writeFileSync(path.join(root, ".coverage"), "original\n");
+	const plan = await createLaunchPlan(root, agentDir);
+	const coverage = path.join(plan.childCwd, ".coverage");
+	assert.equal(plan.manifest.linkedIgnoredPaths?.includes(".coverage"), false);
+	assert.equal(fs.existsSync(coverage), false);
+	fs.writeFileSync(coverage, "generated\n");
+	assert.equal(fs.readFileSync(path.join(root, ".coverage"), "utf8"), "original\n");
+	await releaseManagedWorktree(plan.manifest);
+	assert.equal(fs.readFileSync(path.join(root, ".coverage"), "utf8"), "original\n");
+	assert.equal(fs.existsSync(plan.manifest.worktreeRoot), false);
+});
+
+test("discards replaced coverage links from older sessions", async () => {
+	const { root, agentDir } = createRepo();
+	fs.writeFileSync(path.join(root, ".gitignore"), ".coverage\n");
+	command(root, ["add", ".gitignore"]);
+	command(root, ["commit", "-m", "chore: ignore coverage"]);
+	fs.writeFileSync(path.join(root, ".coverage"), "original\n");
+	const plan = await createLaunchPlan(root, agentDir);
+	const coverage = path.join(plan.childCwd, ".coverage");
+	fs.symlinkSync(path.join(root, ".coverage"), coverage);
+	plan.manifest.linkedIgnoredPaths?.push(".coverage");
+	await saveManifest(plan.manifest);
+	fs.unlinkSync(coverage);
+	fs.writeFileSync(coverage, "generated\n");
+	await releaseManagedWorktree(plan.manifest);
+	assert.equal(fs.readFileSync(path.join(root, ".coverage"), "utf8"), "original\n");
+	assert.equal(fs.existsSync(plan.manifest.worktreeRoot), false);
+});
+
 test("preserves a replaced ignored link rather than deleting session data", async () => {
 	const { root, agentDir } = createRepo();
 	fs.writeFileSync(path.join(root, ".gitignore"), "cache/\n");
@@ -147,6 +182,18 @@ test("preserves a replaced ignored link rather than deleting session data", asyn
 	fs.writeFileSync(path.join(plan.childCwd, "cache", "important"), "keep\n");
 	await assert.rejects(releaseManagedWorktree(plan.manifest), /Linked ignored path cache was replaced/);
 	assert.equal(fs.readFileSync(path.join(plan.childCwd, "cache/important"), "utf8"), "keep\n");
+});
+
+test("preserves ignored directories named .coverage", async () => {
+	const { root, agentDir } = createRepo();
+	fs.writeFileSync(path.join(root, ".gitignore"), ".coverage/\n");
+	command(root, ["add", ".gitignore"]);
+	command(root, ["commit", "-m", "chore: ignore coverage"]);
+	const plan = await createLaunchPlan(root, agentDir);
+	fs.mkdirSync(path.join(plan.childCwd, ".coverage"));
+	fs.writeFileSync(path.join(plan.childCwd, ".coverage", "important"), "keep\n");
+	await assert.rejects(releaseManagedWorktree(plan.manifest), /Ignored path .coverage/);
+	assert.equal(fs.readFileSync(path.join(plan.childCwd, ".coverage", "important"), "utf8"), "keep\n");
 });
 
 test("retains global excludes and safely quotes ignored path names", async () => {
