@@ -13,6 +13,7 @@ import {
 	assertWorktreeReleasable,
 	checkpointSessionIfPresent,
 	checkpointWorktreeSessions,
+	claimManagedWorktree,
 	consumeResumeRecord,
 	createLaunchPlan,
 	createResumePlan,
@@ -22,6 +23,8 @@ import {
 	hydrateIgnoredPaths,
 	loadManifest,
 	loadResumeRecord,
+	reapStaleWorktrees,
+	relocateIgnoredPaths,
 	releaseManagedWorktree,
 	rewriteSessionCwd,
 	sessionCwd,
@@ -88,23 +91,36 @@ async function extensionCwd(pi: ExtensionAPI): Promise<string> {
 	return path.resolve(result.stdout.trim());
 }
 
-function relaunch(plan: Awaited<ReturnType<typeof createLaunchPlan>>, args = cliArgs()): never {
+async function relaunch(plan: Awaited<ReturnType<typeof createLaunchPlan>>, args = cliArgs()): Promise<never> {
 	const result = spawnSync(process.execPath, [process.argv[1]!, ...args], {
 		cwd: plan.childCwd,
 		stdio: "inherit",
 		env: { ...process.env, [CHILD_MANIFEST_ENV]: plan.manifest.manifestPath },
 	});
+	try {
+		await reapStaleWorktrees(plan.manifest.repoRoot, result.pid || process.pid);
+	} catch (error) {
+		process.stderr.write(`Pi worktree isolation: recovery failed: ${error instanceof Error ? error.message : String(error)}\n`);
+	}
 	if (result.error) fatal(`could not relaunch Pi: ${result.error.message}`);
 	process.exit(result.status ?? (result.signal === "SIGINT" ? 130 : 1));
 }
 
-function resumeInManagedWorktree(sessionFile: string, cwd: string, manifestPath: string): never {
+async function resumeInManagedWorktree(sessionFile: string, cwd: string, manifestPath: string): Promise<never> {
 	const env: NodeJS.ProcessEnv = { ...process.env, [CHILD_MANIFEST_ENV]: manifestPath };
 	const result = spawnSync(process.execPath, [process.argv[1]!, "--session", sessionFile], {
 		cwd,
 		stdio: "inherit",
 		env,
 	});
+	const manifest = await loadManifest(manifestPath).catch(() => null);
+	if (manifest) {
+		try {
+			await reapStaleWorktrees(manifest.repoRoot, result.pid || process.pid);
+		} catch (error) {
+			process.stderr.write(`Pi worktree isolation: recovery failed: ${error instanceof Error ? error.message : String(error)}\n`);
+		}
+	}
 	if (result.error) fatal(`could not resume the selected worktree session: ${result.error.message}`);
 	process.exit(result.status ?? (result.signal === "SIGINT" ? 130 : 1));
 }
@@ -132,7 +148,7 @@ function registerReleasedSessionStartup(pi: ExtensionAPI): void {
 		if (!sessionFile) fatal("the selected saved session has no session file.");
 		try {
 			const plan = await activateReleasedSession(sessionFile);
-			resumeInManagedWorktree(sessionFile, plan.childCwd, plan.manifest.manifestPath);
+			await resumeInManagedWorktree(sessionFile, plan.childCwd, plan.manifest.manifestPath);
 		} catch (error) {
 			fatal(error instanceof Error ? error.message : String(error));
 		}
@@ -199,6 +215,7 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 				process.stderr.write("Pi worktree isolation: repository is not safely finalized; worktree was preserved.\n");
 				return;
 			}
+			await relocateIgnoredPaths(manifest);
 			await assertWorktreeReleasable(manifest);
 			await checkpointWorktreeSessions(manifest, sessionFile);
 			process.chdir(manifest.repoRoot);
@@ -309,12 +326,13 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 			if (!resumedCwd || targetManifest.commonGitDir !== manifest.commonGitDir) {
 				throw new Error("Session is not managed by this repository.");
 			}
+			await relocateIgnoredPaths(manifest);
 			await assertWorktreeReleasable(manifest);
 			await checkpointWorktreeSessions(manifest, currentSessionFile);
 			process.chdir(manifest.repoRoot);
 			await releaseManagedWorktree(manifest);
 			await releaseTranscript();
-			resumeInManagedWorktree(event.targetSessionFile, resumedCwd, targetManifest.manifestPath);
+			await resumeInManagedWorktree(event.targetSessionFile, resumedCwd, targetManifest.manifestPath);
 		} catch (error) {
 			ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
 			return { cancel: true };
@@ -349,6 +367,7 @@ export default async function (pi: ExtensionAPI) {
 		if (relative.startsWith("..") || path.isAbsolute(relative)) {
 			fatal(`managed session cwd ${cwd} is outside ${manifest.worktreeRoot}.`);
 		}
+		await claimManagedWorktree(manifest);
 		registerManagedSession(pi, manifest);
 		return;
 	}
@@ -364,6 +383,7 @@ export default async function (pi: ExtensionAPI) {
 			return;
 		}
 		if (extensionRepository && currentRepository === extensionRepository) return;
+		if (currentRepository) await reapStaleWorktrees(cwd);
 		if (resumeInvocation && !isSessionIdInvocation(cliArgs())) {
 			registerReleasedSessionStartup(pi);
 			return;
@@ -383,14 +403,14 @@ export default async function (pi: ExtensionAPI) {
 					const sessionFile = ctx.sessionManager.getSessionFile();
 					if (!sessionFile) fatal("could not locate the newly created fork session.");
 					await rewriteSessionCwd(sessionFile, plan.childCwd);
-					relaunch(plan, forkChildArgs(sessionFile));
+					await relaunch(plan, forkChildArgs(sessionFile));
 				} catch (error) {
 					fatal(error instanceof Error ? error.message : String(error));
 				}
 			});
 			return;
 		}
-		relaunch(plan);
+		await relaunch(plan);
 	} catch (error) {
 		fatal(error instanceof Error ? error.message : String(error));
 	}

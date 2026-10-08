@@ -12,7 +12,9 @@ After every settled agent run:
 
 - Dirty work triggers a hidden follow-up turn requiring the same agent to commit it.
 - A named branch explicitly selected or created by the agent becomes the session's
-  remembered publication branch.
+  remembered publication branch. A launch from detached HEAD creates a dedicated
+  `pi/<worktree-name>` branch instead of guessing which existing branch to update;
+  that branch remains after the worktree is removed.
 - Commits on detached `HEAD` are published to the remembered branch.
 - Publication is serialized across Pi processes.
 - If the launch branch advanced, the session is rebased automatically.
@@ -34,9 +36,14 @@ they can be committed. Git's worktree
 configuration is enabled for the repository, and each managed worktree gets a private
 exclude file so directory-only ignore rules also exclude their symlinks. The existing
 `core.excludesFile` patterns (or Git's default global ignore file) are carried into
-that file. Links are refreshed on managed session start and removed on clean
-release; a replaced link is preserved unless it is a disposable `.coverage` file
-from an older session.
+that file.  Links are refreshed on managed session start and removed on clean
+  release. Ignored files created inside the worktree, including replaced links,
+  are moved into the main checkout first. When a destination exists, the moved
+  name gets `-<worktree-name>` (and a numeric suffix if necessary), never
+  overwriting existing content. A path-specific rule is added to the repository's
+  local Git exclude file if the main checkout would otherwise see the moved
+  output as untracked. Symlinked ancestors and Git operations that make a move
+  unsafe still prevent release. Disposable `.coverage` files are removed.
 If the launch checkout remains unchanged, publication updates its index under Git's
 lock protocol and atomically applies the agent's tree-to-tree patch. Concurrent
 working-file or index changes block synchronization without being overwritten. A
@@ -75,17 +82,20 @@ worktree.
 ## Safety and recovery
 
 Active manifests live in the repository's common Git directory under
-`pi-worktree-sessions/`. Dirty work, unknown ignored files, a Git operation in
-progress, pending checkout synchronization, failed repair, or blocked
-publication prevents release and leaves the locked worktree and manifest
-recoverable. Links created by the extension (and copied `.env` files in older
-sessions) are treated as known ephemeral state. A crash or forced exit likewise
-retains the active worktree; cleanup is performed only by a graceful finalized
-session boundary.
+`pi-worktree-sessions/`. Dirty work, a Git operation in progress, pending checkout synchronization,
+failed repair, or blocked publication prevents release and leaves the locked
+worktree and manifest recoverable. Links created by the extension (and copied
+`.env` files in older sessions) are treated as known ephemeral state. Ignored
+session output is relocated into the main checkout before release. After an
+abrupt child exit, the surviving Pi launcher reclaims a safely finalized
+worktree; if the whole process is killed, the next Pi launch in that repository
+reclaims dormant worktrees. A live owner or active transcript is never reaped.
+Worktrees with uncommitted work remain locked so it is not lost; resume and
+commit that work to enable removal.
 
-A launch must start from a named branch so the extension has a publication
-target. Uncommitted launch-checkout changes do not require terminal interaction:
-they are snapshotted before relaunch.
+A launch from a named branch publishes back to that branch. A detached launch
+gets a dedicated branch; uncommitted launch-checkout changes do not require
+terminal interaction and are snapshotted before relaunch.
 
 All managed worktrees for a repository share the main checkout's Pi session
 directory, so the default `/resume` view includes active and released sessions
