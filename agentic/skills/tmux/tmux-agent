@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+"""Start tagged agent tmux sessions and remove only verifiably idle ones."""
+
+import argparse
+import subprocess
+import sys
+from pathlib import Path
+
+MARKER = "@pi_agent"
+SHELLS = {"sh", "bash", "zsh", "fish", "dash", "ksh", "mksh", "tcsh", "csh", "nu"}
+
+
+def run(command, *, check=True):
+    return subprocess.run(command, text=True, capture_output=True, check=check)
+
+
+def tmux(args, socket):
+    return run(["tmux", *(["-L", socket] if socket else []), *args])
+
+
+def start(args):
+    cwd = Path(args.directory).expanduser().resolve(strict=True)
+    if not cwd.is_dir():
+        raise ValueError(f"not a directory: {cwd}")
+    session = tmux(
+        [
+            "new-session",
+            "-d",
+            "-P",
+            "-F",
+            "#{session_id}",
+            "-s",
+            args.name,
+            "-c",
+            str(cwd),
+        ],
+        args.socket,
+    ).stdout.strip()
+    tmux(["set-option", "-t", session, MARKER, "1"], args.socket)
+    print(
+        f"Created agent session {args.name} ({session}); attach with tmux attach -t {args.name}"
+    )
+
+
+def process_table():
+    """Map PIDs to parents; fail closed if the process list is unavailable."""
+    rows = run(["ps", "-e", "-o", "pid=", "-o", "ppid="]).stdout.splitlines()
+    return {int(pid): int(ppid) for pid, ppid in (row.split() for row in rows)}
+
+
+def idle(pane, processes):
+    try:
+        pid = int(pane[0])
+        shell = pane[1]
+        if shell not in SHELLS:
+            return False
+        status = (
+            run(["ps", "-p", str(pid), "-o", "pgid=", "-o", "tpgid=", "-o", "comm="])
+            .stdout.strip()
+            .split(maxsplit=2)
+        )
+        if len(status) != 3:
+            return False
+        pgid, foreground, command = status
+        if Path(command.lstrip("-")).name != shell or pgid != foreground:
+            return False
+        # Foreground jobs change the terminal process group. Background jobs remain
+        # children of the shell; preserve the session while either is present.
+        return pid in processes and pid not in processes.values()
+    except (ValueError, subprocess.CalledProcessError):
+        return False
+
+
+def cleanup(args):
+    base = ["tmux", *(["-L", args.socket] if args.socket else [])]
+    listed = run(
+        [
+            *base,
+            "list-sessions",
+            "-F",
+            "#{session_id} #{session_name} #{session_attached}",
+        ],
+        check=False,
+    )
+    if listed.returncode:
+        if (
+            "no server running" in listed.stderr
+            or "error connecting to" in listed.stderr
+        ):
+            print("No tmux sessions to clean up")
+            return
+        raise RuntimeError(listed.stderr.strip())
+    processes = process_table()
+    removed = 0
+    for row in listed.stdout.splitlines():
+        session, name, attached = row.split(maxsplit=2)
+        if (
+            tmux(
+                ["show-option", "-qv", "-t", session, MARKER], args.socket
+            ).stdout.strip()
+            != "1"
+        ):
+            continue
+        if attached != "0":
+            print(f"Keeping attached session: {name}")
+            continue
+        panes = tmux(
+            [
+                "list-panes",
+                "-s",
+                "-t",
+                session,
+                "-F",
+                "#{pane_pid} #{pane_current_command}",
+            ],
+            args.socket,
+        ).stdout.splitlines()
+        if not panes or not all(
+            idle(pane.split(maxsplit=1), processes) for pane in panes
+        ):
+            print(f"Keeping active or unverifiable session: {name}")
+            continue
+        # Recheck immediately before killing; a user may have attached or started
+        # a job since the first snapshot. An unavoidable tiny race remains.
+        current = tmux(
+            ["display-message", "-pt", session, "#{session_attached}"], args.socket
+        ).stdout.strip()
+        current_panes = tmux(
+            [
+                "list-panes",
+                "-s",
+                "-t",
+                session,
+                "-F",
+                "#{pane_pid} #{pane_current_command}",
+            ],
+            args.socket,
+        ).stdout.splitlines()
+        processes = process_table()
+        if (
+            current != "0"
+            or panes != current_panes
+            or not all(
+                idle(pane.split(maxsplit=1), processes) for pane in current_panes
+            )
+        ):
+            print(f"Keeping changed session: {name}")
+            continue
+        tmux(["kill-session", "-t", session], args.socket)
+        print(f"Closed idle agent session: {name}")
+        removed += 1
+    print(f"Closed {removed} idle agent session(s)")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--socket", help="tmux socket name (for an isolated server)")
+    commands = parser.add_subparsers(dest="command", required=True)
+    create = commands.add_parser("start", help="start a tagged interactive shell")
+    create.add_argument("name")
+    create.add_argument("directory", help="working directory")
+    commands.add_parser("cleanup", help="close detached, idle tagged sessions")
+    args = parser.parse_args()
+    try:
+        if args.command == "start":
+            start(args)
+        else:
+            cleanup(args)
+    except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as exc:
+        print(f"tmux-agent: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

@@ -3,7 +3,7 @@ name: tmux
 description: >-
   Use when creating, running, attaching to, inspecting, or cleaning up local tmux
   sessions for agent-run commands and long-running jobs.
-last-updated: 2026-10-03
+last-updated: 2026-10-08
 ---
 
 # Local tmux sessions
@@ -17,15 +17,17 @@ detached does **not** mean the pane should run a non-interactive shell.
 1. Check `command -v tmux`, `tmux list-sessions`, the intended working directory, and
    whether the same job is already running. Pick a unique, descriptive session name; do
    not launch a duplicate process against the same output files.
-2. Create the session **without a command argument**. `-c` sets the pane's working
-   directory while tmux starts its normal interactive default shell:
+2. Create the session with the skill's helper, which starts an interactive shell
+   in the given directory and marks the session with tmux's `@pi_agent=1` option:
 
    ```bash
-   tmux new-session -d -s my-job -c /absolute/path/to/project
+   ~/.pi/agent/skills/tmux/tmux-agent start my-job /absolute/path/to/project
    ```
 
-   If the user will start it themselves in a terminal, `tmux new -s my-job` is
-   equivalent. Never pass the job as a positional command to `tmux new-session`:
+   If creating a session by hand (including one the user will attach to), mark it
+   immediately after creation with `tmux set-option -t my-job @pi_agent 1`.
+   Never mark an existing user-created session. Never pass the job as a positional
+   command to `tmux new-session`:
    tmux would run it *instead of* a shell, so Ctrl-C or job exit closes the pane.
    Never use `exec`, `bash -lc`, or a launcher that replaces the pane's shell.
    Before sending the job, check that the pane's process is the expected shell:
@@ -70,20 +72,20 @@ detached does **not** mean the pane should run a non-interactive shell.
 
 ## Clean up agent-created sessions
 
-Track the names of sessions you create. **Leave them open after a job finishes or is
-canceled**, with the shell ready for the user to inspect, edit, or rerun the command.
-Do not treat an idle shell as a dead session or automatically kill it. When the user
-asks to clean up an agent-created session, first check that it is idle and unattached;
-then remove **that session**:
+Close agent-created sessions once their commands have finished, rather than leaving
+idle shells indefinitely. After a job finishes or is canceled, capture any results
+needed for the user, then run the cleanup command. Also run it at the end of agent
+work that used tmux, and when asked to clear completed agent sessions:
 
 ```bash
-tmux list-sessions -F '#{session_name} #{session_attached}'
-tmux kill-session -t my-job
+~/.pi/agent/skills/tmux/tmux-agent cleanup
 ```
 
-- Do not confuse a running job with a dead session; leave active sessions alone.
-- Do not kill a session that the user created or is currently attached to. If the user
-  is attached to an idle agent-created session, let them detach first.
-- When replacing a session, leave the old one for inspection unless the user asked
-  to remove it. Do not silently replace a shell the user may still need.
-- Never use `tmux kill-server` for cleanup: it also kills unrelated sessions.
+Cleanup scans **only sessions marked `@pi_agent=1`**. It closes a session only when
+it is detached and every pane has a verifiably idle shell (the shell owns the
+terminal foreground process group and has no child process). Running foreground or
+background commands, attached sessions, user-created sessions, and sessions whose
+state cannot be verified are left alone. If the user needs to inspect a finished
+session, keep it attached until they are done; once detached, cleanup can close it.
+Names alone do not prove ownership, so old unmarked agent sessions are not included.
+Never use `tmux kill-server` for cleanup: it also kills unrelated sessions.
