@@ -30,6 +30,8 @@ export interface SessionManifest {
 	agentDir?: string;
 	targetBranch: string;
 	targetRef: string;
+	/** Branch explicitly created by isolated_new_branch; only this branch is eligible for cleanup. */
+	createdBranch?: string;
 	baseSha: string;
 	publishedHead: string;
 	launchSnapshotCommit?: string;
@@ -50,6 +52,8 @@ export interface SessionResumeRecord {
 	repoRoot: string;
 	commonGitDir: string;
 	launchCwdRelative: string;
+	/** Original cwd for this transcript, which may be nested below the launch cwd. */
+	sessionCwdRelative?: string;
 	sessionHubCwd: string;
 	agentDir: string;
 	targetBranch: string;
@@ -571,12 +575,18 @@ async function writeResumeCheckpoint(manifest: SessionManifest, sessionFile: str
 	const resumeRef = `refs/pi-worktree-sessions/${key}`;
 	const agentDir = inferredAgentDir(manifest);
 	const placeholderCwd = path.join(agentDir, "released-sessions", key);
+	const originalCwd = await sessionCwd(resolvedSessionFile);
+	const relativeCwd = originalCwd ? path.relative(manifest.worktreeRoot, originalCwd) : manifest.launchCwdRelative;
+	if (relativeCwd.startsWith("..") || path.isAbsolute(relativeCwd)) {
+		throw new Error(`Session cwd is outside its worktree: ${resolvedSessionFile}`);
+	}
 	const record: SessionResumeRecord = {
 		version: 1,
 		sessionFile: resolvedSessionFile,
 		repoRoot: manifest.repoRoot,
 		commonGitDir: manifest.commonGitDir,
 		launchCwdRelative: manifest.launchCwdRelative,
+		sessionCwdRelative: relativeCwd,
 		sessionHubCwd: manifest.sessionHubCwd ?? manifest.repoRoot,
 		agentDir,
 		targetBranch: manifest.targetBranch,
@@ -886,6 +896,7 @@ export async function createLaunchPlan(cwd: string, agentDir?: string, newBranch
 			agentDir: root,
 			targetBranch,
 			targetRef: `refs/heads/${targetBranch}`,
+			...(newBranch ? { createdBranch: newBranch } : {}),
 			baseSha,
 			publishedHead: detachedLaunch || newBranch ? snapshot.startSha : baseSha,
 			...(snapshot.workingTree && snapshot.indexTree && snapshot.indexCommit
@@ -999,7 +1010,7 @@ export async function createResumePlan(record: SessionResumeRecord): Promise<Lau
 			ownerPid: process.pid,
 		};
 		await saveManifest(manifest);
-		const childCwd = path.join(worktreeRoot, record.launchCwdRelative);
+		const childCwd = path.join(worktreeRoot, record.sessionCwdRelative ?? record.launchCwdRelative);
 		await fs.promises.mkdir(childCwd, { recursive: true });
 		await linkSessionDirectory(childCwd, record.sessionHubCwd, record.agentDir);
 		return { manifest, childCwd };
@@ -1071,6 +1082,9 @@ export async function reapStaleWorktrees(repoRoot: string, finishedChildPid?: nu
 					await fs.promises.rm(manifest.manifestPath, { force: true });
 					continue;
 				}
+				// Explicitly created feature branches survive quit/crash until their
+				// changes are verified on main and the cleanup tool is invoked.
+				if (manifest.createdBranch) continue;
 				if ((await enforceRepository(manifest)).kind !== "ok") continue;
 				await assertWorktreeReleasable(manifest);
 				await checkpointWorktreeSessions(manifest);
@@ -1088,6 +1102,143 @@ export async function reapStaleWorktrees(repoRoot: string, finishedChildPid?: nu
 		await unlock();
 	}
 	return released;
+}
+
+/** Fetch main, fast-forward its checkout when safe, and prove this branch adds no missing changes. */
+export async function prepareBranchCleanup(manifest: SessionManifest): Promise<{ mainRoot: string; branchSha: string }> {
+	const branch = manifest.createdBranch;
+	if (!branch || branch === "main" || await currentBranch(manifest.worktreeRoot) !== branch) {
+		throw new Error("Cleanup only applies to the original isolated feature branch while checked out in its worktree.");
+	}
+	await assertWorktreeReleasable(manifest);
+	const main = (await listWorktrees(manifest.repoRoot)).find((worktree) => worktree.branch === "main");
+	if (!main || main.path === manifest.worktreeRoot) throw new Error("A separate main worktree must be available for cleanup.");
+	const mainRoot = await fs.promises.realpath(main.path);
+	const branchSha = await git(manifest.repoRoot, ["rev-parse", `refs/heads/${branch}`]);
+	if (branchSha !== await git(manifest.worktreeRoot, ["rev-parse", "HEAD"])) {
+		throw new Error("The isolated branch moved unexpectedly; retry cleanup.");
+	}
+	if ((await run(manifest.repoRoot, ["remote", "get-url", "origin"])).code === 0) {
+		const remoteMain = await run(mainRoot, ["ls-remote", "--exit-code", "--heads", "origin", "main"]);
+		if (remoteMain.code !== 0 && remoteMain.code !== 2) {
+			throw new Error(`Could not check origin/main: ${remoteMain.stderr.trim()}`);
+		}
+		if (remoteMain.code === 0) {
+			await git(mainRoot, ["fetch", "origin", "+refs/heads/main:refs/remotes/origin/main"]);
+			const remoteSha = await git(mainRoot, ["rev-parse", "refs/remotes/origin/main"]);
+			const localSha = await git(mainRoot, ["rev-parse", "refs/heads/main"]);
+			if (localSha !== remoteSha && (await run(mainRoot, ["merge-base", "--is-ancestor", remoteSha, localSha])).code !== 0) {
+				if ((await run(mainRoot, ["merge-base", "--is-ancestor", localSha, remoteSha])).code !== 0) {
+					throw new Error("Local main and origin/main diverged; reconcile them before cleanup.");
+				}
+				if (await git(mainRoot, ["status", "--porcelain=v1"])) {
+					throw new Error("Local main has uncommitted changes and cannot be fast-forwarded safely.");
+				}
+				await git(mainRoot, ["merge", "--ff-only", "refs/remotes/origin/main"]);
+			}
+		}
+	}
+	const mainSha = await git(mainRoot, ["rev-parse", "refs/heads/main"]);
+	if ((await run(mainRoot, ["merge-base", "--is-ancestor", branchSha, mainSha])).code !== 0) {
+		// A squash or cherry-pick can carry the same net changes without containing
+		// the original commits. A virtual merge must add nothing to main's tree.
+		const merged = await run(mainRoot, ["merge-tree", "--write-tree", mainSha, branchSha]);
+		const mainTree = await git(mainRoot, ["rev-parse", `${mainSha}^{tree}`]);
+		if (merged.code !== 0 || merged.stdout.split("\n", 1)[0] !== mainTree) {
+			throw new Error(`main does not yet contain the changes on ${branch}. If there is a PR, ask the user before merging it; otherwise ask the user before merging the branch into main. Then retry cleanup.`);
+		}
+	}
+	return { mainRoot, branchSha };
+}
+
+/** Remove the verified worktree and branch, migrating all its saved sessions to main. */
+export async function finishBranchCleanup(
+	manifest: SessionManifest, sessionFile: string, mainRoot: string, expectedSha: string,
+): Promise<string> {
+	const branch = manifest.createdBranch;
+	if (!branch || await currentBranch(manifest.worktreeRoot) !== branch ||
+		await git(manifest.repoRoot, ["rev-parse", `refs/heads/${branch}`]) !== expectedSha ||
+		await git(manifest.worktreeRoot, ["rev-parse", "HEAD"]) !== expectedSha) {
+		throw new Error("The feature branch moved during cleanup; nothing was removed.");
+	}
+	if (await findCommonGitDir(mainRoot) !== manifest.commonGitDir ||
+		!(await listWorktrees(manifest.repoRoot)).some((entry) => entry.branch === "main" &&
+			path.resolve(entry.path) === path.resolve(mainRoot)) ||
+		await git(mainRoot, ["symbolic-ref", "--quiet", "--short", "HEAD"]) !== "main") {
+		throw new Error("The main worktree changed branches during cleanup.");
+	}
+	// Recheck main after the agent turn. No merge or branch deletion is allowed
+	// when main no longer proves the branch is integrated.
+	const mainSha = await git(mainRoot, ["rev-parse", "HEAD"]);
+	if ((await run(mainRoot, ["merge-base", "--is-ancestor", expectedSha, mainSha])).code !== 0) {
+		const merged = await run(mainRoot, ["merge-tree", "--write-tree", mainSha, expectedSha]);
+		if (merged.code !== 0 || merged.stdout.split("\n", 1)[0] !== await git(mainRoot, ["rev-parse", `${mainSha}^{tree}`])) {
+			throw new Error("main changed and no longer proves inclusion of the feature branch; cleanup was cancelled.");
+		}
+	}
+	await assertWorktreeReleasable(manifest);
+	const dir = sessionDirectoryForCwd(manifest.sessionHubCwd ?? manifest.repoRoot, inferredAgentDir(manifest));
+	const files = (await fs.promises.readdir(dir).catch(() => [] as string[]))
+		.filter((name) => name.endsWith(".jsonl")).map((name) => path.join(dir, name));
+	const current = await canonicalSessionFilePath(sessionFile);
+	if (!files.some((file) => path.resolve(file) === current)) files.push(current);
+	const migrated: SessionResumeRecord[] = [];
+	const releases: Array<() => Promise<void>> = [];
+	const locked = new Set<string>();
+	const leaseOtherSession = async (file: string): Promise<void> => {
+		const canonical = await canonicalSessionFilePath(file);
+		if (canonical === current || locked.has(canonical)) return;
+		releases.push(await acquireSessionLease(file));
+		locked.add(canonical);
+	};
+	try {
+		for (const file of files) {
+			const record = await loadResumeRecord(file);
+			if (record?.targetRef !== `refs/heads/${branch}` || record.commonGitDir !== manifest.commonGitDir) continue;
+			if ((await run(mainRoot, ["merge-base", "--is-ancestor", record.resumeSha, expectedSha])).code !== 0) {
+				throw new Error(`Saved session ${file} is not part of the feature branch; cleanup was cancelled.`);
+			}
+			await leaseOtherSession(file);
+			migrated.push(record);
+		}
+		for (const file of files) {
+			const cwd = await sessionCwd(file);
+			if (!cwd || (cwd !== manifest.worktreeRoot && !cwd.startsWith(`${manifest.worktreeRoot}${path.sep}`))) continue;
+			await leaseOtherSession(file);
+		}
+		// Protected resume refs make a partial failure recoverable until all
+		// transcripts have been moved; the branch remains until migration succeeds.
+		await checkpointWorktreeSessions(manifest, sessionFile);
+		const records = new Map(migrated.map((record) => [record.sessionFile, record]));
+		for (const file of files) {
+			const record = await loadResumeRecord(file);
+			if (record?.targetRef === `refs/heads/${branch}` && record.commonGitDir === manifest.commonGitDir) {
+				records.set(record.sessionFile, record);
+			}
+		}
+		for (const record of records.values()) {
+			const relative = record.sessionCwdRelative ?? record.launchCwdRelative;
+			const candidate = path.resolve(mainRoot, relative);
+			if (candidate !== mainRoot && !candidate.startsWith(`${mainRoot}${path.sep}`)) {
+				throw new Error(`Saved session ${record.sessionFile} has an unsafe cwd.`);
+			}
+			const destination = (await fs.promises.stat(candidate).catch(() => null))?.isDirectory()
+				? candidate : mainRoot;
+			await rewriteSessionCwd(record.sessionFile, destination);
+			await consumeResumeRecord(record);
+		}
+		const intendedDestination = path.join(mainRoot, manifest.launchCwdRelative);
+		const destination = (await fs.promises.stat(intendedDestination).catch(() => null))?.isDirectory()
+			? intendedDestination : mainRoot;
+		await releaseManagedWorktree(manifest);
+		if ((await listWorktrees(manifest.repoRoot)).some((entry) => entry.branch === branch)) {
+			throw new Error(`The feature branch ${branch} is still checked out elsewhere; the worktree was released but the branch was preserved.`);
+		}
+		await git(mainRoot, ["update-ref", "-d", `refs/heads/${branch}`, expectedSha]);
+		return destination;
+	} finally {
+		for (const release of releases.reverse()) await release();
+	}
 }
 
 export async function releaseManagedWorktree(manifest: SessionManifest): Promise<void> {

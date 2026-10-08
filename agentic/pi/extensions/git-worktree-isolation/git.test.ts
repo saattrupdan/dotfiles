@@ -22,6 +22,8 @@ import {
 	findManifestForCwd,
 	hydrateIgnoredPaths,
 	loadResumeRecord,
+	prepareBranchCleanup,
+	finishBranchCleanup,
 	reapStaleWorktrees,
 	releaseManagedWorktree,
 	rewriteSessionCwd,
@@ -921,6 +923,141 @@ test("preserves ignored branch outputs without moving them into main", async () 
 	plan.manifest.ownerPid = 99999999;
 	await saveManifest(plan.manifest);
 	assert.deepEqual(await reapStaleWorktrees(root), []);
+	assert.equal(fs.existsSync(plan.childCwd), true);
+});
+
+test("managed feature sessions expose cleanup but do not auto-release on quit", async () => {
+	const { root, agentDir } = createRepo();
+	const plan = await createLaunchPlan(root, agentDir, "feat/keep");
+	fs.writeFileSync(path.join(plan.childCwd, "work.txt"), "pending\n");
+	command(plan.childCwd, ["add", "work.txt"]);
+	command(plan.childCwd, ["commit", "-m", "feat: pending cleanup"]);
+	const tools = new Map<string, { execute: (...args: unknown[]) => Promise<unknown> }>();
+	const handlers = new Map<string, Array<(...args: unknown[]) => Promise<unknown>>>();
+	const pi = {
+		registerFlag: () => undefined,
+		getFlag: () => false,
+		exec: async () => ({ code: 0, stdout: `${plan.childCwd}\n` }),
+		registerTool: (tool: { name: string; execute: (...args: unknown[]) => Promise<unknown> }) => { tools.set(tool.name, tool); },
+		on: (name: string, handler: (...args: unknown[]) => Promise<unknown>) => { handlers.set(name, [...(handlers.get(name) ?? []), handler]); },
+	} as unknown as ExtensionAPI;
+	await registerIsolation(pi);
+	assert.ok(tools.has("clean-up-isolated-branch"));
+	const sessionFile = path.join(agentDir, "current.jsonl");
+	fs.mkdirSync(agentDir, { recursive: true });
+	fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", cwd: plan.childCwd })}\n`);
+	let aborted = false;
+	await assert.rejects(tools.get("clean-up-isolated-branch")!.execute("call", {}, undefined, undefined, {
+		sessionManager: { getSessionFile: () => sessionFile },
+		abort: () => { aborted = true; },
+	}), /ask the user before merging/);
+	assert.equal(aborted, false);
+	for (const handler of handlers.get("session_shutdown") ?? []) {
+		await handler({ reason: "quit" }, { sessionManager: { getSessionFile: () => sessionFile } });
+	}
+	assert.equal(fs.existsSync(plan.childCwd), true);
+	assert.equal(await sessionCwd(sessionFile), plan.childCwd);
+});
+
+test("cleanup refuses an unmerged feature branch and preserves its worktree", async () => {
+	const { root, agentDir } = createRepo();
+	const plan = await createLaunchPlan(root, agentDir, "feat/pending");
+	fs.writeFileSync(path.join(plan.childCwd, "work.txt"), "not merged\n");
+	command(plan.childCwd, ["add", "work.txt"]);
+	command(plan.childCwd, ["commit", "-m", "feat: pending work"]);
+	await assert.rejects(prepareBranchCleanup(plan.manifest), /ask the user before merging/);
+	plan.manifest.ownerPid = 99999999;
+	await saveManifest(plan.manifest);
+	assert.deepEqual(await reapStaleWorktrees(root), []);
+	assert.equal(fs.existsSync(plan.childCwd), true);
+	assert.equal(command(root, ["branch", "--list", "feat/pending"]), "+ feat/pending");
+});
+
+test("cleanup migrates saved sessions after main contains the branch", async () => {
+	const { root, agentDir } = createRepo();
+	fs.mkdirSync(path.join(root, "nested"));
+	fs.writeFileSync(path.join(root, "nested", "tracked.txt"), "tracked\n");
+	command(root, ["add", "nested"]);
+	command(root, ["commit", "-m", "chore: add nested directory"]);
+	const plan = await createLaunchPlan(root, agentDir, "feat/merged");
+	fs.writeFileSync(path.join(plan.childCwd, "work.txt"), "merged\n");
+	command(plan.childCwd, ["add", "work.txt"]);
+	command(plan.childCwd, ["commit", "-m", "feat: merged work"]);
+	const sessionDir = sessionDirectoryForCwd(plan.childCwd, agentDir);
+	const current = path.join(sessionDir, "current.jsonl");
+	const older = path.join(sessionDir, "older.jsonl");
+	fs.writeFileSync(current, `${JSON.stringify({ type: "session", cwd: plan.childCwd })}\n`);
+	fs.writeFileSync(older, `${JSON.stringify({ type: "session", cwd: path.join(plan.childCwd, "nested") })}\n`);
+	await checkpointSession(plan.manifest, older);
+	command(root, ["merge", "--ff-only", "feat/merged"]);
+	const { mainRoot, branchSha } = await prepareBranchCleanup(plan.manifest);
+	assert.equal(mainRoot, fs.realpathSync(root));
+	assert.equal(await finishBranchCleanup(plan.manifest, current, mainRoot, branchSha), fs.realpathSync(root));
+	assert.equal(fs.existsSync(plan.childCwd), false);
+	assert.equal(command(root, ["branch", "--list", "feat/merged"]), "");
+	assert.equal(await sessionCwd(current), fs.realpathSync(root));
+	assert.equal(await sessionCwd(older), path.join(fs.realpathSync(root), "nested"));
+	for (const file of [current, older]) assert.equal(await loadResumeRecord(file), null);
+});
+
+test("cleanup accepts a squash merge but refuses dirty ignored outputs", async () => {
+	const { root, agentDir } = createRepo();
+	fs.writeFileSync(path.join(root, ".gitignore"), "cache/\n");
+	command(root, ["add", ".gitignore"]);
+	command(root, ["commit", "-m", "chore: ignore cache"]);
+	const plan = await createLaunchPlan(root, agentDir, "feat/squashed");
+	fs.writeFileSync(path.join(plan.childCwd, "work.txt"), "squashed\n");
+	command(plan.childCwd, ["add", "work.txt"]);
+	command(plan.childCwd, ["commit", "-m", "feat: work"]);
+	command(root, ["merge", "--squash", "feat/squashed"]);
+	command(root, ["commit", "-m", "feat: squash work"]);
+	assert.equal((await prepareBranchCleanup(plan.manifest)).mainRoot, fs.realpathSync(root));
+	fs.mkdirSync(path.join(plan.childCwd, "cache"));
+	fs.writeFileSync(path.join(plan.childCwd, "cache", "output"), "generated\n");
+	await assert.rejects(prepareBranchCleanup(plan.manifest), /Ignored path cache/);
+	assert.equal(fs.existsSync(path.join(plan.childCwd, "cache", "output")), true);
+});
+
+test("cleanup fast-forwards a clean local main from origin/main", async () => {
+	const { root, agentDir } = createRepo();
+	const bare = path.join(path.dirname(root), "remote.git");
+	command(root, ["init", "--bare", bare]);
+	command(root, ["remote", "add", "origin", bare]);
+	command(root, ["push", "origin", "main"]);
+	const plan = await createLaunchPlan(root, agentDir, "feat/remote");
+	fs.writeFileSync(path.join(plan.childCwd, "work.txt"), "remote\n");
+	command(plan.childCwd, ["add", "work.txt"]);
+	command(plan.childCwd, ["commit", "-m", "feat: remote work"]);
+	command(plan.childCwd, ["push", "origin", "HEAD:main"]);
+	assert.notEqual(command(root, ["rev-parse", "main"]), command(plan.childCwd, ["rev-parse", "HEAD"]));
+	assert.equal((await prepareBranchCleanup(plan.manifest)).branchSha, command(root, ["rev-parse", "main"]));
+});
+
+test("cleanup accepts local main when origin has no main branch", async () => {
+	const { root, agentDir } = createRepo();
+	const bare = path.join(path.dirname(root), "empty-origin.git");
+	command(root, ["init", "--bare", bare]);
+	command(root, ["remote", "add", "origin", bare]);
+	const plan = await createLaunchPlan(root, agentDir, "feat/local");
+	fs.writeFileSync(path.join(plan.childCwd, "work.txt"), "locally merged\n");
+	command(plan.childCwd, ["add", "work.txt"]);
+	command(plan.childCwd, ["commit", "-m", "feat: local work"]);
+	command(root, ["merge", "--ff-only", "feat/local"]);
+	assert.equal((await prepareBranchCleanup(plan.manifest)).mainRoot, fs.realpathSync(root));
+});
+
+test("cleanup refuses to delete a branch advanced after verification", async () => {
+	const { root, agentDir } = createRepo();
+	const plan = await createLaunchPlan(root, agentDir, "feat/race");
+	command(root, ["merge", "--ff-only", "feat/race"]);
+	const { mainRoot, branchSha } = await prepareBranchCleanup(plan.manifest);
+	fs.writeFileSync(path.join(plan.childCwd, "late.txt"), "new\n");
+	command(plan.childCwd, ["add", "late.txt"]);
+	command(plan.childCwd, ["commit", "-m", "feat: later work"]);
+	const sessionFile = path.join(agentDir, "current.jsonl");
+	fs.mkdirSync(agentDir, { recursive: true });
+	fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", cwd: plan.childCwd })}\n`);
+	await assert.rejects(finishBranchCleanup(plan.manifest, sessionFile, mainRoot, branchSha), /moved during cleanup/);
 	assert.equal(fs.existsSync(plan.childCwd), true);
 });
 

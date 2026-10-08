@@ -26,6 +26,8 @@ import {
 	loadResumeRecord,
 	reapStaleWorktrees,
 	releaseManagedWorktree,
+	prepareBranchCleanup,
+	finishBranchCleanup,
 	rewriteSessionCwd,
 	sessionCwd,
 	type SessionManifest,
@@ -48,7 +50,7 @@ export function recoveredFromRateLimit(ctx: ExtensionContext): boolean {
 
 const SYSTEM_INSTRUCTION = `You are running in an isolated Git worktree managed by Pi.
 Before concluding any turn that changes files, commit all intended changes and leave the worktree clean.
-The feature branch is preserved, not merged into the original checkout. Ignored outputs stay here; remove or save them before worktree release.
+The feature branch is not merged automatically. Once its changes are on main, call clean-up-isolated-branch to return to main and remove the worktree and branch. If a PR or direct merge is needed, ask the user before merging; then retry the tool. Ignored outputs stay here; remove or save them before cleanup.
 Older resumed sessions may be detached; Pi will publish those commits to the remembered branch.
 Never bypass, remove, or alter the Pi worktree metadata.`;
 
@@ -189,6 +191,7 @@ function registerReleasedSessionStartup(pi: ExtensionAPI): void {
 function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): void {
 	let repairTurns = 0;
 	let enforcementRunning = false;
+	let pendingCleanup: { sessionFile: string; mainRoot: string; branchSha: string } | null = null;
 	let releaseSessionLease: (() => Promise<void>) | null = null;
 
 	const releaseTranscript = async (): Promise<void> => {
@@ -216,7 +219,7 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 	});
 
 	pi.on("session_shutdown", async (event, ctx) => {
-		if (event.reason !== "quit") {
+		if (event.reason !== "quit" || manifest.createdBranch) {
 			await releaseTranscript();
 			return;
 		}
@@ -247,7 +250,7 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 	// emitting agent_settled. Queue repair here so TUI, print, JSON, and RPC modes
 	// all finish Git finalization as part of the same run.
 	pi.on("agent_end", async (_event, ctx: ExtensionContext) => {
-		if (enforcementRunning) return;
+		if (enforcementRunning || pendingCleanup) return;
 		enforcementRunning = true;
 		try {
 			const result = await enforceRepository(manifest);
@@ -292,6 +295,39 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 		}
 	});
 
+	if (manifest.createdBranch) {
+		pi.registerTool({
+			name: "clean-up-isolated-branch",
+			label: "Clean up isolated branch",
+			description: "Return to main and delete this managed worktree and its local feature branch only after the branch changes are already on main. Fetches and safely fast-forwards main. Never merges the feature branch or a PR: ask the user before any such merge, then call this tool again.",
+			parameters: Type.Object({}),
+			executionMode: "sequential",
+			async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+				if (pendingCleanup) throw new Error("Cleanup is already in progress.");
+				const sessionFile = ctx.sessionManager.getSessionFile();
+				if (!sessionFile) throw new Error("A saved Pi session is required to clean up this branch.");
+				const { mainRoot, branchSha } = await prepareBranchCleanup(manifest);
+				pendingCleanup = { sessionFile, mainRoot, branchSha };
+				ctx.abort();
+				return { content: [{ type: "text", text: `Verified ${manifest.createdBranch} is on main. Cleaning up the isolated branch and returning to main.` }], details: undefined };
+			},
+		});
+		pi.on("agent_end", async () => {
+			if (!pendingCleanup) return;
+			const { sessionFile, mainRoot, branchSha } = pendingCleanup;
+			pendingCleanup = null;
+			try {
+				// Do not leave Pi's process cwd pointing into a worktree we remove.
+				process.chdir(mainRoot);
+				const mainCwd = await finishBranchCleanup(manifest, sessionFile, mainRoot, branchSha);
+				await releaseTranscript();
+				await resumeInManagedWorktree(sessionFile, mainCwd);
+			} catch (error) {
+				fatal(`isolated branch cleanup stopped: ${error instanceof Error ? error.message : String(error)}`);
+			}
+		});
+	}
+
 	pi.on("session_before_switch", async (event, ctx) => {
 		const finalized = await enforceRepository(manifest);
 		if (finalized.kind !== "ok") {
@@ -306,7 +342,7 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 
 		if (event.reason === "new") {
 			try {
-				await checkpointSessionIfPresent(manifest, currentSessionFile);
+				if (!manifest.createdBranch) await checkpointSessionIfPresent(manifest, currentSessionFile);
 				return;
 			} catch (error) {
 				ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
@@ -322,7 +358,7 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 				!path.relative(manifest.worktreeRoot, targetCwd).startsWith(".."))
 		) {
 			try {
-				await checkpointSessionIfPresent(manifest, currentSessionFile);
+				if (!manifest.createdBranch) await checkpointSessionIfPresent(manifest, currentSessionFile);
 				return;
 			} catch (error) {
 				ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
@@ -342,9 +378,9 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 				throw new Error("The target session has no accessible checkout in this repository.");
 			}
 			await assertWorktreeReleasable(manifest);
-			await checkpointWorktreeSessions(manifest, currentSessionFile);
+			if (!manifest.createdBranch) await checkpointWorktreeSessions(manifest, currentSessionFile);
 			process.chdir(manifest.repoRoot);
-			await releaseManagedWorktree(manifest);
+			if (!manifest.createdBranch) await releaseManagedWorktree(manifest);
 			await releaseTranscript();
 			await resumeInManagedWorktree(event.targetSessionFile, resumedCwd, targetManifest?.manifestPath);
 		} catch (error) {

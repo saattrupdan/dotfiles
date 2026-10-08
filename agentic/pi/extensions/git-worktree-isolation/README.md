@@ -23,14 +23,28 @@ worktree configuration and a private exclude file keep linked ignored paths
 ignored, including patterns from `core.excludesFile` or the default global ignore
 file. The footer shows a memorable adjective-animal worktree ID.
 
-## Finalization and release
+## Finishing and cleanup
 
 Managed sessions require tracked and non-ignored untracked changes to be committed
 before the run ends. An automatic follow-up turn asks the agent to finish that work.
-The new branch remains after the worktree is released; it is never merged into the
-original branch automatically. A branch explicitly switched to by the agent is
-also retained. Older detached managed sessions still publish their commits to their
-remembered branch, with the existing locking, rebase, and conflict safeguards.
+Branches created with `isolated_new_branch` and their worktrees remain in place on
+quit, session switch, or crash recovery. They are never merged automatically.
+
+Call `clean-up-isolated-branch` **from the original feature branch** when its work
+has landed on `main`. The tool fetches `origin/main` if present and fast-forwards a
+clean local `main` worktree when necessary. It verifies that the branch commit is
+an ancestor of `main`, or that a virtual merge would add no changes to `main`
+(supporting squash and cherry-pick merges). If inclusion cannot be proved, cleanup
+stops without deleting anything. If there is a PR, the agent must ask the user
+before merging it; without a PR, it must ask before merging the branch directly.
+After an approved merge, call the cleanup tool again. It does not perform merges.
+
+After verification, the tool moves saved sessions to the main checkout, removes
+the worktree, deletes only the originally created local branch, and relaunches Pi
+in `main`. Dirty feature work, unknown ignored outputs, active sessions, a missing
+main worktree, or main that cannot safely fast-forward block cleanup. Older detached
+managed sessions retain their existing publication and release behavior; branches
+explicitly switched to by those agents are not deleted.
 
 Ignored outputs created inside a managed worktree are **not moved** to the original
 checkout. If such outputs remain (or a linked ignored path was replaced), cleanup
@@ -39,10 +53,10 @@ save them explicitly before releasing it. Ignored `.coverage` files generated in
 the worktree are the one disposable exception. Known linked paths are removed
 without deleting their targets in the original checkout.
 
-On clean shutdown, the extension saves a resume record beside the session JSONL,
-protects its commit with `refs/pi-worktree-sessions/<id>`, rewrites the transcript
-cwd to a placeholder, and removes the worktree and manifest. Resuming the transcript
-recreates a worktree from the remembered branch; an absent or rewritten branch is
+For older managed sessions, clean shutdown saves a resume record beside the
+session JSONL, protects its commit with `refs/pi-worktree-sessions/<id>`, rewrites
+the transcript cwd to a placeholder, and removes the worktree and manifest.
+Resuming the transcript recreates a worktree from the remembered branch; an absent or rewritten branch is
 never silently followed. `/new` checkpoints the outgoing transcript and reuses the
 active worktree. In-process `/fork` in a managed session is blocked; fork from a new
 Pi invocation instead. Ordinary sessions can use Pi's normal `/new`, `/resume`, and
@@ -50,8 +64,9 @@ Pi invocation instead. Ordinary sessions can use Pi's normal `/new`, `/resume`, 
 
 Active manifests live under `pi-worktree-sessions/` in the common Git directory;
 worktrees live under `$PI_CODING_AGENT_DIR/worktrees/<repository-id>/<session-id>`.
-Crash recovery reclaims only clean, inactive worktrees. Dirty work, ignored outputs,
-ongoing Git operations, or active transcripts leave the worktree in place. Set
+Crash recovery reclaims only clean, inactive legacy worktrees. Explicit feature
+branches are kept until the cleanup tool succeeds. Dirty work, ignored outputs,
+ongoing Git operations, or active transcripts leave worktrees in place. Set
 `PI_WORKTREE_DEBUG=1` for recovery diagnostics. Existing managed session manifests
 and resume records remain supported.
 
