@@ -1,12 +1,13 @@
 /**
- * Relaunch top-level Pi sessions in detached Git worktrees and automatically
- * finalize their repository state after every agent run.
+ * Enter a managed Git worktree only when an agent explicitly creates a branch.
+ * Previously managed sessions remain resumable and retain their finalization policy.
  */
 
 import { spawnSync } from "node:child_process";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import {
 	acquireResumeClaim,
 	acquireSessionLease,
@@ -24,7 +25,6 @@ import {
 	loadManifest,
 	loadResumeRecord,
 	reapStaleWorktrees,
-	relocateIgnoredPaths,
 	releaseManagedWorktree,
 	rewriteSessionCwd,
 	sessionCwd,
@@ -46,10 +46,10 @@ export function recoveredFromRateLimit(ctx: ExtensionContext): boolean {
 	return false;
 }
 
-const SYSTEM_INSTRUCTION = `You are running in a detached, isolated Git worktree managed by Pi.
+const SYSTEM_INSTRUCTION = `You are running in an isolated Git worktree managed by Pi.
 Before concluding any turn that changes files, commit all intended changes and leave the worktree clean.
-You may explicitly create or switch to a named feature branch and use a PR workflow. Pi will preserve such a branch and will not merge it automatically.
-If you remain on detached HEAD, Pi will automatically publish your commits to the branch from which this session started.
+The feature branch is preserved, not merged into the original checkout. Ignored outputs stay here; remove or save them before worktree release.
+Older resumed sessions may be detached; Pi will publish those commits to the remembered branch.
 Never bypass, remove, or alter the Pi worktree metadata.`;
 
 function cliArgs(): string[] {
@@ -65,6 +65,31 @@ function isMetadataInvocation(args: string[]): boolean {
 function optionArgs(args: string[]): string[] {
 	const end = args.indexOf("--");
 	return end < 0 ? args : args.slice(0, end);
+}
+
+/** Keep launch constraints without replaying the old prompt or session selector. */
+export function continuationArgs(sessionFile: string, prompt?: string, launchArgs = cliArgs()): string[] {
+	const values = new Set([
+		"--provider", "--model", "--api-key", "--system-prompt", "--append-system-prompt",
+		"--mode", "--session-dir", "--models", "--tools", "-t", "--exclude-tools", "-xt",
+		"--thinking", "--extension", "-e", "--skill", "--prompt-template", "--theme",
+		"--use-theme", "--tui-mode", "--mcp-config",
+	]);
+	const flags = new Set([
+		"--print", "-p", "--no-tools", "-nt", "--no-builtin-tools", "-nbt",
+		"--no-mcp", "--no-skills", "-ns", "--no-prompt-templates", "-np",
+		"--no-themes", "--no-context-files", "-nc", "--verbose",
+		"--approve", "-a", "--no-approve", "-na", "--offline",
+	]);
+	const preserved: string[] = [];
+	const args = optionArgs(launchArgs);
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i]!;
+		const option = arg.split("=", 1)[0]!;
+		if (flags.has(arg) || (values.has(option) && arg.includes("="))) preserved.push(arg);
+		else if (values.has(arg) && i + 1 < args.length) preserved.push(arg, args[++i]!);
+	}
+	return ["--session", sessionFile, ...preserved, ...(prompt ? [prompt] : [])];
 }
 
 function isLegacyResumeInvocation(args: string[]): boolean {
@@ -106,14 +131,16 @@ async function relaunch(plan: Awaited<ReturnType<typeof createLaunchPlan>>, args
 	process.exit(result.status ?? (result.signal === "SIGINT" ? 130 : 1));
 }
 
-async function resumeInManagedWorktree(sessionFile: string, cwd: string, manifestPath: string): Promise<never> {
-	const env: NodeJS.ProcessEnv = { ...process.env, [CHILD_MANIFEST_ENV]: manifestPath };
-	const result = spawnSync(process.execPath, [process.argv[1]!, "--session", sessionFile], {
+async function resumeInManagedWorktree(sessionFile: string, cwd: string, manifestPath?: string): Promise<never> {
+	const env: NodeJS.ProcessEnv = { ...process.env };
+	if (manifestPath) env[CHILD_MANIFEST_ENV] = manifestPath;
+	else delete env[CHILD_MANIFEST_ENV];
+	const result = spawnSync(process.execPath, [process.argv[1]!, ...continuationArgs(sessionFile)], {
 		cwd,
 		stdio: "inherit",
 		env,
 	});
-	const manifest = await loadManifest(manifestPath).catch(() => null);
+	const manifest = manifestPath ? await loadManifest(manifestPath).catch(() => null) : null;
 	if (manifest) {
 		try {
 			await reapStaleWorktrees(manifest.repoRoot, result.pid || process.pid);
@@ -147,6 +174,7 @@ function registerReleasedSessionStartup(pi: ExtensionAPI): void {
 		const sessionFile = ctx.sessionManager.getSessionFile();
 		if (!sessionFile) fatal("the selected saved session has no session file.");
 		try {
+			if (!await loadResumeRecord(sessionFile)) return;
 			const plan = await activateReleasedSession(sessionFile);
 			await reapStaleWorktrees(plan.manifest.repoRoot).catch((error) => {
 				process.stderr.write(`Pi worktree isolation: recovery failed: ${error instanceof Error ? error.message : String(error)}\n`);
@@ -156,21 +184,6 @@ function registerReleasedSessionStartup(pi: ExtensionAPI): void {
 			fatal(error instanceof Error ? error.message : String(error));
 		}
 	});
-}
-
-function forkChildArgs(sessionFile: string): string[] {
-	const args = cliArgs();
-	const result: string[] = [];
-	for (let index = 0; index < args.length; index++) {
-		const arg = args[index]!;
-		if (arg === "--fork" || arg === "--session-id") {
-			index++;
-			continue;
-		}
-		if (arg.startsWith("--fork=") || arg.startsWith("--session-id=")) continue;
-		result.push(arg);
-	}
-	return ["--session", sessionFile, ...result];
 }
 
 function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): void {
@@ -218,7 +231,6 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 				process.stderr.write("Pi worktree isolation: repository is not safely finalized; worktree was preserved.\n");
 				return;
 			}
-			await relocateIgnoredPaths(manifest);
 			await assertWorktreeReleasable(manifest);
 			await checkpointWorktreeSessions(manifest, sessionFile);
 			process.chdir(manifest.repoRoot);
@@ -321,21 +333,20 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 		let targetManifest = targetCwd ? await findManifestForCwd(targetCwd) : null;
 		let resumedCwd = targetCwd;
 		try {
-			if (!targetManifest) {
+			if (!targetManifest && await loadResumeRecord(event.targetSessionFile)) {
 				const plan = await activateReleasedSession(event.targetSessionFile, manifest.commonGitDir);
 				targetManifest = plan.manifest;
 				resumedCwd = plan.childCwd;
 			}
-			if (!resumedCwd || targetManifest.commonGitDir !== manifest.commonGitDir) {
-				throw new Error("Session is not managed by this repository.");
+			if (!resumedCwd || (targetManifest && targetManifest.commonGitDir !== manifest.commonGitDir)) {
+				throw new Error("The target session has no accessible checkout in this repository.");
 			}
-			await relocateIgnoredPaths(manifest);
 			await assertWorktreeReleasable(manifest);
 			await checkpointWorktreeSessions(manifest, currentSessionFile);
 			process.chdir(manifest.repoRoot);
 			await releaseManagedWorktree(manifest);
 			await releaseTranscript();
-			await resumeInManagedWorktree(event.targetSessionFile, resumedCwd, targetManifest.manifestPath);
+			await resumeInManagedWorktree(event.targetSessionFile, resumedCwd, targetManifest?.manifestPath);
 		} catch (error) {
 			ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
 			return { cancel: true };
@@ -350,7 +361,7 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 
 export default async function (pi: ExtensionAPI) {
 	pi.registerFlag("no-worktree-isolation", {
-		description: "Run without automatic Git worktree isolation",
+		description: "Disable managed Git worktree sessions",
 		type: "boolean",
 		default: false,
 	});
@@ -388,37 +399,56 @@ export default async function (pi: ExtensionAPI) {
 		if (extensionRepository && currentRepository === extensionRepository) return;
 		if (resumeInvocation && !isSessionIdInvocation(cliArgs())) {
 			registerReleasedSessionStartup(pi);
-			return;
 		}
 	} catch (error) {
 		fatal(error instanceof Error ? error.message : String(error));
 	}
 
-	try {
-		const plan = await createLaunchPlan(cwd);
-		// Reclaim older sessions after the new worktree has been populated. Old
-		// ignored outputs relocated to main must not appear in the new session.
-		await reapStaleWorktrees(plan.manifest.repoRoot).catch((error) => {
-			process.stderr.write(`Pi worktree isolation: recovery failed: ${error instanceof Error ? error.message : String(error)}\n`);
-		});
-		if (cliArgs().some((arg) => arg === "--fork" || arg.startsWith("--fork="))) {
-			// Pi creates a CLI fork before extensions load. Repoint that already-created
-			// session at the managed cwd, then reopen it in the child instead of
-			// replaying --fork and creating a duplicate session.
-			pi.on("session_start", async (_event, ctx) => {
-				try {
-					const sessionFile = ctx.sessionManager.getSessionFile();
-					if (!sessionFile) fatal("could not locate the newly created fork session.");
-					await rewriteSessionCwd(sessionFile, plan.childCwd);
-					await relaunch(plan, forkChildArgs(sessionFile));
-				} catch (error) {
-					fatal(error instanceof Error ? error.message : String(error));
-				}
-			});
-			return;
+	// Recovery no longer depends on launching a new worktree first.
+	await reapStaleWorktrees(cwd).catch((error) => {
+		process.stderr.write(`Pi worktree isolation: recovery failed: ${error instanceof Error ? error.message : String(error)}\n`);
+	});
+	pi.on("session_before_switch", async (event, ctx) => {
+		if (!event.targetSessionFile) return;
+		const record = await loadResumeRecord(event.targetSessionFile);
+		if (!record || record.commonGitDir !== await findCommonGitDir(cwd)) return;
+		try {
+			const plan = await activateReleasedSession(event.targetSessionFile, record.commonGitDir);
+			await resumeInManagedWorktree(event.targetSessionFile, plan.childCwd, plan.manifest.manifestPath);
+		} catch (error) {
+			ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
+			return { cancel: true };
 		}
-		await relaunch(plan);
-	} catch (error) {
-		fatal(error instanceof Error ? error.message : String(error));
-	}
+	});
+
+	let pending: { plan: Awaited<ReturnType<typeof createLaunchPlan>>; sessionFile: string } | null = null;
+	pi.registerTool({
+		name: "isolated_new_branch",
+		label: "Create isolated branch",
+		description: "Create a named feature branch in an isolated worktree and continue this saved Pi session there. Requires a clean Git checkout; ignored configuration is linked as usual.",
+		parameters: Type.Object({ name: Type.String({ description: "Name of the new feature branch" }) }),
+		executionMode: "sequential",
+		async execute(_toolCallId, { name }, _signal, _onUpdate, ctx) {
+			if (pending) throw new Error("A branch transition is already in progress.");
+			const sessionFile = ctx.sessionManager.getSessionFile();
+			if (!sessionFile) throw new Error("Save this Pi session before creating an isolated branch.");
+			const plan = await createLaunchPlan(ctx.cwd, undefined, name);
+			pending = { plan, sessionFile };
+			ctx.abort();
+			return { content: [{ type: "text", text: `Created ${name} at ${plan.childCwd}. Continuing this session there now; do not perform more work in the original checkout.` }], details: undefined };
+		},
+	});
+	pi.on("agent_end", async () => {
+		if (!pending) return;
+		const { plan, sessionFile } = pending;
+		pending = null;
+		try {
+			await rewriteSessionCwd(sessionFile, plan.childCwd);
+			const args = continuationArgs(sessionFile,
+				"Continue the previous request in the newly created isolated branch. Do not call isolated_new_branch again for this request.");
+			await relaunch(plan, args);
+		} catch (error) {
+			fatal(`could not enter the new branch; worktree remains at ${plan.childCwd}: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	});
 }

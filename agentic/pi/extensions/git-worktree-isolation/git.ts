@@ -619,88 +619,8 @@ export async function checkpointSessionIfPresent(
 	return checkpointSession(manifest, sessionFile);
 }
 
-// Ignored outputs created in an isolated worktree are not part of Git's
-// publication. Move them to the launch checkout before deleting that worktree.
-// Existing names are never overwritten: keep adding the session suffix until free.
-export async function relocateIgnoredPaths(manifest: SessionManifest): Promise<string[]> {
-	const copied = new Set(manifest.copiedEnvFiles ?? []);
-	const linked = new Set(manifest.linkedIgnoredPaths ?? []);
-	const moved: string[] = [];
-	for (const relativePath of await listIgnoredPaths(manifest.worktreeRoot)) {
-		if (copied.has(relativePath) || isDisposableCoverage(relativePath)) continue;
-		if (linked.has(relativePath)) {
-			const link = await fs.promises.lstat(path.join(manifest.worktreeRoot, relativePath));
-			if (link.isSymbolicLink() &&
-				(await fs.promises.readlink(path.join(manifest.worktreeRoot, relativePath))) === path.join(manifest.repoRoot, relativePath)) continue;
-		}
-
-		const source = path.join(manifest.worktreeRoot, relativePath);
-		const root = path.resolve(manifest.repoRoot);
-		const parent = path.dirname(path.join(root, relativePath));
-		if (parent !== root && !parent.startsWith(`${root}${path.sep}`)) throw new Error(`Unsafe ignored path: ${relativePath}`);
-		// A symlinked ancestor could direct a move outside the main checkout.
-		let ancestor = root;
-		for (const part of path.relative(root, parent).split(path.sep).filter(Boolean)) {
-			ancestor = path.join(ancestor, part);
-			const stat = await fs.promises.lstat(ancestor).catch((error: NodeJS.ErrnoException) => {
-				if (error.code === "ENOENT") return null;
-				throw error;
-			});
-			if (stat?.isSymbolicLink() || (stat && !stat.isDirectory())) {
-				throw new Error(`Cannot move ${relativePath} into a non-directory or symlinked checkout path ${ancestor}.`);
-			}
-		}
-		await fs.promises.mkdir(parent, { recursive: true });
-		const original = path.join(root, relativePath);
-		const directory = (await fs.promises.lstat(source)).isDirectory();
-		for (let suffix = 0; ; suffix++) {
-			const target = suffix ? `${original}-${manifest.id}${suffix > 1 ? `-${suffix}` : ""}` : original;
-			const relativeTarget = path.relative(root, target);
-			if ((await run(root, ["ls-files", "--", relativeTarget])).stdout.trim()) continue;
-			// Reserve the destination atomically. rename() alone can replace another
-			// session's file between an existence check and the move.
-			let reserved: fs.Stats;
-			try {
-				if (directory) await fs.promises.mkdir(target);
-				else {
-					const handle = await fs.promises.open(target, "wx");
-					await handle.close();
-				}
-				reserved = await fs.promises.lstat(target);
-			} catch (error) {
-				if ((error as NodeJS.ErrnoException).code === "EEXIST") continue;
-				throw error;
-			}
-			try {
-				const ignored = await run(root, ["check-ignore", "--quiet", "--no-index", "--", relativeTarget]);
-				if (ignored.code === 1) {
-					// A session-specific ignore rule may not exist on the main branch.
-					// Keep the relocated output private, including collision names.
-					if (/[\n\r]/.test(relativeTarget)) throw new Error(`Cannot safely exclude ${relativeTarget} from Git.`);
-					const escaped = [...relativeTarget].map((char) => "\\*?[]#! ".includes(char) ? `\\${char}` : char).join("");
-					const pattern = `/${escaped}`;
-					await fs.promises.appendFile(path.join(manifest.commonGitDir, "info", "exclude"), `${pattern}\n`, "utf8");
-				} else if (ignored.code !== 0) throw new Error(ignored.stderr);
-				if ((await run(root, ["check-ignore", "--quiet", "--no-index", "--", relativeTarget])).code !== 0) {
-					throw new Error(`Cannot keep relocated path ${relativeTarget} ignored in the main checkout.`);
-				}
-				await fs.promises.rename(source, target);
-				moved.push(relativeTarget);
-			} catch (error) {
-				const current = await fs.promises.lstat(target).catch(() => null);
-				if (current?.ino === reserved.ino) {
-					if (directory) await fs.promises.rmdir(target).catch(() => undefined);
-					else await fs.promises.unlink(target).catch(() => undefined);
-				}
-				throw error;
-			}
-			break;
-		}
-	}
-	await verifyKnownLinks(manifest);
-	return moved;
-}
-
+// Unknown ignored outputs are not published and must remain in their worktree.
+// Refuse release rather than silently deleting or moving experiment results.
 export async function assertWorktreeReleasable(manifest: SessionManifest): Promise<void> {
 	if (manifest.pendingSync) throw new Error("Checkout synchronization is still pending.");
 	if (await hasInProgressOperation(manifest)) throw new Error("A Git operation is still in progress.");
@@ -862,9 +782,20 @@ async function consolidateManagedSessionDirectories(
 	}
 }
 
-export async function createLaunchPlan(cwd: string, agentDir?: string): Promise<LaunchPlan> {
+export async function createLaunchPlan(cwd: string, agentDir?: string, newBranch?: string): Promise<LaunchPlan> {
 	const repoRoot = await findRepoRoot(cwd);
 	if (!repoRoot) throw new Error(`${cwd} is not inside a Git working tree.`);
+	if (newBranch !== undefined) {
+		if (!newBranch || (await run(repoRoot, ["check-ref-format", "--branch", newBranch])).code !== 0) {
+			throw new Error(`Invalid branch name: ${newBranch}`);
+		}
+		if ((await run(repoRoot, ["show-ref", "--verify", "--quiet", `refs/heads/${newBranch}`])).code === 0) {
+			throw new Error(`Branch ${newBranch} already exists.`);
+		}
+		if (await git(repoRoot, ["status", "--porcelain=v1"])) {
+			throw new Error("Commit or remove non-ignored checkout changes before creating an isolated branch.");
+		}
+	}
 
 	let targetBranch = "";
 	let baseSha = "";
@@ -891,6 +822,9 @@ export async function createLaunchPlan(cwd: string, agentDir?: string): Promise<
 		await new Promise((resolve) => setTimeout(resolve, 25));
 	}
 	if (!snapshot) throw new Error("The launch checkout kept changing while Pi prepared its isolated worktree.");
+	if (newBranch && (snapshot.workingTree || await git(repoRoot, ["status", "--porcelain=v1"]))) {
+		throw new Error("The checkout changed while preparing the isolated branch; retry from a clean checkout.");
+	}
 	const commonRaw = await git(repoRoot, ["rev-parse", "--git-common-dir"]);
 	const commonGitDir = resolveGitPath(repoRoot, commonRaw);
 	const lexicalCwd = path.resolve(cwd);
@@ -907,8 +841,9 @@ export async function createLaunchPlan(cwd: string, agentDir?: string): Promise<
 	const id = await reserveSessionId(commonGitDir, worktreesRoot);
 	// A detached launch has no safe publication target. Give this session its
 	// own branch rather than guessing or changing another worktree's branch.
-	const detachedLaunch = !targetBranch;
-	if (detachedLaunch) targetBranch = `pi/${id}`;
+	const detachedLaunch = !targetBranch && !newBranch;
+	if (newBranch) targetBranch = newBranch;
+	else if (detachedLaunch) targetBranch = `pi/${id}`;
 	const requestedWorktreeRoot = path.join(worktreesRoot, id);
 	await fs.promises.mkdir(worktreesRoot, { recursive: true });
 	const hasSnapshotRefs = Boolean(snapshot.workingTree && snapshot.indexCommit);
@@ -930,7 +865,10 @@ export async function createLaunchPlan(cwd: string, agentDir?: string): Promise<
 			await git(repoRoot, ["update-ref", `refs/pi-worktree-snapshots/${id}/index`, snapshot.indexCommit!]);
 			indexRefCreated = true;
 		}
-		await git(repoRoot, ["worktree", "add", "--detach", requestedWorktreeRoot, snapshot.startSha]);
+		await git(repoRoot, newBranch
+			? ["worktree", "add", "-b", newBranch, requestedWorktreeRoot, snapshot.startSha]
+			: ["worktree", "add", "--detach", requestedWorktreeRoot, snapshot.startSha]);
+		if (newBranch) targetRefCreated = true;
 		worktreeAdded = true;
 		worktreeRoot = await fs.promises.realpath(requestedWorktreeRoot);
 		const linkedIgnoredPaths = await linkIgnoredPaths(repoRoot, worktreeRoot);
@@ -949,7 +887,7 @@ export async function createLaunchPlan(cwd: string, agentDir?: string): Promise<
 			targetBranch,
 			targetRef: `refs/heads/${targetBranch}`,
 			baseSha,
-			publishedHead: detachedLaunch ? snapshot.startSha : baseSha,
+			publishedHead: detachedLaunch || newBranch ? snapshot.startSha : baseSha,
 			...(snapshot.workingTree && snapshot.indexTree && snapshot.indexCommit
 				? {
 						launchSnapshotCommit: snapshot.startSha,
@@ -993,9 +931,9 @@ export async function createLaunchPlan(cwd: string, agentDir?: string): Promise<
 			);
 		}
 		if (targetRefCreated && !cleanupFailures.length) {
-			await attemptCleanup("temporary session branch removal", () =>
+			await attemptCleanup("new session branch removal", () =>
 				git(repoRoot, ["update-ref", "-d", `refs/heads/${targetBranch}`, snapshot.startSha]),
-			);
+		);
 		}
 		if (cleanupFailures.length > 0) {
 			const message = error instanceof Error ? error.message : String(error);
@@ -1134,7 +1072,6 @@ export async function reapStaleWorktrees(repoRoot: string, finishedChildPid?: nu
 					continue;
 				}
 				if ((await enforceRepository(manifest)).kind !== "ok") continue;
-				await relocateIgnoredPaths(manifest);
 				await assertWorktreeReleasable(manifest);
 				await checkpointWorktreeSessions(manifest);
 				await releaseManagedWorktree(manifest);
@@ -1154,7 +1091,6 @@ export async function reapStaleWorktrees(repoRoot: string, finishedChildPid?: nu
 }
 
 export async function releaseManagedWorktree(manifest: SessionManifest): Promise<void> {
-	await relocateIgnoredPaths(manifest);
 	await assertWorktreeReleasable(manifest);
 	await cleanLinkedIgnoredPaths(manifest);
 	await git(manifest.repoRoot, ["worktree", "unlock", manifest.worktreeRoot]);

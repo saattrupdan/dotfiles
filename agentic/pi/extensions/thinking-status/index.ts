@@ -48,6 +48,7 @@ const TOOL_LABELS: Record<string, string> = {
 	web_browse: "Browsing...",
 	web_search: "Searching...",
 	subagent: "Whipping the subagents...",
+	isolated_new_branch: "Creating branch...",
 	// MCP tools (understory memory)
 	memory_query: "Remembering...",
 	memory_add: "Storing to memory...",

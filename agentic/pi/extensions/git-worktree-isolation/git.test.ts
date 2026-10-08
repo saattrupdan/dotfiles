@@ -5,12 +5,12 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, test } from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { recoveredFromRateLimit } from "./index.ts";
+import registerIsolation, { continuationArgs, recoveredFromRateLimit } from "./index.ts";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	acquirePublishLock,
 	acquireResumeClaim,
 	acquireSessionLease,
-	assertWorktreeReleasable,
 	checkpointSession,
 	checkpointSessionIfPresent,
 	checkpointWorktreeSessions,
@@ -29,6 +29,21 @@ import {
 	sessionCwd,
 	sessionDirectoryForCwd,
 } from "./git.ts";
+
+test("preserves output and prompt constraints when continuing in a branch", () => {
+	assert.deepEqual(
+		continuationArgs("/tmp/session.jsonl", "Continue", [
+			"--print", "--mode=json", "--model", "provider/model", "--system-prompt", "Be careful",
+			"--append-system-prompt=More rules", "--session-dir", "/tmp/sessions",
+			"--fork", "old-session", "Old user request", "--", "ignored attachment",
+		]),
+		[
+			"--session", "/tmp/session.jsonl", "--print", "--mode=json", "--model", "provider/model",
+			"--system-prompt", "Be careful", "--append-system-prompt=More rules",
+			"--session-dir", "/tmp/sessions", "Continue",
+		],
+	);
+});
 
 test("detects a rate-limit retry only in the current user request", () => {
 	const entries = [
@@ -80,6 +95,64 @@ test("creates a detached worktree without creating a branch", async () => {
 	const hub = fs.realpathSync(sessionDirectoryForCwd(root, agentDir));
 	assert.equal(fs.realpathSync(sessionDirectoryForCwd(nested, agentDir)), hub);
 	assert.equal(fs.realpathSync(sessionDirectoryForCwd(plan.childCwd, agentDir)), hub);
+});
+
+test("registers an opt-in branch tool without isolating ordinary sessions", async () => {
+	const { root, agentDir } = createRepo();
+	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	try {
+		let tool: { execute: (...args: unknown[]) => Promise<unknown> } | undefined;
+		const pi = {
+			registerFlag: () => undefined,
+			getFlag: () => false,
+			exec: async () => ({ code: 0, stdout: `${root}\n` }),
+			registerTool: (registered: typeof tool) => { tool = registered; },
+			on: () => undefined,
+		} as unknown as ExtensionAPI;
+		await registerIsolation(pi);
+		assert.ok(tool);
+		tool = undefined;
+		const originalArgv = process.argv;
+		try {
+			process.argv = ["node", "pi", "--session", path.join(agentDir, "session.jsonl")];
+			await registerIsolation(pi);
+			assert.ok(tool, "resuming an ordinary session must retain the branch tool");
+		} finally {
+			process.argv = originalArgv;
+		}
+		assert.deepEqual(command(root, ["worktree", "list", "--porcelain"]).match(/^worktree /gm), ["worktree "]);
+		let aborted = false;
+		const result = await tool.execute("call", { name: "feat/from-tool" }, undefined, undefined, {
+			cwd: root,
+			sessionManager: { getSessionFile: () => path.join(agentDir, "session.jsonl") },
+			abort: () => { aborted = true; },
+		});
+		assert.equal(aborted, true);
+		assert.match(JSON.stringify(result), /feat\/from-tool/);
+		assert.equal(command(root, ["branch", "--show-current"]), "main");
+		assert.equal(command(root, ["branch", "--list", "feat/from-tool"]), "+ feat/from-tool");
+	} finally {
+		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+	}
+});
+
+test("ordinary startup reaps a clean abandoned managed worktree", async () => {
+	const { root, agentDir } = createRepo();
+	const stale = await createLaunchPlan(root, agentDir);
+	stale.manifest.ownerPid = 99999999;
+	await saveManifest(stale.manifest);
+	const pi = {
+		registerFlag: () => undefined,
+		getFlag: () => false,
+		exec: async () => ({ code: 0, stdout: `${root}\n` }),
+		registerTool: () => undefined,
+		on: () => undefined,
+	} as unknown as ExtensionAPI;
+	await registerIsolation(pi);
+	assert.equal(fs.existsSync(stale.manifest.worktreeRoot), false);
+	assert.equal(command(root, ["branch", "--show-current"]), "main");
 });
 
 test("launches a detached checkout on its own publication branch", async () => {
@@ -149,8 +222,8 @@ test("does not link dependency and cache directories into new worktrees", async 
 	}
 	fs.mkdirSync(path.join(plan.childCwd, ".venv"));
 	fs.writeFileSync(path.join(plan.childCwd, ".venv", "new"), "session\n");
-	await releaseManagedWorktree(plan.manifest);
-	assert.equal(fs.readFileSync(path.join(root, `.venv-${plan.manifest.id}/new`), "utf8"), "session\n");
+	await assert.rejects(releaseManagedWorktree(plan.manifest), /Ignored path .venv/);
+	assert.equal(fs.readFileSync(path.join(plan.childCwd, ".venv/new"), "utf8"), "session\n");
 	const next = await createLaunchPlan(root, agentDir);
 	assert.equal(fs.existsSync(path.join(next.childCwd, `.venv-${plan.manifest.id}`)), false);
 });
@@ -221,8 +294,8 @@ test("moves a replaced ignored link without deleting session data", async () => 
 	fs.unlinkSync(path.join(plan.childCwd, "assets"));
 	fs.mkdirSync(path.join(plan.childCwd, "assets"));
 	fs.writeFileSync(path.join(plan.childCwd, "assets", "important"), "keep\n");
-	await releaseManagedWorktree(plan.manifest);
-	assert.equal(fs.readFileSync(path.join(root, `assets-${plan.manifest.id}/important`), "utf8"), "keep\n");
+	await assert.rejects(releaseManagedWorktree(plan.manifest), /Linked ignored path assets was replaced/);
+	assert.equal(fs.readFileSync(path.join(plan.childCwd, "assets/important"), "utf8"), "keep\n");
 });
 
 test("does not treat a tracked directory on a new branch as a replaced ignored link", async () => {
@@ -276,8 +349,8 @@ test("retains global excludes and safely quotes ignored path names", async () =>
 	assert.equal(fs.readlinkSync(path.join(plan.childCwd, "build[1]")), path.join(fs.realpathSync(root), "build[1]"));
 	fs.writeFileSync(path.join(plan.childCwd, "new.global.tmp"), "local\n");
 	assert.equal(command(plan.childCwd, ["status", "--porcelain"]), "");
-	await releaseManagedWorktree(plan.manifest);
-	assert.equal(fs.readFileSync(path.join(root, "new.global.tmp"), "utf8"), "local\n");
+	await assert.rejects(releaseManagedWorktree(plan.manifest), /Ignored path new.global.tmp/);
+	assert.equal(fs.readFileSync(path.join(plan.childCwd, "new.global.tmp"), "utf8"), "local\n");
 });
 
 test("preserves Git's default XDG global ignore file", async () => {
@@ -291,8 +364,8 @@ test("preserves Git's default XDG global ignore file", async () => {
 		const plan = await createLaunchPlan(root, agentDir);
 		fs.writeFileSync(path.join(plan.childCwd, "new.global.tmp"), "local\n");
 		assert.equal(command(plan.childCwd, ["status", "--porcelain"]), "");
-		await releaseManagedWorktree(plan.manifest);
-		assert.equal(fs.readFileSync(path.join(root, "new.global.tmp"), "utf8"), "local\n");
+		await assert.rejects(releaseManagedWorktree(plan.manifest), /Ignored path new.global.tmp/);
+		assert.equal(fs.readFileSync(path.join(plan.childCwd, "new.global.tmp"), "utf8"), "local\n");
 	} finally {
 		if (previousXdg === undefined) delete process.env.XDG_CONFIG_HOME;
 		else process.env.XDG_CONFIG_HOME = previousXdg;
@@ -833,87 +906,46 @@ test("does not checkpoint or release an unsafe worktree", async () => {
 	assert.equal(await loadResumeRecord(sessionFile), null);
 });
 
-test("moves previously unknown ignored files into the main checkout", async () => {
+test("preserves ignored branch outputs without moving them into main", async () => {
 	const { root, agentDir } = createRepo();
 	fs.writeFileSync(path.join(root, ".gitignore"), "cache/\n");
 	command(root, ["add", ".gitignore"]);
 	command(root, ["commit", "-m", "chore: ignore cache"]);
-	const plan = await createLaunchPlan(root, agentDir);
+	const plan = await createLaunchPlan(root, agentDir, "feat/experiment");
+	assert.equal(command(plan.childCwd, ["branch", "--show-current"]), "feat/experiment");
 	fs.mkdirSync(path.join(plan.childCwd, "cache"));
 	fs.writeFileSync(path.join(plan.childCwd, "cache", "result.bin"), "important\n");
-
-	await assert.rejects(assertWorktreeReleasable(plan.manifest), /Ignored path cache/);
-	await releaseManagedWorktree(plan.manifest);
-	assert.equal(fs.readFileSync(path.join(root, "cache", "result.bin"), "utf8"), "important\n");
+	await assert.rejects(releaseManagedWorktree(plan.manifest), /Ignored path cache/);
+	assert.equal(fs.readFileSync(path.join(plan.childCwd, "cache/result.bin"), "utf8"), "important\n");
+	assert.equal(fs.existsSync(path.join(root, "cache")), false);
+	plan.manifest.ownerPid = 99999999;
+	await saveManifest(plan.manifest);
+	assert.deepEqual(await reapStaleWorktrees(root), []);
+	assert.equal(fs.existsSync(plan.childCwd), true);
 });
 
-test("moves ignored output into the main checkout and suffixes collisions", async () => {
+test("refuses invalid, duplicate and dirty branch launches without changing the checkout", async () => {
 	const { root, agentDir } = createRepo();
-	fs.writeFileSync(path.join(root, ".gitignore"), "cache/\n");
+	await assert.rejects(createLaunchPlan(root, agentDir, "bad name"), /Invalid branch name/);
+	await assert.rejects(createLaunchPlan(root, agentDir, "main"), /already exists/);
+	fs.writeFileSync(path.join(root, "scratch.txt"), "experiment\n");
+	await assert.rejects(createLaunchPlan(root, agentDir, "feat/experiment"), /clean checkout|Commit or remove/);
+	assert.equal(command(root, ["branch", "--show-current"]), "main");
+	assert.throws(() => command(root, ["rev-parse", "--verify", "refs/heads/feat/experiment"]));
+});
+
+test("creates a named branch from a clean checkout with ignored links", async () => {
+	const { root, agentDir } = createRepo();
+	fs.writeFileSync(path.join(root, ".gitignore"), ".env\n");
 	command(root, ["add", ".gitignore"]);
-	command(root, ["commit", "-m", "chore: ignore cache"]);
-	const plan = await createLaunchPlan(root, agentDir);
-	fs.mkdirSync(path.join(plan.childCwd, "cache"));
-	fs.writeFileSync(path.join(plan.childCwd, "cache", "result.bin"), "session\n");
-	// Another session created this destination after our launch.
-	fs.mkdirSync(path.join(root, "cache"));
-	fs.writeFileSync(path.join(root, "cache", "result.bin"), "original\n");
+	command(root, ["commit", "-m", "chore: ignore env"]);
+	fs.writeFileSync(path.join(root, ".env"), "secret\n");
+	const plan = await createLaunchPlan(root, agentDir, "feat/isolated");
+	assert.equal(command(plan.childCwd, ["branch", "--show-current"]), "feat/isolated");
+	assert.equal(command(root, ["branch", "--show-current"]), "main");
+	assert.equal(fs.readlinkSync(path.join(plan.childCwd, ".env")), path.join(fs.realpathSync(root), ".env"));
 	await releaseManagedWorktree(plan.manifest);
-	assert.equal(fs.readFileSync(path.join(root, "cache", "result.bin"), "utf8"), "original\n");
-	assert.equal(fs.readFileSync(path.join(root, `cache-${plan.manifest.id}`, "result.bin"), "utf8"), "session\n");
-	assert.equal(fs.existsSync(plan.manifest.worktreeRoot), false);
-});
-
-test("crash recovery does not populate the newly created checkout", async () => {
-	const { root, agentDir } = createRepo();
-	fs.writeFileSync(path.join(root, ".gitignore"), "cache/\n");
-	command(root, ["add", ".gitignore"]);
-	command(root, ["commit", "-m", "chore: ignore cache"]);
-	const old = await createLaunchPlan(root, agentDir);
-	fs.mkdirSync(path.join(old.childCwd, "cache"));
-	fs.writeFileSync(path.join(old.childCwd, "cache", "artifact"), "old\n");
-	old.manifest.ownerPid = 99999999;
-	await saveManifest(old.manifest);
-	const current = await createLaunchPlan(root, agentDir);
-	await reapStaleWorktrees(root);
-	assert.equal(fs.readFileSync(path.join(root, "cache/artifact"), "utf8"), "old\n");
-	assert.equal(fs.existsSync(path.join(current.childCwd, "cache")), false);
-});
-
-test("simultaneous exits cannot overwrite another session's ignored output", async () => {
-	const { root, agentDir } = createRepo();
-	fs.writeFileSync(path.join(root, ".gitignore"), "output/\n");
-	command(root, ["add", ".gitignore"]);
-	command(root, ["commit", "-m", "chore: ignore output"]);
-	const first = await createLaunchPlan(root, agentDir);
-	const second = await createLaunchPlan(root, agentDir);
-	for (const [plan, value] of [[first, "first"], [second, "second"]] as const) {
-		fs.mkdirSync(path.join(plan.childCwd, "output"));
-		fs.writeFileSync(path.join(plan.childCwd, "output", "result"), value);
-	}
-	await Promise.all([releaseManagedWorktree(first.manifest), releaseManagedWorktree(second.manifest)]);
-	const results = [
-		path.join(root, "output", "result"),
-		path.join(root, `output-${first.manifest.id}`, "result"),
-		path.join(root, `output-${second.manifest.id}`, "result"),
-	].filter((file) => fs.existsSync(file)).map((file) => fs.readFileSync(file, "utf8"));
-	assert.deepEqual(results.sort(), ["first", "second"]);
-});
-
-test("keeps session-only ignored output private after moving it to main", async () => {
-	const { root, agentDir } = createRepo();
-	const plan = await createLaunchPlan(root, agentDir);
-	command(plan.childCwd, ["switch", "-c", "feat/private-output"]);
-	fs.writeFileSync(path.join(plan.childCwd, ".gitignore"), "private/\n");
-	command(plan.childCwd, ["add", ".gitignore"]);
-	command(plan.childCwd, ["commit", "-m", "chore: ignore private output"]);
-	fs.mkdirSync(path.join(plan.childCwd, "private"));
-	fs.writeFileSync(path.join(plan.childCwd, "private", "secret"), "do not stage\n");
-	assert.equal((await enforceRepository(plan.manifest)).kind, "ok");
-	await releaseManagedWorktree(plan.manifest);
-	assert.equal(fs.readFileSync(path.join(root, "private", "secret"), "utf8"), "do not stage\n");
-	assert.equal(command(root, ["status", "--porcelain"]), "");
-	assert.equal(command(root, ["check-ignore", "private/secret"]), "private/secret");
+	assert.equal(command(root, ["rev-parse", "refs/heads/feat/isolated"]), command(root, ["rev-parse", "HEAD"]));
 });
 
 test("recovers clean worktrees after an abrupt exit without reclaiming live owners", async () => {

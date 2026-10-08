@@ -140,7 +140,10 @@ memory".
 
 Builders run in isolated worktrees, merged back on exit. **Every builder must commit**
 before finishing. **Hop to a feature branch before spawning builders** — never on `main`
-unless the user consents.
+unless the user consents. When a new branch is needed in a Git checkout, use
+`isolated_new_branch` to create it in a managed worktree and continue the session
+there; do not isolate ordinary experiments or commands that do not need a branch.
+Honor repository rules that forbid worktrees (such as this dotfiles checkout).
 
 ## Flow selection
 
