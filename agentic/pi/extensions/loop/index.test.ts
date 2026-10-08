@@ -306,6 +306,21 @@ test("checker error and aborted iteration fail closed", async () => {
 	assert.match(h.notices.at(-1) ?? "", /iteration failed/);
 });
 
+test("a recovered provider error does not stop the loop", async () => {
+	const h = harness(undefined, { contextTokens: 2_000 });
+	await h.command("--max-runs 2 work");
+	await h.emit("agent_end", { messages: [{ role: "assistant", stopReason: "error", content: [] }] });
+	await h.emit("agent_end", { messages: [{ role: "assistant", stopReason: "stop", content: [{ type: "text", text: "recovered" }] }] });
+	h.setBusy(false);
+	await h.emit("agent_settled");
+	assert.equal(h.notices.length, 0);
+	h.tick(); // skip compaction for a short session
+	h.tick(); // start run two
+	assert.deepEqual(h.sent, ["work", "work"]);
+	await h.finish();
+	assert.match(h.notices.at(-1) ?? "", /maximum of 2 runs/);
+});
+
 test("user messages do not stop a running or waiting loop", async () => {
 	for (const source of ["interactive", "rpc"] as const) {
 		const h = harness(undefined, { contextTokens: 2_000 });

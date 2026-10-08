@@ -256,6 +256,8 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 			active.failed = true;
 			return;
 		}
+		// A retry can emit an error agent_end before a successful one in the same run.
+		active.failed = false;
 		active.lastOutput = final.content.filter((block) => block.type === "text").map((block) => block.text).join("\n");
 	});
 	function nextOrStop(loop: ActiveLoop) {
