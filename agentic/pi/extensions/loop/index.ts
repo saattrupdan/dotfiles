@@ -226,8 +226,9 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 				say(String(error instanceof Error ? error.message : error));
 				return;
 			}
-			// Only a standalone .txt path is a file; prose mentioning one stays a prompt.
-			const file = /^(?:(["'])(.+\.txt)\1|(\S+\.txt))$/.exec(options.prompt);
+			// Only a standalone .txt path is a file; @ enables Pi's path completion.
+			// Prose mentioning one stays a prompt.
+			const file = /^@?(?:(["'])(.+\.txt)\1|(\S+\.txt))$/.exec(options.prompt);
 			const path = file?.[2] ?? file?.[3];
 			if (path) {
 				try {

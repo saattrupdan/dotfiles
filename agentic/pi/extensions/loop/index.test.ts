@@ -48,6 +48,30 @@ test("a .txt path loads the prompt once for every run", async () => {
 	}
 });
 
+test("@-prefixed .txt paths load prompts with relative, quoted, and absolute paths", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-loop-"));
+	try {
+		const file = join(dir, "prompt with spaces.txt");
+		await writeFile(file, "Fix errors from file");
+		await writeFile(join(dir, "prompt.txt"), "Fix errors from file");
+		const h = harness(undefined, { cwd: dir });
+		for (const path of ["@prompt.txt", '@"prompt with spaces.txt"', `@${join(dir, "prompt.txt")}`]) {
+			await h.command(path);
+			assert.equal(h.sent.at(-1), "Fix errors from file");
+			await h.finish();
+			await h.command("stop");
+		}
+		await h.command("@missing.txt");
+		assert.match(h.notices.at(-1) ?? "", /Unable to read prompt file missing\.txt/);
+		assert.equal(h.sent.length, 3);
+		await h.command("read @prompt.txt");
+		assert.equal(h.sent.at(-1), "read @prompt.txt");
+		await h.command("stop");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
 test("missing or empty .txt files do not start a loop; prose remains a prompt", async () => {
 	const dir = await mkdtemp(join(tmpdir(), "pi-loop-"));
 	try {
