@@ -148,6 +148,9 @@ function registerReleasedSessionStartup(pi: ExtensionAPI): void {
 		if (!sessionFile) fatal("the selected saved session has no session file.");
 		try {
 			const plan = await activateReleasedSession(sessionFile);
+			await reapStaleWorktrees(plan.manifest.repoRoot).catch((error) => {
+				process.stderr.write(`Pi worktree isolation: recovery failed: ${error instanceof Error ? error.message : String(error)}\n`);
+			});
 			await resumeInManagedWorktree(sessionFile, plan.childCwd, plan.manifest.manifestPath);
 		} catch (error) {
 			fatal(error instanceof Error ? error.message : String(error));
@@ -383,7 +386,6 @@ export default async function (pi: ExtensionAPI) {
 			return;
 		}
 		if (extensionRepository && currentRepository === extensionRepository) return;
-		if (currentRepository) await reapStaleWorktrees(cwd);
 		if (resumeInvocation && !isSessionIdInvocation(cliArgs())) {
 			registerReleasedSessionStartup(pi);
 			return;
@@ -394,6 +396,11 @@ export default async function (pi: ExtensionAPI) {
 
 	try {
 		const plan = await createLaunchPlan(cwd);
+		// Reclaim older sessions after the new worktree has been populated. Old
+		// ignored outputs relocated to main must not appear in the new session.
+		await reapStaleWorktrees(plan.manifest.repoRoot).catch((error) => {
+			process.stderr.write(`Pi worktree isolation: recovery failed: ${error instanceof Error ? error.message : String(error)}\n`);
+		});
 		if (cliArgs().some((arg) => arg === "--fork" || arg.startsWith("--fork="))) {
 			// Pi creates a CLI fork before extensions load. Repoint that already-created
 			// session at the managed cwd, then reopen it in the child instead of

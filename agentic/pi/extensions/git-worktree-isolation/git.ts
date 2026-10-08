@@ -165,6 +165,9 @@ async function verifyKnownLinks(manifest: LinkedPaths): Promise<void> {
 			throw error;
 		}
 		if (!stat.isSymbolicLink() || (await fs.promises.readlink(destination)) !== path.join(manifest.repoRoot, relativePath)) {
+			// A branch change can turn an ignored linked directory into a tracked
+			// directory. It belongs to Git now, so never unlink or relocate it.
+			if ((await git(manifest.worktreeRoot, ["ls-files", "--", relativePath])).trim()) continue;
 			// Older sessions linked .coverage; coverage tools replace that link with a disposable file.
 			if (isDisposableCoverage(relativePath) && stat.isFile()) continue;
 			throw new Error(`Linked ignored path ${relativePath} was replaced; worktree was preserved.`);
@@ -175,9 +178,14 @@ async function verifyKnownLinks(manifest: LinkedPaths): Promise<void> {
 async function removeKnownLinks(manifest: LinkedPaths): Promise<void> {
 	await verifyKnownLinks(manifest);
 	for (const relativePath of manifest.linkedIgnoredPaths ?? []) {
-		await fs.promises.unlink(path.join(manifest.worktreeRoot, relativePath)).catch((error: NodeJS.ErrnoException) => {
-			if (error.code !== "ENOENT") throw error;
+		const destination = path.join(manifest.worktreeRoot, relativePath);
+		const stat = await fs.promises.lstat(destination).catch((error: NodeJS.ErrnoException) => {
+			if (error.code === "ENOENT") return null;
+			throw error;
 		});
+		if (stat?.isSymbolicLink() && (await fs.promises.readlink(destination)) === path.join(manifest.repoRoot, relativePath)) {
+			await fs.promises.unlink(destination);
+		}
 	}
 }
 
@@ -242,6 +250,15 @@ async function listIgnoredPaths(repoRoot: string): Promise<string[]> {
 	return candidates;
 }
 
+// Build outputs and dependency/cache directories must be private to each
+// session. Linking them makes new worktrees look like they contain copies of
+// old sessions' artifacts (including names relocated on earlier releases).
+function isGeneratedDirectory(relativePath: string): boolean {
+	return relativePath.split(path.sep).some((part) =>
+		/^(?:node_modules|\.venv|venv|__pycache__|\.next|dist|build|(?:\.?[\w.-]*cache))(?:-[a-z]+-[a-z]+(?:-\d+)?)*$/i.test(part),
+	);
+}
+
 async function linkIgnoredPaths(repoRoot: string, worktreeRoot: string): Promise<string[]> {
 	const candidates = (await listIgnoredPaths(repoRoot)).filter((relativePath) => !isDisposableCoverage(relativePath));
 	const linked: string[] = [];
@@ -259,6 +276,9 @@ async function linkIgnoredPaths(repoRoot: string, worktreeRoot: string): Promise
 				throw error;
 			}
 			if (!sourceStat.isFile() && !sourceStat.isDirectory() && !sourceStat.isSymbolicLink()) continue;
+			if (isGeneratedDirectory(relativePath) &&
+				(sourceStat.isDirectory() || (sourceStat.isSymbolicLink() &&
+					(await fs.promises.stat(source).catch(() => null))?.isDirectory()))) continue;
 			try {
 				await fs.promises.lstat(destination);
 				continue; // Never replace tracked or session-owned content.
@@ -530,8 +550,11 @@ export async function checkpointSession(
 		throw new Error("Cannot release a session with uncommitted changes.");
 	}
 
+	return writeResumeCheckpoint(manifest, sessionFile, await git(manifest.worktreeRoot, ["rev-parse", "HEAD"]));
+}
+
+async function writeResumeCheckpoint(manifest: SessionManifest, sessionFile: string, resumeSha: string): Promise<SessionResumeRecord> {
 	const resolvedSessionFile = await canonicalSessionFilePath(sessionFile);
-	const resumeSha = await git(manifest.worktreeRoot, ["rev-parse", "HEAD"]);
 	const existing = await loadResumeRecord(resolvedSessionFile);
 	if (existing) {
 		const cwd = await sessionCwd(resolvedSessionFile);
@@ -572,6 +595,19 @@ export async function checkpointSession(
 	await fs.promises.rename(temporary, recordPath);
 	await rewriteSessionCwd(resolvedSessionFile, placeholderCwd);
 	return record;
+}
+
+async function checkpointOrphanedSessions(manifest: SessionManifest): Promise<void> {
+	if (manifest.pendingSync) throw new Error("Cannot recover an orphaned worktree while checkout synchronization is pending.");
+	await git(manifest.repoRoot, ["cat-file", "-e", `${manifest.publishedHead}^{commit}`]);
+	const sessionDir = sessionDirectoryForCwd(manifest.sessionHubCwd ?? manifest.repoRoot, inferredAgentDir(manifest));
+	for (const entry of await fs.promises.readdir(sessionDir, { withFileTypes: true }).catch(() => [])) {
+		if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
+		const sessionFile = path.join(sessionDir, entry.name);
+		const cwd = await sessionCwd(sessionFile);
+		if (cwd !== manifest.worktreeRoot && !cwd?.startsWith(`${manifest.worktreeRoot}${path.sep}`)) continue;
+		await writeResumeCheckpoint(manifest, sessionFile, manifest.publishedHead);
+	}
 }
 
 export async function checkpointSessionIfPresent(
@@ -1087,6 +1123,16 @@ export async function reapStaleWorktrees(repoRoot: string, finishedChildPid?: nu
 					}
 				}
 				if (active) continue;
+				if (!(await fs.promises.lstat(manifest.worktreeRoot).catch(() => null))) {
+					// Older releases could remove the Git worktree but leave its manifest
+					// and transcripts behind. Restore resumability from the published ref.
+					if ((await listWorktrees(manifest.repoRoot)).some((worktree) => worktree.path === manifest.worktreeRoot)) continue;
+					await checkpointOrphanedSessions(manifest);
+					await git(manifest.repoRoot, ["update-ref", "-d", `refs/pi-worktree-snapshots/${manifest.id}/working`]);
+					await git(manifest.repoRoot, ["update-ref", "-d", `refs/pi-worktree-snapshots/${manifest.id}/index`]);
+					await fs.promises.rm(manifest.manifestPath, { force: true });
+					continue;
+				}
 				if ((await enforceRepository(manifest)).kind !== "ok") continue;
 				await relocateIgnoredPaths(manifest);
 				await assertWorktreeReleasable(manifest);
@@ -1094,7 +1140,11 @@ export async function reapStaleWorktrees(repoRoot: string, finishedChildPid?: nu
 				await releaseManagedWorktree(manifest);
 				released.push(manifest.worktreeRoot);
 			} catch (error) {
-				process.stderr.write(`Pi worktree isolation: preserved ${entry}: ${error instanceof Error ? error.message : String(error)}\n`);
+				// Recovery is best-effort. A stale or unsafe worktree must not keep
+				// interrupting every new Pi session with the same diagnostic.
+				if (process.env.PI_WORKTREE_DEBUG === "1") {
+					process.stderr.write(`Pi worktree isolation: preserved ${entry}: ${error instanceof Error ? error.message : String(error)}\n`);
+				}
 			}
 		}
 	} finally {

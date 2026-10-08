@@ -26,24 +26,25 @@ After every settled agent run:
 When a process launches from a dirty checkout, both the working-tree state and the real
 Git index are captured automatically as separate durable checkpoint commits. This
 preserves partially staged files as well as tracked and non-ignored untracked content.
-Ignored files, symlinks, and fully ignored directories (including nested paths) are
-linked back to the launch checkout, never checkpointed or published, except ignored
-`.coverage` files: these are generated locally in the worktree and discarded on
-release. Edits through other links affect the original checkout immediately,
-including changes made inside linked directories; concurrent sessions share that
-state. Non-ignored untracked files remain real files in the launch snapshot so
-they can be committed. Git's worktree
-configuration is enabled for the repository, and each managed worktree gets a private
-exclude file so directory-only ignore rules also exclude their symlinks. The existing
-`core.excludesFile` patterns (or Git's default global ignore file) are carried into
-that file.  Links are refreshed on managed session start and removed on clean
-  release. Ignored files created inside the worktree, including replaced links,
-  are moved into the main checkout first. When a destination exists, the moved
-  name gets `-<worktree-name>` (and a numeric suffix if necessary), never
-  overwriting existing content. A path-specific rule is added to the repository's
-  local Git exclude file if the main checkout would otherwise see the moved
-  output as untracked. Symlinked ancestors and Git operations that make a move
-  unsafe still prevent release. Disposable `.coverage` files are removed.
+Ignored configuration files and other non-generated ignored paths are linked back
+into the launch checkout, never checkpointed or published. Generated dependency
+and cache directories (`.venv`, `node_modules`, `__pycache__`, build outputs, etc.)
+are *not* linked into new sessions, including suffixed outputs saved from previous
+sessions. Ignored `.coverage` files are generated locally and discarded on release.
+Edits through links affect the original checkout immediately; concurrent sessions
+share that state. Non-ignored untracked files remain real files in the launch
+snapshot so they can be committed. Git's worktree configuration is enabled for
+the repository, and each managed worktree gets a private exclude file so
+ignored paths remain ignored. Existing `core.excludesFile` patterns (or Git's
+default global ignore file) are carried into that file. Links are refreshed on
+managed session start and removed on clean release. Ignored files created inside
+the worktree, including replaced links, are moved into the main checkout first.
+When a destination exists, the moved name gets `-<worktree-name>` (and a numeric
+suffix if necessary), never overwriting existing content. A path-specific rule
+is added to the repository's local Git exclude file if the main checkout would
+otherwise see moved output as untracked. If a once-linked ignored directory
+becomes tracked after a branch change, it is left to Git rather than moved or
+deleted. Symlinked ancestors and unsafe Git operations still prevent release.
 If the launch checkout remains unchanged, publication updates its index under Git's
 lock protocol and atomically applies the agent's tree-to-tree patch. Concurrent
 working-file or index changes block synchronization without being overwritten. A
@@ -89,9 +90,14 @@ worktree and manifest recoverable. Links created by the extension (and copied
 session output is relocated into the main checkout before release. After an
 abrupt child exit, the surviving Pi launcher reclaims a safely finalized
 worktree; if the whole process is killed, the next Pi launch in that repository
-reclaims dormant worktrees. A live owner or active transcript is never reaped.
+reclaims dormant worktrees *after* creating its own checkout, so recovered
+ignored output cannot be inherited by the new session. A live owner or active transcript is never reaped.
 Worktrees with uncommitted work remain locked so it is not lost; resume and
-commit that work to enable removal.
+commit that work to enable removal. If an older worktree is already gone but its
+manifest and transcript remain, the next repository launch protects its last
+published commit and makes the transcript resumable before removing the stale
+manifest. Expected blocked/stale cleanup attempts are quiet; set
+`PI_WORKTREE_DEBUG=1` to see per-worktree recovery diagnostics.
 
 A launch from a named branch publishes back to that branch. A detached launch
 gets a dedicated branch; uncommitted launch-checkout changes do not require

@@ -98,7 +98,7 @@ test("launches a detached checkout on its own publication branch", async () => {
 
 test("links ignored files, nested paths, and directories without exposing them to Git", async () => {
 	const { root, agentDir } = createRepo();
-	fs.writeFileSync(path.join(root, ".gitignore"), ".env*\nignored.txt\ncache/\n");
+	fs.writeFileSync(path.join(root, ".gitignore"), ".env*\nignored.txt\nassets/\n");
 	command(root, ["add", ".gitignore"]);
 	command(root, ["commit", "-m", "chore: ignore local files"]);
 	fs.writeFileSync(path.join(root, ".env"), "ROOT_SECRET=root\n");
@@ -108,36 +108,59 @@ test("links ignored files, nested paths, and directories without exposing them t
 	fs.writeFileSync(path.join(nested, ".env.local"), "SERVICE_SECRET=service\n");
 	fs.symlinkSync(".env", path.join(root, ".env.link"));
 	fs.writeFileSync(path.join(root, "ignored.txt"), "ignored\n");
-	fs.mkdirSync(path.join(root, "cache"));
-	fs.writeFileSync(path.join(root, "cache", "data"), "cached\n");
+	fs.mkdirSync(path.join(root, "assets"));
+	fs.writeFileSync(path.join(root, "assets", "data"), "cached\n");
 
 	const plan = await createLaunchPlan(root, agentDir);
 	const target = (relativePath: string) => path.join(plan.manifest.worktreeRoot, relativePath);
-	assert.deepEqual(plan.manifest.linkedIgnoredPaths, [".env", ".env.link", ".env.local", "cache", "ignored.txt", "service/.env.local"]);
+	assert.deepEqual(plan.manifest.linkedIgnoredPaths, [".env", ".env.link", ".env.local", "assets", "ignored.txt", "service/.env.local"]);
 	for (const relativePath of plan.manifest.linkedIgnoredPaths ?? []) {
 		assert.equal(fs.readlinkSync(target(relativePath)), path.join(fs.realpathSync(root), relativePath));
 	}
-	assert.equal(fs.readFileSync(target("cache/data"), "utf8"), "cached\n");
+	assert.equal(fs.readFileSync(target("assets/data"), "utf8"), "cached\n");
 	assert.equal(fs.readlinkSync(target(".env.link")), path.join(fs.realpathSync(root), ".env.link"));
 	assert.equal(command(plan.manifest.worktreeRoot, ["status", "--porcelain"]), "");
-	fs.writeFileSync(target("cache/data"), "edited\n");
-	assert.equal(fs.readFileSync(path.join(root, "cache/data"), "utf8"), "edited\n");
+	fs.writeFileSync(target("assets/data"), "edited\n");
+	assert.equal(fs.readFileSync(path.join(root, "assets/data"), "utf8"), "edited\n");
 
 	await cleanLinkedIgnoredPaths(plan.manifest);
-	assert.equal(fs.existsSync(target("cache")), false);
-	assert.equal(fs.readFileSync(path.join(root, "cache/data"), "utf8"), "edited\n");
+	assert.equal(fs.existsSync(target("assets")), false);
+	assert.equal(fs.readFileSync(path.join(root, "assets/data"), "utf8"), "edited\n");
 	await hydrateIgnoredPaths(plan.manifest);
-	assert.equal(fs.readFileSync(target("cache/data"), "utf8"), "edited\n");
+	assert.equal(fs.readFileSync(target("assets/data"), "utf8"), "edited\n");
 	assert.equal(command(plan.manifest.worktreeRoot, ["status", "--porcelain"]), "");
+});
+
+test("does not link dependency and cache directories into new worktrees", async () => {
+	const { root, agentDir } = createRepo();
+	fs.writeFileSync(path.join(root, ".gitignore"), ".env\n.venv/\nnode_modules*/\n.pytest_cache/\nservice/__pycache__/\n");
+	command(root, ["add", ".gitignore"]);
+	command(root, ["commit", "-m", "chore: ignore build outputs"]);
+	fs.writeFileSync(path.join(root, ".env"), "CONFIG=yes\n");
+	for (const name of [".venv", "node_modules", "node_modules-brave-rabbit", ".pytest_cache", "service/__pycache__"]) {
+		fs.mkdirSync(path.join(root, name), { recursive: true });
+		fs.writeFileSync(path.join(root, name, "artifact"), "generated\n");
+	}
+	const plan = await createLaunchPlan(root, agentDir);
+	assert.equal(fs.readlinkSync(path.join(plan.childCwd, ".env")), path.join(fs.realpathSync(root), ".env"));
+	for (const name of [".venv", "node_modules", "node_modules-brave-rabbit", ".pytest_cache", "service/__pycache__"]) {
+		assert.equal(fs.existsSync(path.join(plan.childCwd, name)), false, `${name} must not be inherited`);
+	}
+	fs.mkdirSync(path.join(plan.childCwd, ".venv"));
+	fs.writeFileSync(path.join(plan.childCwd, ".venv", "new"), "session\n");
+	await releaseManagedWorktree(plan.manifest);
+	assert.equal(fs.readFileSync(path.join(root, `.venv-${plan.manifest.id}/new`), "utf8"), "session\n");
+	const next = await createLaunchPlan(root, agentDir);
+	assert.equal(fs.existsSync(path.join(next.childCwd, `.venv-${plan.manifest.id}`)), false);
 });
 
 test("releases and resumes linked ignored directories without deleting their contents", async () => {
 	const { root, agentDir } = createRepo();
-	fs.writeFileSync(path.join(root, ".gitignore"), "cache/\n");
+	fs.writeFileSync(path.join(root, ".gitignore"), "assets/\n");
 	command(root, ["add", ".gitignore"]);
-	command(root, ["commit", "-m", "chore: ignore cache"]);
-	fs.mkdirSync(path.join(root, "cache"));
-	fs.writeFileSync(path.join(root, "cache", "result"), "keep\n");
+	command(root, ["commit", "-m", "chore: ignore assets"]);
+	fs.mkdirSync(path.join(root, "assets"));
+	fs.writeFileSync(path.join(root, "assets", "result"), "keep\n");
 	const plan = await createLaunchPlan(root, agentDir);
 	assert.equal(command(plan.childCwd, ["status", "--porcelain"]), "");
 	const sessionFile = path.join(agentDir, "resume.jsonl");
@@ -145,9 +168,9 @@ test("releases and resumes linked ignored directories without deleting their con
 	fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", id: "resume", cwd: plan.childCwd })}\n`);
 	const record = await checkpointSession(plan.manifest, sessionFile);
 	await releaseManagedWorktree(plan.manifest);
-	assert.equal(fs.readFileSync(path.join(root, "cache/result"), "utf8"), "keep\n");
+	assert.equal(fs.readFileSync(path.join(root, "assets/result"), "utf8"), "keep\n");
 	const resumed = await createResumePlan(record);
-	assert.equal(fs.readlinkSync(path.join(resumed.childCwd, "cache")), path.join(fs.realpathSync(root), "cache"));
+	assert.equal(fs.readlinkSync(path.join(resumed.childCwd, "assets")), path.join(fs.realpathSync(root), "assets"));
 	assert.equal(command(resumed.childCwd, ["status", "--porcelain"]), "");
 });
 
@@ -188,16 +211,38 @@ test("discards replaced coverage links from older sessions", async () => {
 
 test("moves a replaced ignored link without deleting session data", async () => {
 	const { root, agentDir } = createRepo();
-	fs.writeFileSync(path.join(root, ".gitignore"), "cache/\n");
+	fs.writeFileSync(path.join(root, ".gitignore"), "assets/\n");
 	command(root, ["add", ".gitignore"]);
-	command(root, ["commit", "-m", "chore: ignore cache"]);
-	fs.mkdirSync(path.join(root, "cache"));
+	command(root, ["commit", "-m", "chore: ignore assets"]);
+	fs.mkdirSync(path.join(root, "assets"));
+	fs.writeFileSync(path.join(root, "assets", "old"), "original\n");
 	const plan = await createLaunchPlan(root, agentDir);
-	fs.unlinkSync(path.join(plan.childCwd, "cache"));
-	fs.mkdirSync(path.join(plan.childCwd, "cache"));
-	fs.writeFileSync(path.join(plan.childCwd, "cache", "important"), "keep\n");
+	fs.unlinkSync(path.join(plan.childCwd, "assets"));
+	fs.mkdirSync(path.join(plan.childCwd, "assets"));
+	fs.writeFileSync(path.join(plan.childCwd, "assets", "important"), "keep\n");
 	await releaseManagedWorktree(plan.manifest);
-	assert.equal(fs.readFileSync(path.join(root, `cache-${plan.manifest.id}/important`), "utf8"), "keep\n");
+	assert.equal(fs.readFileSync(path.join(root, `assets-${plan.manifest.id}/important`), "utf8"), "keep\n");
+});
+
+test("does not treat a tracked directory on a new branch as a replaced ignored link", async () => {
+	const { root, agentDir } = createRepo();
+	fs.writeFileSync(path.join(root, ".gitignore"), "data/experiments/\n");
+	command(root, ["add", ".gitignore"]);
+	command(root, ["commit", "-m", "chore: ignore data"]);
+	fs.mkdirSync(path.join(root, "data/experiments"), { recursive: true });
+	fs.writeFileSync(path.join(root, "data/experiments/old.log"), "ignored\n");
+	const plan = await createLaunchPlan(root, agentDir);
+	assert.ok(plan.manifest.linkedIgnoredPaths?.includes("data/experiments"));
+	fs.unlinkSync(path.join(plan.childCwd, "data/experiments"));
+	fs.mkdirSync(path.join(plan.childCwd, "data/experiments"));
+	fs.writeFileSync(path.join(plan.childCwd, "data/experiments/README.md"), "tracked\n");
+	command(plan.childCwd, ["switch", "-c", "feat/tracked-experiments"]);
+	command(plan.childCwd, ["add", "-f", "data/experiments/README.md"]);
+	command(plan.childCwd, ["commit", "-m", "docs: track experiment guide"]);
+	assert.equal((await enforceRepository(plan.manifest)).kind, "ok");
+	await releaseManagedWorktree(plan.manifest);
+	assert.equal(fs.existsSync(plan.childCwd), false);
+	assert.equal(command(root, ["show", "feat/tracked-experiments:data/experiments/README.md"]), "tracked");
 });
 
 test("preserves ignored directories named .coverage", async () => {
@@ -739,6 +784,22 @@ test("moves ignored output into the main checkout and suffixes collisions", asyn
 	assert.equal(fs.existsSync(plan.manifest.worktreeRoot), false);
 });
 
+test("crash recovery does not populate the newly created checkout", async () => {
+	const { root, agentDir } = createRepo();
+	fs.writeFileSync(path.join(root, ".gitignore"), "cache/\n");
+	command(root, ["add", ".gitignore"]);
+	command(root, ["commit", "-m", "chore: ignore cache"]);
+	const old = await createLaunchPlan(root, agentDir);
+	fs.mkdirSync(path.join(old.childCwd, "cache"));
+	fs.writeFileSync(path.join(old.childCwd, "cache", "artifact"), "old\n");
+	old.manifest.ownerPid = 99999999;
+	await saveManifest(old.manifest);
+	const current = await createLaunchPlan(root, agentDir);
+	await reapStaleWorktrees(root);
+	assert.equal(fs.readFileSync(path.join(root, "cache/artifact"), "utf8"), "old\n");
+	assert.equal(fs.existsSync(path.join(current.childCwd, "cache")), false);
+});
+
 test("simultaneous exits cannot overwrite another session's ignored output", async () => {
 	const { root, agentDir } = createRepo();
 	fs.writeFileSync(path.join(root, ".gitignore"), "output/\n");
@@ -804,6 +865,25 @@ test("reclaims legacy worktrees only after their transcript lease ends", async (
 	fs.unlinkSync(`${sessionFile}.pi-worktree.lock`);
 	assert.deepEqual(await reapStaleWorktrees(root), [plan.manifest.worktreeRoot]);
 	assert.ok(await loadResumeRecord(sessionFile));
+});
+
+test("recovers transcripts and refs left by an already removed worktree", async () => {
+	const { root, agentDir } = createRepo();
+	const plan = await createLaunchPlan(root, agentDir);
+	const sessionFile = path.join(sessionDirectoryForCwd(plan.childCwd, agentDir), "orphaned.jsonl");
+	fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", id: "orphaned", cwd: plan.childCwd })}\n`);
+	command(root, ["worktree", "unlock", plan.manifest.worktreeRoot]);
+	command(root, ["worktree", "remove", "--force", plan.manifest.worktreeRoot]);
+	plan.manifest.ownerPid = 99999999;
+	await saveManifest(plan.manifest);
+	assert.deepEqual(await reapStaleWorktrees(root), []);
+	assert.equal(fs.existsSync(plan.manifest.manifestPath), false);
+	const record = await loadResumeRecord(sessionFile);
+	assert.ok(record);
+	assert.equal(record.resumeSha, plan.manifest.publishedHead);
+	assert.equal(await sessionCwd(sessionFile), record.placeholderCwd);
+	const resumed = await createResumePlan(record);
+	assert.equal(command(resumed.childCwd, ["rev-parse", "HEAD"]), record.resumeSha);
 });
 
 test("does not reclaim a crashed session with uncommitted work", async () => {
