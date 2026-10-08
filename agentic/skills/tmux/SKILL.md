@@ -17,17 +17,18 @@ detached does **not** mean the pane should run a non-interactive shell.
 1. Check `command -v tmux`, `tmux list-sessions`, the intended working directory, and
    whether the same job is already running. Pick a unique, descriptive session name; do
    not launch a duplicate process against the same output files.
-2. Create the session with the skill's helper, which starts an interactive shell
-   in the given directory and marks the session with tmux's `@pi_agent=1` option:
+2. Create the session with ordinary tmux and mark it immediately. Keep the returned
+   session ID and a unique marker for the watcher in step 4; do not mark an existing
+   user-created session:
 
    ```bash
-   ~/.pi/agent/skills/tmux/tmux-agent start my-job /absolute/path/to/project
+   session=$(tmux new-session -d -P -F '#{session_id}' -s my-job \
+     -c /absolute/path/to/project)
+   marker="$$-$(date +%s)-$RANDOM"
+   tmux set-option -t "$session" @pi_agent "$marker"
    ```
 
-   If creating a session by hand (including one the user will attach to), mark it
-   immediately after creation with `tmux set-option -t my-job @pi_agent 1`.
-   Never mark an existing user-created session. Never pass the job as a positional
-   command to `tmux new-session`:
+   Never pass the job as a positional command to `tmux new-session`:
    tmux would run it *instead of* a shell, so Ctrl-C or job exit closes the pane.
    Never use `exec`, `bash -lc`, or a launcher that replaces the pane's shell.
    Before sending the job, check that the pane's process is the expected shell:
@@ -55,7 +56,58 @@ detached does **not** mean the pane should run a non-interactive shell.
    credentials out of command history; use an existing secure environment or credential
    store rather than typing secrets into the pane.
 
-4. Verify the actual process and output, not just `tmux has-session`. A tmux session can
+4. Start the watcher below **immediately after sending the command**. It runs outside
+   tmux, checks the marked session every five seconds, and closes it after at least
+   60 continuous seconds with no attached client, foreground command, or shell child
+   (including a background job). An attached session or unverifiable state resets the
+   timer. Use the same shell in which `session` and `marker` were set in step 2:
+
+   ```bash
+   nohup bash -c '
+     session=$1 marker=$2
+     idle() {
+       local marked attached panes pid shell status pgid foreground command result
+       marked=$(tmux show-option -qv -t "$session" @pi_agent 2>/dev/null)
+       [[ $marked == "$marker" ]] || return 1
+       attached=$(tmux display-message -pt "$session" \
+         "#{session_attached}" 2>/dev/null) || return 1
+       [[ $attached == 0 ]] || return 1
+       panes=$(tmux list-panes -s -t "$session" \
+         -F "#{pane_pid} #{pane_current_command}" 2>/dev/null) || return 1
+       [[ -n $panes ]] || return 1
+       while read -r pid shell; do
+         case $shell in
+           sh|bash|zsh|fish|dash|ksh|mksh|tcsh|csh|nu) ;;
+           *) return 1 ;;
+         esac
+         status=$(ps -p "$pid" -o pgid= -o tpgid= -o comm=) || return 1
+         read -r pgid foreground command <<< "$status"
+         command=${command##*/}; command=${command#-}
+         [[ $pgid == "$foreground" && $command == "$shell" ]] || return 1
+         pgrep -P "$pid" >/dev/null 2>&1
+         result=$?
+         [[ $result == 1 ]] || return 1
+       done <<< "$panes"
+     }
+     idle_since=
+     while tmux has-session -t "$session" 2>/dev/null; do
+       marked=$(tmux show-option -qv -t "$session" @pi_agent 2>/dev/null)
+       [[ $marked == "$marker" ]] || exit 0
+       if idle; then
+         [[ -n $idle_since ]] || idle_since=$SECONDS
+         if (( SECONDS - idle_since >= 60 )) && idle; then
+           tmux kill-session -t "$session"
+           exit 0
+         fi
+       else
+         idle_since=
+       fi
+       sleep 5
+     done
+   ' watcher "$session" "$marker" </dev/null >/dev/null 2>&1 &
+   ```
+
+   Verify the actual process and output, not just `tmux has-session`. A tmux session can
    exist with an idle shell after its job has failed. If a canceled job closes the pane,
    check whether the pane ran the job directly or an agent killed the session:
 
@@ -72,20 +124,10 @@ detached does **not** mean the pane should run a non-interactive shell.
 
 ## Clean up agent-created sessions
 
-Close agent-created sessions once their commands have finished, rather than leaving
-idle shells indefinitely. After a job finishes or is canceled, capture any results
-needed for the user, then run the cleanup command. Also run it at the end of agent
-work that used tmux, and when asked to clear completed agent sessions:
-
-```bash
-~/.pi/agent/skills/tmux/tmux-agent cleanup
-```
-
-Cleanup scans **only sessions marked `@pi_agent=1`**. It closes a session only when
-it is detached and every pane has a verifiably idle shell (the shell owns the
-terminal foreground process group and has no child process). Running foreground or
-background commands, attached sessions, user-created sessions, and sessions whose
-state cannot be verified are left alone. If the user needs to inspect a finished
-session, keep it attached until they are done; once detached, cleanup can close it.
-Names alone do not prove ownership, so old unmarked agent sessions are not included.
-Never use `tmux kill-server` for cleanup: it also kills unrelated sessions.
+The watcher closes **only its own marked session** after a minute of verified idle
+shell time. It exits if that session disappears or its marker changes. Keep a session
+attached while the user needs to inspect or rerun a completed command; detaching
+allows the idle timer to start. Capture results before the minute elapses if the user
+needs them, because the watcher removes the pane and its scrollback. Never use
+`tmux kill-server`: it also kills unrelated sessions. Sessions created before this
+watcher was introduced are not retroactively marked or closed.
