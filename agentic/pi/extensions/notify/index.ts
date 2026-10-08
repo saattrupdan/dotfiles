@@ -19,8 +19,8 @@
  *  - Notifications fire only on `agent_end`, not on intermediate `turn_end`
  *    events within multi-step workflows (e.g., planner → builders → reviewer).
  *  - Notifications are also suppressed for extension-injected retry loops
- *    (e.g., rate-limit-retry's 429 retry turns, double-check's nudge turns),
- *    detected by checking for their injected user prompts.
+ *    (e.g., rate-limit-retry's 429/WebSocket retries, double-check's nudge turns)
+ *    via the retry state signal or their injected user prompts.
  *
  * The notification reaches the user even when the terminal is not focused
  * (that's the whole point — macOS surfaces it system-wide). In iTerm2, the
@@ -44,6 +44,7 @@ import { spawn } from "node:child_process";
 import * as os from "node:os";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { isTransientWebSocketClosure, RETRY_STATE_EVENT } from "../rate-limit-retry/index.ts";
 
 const IS_MACOS = os.platform() === "darwin";
 
@@ -224,17 +225,23 @@ function isRetryableBlockedAbort(stopReason: string | undefined, errorMessage: s
 	);
 }
 
-export default function (pi: ExtensionAPI) {
+export default function (pi: ExtensionAPI, send = notify) {
 	// Subagent children don't drive a UI; the orchestrator gets the events
 	// that actually matter to the human.
 	if (process.env.PI_SUBAGENT_CHILD === "1") return;
 	if (!IS_MACOS) return;
+
+	let retrying = false;
+	pi.events.on(RETRY_STATE_EVENT, (data) => {
+		retrying = (data as { retrying: boolean }).retrying;
+	});
 
 	pi.on("session_start", (_event, ctx) => {
 		// In non-interactive / print mode (pi -p "..."), there's no UI and
 		// notifications would be unwanted noise. Gate on ctx.hasUI.
 		hasUI = ctx.hasUI;
 		sessionManager = ctx.sessionManager;
+		retrying = false;
 	});
 
 	pi.on("tool_call", async (event) => {
@@ -242,7 +249,7 @@ export default function (pi: ExtensionAPI) {
 		const input = event.input as { questions?: Array<{ question?: unknown }> } | undefined;
 		const first = input?.questions?.[0]?.question;
 		const preview = typeof first === "string" && first.length > 0 ? truncate(first) : "Pi needs your input.";
-		notify("Pi has a question", preview, SOUND_QUESTION);
+		send("Pi has a question", preview, SOUND_QUESTION);
 	});
 
 	// Use agent_end to notify only when the entire agent loop finishes (ready for user input).
@@ -254,13 +261,15 @@ export default function (pi: ExtensionAPI) {
 	// Even if it's async, getSessionName() reads from sessionManager state which is
 	// available by the time agent_end fires.
 	pi.on("agent_end", async (event) => {
+		// A quiet retry can finish its low-level agent run with a masked empty
+		// success before the continuation starts. Neither failure nor completion
+		// should notify the user while that retry is pending.
+		if (retrying) return;
 		const msgs = event.messages ?? [];
 
-		// Skip notifications for extension-injected retry/nudge/block loops.
-		// These are prompts inserted by extensions so the agent can continue on
-		// its own; notifying the user would incorrectly suggest Pi needs help.
-		// This is deliberate text-based coupling to avoid requiring exports or
-		// a protocol between extensions.
+		// Skip notifications for extension-injected nudge/block loops. The retry
+		// extension uses the state signal above; other extensions are detected by
+		// their injected user prompts.
 		let lastUserMsg: { role?: string; content?: string | Array<{ text?: string }> } | undefined;
 		for (let i = msgs.length - 1; i >= 0; i--) {
 			const msg = msgs[i] as { role?: string; content?: string | Array<{ text?: string }> };
@@ -309,11 +318,12 @@ export default function (pi: ExtensionAPI) {
 				msg.includes("too many requests") ||
 				msg.includes("our servers are currently overloaded. please try again later.") ||
 				msg.includes("tool_call_timeout") ||
-				msg.includes("http_error")
+				msg.includes("http_error") ||
+				isTransientWebSocketClosure(errorMessage)
 			)
 				return;
 			const detail = errorMessage ? truncate(errorMessage) : stopReason;
-			notify("Pi failed", detail, SOUND_FAILED);
+			send("Pi failed", detail, SOUND_FAILED);
 		} else {
 			// Only notify on success if no errors occurred during the turn.
 			// Check for any tool results with isError: true — if the agent
@@ -323,7 +333,7 @@ export default function (pi: ExtensionAPI) {
 				return toolMsg?.role === "tool" && toolMsg.isError === true;
 			});
 			if (hadToolErrors) return;
-			notify("Pi finished", "Ready for your next prompt.", SOUND_FINISHED);
+			send("Pi finished", "Ready for your next prompt.", SOUND_FINISHED);
 		}
 	});
 }

@@ -4,23 +4,36 @@
  * Pi renders every failed assistant message and reports when its built-in retry
  * budget expires. Mask only empty, retryable responses in message_end, then
  * continue at turn_end with an invisible context message. This keeps attempts
- * in one agent run. Partial responses and non-transport errors keep Pi's normal path.
+ * in one agent run. Partial responses and unrelated errors keep Pi's normal path.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const WORKING_OVERRIDE = "thinking-status:override";
+export const RETRY_STATE_EVENT = "rate-limit-retry:state";
 const CUSTOM_TYPE = "rate-limit-retry:continue";
 const PROMPT = "The previous model request failed transiently. Resume the user's task.";
 const BASE_DELAY_MS = 2_000;
 const MAX_DELAY_MS = 60_000;
 
+export function isTransientWebSocketClosure(error: string | undefined): boolean {
+	// 1000 is a clean close without a completed response; 1006 is a dropped connection.
+	// Do not quietly retry policy, auth, or message-too-big close codes.
+	return /(?:^|:\s*)websocket closed (?:1000|1006)\b/i.test(error ?? "");
+}
+
 function isRetryableError(error: string | undefined): boolean {
 	const text = (error ?? "").toLowerCase();
-	return /\b429\b/.test(text) || /rate[ _-]?limit/.test(text) || text.includes("too many requests") ||
+	return isTransientWebSocketClosure(error) || /\b429\b/.test(text) ||
+		/rate[ _-]?limit/.test(text) || text.includes("too many requests") ||
 		/\b(?:servers?|service) (?:is|are) (?:currently )?overloaded\b/.test(text) ||
 		/\b(econnreset|econnrefused|etimedout|enotfound|eai_again|enetunreach|ehostunreach)\b/.test(text) ||
 		/\b(fetch failed|network error|socket hang up|connection (?:reset|refused|timed out)|no route to host|temporary failure in name resolution)\b/.test(text);
+}
+
+function hasNoOutput(content: ReadonlyArray<{ type: string; text?: string; thinking?: string }>): boolean {
+	return content.every((block) =>
+		(block.type === "thinking" && !block.thinking) || (block.type === "text" && !block.text));
 }
 
 function retryLabel(attempt: number): string {
@@ -54,6 +67,7 @@ export default function (pi: ExtensionAPI, wait = waitForRetry) {
 		pendingRetry = false;
 		retryCount = 0;
 		pi.events.emit(WORKING_OVERRIDE, { label: undefined });
+		pi.events.emit(RETRY_STATE_EVENT, { retrying: false });
 	};
 
 	pi.on("session_start", () => clearRetry());
@@ -66,7 +80,7 @@ export default function (pi: ExtensionAPI, wait = waitForRetry) {
 		if (
 			sessionEnabled && message.role === "assistant" &&
 			message.stopReason === "error" && isRetryableError(message.errorMessage) &&
-			message.content.length === 0
+			hasNoOutput(message.content)
 		) {
 			message.stopReason = "pending";
 			message.errorMessage = undefined;
@@ -86,7 +100,7 @@ export default function (pi: ExtensionAPI, wait = waitForRetry) {
 		if (message.role !== "assistant") return;
 		if (
 			!sessionEnabled || message.stopReason !== "error" ||
-			!isRetryableError(message.errorMessage) || message.content.length > 0
+			!isRetryableError(message.errorMessage) || !hasNoOutput(message.content)
 		) {
 			// Only empty retryable responses are masked. Leave other responses
 			// untouched, but restore the working label if recovery has ended.
@@ -96,12 +110,13 @@ export default function (pi: ExtensionAPI, wait = waitForRetry) {
 
 		pendingRetry = true;
 		retryCount++;
+		pi.events.emit(RETRY_STATE_EVENT, { retrying: true });
 		// The working spinner is shared with thinking-status; overriding it
 		// replaces "Thinking..." rather than adding a separate footer item.
 		pi.events.emit(WORKING_OVERRIDE, { label: retryLabel(retryCount) });
 		// The replacement is applied in-place before the TUI receives message_end
 		// and before Pi decides whether to use its three-attempt retry policy.
-		return { message: { ...message, stopReason: "stop" as const, errorMessage: undefined } };
+		return { message: { ...message, content: [], stopReason: "stop" as const, errorMessage: undefined } };
 	});
 
 	pi.on("turn_end", async (_event, ctx) => {
