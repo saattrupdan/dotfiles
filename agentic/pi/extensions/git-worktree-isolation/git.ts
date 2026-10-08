@@ -1198,51 +1198,146 @@ async function hasRebaseState(manifest: SessionManifest): Promise<boolean> {
 	return fs.existsSync(path.join(gitDir, "rebase-merge")) || fs.existsSync(path.join(gitDir, "rebase-apply"));
 }
 
-async function acquirePublishLock(commonGitDir: string): Promise<() => Promise<void>> {
+async function processStartedAt(pid: number): Promise<string> {
+	return execFileAsync("ps", ["-p", String(pid), "-o", "lstart="], {
+		env: { ...process.env, LC_ALL: "C" },
+	}).then((result) => result.stdout.trim(), () => "");
+}
+
+async function publicationOwnerAlive(pid: number, startedAt?: string, createdAt?: number): Promise<boolean> {
+	if (!processIsAlive(pid)) return false;
+	const actual = await processStartedAt(pid);
+	if (!actual) return true; // Unknown process identity: never reclaim speculatively.
+	if (startedAt) return actual === startedAt;
+	const startTime = Date.parse(actual);
+	return !createdAt || !Number.isFinite(startTime) || startTime <= createdAt + 1000;
+}
+
+async function acquireLegacyPublishLock(commonGitDir: string, startedAt: string): Promise<() => Promise<void>> {
 	const lockDir = path.join(commonGitDir, "pi-worktree-publish.lock");
 	const token = randomUUID();
 	for (let attempt = 0; attempt < 200; attempt++) {
 		const candidate = `${lockDir}.${process.pid}.${token}`;
-		await fs.promises.rm(candidate, { recursive: true, force: true });
 		await fs.promises.mkdir(candidate);
 		await fs.promises.writeFile(
 			path.join(candidate, "owner.json"),
-			`${JSON.stringify({ pid: process.pid, token, createdAt: Date.now() })}\n`,
+			`${JSON.stringify({ pid: process.pid, token, createdAt: Date.now(), startedAt })}\n`,
 			"utf8",
 		);
 		try {
-			// The fully initialized directory becomes visible in one rename.
 			await fs.promises.rename(candidate, lockDir);
 			return async () => {
-				const ownerText = await fs.promises.readFile(path.join(lockDir, "owner.json"), "utf8").catch(() => "");
-				let ownerToken: string;
-				try {
-					ownerToken = String((JSON.parse(ownerText) as { token?: unknown }).token ?? "");
-				} catch {
-					return;
+				const owner = await fs.promises.readFile(path.join(lockDir, "owner.json"), "utf8").catch(() => "");
+				if (owner && (JSON.parse(owner) as { token?: string }).token === token) {
+					await fs.promises.rm(lockDir, { recursive: true, force: true });
 				}
-				if (ownerToken === token) await fs.promises.rm(lockDir, { recursive: true, force: true });
 			};
 		} catch (error) {
 			await fs.promises.rm(candidate, { recursive: true, force: true });
 			const code = (error as NodeJS.ErrnoException).code;
 			if (code !== "EEXIST" && code !== "ENOTEMPTY") throw error;
 			const ownerText = await fs.promises.readFile(path.join(lockDir, "owner.json"), "utf8").catch(() => "");
-			let owner = 0;
+			let owner: { pid?: number; token?: string; startedAt?: string; createdAt?: number } = {};
+			try { owner = JSON.parse(ownerText) as typeof owner; } catch { /* Fail closed for malformed locks. */ }
+			if (!owner.pid || !owner.token ||
+				await publicationOwnerAlive(owner.pid, owner.startedAt, owner.createdAt)) {
+				await new Promise((resolve) => setTimeout(resolve, 50));
+				continue;
+			}
+			// Only new processes use the ref lock, so stale directory reclamation
+			// is serialized with every other new process. An older process can still
+			// acquire the directory first; in that case our rename simply retries.
+			const quarantine = `${lockDir}.dead.${token}`;
 			try {
-				owner = Number((JSON.parse(ownerText) as { pid?: unknown }).pid ?? 0);
-			} catch {
-				// A malformed lock is never reaped automatically: safety beats liveness.
+				await fs.promises.rename(lockDir, quarantine);
+			} catch (renameError) {
+				if ((renameError as NodeJS.ErrnoException).code === "ENOENT") continue;
+				throw renameError;
 			}
-			if (owner > 0) {
-				try {
-					process.kill(owner, 0);
-				} catch {
-					throw new Error(`Stale Pi publication lock at ${lockDir}; remove it after confirming PID ${owner} is gone.`);
-				}
+			const moved = await fs.promises.readFile(path.join(quarantine, "owner.json"), "utf8").catch(() => "");
+			if (moved !== ownerText) {
+				await fs.promises.rename(quarantine, lockDir);
+				continue;
 			}
-			await new Promise((resolve) => setTimeout(resolve, 50));
+			await fs.promises.rm(quarantine, { recursive: true, force: true });
 		}
+	}
+	throw new Error("Timed out waiting for another Pi session to publish Git changes.");
+}
+
+export async function acquirePublishLock(commonGitDir: string): Promise<() => Promise<void>> {
+	const ref = "refs/pi-worktree-locks/publication";
+	const zero = "0".repeat(40);
+	const gitDir = (...args: string[]) => run(commonGitDir, [`--git-dir=${commonGitDir}`, ...args]);
+	const token = randomUUID();
+	const startedAt = await processStartedAt(process.pid);
+	const candidate = path.join(commonGitDir, `pi-worktree-publish.${process.pid}.${token}.tmp`);
+	let sha: string;
+	try {
+		await fs.promises.writeFile(candidate, `${JSON.stringify({ pid: process.pid, token, createdAt: Date.now(), startedAt })}\n`, { flag: "wx" });
+		const hashed = await gitDir("hash-object", "-w", candidate);
+		if (hashed.code !== 0) throw new Error(hashed.stderr);
+		sha = hashed.stdout.trim();
+	} finally {
+		await fs.promises.rm(candidate, { force: true });
+	}
+	for (let attempt = 0; attempt < 200; attempt++) {
+		// Legacy Pi processes use a directory lock. Honor a live owner during
+		// upgrades, but don't let a dead legacy PID block every future session.
+		const legacy = path.join(commonGitDir, "pi-worktree-publish.lock", "owner.json");
+		const legacyText = await fs.promises.readFile(legacy, "utf8").catch((error: NodeJS.ErrnoException) => {
+			if (error.code === "ENOENT") return "";
+			throw error;
+		});
+		if (legacyText) {
+			let owner: { pid?: number; startedAt?: string; createdAt?: number } = {};
+			try { owner = JSON.parse(legacyText) as typeof owner; } catch { /* Unknown owner: wait safely. */ }
+			if (!owner.pid || await publicationOwnerAlive(owner.pid, owner.startedAt, owner.createdAt)) {
+				await new Promise((resolve) => setTimeout(resolve, 50));
+				continue;
+			}
+		}
+
+		const current = await gitDir("rev-parse", "--verify", ref);
+		if (current.code !== 0 && current.code !== 1 && current.code !== 128) throw new Error(current.stderr);
+		const oldSha = current.code === 0 ? current.stdout.trim() : zero;
+		if (oldSha !== zero) {
+			const blob = await gitDir("cat-file", "blob", oldSha);
+			if (blob.code !== 0) throw new Error(`Cannot verify Pi publication lock ${oldSha}.`);
+			let owner = 0;
+			let ownerStart = "";
+			try {
+				const record = JSON.parse(blob.stdout) as { pid?: unknown; startedAt?: unknown };
+				owner = Number(record.pid);
+				ownerStart = typeof record.startedAt === "string" ? record.startedAt : "";
+			} catch { /* Unknown owner: wait safely. */ }
+			if (!owner || await publicationOwnerAlive(owner, ownerStart)) {
+				await new Promise((resolve) => setTimeout(resolve, 50));
+				continue;
+			}
+		}
+		// Git's expected-old-value update is atomic across all Pi processes.
+		// A dead owner is replaced without a remove/recreate race.
+		const updated = await gitDir("update-ref", ref, sha, oldSha);
+		if (updated.code === 0) {
+			let releaseLegacy: () => Promise<void>;
+			try {
+				// Older Pi processes do not know about the ref. Hold their directory
+				// lock for the entire publication as well as the new atomic ref.
+				releaseLegacy = await acquireLegacyPublishLock(commonGitDir, startedAt);
+			} catch (error) {
+				await gitDir("update-ref", "-d", ref, sha);
+				throw error;
+			}
+			return async () => {
+				let legacyError: unknown;
+				try { await releaseLegacy(); } catch (error) { legacyError = error; }
+				const released = await gitDir("update-ref", "-d", ref, sha);
+				if (released.code !== 0) throw new Error(`Could not release Pi publication lock: ${released.stderr}`);
+				if (legacyError) throw legacyError;
+			};
+		}
+		await new Promise((resolve) => setTimeout(resolve, 50));
 	}
 	throw new Error("Timed out waiting for another Pi session to publish Git changes.");
 }

@@ -7,6 +7,7 @@ import { afterEach, test } from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { recoveredFromRateLimit } from "./index.ts";
 import {
+	acquirePublishLock,
 	acquireResumeClaim,
 	acquireSessionLease,
 	assertWorktreeReleasable,
@@ -441,6 +442,85 @@ test("publishes detached commits to the launch branch", async () => {
 	assert.equal(fs.readFileSync(path.join(root, "session.txt"), "utf8"), "session\n");
 	assert.equal(command(root, ["rev-parse", "main"]), command(plan.manifest.worktreeRoot, ["rev-parse", "HEAD"]));
 	assert.equal(command(root, ["branch", "--format=%(refname:short)"]), "main");
+});
+
+test("holds both publication protocols until the new publisher finishes", async () => {
+	const { root } = createRepo();
+	const gitDir = path.join(fs.realpathSync(root), ".git");
+	const release = await acquirePublishLock(gitDir);
+	const legacy = path.join(gitDir, "pi-worktree-publish.lock");
+	assert.equal(fs.existsSync(legacy), true);
+	assert.ok(command(root, ["rev-parse", "--verify", "refs/pi-worktree-locks/publication"]));
+	const olderCandidate = path.join(gitDir, "older-publisher.lock");
+	fs.mkdirSync(olderCandidate);
+	fs.writeFileSync(path.join(olderCandidate, "owner.json"), "old");
+	assert.throws(() => fs.renameSync(olderCandidate, legacy), /EEXIST|ENOTEMPTY/);
+	await release();
+	assert.equal(fs.existsSync(legacy), false);
+	assert.throws(() => command(root, ["show-ref", "--verify", "refs/pi-worktree-locks/publication"]));
+});
+
+test("reclaims a dead publication owner without a manual lock removal", async () => {
+	const { root, agentDir } = createRepo();
+	const plan = await createLaunchPlan(root, agentDir);
+	fs.writeFileSync(path.join(plan.childCwd, "session.txt"), "new\n");
+	command(plan.childCwd, ["add", "session.txt"]);
+	command(plan.childCwd, ["commit", "-m", "feat: session work"]);
+	const lockFile = path.join(root, ".git", "dead-lock.json");
+	fs.writeFileSync(lockFile, JSON.stringify({ pid: 99999999, token: "dead" }));
+	const oldSha = command(root, ["hash-object", "-w", lockFile]);
+	command(root, ["update-ref", "refs/pi-worktree-locks/publication", oldSha]);
+	const legacy = path.join(root, ".git", "pi-worktree-publish.lock");
+	fs.mkdirSync(legacy);
+	fs.writeFileSync(path.join(legacy, "owner.json"), JSON.stringify({ pid: 99999999, token: "old" }));
+	assert.equal((await enforceRepository(plan.manifest)).kind, "ok");
+	assert.equal(fs.readFileSync(path.join(root, "session.txt"), "utf8"), "new\n");
+	assert.throws(() => command(root, ["show-ref", "--verify", "refs/pi-worktree-locks/publication"]));
+});
+
+test("waits for a live legacy publisher before publishing", async () => {
+	const { root, agentDir } = createRepo();
+	const plan = await createLaunchPlan(root, agentDir);
+	fs.writeFileSync(path.join(plan.childCwd, "session.txt"), "work\n");
+	command(plan.childCwd, ["add", "session.txt"]);
+	command(plan.childCwd, ["commit", "-m", "feat: session work"]);
+	const legacy = path.join(root, ".git", "pi-worktree-publish.lock");
+	fs.mkdirSync(legacy);
+	fs.writeFileSync(path.join(legacy, "owner.json"), JSON.stringify({ pid: process.pid, token: "live" }));
+	let settled = false;
+	const publishing = enforceRepository(plan.manifest).then((result) => { settled = true; return result; });
+	await new Promise((resolve) => setTimeout(resolve, 150));
+	assert.equal(settled, false);
+	fs.rmSync(legacy, { recursive: true });
+	assert.equal((await publishing).kind, "ok");
+});
+
+test("reclaims a legacy directory lock after PID reuse", async () => {
+	const { root, agentDir } = createRepo();
+	const plan = await createLaunchPlan(root, agentDir);
+	fs.writeFileSync(path.join(plan.childCwd, "session.txt"), "work\n");
+	command(plan.childCwd, ["add", "session.txt"]);
+	command(plan.childCwd, ["commit", "-m", "feat: session work"]);
+	const legacy = path.join(root, ".git", "pi-worktree-publish.lock");
+	fs.mkdirSync(legacy);
+	fs.writeFileSync(path.join(legacy, "owner.json"), JSON.stringify({ pid: process.pid, createdAt: 1, token: "old" }));
+	assert.equal((await enforceRepository(plan.manifest)).kind, "ok");
+	assert.equal(fs.existsSync(legacy), false);
+	assert.equal(fs.readFileSync(path.join(root, "session.txt"), "utf8"), "work\n");
+});
+
+test("reclaims a publication lock whose PID has been reused", async () => {
+	const { root, agentDir } = createRepo();
+	const plan = await createLaunchPlan(root, agentDir);
+	fs.writeFileSync(path.join(plan.childCwd, "session.txt"), "work\n");
+	command(plan.childCwd, ["add", "session.txt"]);
+	command(plan.childCwd, ["commit", "-m", "feat: session work"]);
+	const lockFile = path.join(root, ".git", "reused-pid.json");
+	fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, startedAt: "a previous process" }));
+	const oldSha = command(root, ["hash-object", "-w", lockFile]);
+	command(root, ["update-ref", "refs/pi-worktree-locks/publication", oldSha]);
+	assert.equal((await enforceRepository(plan.manifest)).kind, "ok");
+	assert.equal(fs.readFileSync(path.join(root, "session.txt"), "utf8"), "work\n");
 });
 
 test("blocks publication before overwriting an ignored file", async () => {

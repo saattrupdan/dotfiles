@@ -16,7 +16,10 @@ After every settled agent run:
   `pi/<worktree-name>` branch instead of guessing which existing branch to update;
   that branch remains after the worktree is removed.
 - Commits on detached `HEAD` are published to the remembered branch.
-- Publication is serialized across Pi processes.
+- Publication is serialized across Pi processes with an atomic Git ref lock
+  *and* the legacy directory lock while older Pi sessions may still be running.
+  Dead owners of either lock are reclaimed after checking their process identity;
+  live owners remain protected.
 - If the launch branch advanced, the session is rebased automatically.
 - If the launch branch was deleted after the session commit landed on another local
   or remote-tracking branch, the session is treated as finalized.
