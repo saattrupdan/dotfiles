@@ -30,8 +30,10 @@ before the run ends. An automatic follow-up turn asks the agent to finish that w
 Branches created with `isolated_new_branch` and their worktrees remain in place on
 quit, session switch, or crash recovery. They are never merged automatically.
 
-`clean-up-isolated-branch` is a Pi tool (not a shell command). It appears in ordinary
-sessions too, but can run **only from the original managed feature branch**. In other
+`clean-up-isolated-branch` is a Pi tool and is also available as the interactive
+`/clean-up-isolated-branch` command. Both use the same checks. They appear in
+ordinary sessions too, but can run **only from the original managed feature
+branch**. In other
 sessions it explains why cleanup is unavailable. Restart Pi to load a newly added
 extension tool. Call it when the branch's work has landed on `main`. The tool fetches `origin/main` if present and fast-forwards a
 clean local `main` worktree when necessary. It verifies that the branch commit is

@@ -188,7 +188,13 @@ function registerReleasedSessionStartup(pi: ExtensionAPI): void {
 	});
 }
 
+const CLEANUP_UNAVAILABLE = "No eligible isolated feature branch is active. Run this from the worktree created by isolated_new_branch; older managed sessions without recorded branch ownership cannot safely delete a branch.";
+
 function registerUnavailableCleanupTool(pi: ExtensionAPI): void {
+	pi.registerCommand("clean-up-isolated-branch", {
+		description: "Clean up the current isolated feature branch after its changes reach main",
+		async handler(_args, ctx) { ctx.ui.notify(CLEANUP_UNAVAILABLE, "warning"); },
+	});
 	pi.registerTool({
 		name: "clean-up-isolated-branch",
 		label: "Clean up isolated branch",
@@ -196,7 +202,7 @@ function registerUnavailableCleanupTool(pi: ExtensionAPI): void {
 		parameters: Type.Object({}),
 		executionMode: "sequential",
 		async execute() {
-			throw new Error("No eligible isolated feature branch is active. Run this tool from the worktree created by isolated_new_branch; older managed sessions without recorded branch ownership cannot safely delete a branch.");
+			throw new Error(CLEANUP_UNAVAILABLE);
 		},
 	});
 }
@@ -310,6 +316,46 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 	});
 
 	if (manifest.createdBranch) {
+		const finishCleanup = async (sessionFile: string, mainRoot: string, branchSha: string): Promise<never> => {
+			// Do not leave Pi's process cwd pointing into a worktree we remove.
+			process.chdir(mainRoot);
+			const mainCwd = await finishBranchCleanup(manifest, sessionFile, mainRoot, branchSha);
+			await releaseTranscript();
+			return resumeInManagedWorktree(sessionFile, mainCwd);
+		};
+		pi.registerCommand("clean-up-isolated-branch", {
+			description: "Return to main after verifying the isolated branch has been merged",
+			async handler(args, ctx) {
+				if (args.trim()) {
+					ctx.ui.notify("/clean-up-isolated-branch takes no arguments.", "warning");
+					return;
+				}
+				if (!ctx.isIdle()) await ctx.waitForIdle();
+				if (pendingCleanup) {
+					ctx.ui.notify("Cleanup is already in progress.", "warning");
+					return;
+				}
+				const sessionFile = ctx.sessionManager.getSessionFile();
+				if (!sessionFile) {
+					ctx.ui.notify("A saved Pi session is required to clean up this branch.", "warning");
+					return;
+				}
+				let prepared: Awaited<ReturnType<typeof prepareBranchCleanup>>;
+				try {
+					prepared = await prepareBranchCleanup(manifest);
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					if (ctx.hasUI) ctx.ui.notify(message, "warning");
+					else process.stderr.write(`Pi worktree isolation: ${message}\n`);
+					return;
+				}
+				try {
+					await finishCleanup(sessionFile, prepared.mainRoot, prepared.branchSha);
+				} catch (error) {
+					fatal(`isolated branch cleanup stopped: ${error instanceof Error ? error.message : String(error)}`);
+				}
+			},
+		});
 		pi.registerTool({
 			name: "clean-up-isolated-branch",
 			label: "Clean up isolated branch",
@@ -331,11 +377,7 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 			const { sessionFile, mainRoot, branchSha } = pendingCleanup;
 			pendingCleanup = null;
 			try {
-				// Do not leave Pi's process cwd pointing into a worktree we remove.
-				process.chdir(mainRoot);
-				const mainCwd = await finishBranchCleanup(manifest, sessionFile, mainRoot, branchSha);
-				await releaseTranscript();
-				await resumeInManagedWorktree(sessionFile, mainCwd);
+				await finishCleanup(sessionFile, mainRoot, branchSha);
 			} catch (error) {
 				fatal(`isolated branch cleanup stopped: ${error instanceof Error ? error.message : String(error)}`);
 			}

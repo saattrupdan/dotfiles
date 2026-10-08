@@ -106,8 +106,10 @@ test("registers an opt-in branch tool without isolating ordinary sessions", asyn
 	process.env.PI_CODING_AGENT_DIR = agentDir;
 	try {
 		const tools = new Map<string, { execute: (...args: unknown[]) => Promise<unknown> }>();
+		const commands: string[] = [];
 		const pi = {
 			registerFlag: () => undefined,
+			registerCommand: (name: string) => { commands.push(name); },
 			getFlag: () => false,
 			exec: async () => ({ code: 0, stdout: `${root}\n` }),
 			registerTool: (registered: { name: string; execute: (...args: unknown[]) => Promise<unknown> }) => {
@@ -118,6 +120,7 @@ test("registers an opt-in branch tool without isolating ordinary sessions", asyn
 		await registerIsolation(pi);
 		assert.ok(tools.has("isolated_new_branch"));
 		assert.ok(tools.has("clean-up-isolated-branch"));
+		assert.ok(commands.includes("clean-up-isolated-branch"));
 		await assert.rejects(tools.get("clean-up-isolated-branch")!.execute(), /No eligible isolated feature branch/);
 		tools.clear();
 		const originalArgv = process.argv;
@@ -149,8 +152,10 @@ test("registers an opt-in branch tool without isolating ordinary sessions", asyn
 test("cleanup tool is discoverable in the exempt dotfiles checkout", async () => {
 	const cwd = command(path.dirname(fileURLToPath(import.meta.url)), ["rev-parse", "--show-toplevel"]);
 	const tools: string[] = [];
+	const commands: string[] = [];
 	const pi = {
 		registerFlag: () => undefined,
+		registerCommand: (name: string) => { commands.push(name); },
 		getFlag: () => false,
 		exec: async () => ({ code: 0, stdout: `${cwd}\n` }),
 		registerTool: (tool: { name: string }) => { tools.push(tool.name); },
@@ -158,6 +163,7 @@ test("cleanup tool is discoverable in the exempt dotfiles checkout", async () =>
 	} as unknown as ExtensionAPI;
 	await registerIsolation(pi);
 	assert.deepEqual(tools, ["clean-up-isolated-branch"]);
+	assert.deepEqual(commands, ["clean-up-isolated-branch"]);
 });
 
 test("ordinary startup reaps a clean abandoned managed worktree", async () => {
@@ -167,6 +173,7 @@ test("ordinary startup reaps a clean abandoned managed worktree", async () => {
 	await saveManifest(stale.manifest);
 	const pi = {
 		registerFlag: () => undefined,
+		registerCommand: () => undefined,
 		getFlag: () => false,
 		exec: async () => ({ code: 0, stdout: `${root}\n` }),
 		registerTool: () => undefined,
@@ -953,9 +960,13 @@ test("managed feature sessions expose cleanup but do not auto-release on quit", 
 	command(plan.childCwd, ["add", "work.txt"]);
 	command(plan.childCwd, ["commit", "-m", "feat: pending cleanup"]);
 	const tools = new Map<string, { execute: (...args: unknown[]) => Promise<unknown> }>();
+	const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
 	const handlers = new Map<string, Array<(...args: unknown[]) => Promise<unknown>>>();
 	const pi = {
 		registerFlag: () => undefined,
+		registerCommand: (name: string, options: { handler: (args: string, ctx: unknown) => Promise<void> }) => {
+			commands.set(name, options);
+		},
 		getFlag: () => false,
 		exec: async () => ({ code: 0, stdout: `${plan.childCwd}\n` }),
 		registerTool: (tool: { name: string; execute: (...args: unknown[]) => Promise<unknown> }) => { tools.set(tool.name, tool); },
@@ -963,6 +974,7 @@ test("managed feature sessions expose cleanup but do not auto-release on quit", 
 	} as unknown as ExtensionAPI;
 	await registerIsolation(pi);
 	assert.ok(tools.has("clean-up-isolated-branch"));
+	assert.ok(commands.has("clean-up-isolated-branch"));
 	const sessionFile = path.join(agentDir, "current.jsonl");
 	fs.mkdirSync(agentDir, { recursive: true });
 	fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", cwd: plan.childCwd })}\n`);
@@ -972,6 +984,14 @@ test("managed feature sessions expose cleanup but do not auto-release on quit", 
 		abort: () => { aborted = true; },
 	}), /ask the user before merging/);
 	assert.equal(aborted, false);
+	const notifications: string[] = [];
+	await commands.get("clean-up-isolated-branch")!.handler("", {
+		isIdle: () => true,
+		sessionManager: { getSessionFile: () => sessionFile },
+		hasUI: true,
+		ui: { notify: (message: string) => { notifications.push(message); } },
+	});
+	assert.match(notifications.join("\n"), /ask the user before merging/);
 	for (const handler of handlers.get("session_shutdown") ?? []) {
 		await handler({ reason: "quit" }, { sessionManager: { getSessionFile: () => sessionFile } });
 	}
