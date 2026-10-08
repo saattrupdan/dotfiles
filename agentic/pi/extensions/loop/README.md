@@ -4,6 +4,8 @@ Run a prompt repeatedly in the **current Pi session**:
 
 ```text
 /loop fix the next TypeScript error
+/loop task.txt
+/loop 1m30s "prompts/fix errors.txt"
 /loop 1m30s fix TypeScript errors in src/
 /loop 1h --max-runs 3 check the PR's CI status
 /loop 1m30s fix TypeScript errors --until npx tsc --noEmit exits with code 0
@@ -11,7 +13,12 @@ Run a prompt repeatedly in the **current Pi session**:
 /loop stop
 ```
 
-Syntax: `/loop [duration] [--max-runs N] <prompt> [--until <condition>]`.
+Syntax: `/loop [duration] [--max-runs N] <prompt|file.txt> [--until <condition>]`.
+A standalone `.txt` path is read relative to Pi's working directory (or as an
+absolute path) when the loop starts. Quote paths containing spaces. Its contents
+become the prompt for every run, even if the file changes later. An unreadable or
+empty file does not start a loop. Prose mentioning a `.txt` file remains a normal
+prompt.
 Durations consist of positive integer `h`, `m`, and `s` components in that order,
 for example `1h2m3s`. The maximum duration is 24 hours. Omit the duration to
 start the next run immediately after the previous run (and check) settles. The

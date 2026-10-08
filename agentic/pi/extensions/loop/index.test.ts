@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import loopExtension, { parseDuration, parseLoopArgs } from "./index.ts";
@@ -26,6 +29,45 @@ test("parses optional duration, cap and finish condition", () => {
 	}
 });
 
+test("a .txt path loads the prompt once for every run", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-loop-"));
+	const file = join(dir, "prompt with spaces.txt");
+	try {
+		await writeFile(file, "Fix errors\nwith context\n");
+		const h = harness(undefined, { cwd: dir });
+		await h.command('--max-runs 2 "prompt with spaces.txt"');
+		assert.deepEqual(h.sent, ["Fix errors\nwith context\n"]);
+		await writeFile(file, "changed later");
+		await h.finish();
+		h.tick(); // skip compaction for a short session
+		h.tick(); // start the next run
+		assert.deepEqual(h.sent, ["Fix errors\nwith context\n", "Fix errors\nwith context\n"]);
+		await h.command("stop");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("missing or empty .txt files do not start a loop; prose remains a prompt", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-loop-"));
+	try {
+		const h = harness();
+		await h.command(join(dir, "missing.txt"));
+		assert.match(h.notices.at(-1) ?? "", /Unable to read prompt file/);
+		assert.deepEqual(h.sent, []);
+		const file = join(dir, "empty.txt");
+		await writeFile(file, " \n");
+		await h.command(file);
+		assert.match(h.notices.at(-1) ?? "", /file is empty/);
+		assert.deepEqual(h.sent, []);
+		await h.command("read notes.txt");
+		assert.deepEqual(h.sent, ["read notes.txt"]);
+		await h.command("stop");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
 test("checker verdict is strict and needs evidence", () => {
 	assert.deepEqual(parseVerdict('{"done":true,"evidence":"typecheck passed"}'), { done: true, evidence: "typecheck passed" });
 	for (const value of ["yes", "```json\n{}\n```", '{"done":"true","evidence":"ok"}', '{"done":true,"evidence":""}']) {
@@ -36,7 +78,7 @@ test("checker verdict is strict and needs evidence", () => {
 type Handler = (event: unknown, ctx: ExtensionContext) => unknown;
 function harness(
 	check?: (condition: string, output: string, ctx: ExtensionContext, signal: AbortSignal) => Promise<Verdict>,
-	options: { mode?: "tui" | "rpc" | "print"; autoStart?: boolean; compact?: "complete" | "small" | "fail" | "pending"; contextTokens?: number } = {},
+	options: { mode?: "tui" | "rpc" | "print"; autoStart?: boolean; compact?: "complete" | "small" | "fail" | "pending"; contextTokens?: number; cwd?: string } = {},
 ) {
 	const handlers = new Map<string, Handler>();
 	const sent: string[] = [];
@@ -51,7 +93,7 @@ function harness(
 	let handler: ((args: string, ctx: ExtensionContext) => Promise<void>) | undefined;
 	const ctx = {
 		mode: options.mode ?? "tui",
-		cwd: process.cwd(),
+		cwd: options.cwd ?? process.cwd(),
 		ui: { setStatus: () => {} },
 		isIdle: () => !busy,
 		hasPendingMessages: () => pending,

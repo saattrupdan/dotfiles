@@ -1,5 +1,7 @@
-/** `/loop [duration] [--max-runs N] <prompt> [--until <condition>]`. */
+/** `/loop [duration] [--max-runs N] <prompt|file.txt> [--until <condition>]`. */
 
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { checkCondition, type Verdict } from "./checker.ts";
 import { setLoopActive } from "../_loop_state/state.ts";
@@ -11,7 +13,7 @@ const DEFAULT_UNTIL_CAP = 20;
 const COMPACTION_INSTRUCTIONS =
 	"Summarize this loop's goal, constraints, work completed, failed attempts, current file state, " +
 	"and the next concrete step. Keep the summary brief but retain information needed by the next iteration.";
-const USAGE = "Usage: /loop [1h2m3s] [--max-runs N] <prompt> [--until <condition>] | /loop status | /loop stop";
+const USAGE = "Usage: /loop [1h2m3s] [--max-runs N] <prompt|file.txt> [--until <condition>] | /loop status | /loop stop";
 
 export interface LoopOptions {
 	intervalMs: number;
@@ -223,6 +225,18 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 			try { options = parseLoopArgs(args); } catch (error) {
 				say(String(error instanceof Error ? error.message : error));
 				return;
+			}
+			// Only a standalone .txt path is a file; prose mentioning one stays a prompt.
+			const file = /^(?:(["'])(.+\.txt)\1|(\S+\.txt))$/.exec(options.prompt);
+			const path = file?.[2] ?? file?.[3];
+			if (path) {
+				try {
+					options.prompt = await readFile(resolve(ctx.cwd, path), "utf8");
+					if (!options.prompt.trim()) throw new Error("file is empty");
+				} catch (error) {
+					say(`Unable to read prompt file ${path}: ${String(error instanceof Error ? error.message : error)}.`);
+					return;
+				}
 			}
 			active = { ...options, runs: 0, phase: "running", compacted: false, generation: ++generation, ctx };
 			setLoopActive(true, ctx);
