@@ -188,7 +188,21 @@ function registerReleasedSessionStartup(pi: ExtensionAPI): void {
 	});
 }
 
+function registerUnavailableCleanupTool(pi: ExtensionAPI): void {
+	pi.registerTool({
+		name: "clean-up-isolated-branch",
+		label: "Clean up isolated branch",
+		description: "Clean up an explicitly created isolated feature branch after its changes are on main. Requires running inside that managed branch; never merges a PR or branch automatically.",
+		parameters: Type.Object({}),
+		executionMode: "sequential",
+		async execute() {
+			throw new Error("No eligible isolated feature branch is active. Run this tool from the worktree created by isolated_new_branch; older managed sessions without recorded branch ownership cannot safely delete a branch.");
+		},
+	});
+}
+
 function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): void {
+	if (!manifest.createdBranch) registerUnavailableCleanupTool(pi);
 	let repairTurns = 0;
 	let enforcementRunning = false;
 	let pendingCleanup: { sessionFile: string; mainRoot: string; branchSha: string } | null = null;
@@ -430,9 +444,13 @@ export default async function (pi: ExtensionAPI) {
 		const currentRepository = await findCommonGitDir(cwd);
 		if (!currentRepository) {
 			if (resumeInvocation) registerReleasedSessionStartup(pi);
+			registerUnavailableCleanupTool(pi);
 			return;
 		}
-		if (extensionRepository && currentRepository === extensionRepository) return;
+		if (extensionRepository && currentRepository === extensionRepository) {
+			registerUnavailableCleanupTool(pi);
+			return;
+		}
 		if (resumeInvocation && !isSessionIdInvocation(cliArgs())) {
 			registerReleasedSessionStartup(pi);
 		}
@@ -440,6 +458,7 @@ export default async function (pi: ExtensionAPI) {
 		fatal(error instanceof Error ? error.message : String(error));
 	}
 
+	registerUnavailableCleanupTool(pi);
 	// Recovery no longer depends on launching a new worktree first.
 	await reapStaleWorktrees(cwd).catch((error) => {
 		process.stderr.write(`Pi worktree isolation: recovery failed: ${error instanceof Error ? error.message : String(error)}\n`);

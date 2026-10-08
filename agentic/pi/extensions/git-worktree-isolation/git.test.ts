@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, test } from "node:test";
+import { fileURLToPath } from "node:url";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import registerIsolation, { continuationArgs, recoveredFromRateLimit } from "./index.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -104,28 +105,33 @@ test("registers an opt-in branch tool without isolating ordinary sessions", asyn
 	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = agentDir;
 	try {
-		let tool: { execute: (...args: unknown[]) => Promise<unknown> } | undefined;
+		const tools = new Map<string, { execute: (...args: unknown[]) => Promise<unknown> }>();
 		const pi = {
 			registerFlag: () => undefined,
 			getFlag: () => false,
 			exec: async () => ({ code: 0, stdout: `${root}\n` }),
-			registerTool: (registered: typeof tool) => { tool = registered; },
+			registerTool: (registered: { name: string; execute: (...args: unknown[]) => Promise<unknown> }) => {
+				tools.set(registered.name, registered);
+			},
 			on: () => undefined,
 		} as unknown as ExtensionAPI;
 		await registerIsolation(pi);
-		assert.ok(tool);
-		tool = undefined;
+		assert.ok(tools.has("isolated_new_branch"));
+		assert.ok(tools.has("clean-up-isolated-branch"));
+		await assert.rejects(tools.get("clean-up-isolated-branch")!.execute(), /No eligible isolated feature branch/);
+		tools.clear();
 		const originalArgv = process.argv;
 		try {
 			process.argv = ["node", "pi", "--session", path.join(agentDir, "session.jsonl")];
 			await registerIsolation(pi);
-			assert.ok(tool, "resuming an ordinary session must retain the branch tool");
+			assert.ok(tools.has("isolated_new_branch"), "resuming an ordinary session must retain the branch tool");
+			assert.ok(tools.has("clean-up-isolated-branch"));
 		} finally {
 			process.argv = originalArgv;
 		}
 		assert.deepEqual(command(root, ["worktree", "list", "--porcelain"]).match(/^worktree /gm), ["worktree "]);
 		let aborted = false;
-		const result = await tool.execute("call", { name: "feat/from-tool" }, undefined, undefined, {
+		const result = await tools.get("isolated_new_branch")!.execute("call", { name: "feat/from-tool" }, undefined, undefined, {
 			cwd: root,
 			sessionManager: { getSessionFile: () => path.join(agentDir, "session.jsonl") },
 			abort: () => { aborted = true; },
@@ -138,6 +144,20 @@ test("registers an opt-in branch tool without isolating ordinary sessions", asyn
 		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
 	}
+});
+
+test("cleanup tool is discoverable in the exempt dotfiles checkout", async () => {
+	const cwd = command(path.dirname(fileURLToPath(import.meta.url)), ["rev-parse", "--show-toplevel"]);
+	const tools: string[] = [];
+	const pi = {
+		registerFlag: () => undefined,
+		getFlag: () => false,
+		exec: async () => ({ code: 0, stdout: `${cwd}\n` }),
+		registerTool: (tool: { name: string }) => { tools.push(tool.name); },
+		on: () => undefined,
+	} as unknown as ExtensionAPI;
+	await registerIsolation(pi);
+	assert.deepEqual(tools, ["clean-up-isolated-branch"]);
 });
 
 test("ordinary startup reaps a clean abandoned managed worktree", async () => {
