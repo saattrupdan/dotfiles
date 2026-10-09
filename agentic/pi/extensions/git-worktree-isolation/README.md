@@ -58,10 +58,11 @@ explicitly switched to by those agents are not deleted.
 Ignored outputs created inside a managed worktree are **not moved** to the original
 checkout. If such outputs remain (or a linked ignored path was replaced), cleanup
 refuses to remove the worktree and leaves the files recoverable there. Remove or
-save them explicitly before releasing it. Generated `.coverage` files and ignored cache directories (such as
-`.pytest_cache`, `__pycache__`, and `cache`) are disposable exceptions; cache-named
-files and symlinks are not. Known linked paths are removed without deleting
-their targets in the original checkout.
+save them explicitly before releasing it. Generated `.coverage` files, ignored
+cache directories (such as `.pytest_cache`, `__pycache__`, and `cache`), local
+`.venv`/`venv` directories, and `node_modules` directories are disposable
+exceptions; files and symlinks at those directory paths are not. Known linked
+paths are removed without deleting their targets in the original checkout.
 
 For older managed sessions, clean shutdown saves a resume record beside the
 session JSONL, protects its commit with `refs/pi-worktree-sessions/<id>`, rewrites

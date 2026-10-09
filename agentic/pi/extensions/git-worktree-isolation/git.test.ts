@@ -249,10 +249,15 @@ test("does not link dependency and cache directories into new worktrees", async 
 	for (const name of [".venv", "node_modules", "node_modules-brave-rabbit", ".pytest_cache", "service/__pycache__"]) {
 		assert.equal(fs.existsSync(path.join(plan.childCwd, name)), false, `${name} must not be inherited`);
 	}
-	fs.mkdirSync(path.join(plan.childCwd, ".venv"));
-	fs.writeFileSync(path.join(plan.childCwd, ".venv", "new"), "session\n");
-	await assert.rejects(releaseManagedWorktree(plan.manifest), /Ignored path .venv/);
-	assert.equal(fs.readFileSync(path.join(plan.childCwd, ".venv/new"), "utf8"), "session\n");
+	for (const name of [".venv", "node_modules", "node_modules-brave-rabbit"]) {
+		fs.mkdirSync(path.join(plan.childCwd, name));
+		fs.writeFileSync(path.join(plan.childCwd, name, "new"), "session\n");
+	}
+	await releaseManagedWorktree(plan.manifest);
+	assert.equal(fs.existsSync(plan.childCwd), false);
+	for (const name of [".venv", "node_modules", "node_modules-brave-rabbit"]) {
+		assert.equal(fs.readFileSync(path.join(root, name, "artifact"), "utf8"), "generated\n");
+	}
 	const next = await createLaunchPlan(root, agentDir);
 	assert.equal(fs.existsSync(path.join(next.childCwd, `.venv-${plan.manifest.id}`)), false);
 });
@@ -311,6 +316,31 @@ test("removes generated cache directories on release without touching original c
 	await releaseManagedWorktree(plan.manifest);
 	assert.equal(fs.existsSync(plan.childCwd), false);
 	assert.equal(fs.readFileSync(path.join(root, ".pytest_cache/original"), "utf8"), "keep\n");
+});
+
+test("removes local venv directories but preserves files and symlinks at those paths", async () => {
+	const { root, agentDir } = createRepo();
+	fs.writeFileSync(path.join(root, ".gitignore"), ".venv\nvenv\nnode_modules\n");
+	command(root, ["add", ".gitignore"]);
+	command(root, ["commit", "-m", "chore: ignore virtual environments"]);
+	const plan = await createLaunchPlan(root, agentDir);
+	fs.mkdirSync(path.join(plan.childCwd, ".venv"));
+	fs.mkdirSync(path.join(plan.childCwd, "venv"));
+	fs.writeFileSync(path.join(plan.childCwd, ".venv", "artifact"), "generated\n");
+	await releaseManagedWorktree(plan.manifest);
+	assert.equal(fs.existsSync(plan.childCwd), false);
+	const filePlan = await createLaunchPlan(root, agentDir);
+	fs.writeFileSync(path.join(filePlan.childCwd, "venv"), "keep\n");
+	await assert.rejects(releaseManagedWorktree(filePlan.manifest), /Ignored path venv/);
+	const linkPlan = await createLaunchPlan(root, agentDir);
+	fs.mkdirSync(path.join(root, ".venv"));
+	fs.writeFileSync(path.join(root, ".venv/original"), "keep\n");
+	fs.symlinkSync(path.join(root, ".venv"), path.join(linkPlan.childCwd, ".venv"));
+	await assert.rejects(releaseManagedWorktree(linkPlan.manifest), /Ignored path .venv/);
+	assert.equal(fs.readFileSync(path.join(root, ".venv/original"), "utf8"), "keep\n");
+	const modulesPlan = await createLaunchPlan(root, agentDir);
+	fs.writeFileSync(path.join(modulesPlan.childCwd, "node_modules"), "keep\n");
+	await assert.rejects(releaseManagedWorktree(modulesPlan.manifest), /Ignored path node_modules/);
 });
 
 test("refuses ignored cache-named files and symlinks", async () => {

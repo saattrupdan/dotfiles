@@ -159,6 +159,11 @@ function isCacheDirectory(relativePath: string): boolean {
 	return /^(?:__pycache__|\.?[\w.-]*cache)(?:-[a-z]+-[a-z]+(?:-\d+)?)*$/i.test(path.basename(relativePath));
 }
 
+function isDisposableDirectory(relativePath: string): boolean {
+	return isCacheDirectory(relativePath) ||
+		/^(?:\.venv|venv|node_modules(?:-[a-z]+-[a-z]+(?:-\d+)?)*)$/i.test(path.basename(relativePath));
+}
+
 type LinkedPaths = Pick<SessionManifest, "repoRoot" | "worktreeRoot" | "linkedIgnoredPaths">;
 
 async function verifyKnownLinks(manifest: LinkedPaths): Promise<void> {
@@ -203,7 +208,7 @@ async function removeDisposableOutputs(manifest: SessionManifest): Promise<void>
 		const destination = path.join(manifest.worktreeRoot, relativePath);
 		if (isDisposableCoverage(relativePath)) {
 			if ((await fs.promises.lstat(destination)).isFile()) await fs.promises.unlink(destination);
-		} else if (isCacheDirectory(relativePath)) {
+		} else if (isDisposableDirectory(relativePath)) {
 			// Only generated directories, never symlinks or files at this path.
 			if ((await fs.promises.lstat(destination)).isDirectory()) await fs.promises.rm(destination, { recursive: true });
 		}
@@ -650,10 +655,10 @@ export async function assertWorktreeReleasable(manifest: SessionManifest): Promi
 	const ephemeral = new Set([...(manifest.copiedEnvFiles ?? []), ...(manifest.linkedIgnoredPaths ?? [])]);
 	for (const relativePath of ignored) {
 		if (ephemeral.has(relativePath)) continue;
-		if (isDisposableCoverage(relativePath) || isCacheDirectory(relativePath)) {
+		if (isDisposableCoverage(relativePath) || isDisposableDirectory(relativePath)) {
 			const stat = await fs.promises.lstat(path.join(manifest.worktreeRoot, relativePath));
 			if ((isDisposableCoverage(relativePath) && stat.isFile()) ||
-				(isCacheDirectory(relativePath) && stat.isDirectory())) continue;
+				(isDisposableDirectory(relativePath) && stat.isDirectory())) continue;
 		}
 		throw new Error(`Ignored path ${relativePath} is not ephemeral session configuration; worktree was preserved.`);
 	}
