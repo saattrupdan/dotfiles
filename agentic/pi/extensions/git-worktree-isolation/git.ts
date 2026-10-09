@@ -155,6 +155,10 @@ function isDisposableCoverage(relativePath: string): boolean {
 	return path.basename(relativePath) === ".coverage";
 }
 
+function isCacheDirectory(relativePath: string): boolean {
+	return /^(?:__pycache__|\.?[\w.-]*cache)(?:-[a-z]+-[a-z]+(?:-\d+)?)*$/i.test(path.basename(relativePath));
+}
+
 type LinkedPaths = Pick<SessionManifest, "repoRoot" | "worktreeRoot" | "linkedIgnoredPaths">;
 
 async function verifyKnownLinks(manifest: LinkedPaths): Promise<void> {
@@ -193,12 +197,16 @@ async function removeKnownLinks(manifest: LinkedPaths): Promise<void> {
 	}
 }
 
-async function removeDisposableCoverage(manifest: SessionManifest): Promise<void> {
+async function removeDisposableOutputs(manifest: SessionManifest): Promise<void> {
 	for (const relativePath of await listIgnoredPaths(manifest.worktreeRoot)) {
-		if (!isDisposableCoverage(relativePath) || (manifest.linkedIgnoredPaths ?? []).includes(relativePath)) continue;
+		if ((manifest.linkedIgnoredPaths ?? []).includes(relativePath)) continue;
 		const destination = path.join(manifest.worktreeRoot, relativePath);
-		const stat = await fs.promises.lstat(destination);
-		if (stat.isFile()) await fs.promises.unlink(destination);
+		if (isDisposableCoverage(relativePath)) {
+			if ((await fs.promises.lstat(destination)).isFile()) await fs.promises.unlink(destination);
+		} else if (isCacheDirectory(relativePath)) {
+			// Only generated directories, never symlinks or files at this path.
+			if ((await fs.promises.lstat(destination)).isDirectory()) await fs.promises.rm(destination, { recursive: true });
+		}
 	}
 }
 
@@ -259,7 +267,7 @@ async function listIgnoredPaths(repoRoot: string): Promise<string[]> {
 // old sessions' artifacts (including names relocated on earlier releases).
 function isGeneratedDirectory(relativePath: string): boolean {
 	return relativePath.split(path.sep).some((part) =>
-		/^(?:node_modules|\.venv|venv|__pycache__|\.next|dist|build|(?:\.?[\w.-]*cache))(?:-[a-z]+-[a-z]+(?:-\d+)?)*$/i.test(part),
+		isCacheDirectory(part) || /^(?:node_modules|\.venv|venv|\.next|dist|build)(?:-[a-z]+-[a-z]+(?:-\d+)?)*$/i.test(part),
 	);
 }
 
@@ -310,7 +318,7 @@ export async function hydrateIgnoredPaths(manifest: SessionManifest): Promise<vo
 
 export async function cleanLinkedIgnoredPaths(manifest: SessionManifest): Promise<void> {
 	await removeKnownLinks(manifest);
-	await removeDisposableCoverage(manifest);
+	await removeDisposableOutputs(manifest);
 	await removeEnvFiles(manifest.worktreeRoot, manifest.copiedEnvFiles ?? []);
 	manifest.linkedIgnoredPaths = [];
 	manifest.copiedEnvFiles = [];
@@ -642,9 +650,10 @@ export async function assertWorktreeReleasable(manifest: SessionManifest): Promi
 	const ephemeral = new Set([...(manifest.copiedEnvFiles ?? []), ...(manifest.linkedIgnoredPaths ?? [])]);
 	for (const relativePath of ignored) {
 		if (ephemeral.has(relativePath)) continue;
-		if (isDisposableCoverage(relativePath)) {
+		if (isDisposableCoverage(relativePath) || isCacheDirectory(relativePath)) {
 			const stat = await fs.promises.lstat(path.join(manifest.worktreeRoot, relativePath));
-			if (stat.isFile()) continue;
+			if ((isDisposableCoverage(relativePath) && stat.isFile()) ||
+				(isCacheDirectory(relativePath) && stat.isDirectory())) continue;
 		}
 		throw new Error(`Ignored path ${relativePath} is not ephemeral session configuration; worktree was preserved.`);
 	}

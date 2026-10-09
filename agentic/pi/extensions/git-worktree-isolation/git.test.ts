@@ -294,6 +294,42 @@ test("keeps ignored coverage local and discards generated coverage on release", 
 	assert.equal(fs.existsSync(plan.manifest.worktreeRoot), false);
 });
 
+test("removes generated cache directories on release without touching original checkout caches", async () => {
+	const { root, agentDir } = createRepo();
+	fs.writeFileSync(path.join(root, ".gitignore"), "cache/\n.pytest_cache/\n.mypy_cache/\n__pycache__/\n");
+	command(root, ["add", ".gitignore"]);
+	command(root, ["commit", "-m", "chore: ignore caches"]);
+	fs.mkdirSync(path.join(root, ".pytest_cache"));
+	fs.writeFileSync(path.join(root, ".pytest_cache/original"), "keep\n");
+	const plan = await createLaunchPlan(root, agentDir);
+	for (const relativePath of ["cache", ".pytest_cache", ".mypy_cache", "nested/__pycache__"]) {
+		const directory = path.join(plan.childCwd, relativePath);
+		fs.mkdirSync(directory, { recursive: true });
+		fs.writeFileSync(path.join(directory, "generated"), "discard\n");
+	}
+	assert.equal(plan.manifest.linkedIgnoredPaths?.includes(".pytest_cache"), false);
+	await releaseManagedWorktree(plan.manifest);
+	assert.equal(fs.existsSync(plan.childCwd), false);
+	assert.equal(fs.readFileSync(path.join(root, ".pytest_cache/original"), "utf8"), "keep\n");
+});
+
+test("refuses ignored cache-named files and symlinks", async () => {
+	const { root, agentDir } = createRepo();
+	fs.writeFileSync(path.join(root, ".gitignore"), "cache\n.pytest_cache\n");
+	command(root, ["add", ".gitignore"]);
+	command(root, ["commit", "-m", "chore: ignore caches"]);
+	const filePlan = await createLaunchPlan(root, agentDir);
+	fs.writeFileSync(path.join(filePlan.childCwd, "cache"), "keep\n");
+	await assert.rejects(releaseManagedWorktree(filePlan.manifest), /Ignored path cache/);
+	assert.equal(fs.readFileSync(path.join(filePlan.childCwd, "cache"), "utf8"), "keep\n");
+	const linkPlan = await createLaunchPlan(root, agentDir);
+	fs.mkdirSync(path.join(root, ".pytest_cache"));
+	fs.writeFileSync(path.join(root, ".pytest_cache/original"), "keep\n");
+	fs.symlinkSync(path.join(root, ".pytest_cache"), path.join(linkPlan.childCwd, ".pytest_cache"));
+	await assert.rejects(releaseManagedWorktree(linkPlan.manifest), /Ignored path .pytest_cache/);
+	assert.equal(fs.readFileSync(path.join(root, ".pytest_cache/original"), "utf8"), "keep\n");
+});
+
 test("discards replaced coverage links from older sessions", async () => {
 	const { root, agentDir } = createRepo();
 	fs.writeFileSync(path.join(root, ".gitignore"), ".coverage\n");
@@ -937,16 +973,16 @@ test("does not checkpoint or release an unsafe worktree", async () => {
 
 test("preserves ignored branch outputs without moving them into main", async () => {
 	const { root, agentDir } = createRepo();
-	fs.writeFileSync(path.join(root, ".gitignore"), "cache/\n");
+	fs.writeFileSync(path.join(root, ".gitignore"), "results/\n");
 	command(root, ["add", ".gitignore"]);
-	command(root, ["commit", "-m", "chore: ignore cache"]);
+	command(root, ["commit", "-m", "chore: ignore results"]);
 	const plan = await createLaunchPlan(root, agentDir, "feat/experiment");
 	assert.equal(command(plan.childCwd, ["branch", "--show-current"]), "feat/experiment");
-	fs.mkdirSync(path.join(plan.childCwd, "cache"));
-	fs.writeFileSync(path.join(plan.childCwd, "cache", "result.bin"), "important\n");
-	await assert.rejects(releaseManagedWorktree(plan.manifest), /Ignored path cache/);
-	assert.equal(fs.readFileSync(path.join(plan.childCwd, "cache/result.bin"), "utf8"), "important\n");
-	assert.equal(fs.existsSync(path.join(root, "cache")), false);
+	fs.mkdirSync(path.join(plan.childCwd, "results"));
+	fs.writeFileSync(path.join(plan.childCwd, "results", "result.bin"), "important\n");
+	await assert.rejects(releaseManagedWorktree(plan.manifest), /Ignored path results/);
+	assert.equal(fs.readFileSync(path.join(plan.childCwd, "results/result.bin"), "utf8"), "important\n");
+	assert.equal(fs.existsSync(path.join(root, "results")), false);
 	plan.manifest.ownerPid = 99999999;
 	await saveManifest(plan.manifest);
 	assert.deepEqual(await reapStaleWorktrees(root), []);
@@ -1167,9 +1203,9 @@ test("cleanup rejects a ref recreated after missing-branch verification", async 
 
 test("cleanup accepts a squash merge but refuses dirty ignored outputs", async () => {
 	const { root, agentDir } = createRepo();
-	fs.writeFileSync(path.join(root, ".gitignore"), "cache/\n");
+	fs.writeFileSync(path.join(root, ".gitignore"), "results/\n");
 	command(root, ["add", ".gitignore"]);
-	command(root, ["commit", "-m", "chore: ignore cache"]);
+	command(root, ["commit", "-m", "chore: ignore results"]);
 	const plan = await createLaunchPlan(root, agentDir, "feat/squashed");
 	fs.writeFileSync(path.join(plan.childCwd, "work.txt"), "squashed\n");
 	command(plan.childCwd, ["add", "work.txt"]);
@@ -1177,10 +1213,10 @@ test("cleanup accepts a squash merge but refuses dirty ignored outputs", async (
 	command(root, ["merge", "--squash", "feat/squashed"]);
 	command(root, ["commit", "-m", "feat: squash work"]);
 	assert.equal((await prepareBranchCleanup(plan.manifest)).mainRoot, fs.realpathSync(root));
-	fs.mkdirSync(path.join(plan.childCwd, "cache"));
-	fs.writeFileSync(path.join(plan.childCwd, "cache", "output"), "generated\n");
-	await assert.rejects(prepareBranchCleanup(plan.manifest), /Ignored path cache/);
-	assert.equal(fs.existsSync(path.join(plan.childCwd, "cache", "output")), true);
+	fs.mkdirSync(path.join(plan.childCwd, "results"));
+	fs.writeFileSync(path.join(plan.childCwd, "results", "output"), "important\n");
+	await assert.rejects(prepareBranchCleanup(plan.manifest), /Ignored path results/);
+	assert.equal(fs.existsSync(path.join(plan.childCwd, "results", "output")), true);
 });
 
 test("cleanup fast-forwards a clean local main from origin/main", async () => {
