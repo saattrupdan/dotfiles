@@ -314,10 +314,13 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 		}
 	});
 
-	const finishCleanup = async (sessionFile: string, mainRoot: string, branchSha: string, branchExists: boolean): Promise<never> => {
+	const finishCleanup = async (
+		sessionFile: string, mainRoot: string, branchSha: string, branchExists: boolean, clearStatus: () => void,
+	): Promise<never> => {
 		// Do not leave Pi's process cwd pointing into a worktree we remove.
 		process.chdir(mainRoot);
 		const mainCwd = await finishBranchCleanup(manifest, sessionFile, mainRoot, branchSha, branchExists);
+		clearStatus();
 		await releaseTranscript();
 		return resumeInManagedWorktree(sessionFile, mainCwd);
 	};
@@ -348,7 +351,8 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 				return;
 			}
 			try {
-				await finishCleanup(sessionFile, prepared.mainRoot, prepared.branchSha, prepared.branchExists);
+				await finishCleanup(sessionFile, prepared.mainRoot, prepared.branchSha, prepared.branchExists,
+					() => ctx.ui.setStatus("git-worktree-isolation", undefined));
 			} catch (error) {
 				fatal(`isolated branch cleanup stopped: ${error instanceof Error ? error.message : String(error)}`);
 			}
@@ -370,12 +374,13 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 			return { content: [{ type: "text", text: `Verified this worktree's HEAD is on main. Cleaning up the isolated worktree and returning to main.` }], details: undefined };
 		},
 	});
-	pi.on("agent_end", async () => {
+	pi.on("agent_end", async (_event, ctx) => {
 		if (!pendingCleanup) return;
 		const { sessionFile, mainRoot, branchSha, branchExists } = pendingCleanup;
 		pendingCleanup = null;
 		try {
-			await finishCleanup(sessionFile, mainRoot, branchSha, branchExists);
+			await finishCleanup(sessionFile, mainRoot, branchSha, branchExists,
+				() => ctx.ui.setStatus("git-worktree-isolation", undefined));
 		} catch (error) {
 			fatal(`isolated branch cleanup stopped: ${error instanceof Error ? error.message : String(error)}`);
 		}
@@ -498,6 +503,8 @@ export default async function (pi: ExtensionAPI) {
 	}
 
 	registerUnavailableCleanupTool(pi);
+	// A resumed ordinary session must not display a status left by a managed worktree.
+	pi.on("session_start", (_event, ctx) => ctx.ui.setStatus("git-worktree-isolation", undefined));
 	// Recovery no longer depends on launching a new worktree first.
 	await reapStaleWorktrees(cwd).catch((error) => {
 		process.stderr.write(`Pi worktree isolation: recovery failed: ${error instanceof Error ? error.message : String(error)}\n`);

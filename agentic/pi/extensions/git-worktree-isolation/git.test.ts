@@ -107,6 +107,7 @@ test("registers an opt-in branch tool without isolating ordinary sessions", asyn
 	try {
 		const tools = new Map<string, { execute: (...args: unknown[]) => Promise<unknown> }>();
 		const commands: string[] = [];
+		const handlers = new Map<string, Array<(...args: unknown[]) => unknown>>();
 		const pi = {
 			registerFlag: () => undefined,
 			registerCommand: (name: string) => { commands.push(name); },
@@ -115,9 +116,16 @@ test("registers an opt-in branch tool without isolating ordinary sessions", asyn
 			registerTool: (registered: { name: string; execute: (...args: unknown[]) => Promise<unknown> }) => {
 				tools.set(registered.name, registered);
 			},
-			on: () => undefined,
+			on: (name: string, handler: (...args: unknown[]) => unknown) => {
+				handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+			},
 		} as unknown as ExtensionAPI;
 		await registerIsolation(pi);
+		const statuses: Array<[string, string | undefined]> = [];
+		for (const handler of handlers.get("session_start") ?? []) {
+			await handler({}, { ui: { setStatus: (key: string, text: string | undefined) => { statuses.push([key, text]); } } });
+		}
+		assert.deepEqual(statuses, [["git-worktree-isolation", undefined]]);
 		assert.ok(tools.has("isolated_new_branch"));
 		assert.ok(tools.has("clean-up-isolated-branch"));
 		assert.ok(commands.includes("clean-up-isolated-branch"));
