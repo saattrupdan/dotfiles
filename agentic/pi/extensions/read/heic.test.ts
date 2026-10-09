@@ -193,7 +193,7 @@ test("abort stops fallback attempts and cleans temporary output", async () => {
 	}
 });
 
-test("registered read tool returns converted HEIC as JPEG content", async () => {
+test("registered read tool resizes converted HEIC before returning it to the model", async () => {
 	const { root, source } = tempHeif();
 	let registered: {
 		execute(
@@ -202,7 +202,7 @@ test("registered read tool returns converted HEIC as JPEG content", async () => 
 			signal: AbortSignal,
 			onUpdate: () => void,
 			ctx: { cwd: string },
-		): Promise<{ content: Array<{ type: string; mimeType?: string; data?: string }> }>;
+		): Promise<{ content: Array<{ type: string; text?: string; mimeType?: string; data?: string }> }>;
 	} | undefined;
 	try {
 		registerRead({
@@ -211,6 +211,19 @@ test("registered read tool returns converted HEIC as JPEG content", async () => 
 			},
 		} as never, {
 			convertHeic: async () => jpegFixture(),
+			resizeImage: async (bytes, mimeType) => {
+				assert.deepEqual(Buffer.from(bytes), jpegFixture());
+				assert.equal(mimeType, "image/jpeg");
+				return {
+					data: "resized-image",
+					mimeType: "image/png",
+					originalWidth: 4000,
+					originalHeight: 2000,
+					width: 1000,
+					height: 500,
+					wasResized: true,
+				};
+			},
 		});
 		assert.ok(registered);
 		const result = await registered.execute(
@@ -220,11 +233,40 @@ test("registered read tool returns converted HEIC as JPEG content", async () => 
 			() => undefined,
 			{ cwd: process.cwd() },
 		);
-		assert.deepEqual(result.content, [{
-			type: "image",
-			data: jpegFixture().toString("base64"),
-			mimeType: "image/jpeg",
-		}]);
+		assert.deepEqual(result.content, [
+			{
+				type: "text",
+				text: "Read image file [image/png]\n[Image: original 4000x2000, displayed at 1000x500. Multiply coordinates by 4.00 to map to original image.]",
+			},
+			{ type: "image", data: "resized-image", mimeType: "image/png" },
+		]);
+	} finally {
+		fs.rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("registered read tool returns a real PNG with model-visible image content", async () => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-read-image-test-"));
+	const source = path.join(root, "red.png");
+	// Valid 2x2 PNG. Exercise the real worker-backed image resizer.
+	fs.writeFileSync(source, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8z8DAwMDAxMDAwMDAAAANHQEDasKb6QAAAABJRU5ErkJggg==", "base64"));
+	let registered: {
+		execute: (id: string, args: { path: string }) => Promise<{
+			content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+		}>;
+	} | undefined;
+	try {
+		registerRead({
+			registerTool(tool: unknown) {
+				registered = tool as typeof registered;
+			},
+		} as never);
+		assert.ok(registered);
+		const result = await registered.execute("test", { path: source });
+		assert.equal(result.content[0]?.text, "Read image file [image/png]");
+		assert.equal(result.content[1]?.type, "image");
+		assert.equal(result.content[1]?.mimeType, "image/png");
+		assert.ok(result.content[1]?.data);
 	} finally {
 		fs.rmSync(root, { recursive: true, force: true });
 	}

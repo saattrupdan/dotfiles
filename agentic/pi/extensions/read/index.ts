@@ -34,6 +34,8 @@ import {
 	type AgentToolResult,
 	createReadToolDefinition,
 	type ExtensionAPI,
+	formatDimensionNote,
+	resizeImage,
 	type Theme,
 	type ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
@@ -530,10 +532,12 @@ function warmRenderHelpers(): void {
 
 export interface ReadExtensionOverrides {
 	convertHeic?: typeof convertHeicToJpeg;
+	resizeImage?: typeof resizeImage;
 }
 
 export default function (pi: ExtensionAPI, overrides: ReadExtensionOverrides = {}): void {
 	const heicConverter = overrides.convertHeic ?? convertHeicToJpeg;
+	const imageResizer = overrides.resizeImage ?? resizeImage;
 	pi.registerTool({
 		name: "read",
 		label: "read",
@@ -634,8 +638,8 @@ export default function (pi: ExtensionAPI, overrides: ReadExtensionOverrides = {
 			// fall through
 		}
 
-		// 2. Image passthrough — convert HEIC/HEIF to a supported, correctly
-		// oriented JPEG; return other supported image formats unchanged.
+		// 2. Convert HEIC/HEIF, then resize in a worker before returning image
+		// content. Raw photos can stall the TUI during inline image rendering.
 		if (isLikelyImage(absolutePath)) {
 			const ext = path.extname(absolutePath).toLowerCase();
 			const isHeic = ext === ".heic" || ext === ".heif";
@@ -658,12 +662,22 @@ export default function (pi: ExtensionAPI, overrides: ReadExtensionOverrides = {
 						: ext === ".gif"
 							? "image/gif"
 							: "image/webp";
-			return {
-				content: [
-					{ type: "image", data: buffer.toString("base64"), mimeType },
-				],
-				details: undefined,
-			};
+			try {
+				const resized = await imageResizer(buffer, mimeType);
+				if (!resized) {
+					return { content: [{ type: "text", text: `Could not resize ${path.basename(absolutePath)} for image reading.` }], details: undefined };
+				}
+				const note = formatDimensionNote(resized);
+				return {
+					content: [
+						{ type: "text", text: `Read image file [${resized.mimeType}]${note ? `\n${note}` : ""}` },
+						{ type: "image", data: resized.data, mimeType: resized.mimeType },
+					],
+					details: undefined,
+				};
+			} catch (err) {
+				return { content: [{ type: "text", text: `Could not resize ${path.basename(absolutePath)} for image reading: ${(err as Error).message}` }], details: undefined };
+			}
 		}
 
 			// 3. SHA-256 + dedupe lookup
