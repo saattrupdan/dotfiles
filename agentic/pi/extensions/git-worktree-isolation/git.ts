@@ -1107,15 +1107,12 @@ export async function reapStaleWorktrees(repoRoot: string, finishedChildPid?: nu
 /** Fetch main, fast-forward its checkout when safe, and prove this branch adds no missing changes. */
 export async function prepareBranchCleanup(manifest: SessionManifest): Promise<{ mainRoot: string; branchSha: string; branchExists: boolean }> {
 	const branch = manifest.createdBranch ?? manifest.targetBranch;
-	if (!branch || branch === "main" || (!manifest.createdBranch && manifest.targetRef !== `refs/heads/${branch}`)) {
-		throw new Error("Cleanup requires a managed feature worktree with a recorded branch.");
+	if (!branch || (manifest.createdBranch && branch === "main") ||
+		(!manifest.createdBranch && manifest.targetRef !== `refs/heads/${branch}`)) {
+		throw new Error("Cleanup requires a managed worktree with a recorded branch.");
 	}
 	const branchExists = (await run(manifest.repoRoot, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`])).code === 0;
-	if (branchExists && !manifest.createdBranch) {
-		throw new Error("Cleanup cannot delete a branch that was not created by isolated_new_branch.");
-	}
-	const checkedOut = await currentBranch(manifest.worktreeRoot);
-	if (checkedOut !== (branchExists ? branch : null)) {
+	if (manifest.createdBranch && await currentBranch(manifest.worktreeRoot) !== (branchExists ? branch : null)) {
 		throw new Error("Cleanup requires the original isolated branch, or a detached managed worktree after that branch was deleted.");
 	}
 	await assertWorktreeReleasable(manifest);
@@ -1165,10 +1162,11 @@ export async function finishBranchCleanup(
 ): Promise<string> {
 	const branch = manifest.createdBranch ?? manifest.targetBranch;
 	const ref = branch ? `refs/heads/${branch}` : "";
-	const currentRef = ref ? await run(manifest.repoRoot, ["rev-parse", "--verify", ref]) : null;
-	if (!branch || await currentBranch(manifest.worktreeRoot) !== (branchExists ? branch : null) ||
-		(branchExists ? currentRef?.code !== 0 || currentRef.stdout.trim() !== expectedSha : currentRef?.code === 0) ||
-		await git(manifest.worktreeRoot, ["rev-parse", "HEAD"]) !== expectedSha) {
+	const currentRef = manifest.createdBranch ? await run(manifest.repoRoot, ["rev-parse", "--verify", ref]) : null;
+	if (!branch || (manifest.createdBranch && (
+		await currentBranch(manifest.worktreeRoot) !== (branchExists ? branch : null) ||
+		(branchExists ? currentRef?.code !== 0 || currentRef.stdout.trim() !== expectedSha : currentRef?.code === 0)
+	)) || await git(manifest.worktreeRoot, ["rev-parse", "HEAD"]) !== expectedSha) {
 		throw new Error("The feature branch moved during cleanup; nothing was removed.");
 	}
 	if (await findCommonGitDir(mainRoot) !== manifest.commonGitDir ||
@@ -1202,7 +1200,7 @@ export async function finishBranchCleanup(
 		locked.add(canonical);
 	};
 	try {
-		for (const file of files) {
+		for (const file of manifest.createdBranch ? files : []) {
 			const record = await loadResumeRecord(file);
 			if (record?.targetRef !== `refs/heads/${branch}` || record.commonGitDir !== manifest.commonGitDir) continue;
 			if ((await run(mainRoot, ["merge-base", "--is-ancestor", record.resumeSha, expectedSha])).code !== 0) {
@@ -1217,13 +1215,17 @@ export async function finishBranchCleanup(
 			await leaseOtherSession(file);
 		}
 		// Protected resume refs make a partial failure recoverable until all
-		// transcripts have been moved; the branch remains until migration succeeds.
-		await checkpointWorktreeSessions(manifest, sessionFile);
-		const records = new Map(migrated.map((record) => [record.sessionFile, record]));
-		for (const file of files) {
-			const record = await loadResumeRecord(file);
-			if (record?.targetRef === `refs/heads/${branch}` && record.commonGitDir === manifest.commonGitDir) {
-				records.set(record.sessionFile, record);
+		// transcripts have been moved. An owned branch remains until then.
+		const checkpointed = await checkpointWorktreeSessions(manifest, sessionFile);
+		const records = new Map([...migrated, ...checkpointed].map((record) => [record.sessionFile, record]));
+		// Older checkpoints on an unowned branch (especially main) could belong
+		// to another worktree; only migrate sessions still in this worktree.
+		if (manifest.createdBranch) {
+			for (const file of files) {
+				const record = await loadResumeRecord(file);
+				if (record?.targetRef === `refs/heads/${branch}` && record.commonGitDir === manifest.commonGitDir) {
+					records.set(record.sessionFile, record);
+				}
 			}
 		}
 		for (const record of records.values()) {
@@ -1241,10 +1243,12 @@ export async function finishBranchCleanup(
 		const destination = (await fs.promises.stat(intendedDestination).catch(() => null))?.isDirectory()
 			? intendedDestination : mainRoot;
 		await releaseManagedWorktree(manifest);
-		if ((await listWorktrees(manifest.repoRoot)).some((entry) => entry.branch === branch)) {
-			throw new Error(`The feature branch ${branch} is still checked out elsewhere; the worktree was released but the branch was preserved.`);
+		if (branchExists && manifest.createdBranch) {
+			if ((await listWorktrees(manifest.repoRoot)).some((entry) => entry.branch === branch)) {
+				throw new Error(`The feature branch ${branch} is still checked out elsewhere; the worktree was released but the branch was preserved.`);
+			}
+			await git(mainRoot, ["update-ref", "-d", ref, expectedSha]);
 		}
-		if (branchExists && manifest.createdBranch) await git(mainRoot, ["update-ref", "-d", ref, expectedSha]);
 		return destination;
 	} finally {
 		for (const release of releases.reverse()) await release();

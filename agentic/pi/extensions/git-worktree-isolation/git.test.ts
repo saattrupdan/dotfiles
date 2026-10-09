@@ -1098,14 +1098,45 @@ test("cleanup retires a legacy managed worktree whose target branch was deleted"
 	assert.equal(await sessionCwd(sessionFile), fs.realpathSync(root));
 });
 
-test("cleanup cannot retire a legacy managed worktree while its target branch exists", async () => {
+test("cleanup releases a managed worktree on an agent-selected branch without deleting it", async () => {
 	const { root, agentDir } = createRepo();
-	command(root, ["branch", "feat/legacy"]);
 	const plan = await createLaunchPlan(root, agentDir);
-	plan.manifest.targetBranch = "feat/legacy";
-	plan.manifest.targetRef = "refs/heads/feat/legacy";
-	await assert.rejects(prepareBranchCleanup(plan.manifest), /cannot delete a branch/);
-	assert.equal(fs.existsSync(plan.childCwd), true);
+	command(plan.childCwd, ["switch", "-c", "feat/manual"]);
+	fs.writeFileSync(path.join(plan.childCwd, "work.txt"), "merged\n");
+	command(plan.childCwd, ["add", "work.txt"]);
+	command(plan.childCwd, ["commit", "-m", "feat: manual branch"]);
+	await enforceRepository(plan.manifest);
+	const sessionFile = path.join(agentDir, "current.jsonl");
+	fs.mkdirSync(agentDir, { recursive: true });
+	fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", cwd: plan.childCwd })}\n`);
+	await assert.rejects(prepareBranchCleanup(plan.manifest), /ask the user before merging/);
+	command(root, ["merge", "--ff-only", "feat/manual"]);
+	const { mainRoot, branchSha, branchExists } = await prepareBranchCleanup(plan.manifest);
+	assert.equal(branchExists, true);
+	assert.equal(await finishBranchCleanup(plan.manifest, sessionFile, mainRoot, branchSha, branchExists), fs.realpathSync(root));
+	assert.equal(fs.existsSync(plan.childCwd), false);
+	assert.equal(command(root, ["rev-parse", "refs/heads/feat/manual"]), branchSha);
+	assert.equal(await sessionCwd(sessionFile), fs.realpathSync(root));
+});
+
+test("cleanup releases a detached legacy worktree while preserving its existing target branch", async () => {
+	const { root, agentDir } = createRepo();
+	const plan = await createLaunchPlan(root, agentDir);
+	const other = await createLaunchPlan(root, agentDir);
+	const sessionFile = path.join(agentDir, "current.jsonl");
+	const unrelated = path.join(agentDir, "unrelated.jsonl");
+	fs.mkdirSync(agentDir, { recursive: true });
+	fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", cwd: plan.childCwd })}\n`);
+	fs.writeFileSync(unrelated, `${JSON.stringify({ type: "session", cwd: other.childCwd })}\n`);
+	await checkpointSession(other.manifest, unrelated);
+	const unrelatedRecord = await loadResumeRecord(unrelated);
+	const { mainRoot, branchSha, branchExists } = await prepareBranchCleanup(plan.manifest);
+	assert.equal(branchExists, true);
+	assert.equal(await finishBranchCleanup(plan.manifest, sessionFile, mainRoot, branchSha, branchExists), fs.realpathSync(root));
+	assert.equal(fs.existsSync(plan.childCwd), false);
+	assert.equal(command(root, ["branch", "--show-current"]), "main");
+	assert.deepEqual(await loadResumeRecord(unrelated), unrelatedRecord);
+	assert.equal(await sessionCwd(unrelated), unrelatedRecord!.placeholderCwd);
 });
 
 test("cleanup preserves a detached worktree if its deleted branch has unmerged work", async () => {

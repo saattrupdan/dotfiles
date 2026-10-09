@@ -32,10 +32,11 @@ quit, session switch, or crash recovery. They are never merged automatically.
 
 `clean-up-isolated-branch` is a Pi tool and is also available as the interactive
 `/clean-up-isolated-branch` command. Both use the same checks. They appear in
-ordinary sessions too. Cleanup requires a managed worktree with recorded branch
-ownership, or a detached managed worktree whose recorded target branch was deleted.
-In other sessions it explains why cleanup is unavailable. Restart Pi to load a newly added
-extension tool. Call it when the branch's work has landed on `main`. The tool fetches `origin/main` if present and fast-forwards a
+ordinary sessions too. Cleanup requires a managed worktree. A branch that Pi did
+not create may still be checked out when cleanup runs, but is preserved. In
+unmanaged sessions the tool explains why cleanup is unavailable. Restart Pi to
+load a newly added extension tool. Call it when the worktree's changes have
+landed on `main`. The tool fetches `origin/main` if present and fast-forwards a
 clean local `main` worktree when necessary. It verifies that the branch commit is
 an ancestor of `main`, or that a virtual merge would add no changes to `main`
 (supporting squash and cherry-pick merges). If inclusion cannot be proved, cleanup
@@ -46,9 +47,11 @@ After an approved merge, call the cleanup tool again. It does not perform merges
 After verification, the tool moves saved sessions to the main checkout, removes
 the worktree, deletes the originally created local branch if it still exists, and
 relaunches Pi in `main`. A detached managed session with a deleted target branch
-can be cleaned up without deleting any branch. It still must prove its HEAD is
-integrated into `main`; an unowned branch that still exists is never deleted. Dirty feature work, unknown ignored outputs, active sessions, a missing
-main worktree, or main that cannot safely fast-forward block cleanup. Older detached
+can be cleaned up without deleting any branch. A managed worktree on an
+agent-selected branch can also be removed while that branch is preserved. In
+all cases, cleanup must prove its HEAD is integrated into `main`. Dirty feature
+work, unknown ignored outputs, active sessions, a missing main worktree, or main
+that cannot safely fast-forward block cleanup. Older detached
 managed sessions retain their existing publication and release behavior; branches
 explicitly switched to by those agents are not deleted.
 
