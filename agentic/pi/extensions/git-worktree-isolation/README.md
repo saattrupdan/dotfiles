@@ -32,9 +32,9 @@ quit, session switch, or crash recovery. They are never merged automatically.
 
 `clean-up-isolated-branch` is a Pi tool and is also available as the interactive
 `/clean-up-isolated-branch` command. Both use the same checks. They appear in
-ordinary sessions too, but can run **only from the original managed feature
-branch**. In other
-sessions it explains why cleanup is unavailable. Restart Pi to load a newly added
+ordinary sessions too. Cleanup requires a managed worktree with recorded branch
+ownership, or a detached managed worktree whose recorded target branch was deleted.
+In other sessions it explains why cleanup is unavailable. Restart Pi to load a newly added
 extension tool. Call it when the branch's work has landed on `main`. The tool fetches `origin/main` if present and fast-forwards a
 clean local `main` worktree when necessary. It verifies that the branch commit is
 an ancestor of `main`, or that a virtual merge would add no changes to `main`
@@ -44,8 +44,10 @@ before merging it; without a PR, it must ask before merging the branch directly.
 After an approved merge, call the cleanup tool again. It does not perform merges.
 
 After verification, the tool moves saved sessions to the main checkout, removes
-the worktree, deletes only the originally created local branch, and relaunches Pi
-in `main`. Dirty feature work, unknown ignored outputs, active sessions, a missing
+the worktree, deletes the originally created local branch if it still exists, and
+relaunches Pi in `main`. A detached managed session with a deleted target branch
+can be cleaned up without deleting any branch. It still must prove its HEAD is
+integrated into `main`; an unowned branch that still exists is never deleted. Dirty feature work, unknown ignored outputs, active sessions, a missing
 main worktree, or main that cannot safely fast-forward block cleanup. Older detached
 managed sessions retain their existing publication and release behavior; branches
 explicitly switched to by those agents are not deleted.

@@ -1105,17 +1105,25 @@ export async function reapStaleWorktrees(repoRoot: string, finishedChildPid?: nu
 }
 
 /** Fetch main, fast-forward its checkout when safe, and prove this branch adds no missing changes. */
-export async function prepareBranchCleanup(manifest: SessionManifest): Promise<{ mainRoot: string; branchSha: string }> {
-	const branch = manifest.createdBranch;
-	if (!branch || branch === "main" || await currentBranch(manifest.worktreeRoot) !== branch) {
-		throw new Error("Cleanup only applies to the original isolated feature branch while checked out in its worktree.");
+export async function prepareBranchCleanup(manifest: SessionManifest): Promise<{ mainRoot: string; branchSha: string; branchExists: boolean }> {
+	const branch = manifest.createdBranch ?? manifest.targetBranch;
+	if (!branch || branch === "main" || (!manifest.createdBranch && manifest.targetRef !== `refs/heads/${branch}`)) {
+		throw new Error("Cleanup requires a managed feature worktree with a recorded branch.");
+	}
+	const branchExists = (await run(manifest.repoRoot, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`])).code === 0;
+	if (branchExists && !manifest.createdBranch) {
+		throw new Error("Cleanup cannot delete a branch that was not created by isolated_new_branch.");
+	}
+	const checkedOut = await currentBranch(manifest.worktreeRoot);
+	if (checkedOut !== (branchExists ? branch : null)) {
+		throw new Error("Cleanup requires the original isolated branch, or a detached managed worktree after that branch was deleted.");
 	}
 	await assertWorktreeReleasable(manifest);
 	const main = (await listWorktrees(manifest.repoRoot)).find((worktree) => worktree.branch === "main");
 	if (!main || main.path === manifest.worktreeRoot) throw new Error("A separate main worktree must be available for cleanup.");
 	const mainRoot = await fs.promises.realpath(main.path);
-	const branchSha = await git(manifest.repoRoot, ["rev-parse", `refs/heads/${branch}`]);
-	if (branchSha !== await git(manifest.worktreeRoot, ["rev-parse", "HEAD"])) {
+	const branchSha = await git(manifest.worktreeRoot, ["rev-parse", "HEAD"]);
+	if (branchExists && branchSha !== await git(manifest.repoRoot, ["rev-parse", `refs/heads/${branch}`])) {
 		throw new Error("The isolated branch moved unexpectedly; retry cleanup.");
 	}
 	if ((await run(manifest.repoRoot, ["remote", "get-url", "origin"])).code === 0) {
@@ -1148,16 +1156,18 @@ export async function prepareBranchCleanup(manifest: SessionManifest): Promise<{
 			throw new Error(`main does not yet contain the changes on ${branch}. If there is a PR, ask the user before merging it; otherwise ask the user before merging the branch into main. Then retry cleanup.`);
 		}
 	}
-	return { mainRoot, branchSha };
+	return { mainRoot, branchSha, branchExists };
 }
 
 /** Remove the verified worktree and branch, migrating all its saved sessions to main. */
 export async function finishBranchCleanup(
-	manifest: SessionManifest, sessionFile: string, mainRoot: string, expectedSha: string,
+	manifest: SessionManifest, sessionFile: string, mainRoot: string, expectedSha: string, branchExists = true,
 ): Promise<string> {
-	const branch = manifest.createdBranch;
-	if (!branch || await currentBranch(manifest.worktreeRoot) !== branch ||
-		await git(manifest.repoRoot, ["rev-parse", `refs/heads/${branch}`]) !== expectedSha ||
+	const branch = manifest.createdBranch ?? manifest.targetBranch;
+	const ref = branch ? `refs/heads/${branch}` : "";
+	const currentRef = ref ? await run(manifest.repoRoot, ["rev-parse", "--verify", ref]) : null;
+	if (!branch || await currentBranch(manifest.worktreeRoot) !== (branchExists ? branch : null) ||
+		(branchExists ? currentRef?.code !== 0 || currentRef.stdout.trim() !== expectedSha : currentRef?.code === 0) ||
 		await git(manifest.worktreeRoot, ["rev-parse", "HEAD"]) !== expectedSha) {
 		throw new Error("The feature branch moved during cleanup; nothing was removed.");
 	}
@@ -1234,7 +1244,7 @@ export async function finishBranchCleanup(
 		if ((await listWorktrees(manifest.repoRoot)).some((entry) => entry.branch === branch)) {
 			throw new Error(`The feature branch ${branch} is still checked out elsewhere; the worktree was released but the branch was preserved.`);
 		}
-		await git(mainRoot, ["update-ref", "-d", `refs/heads/${branch}`, expectedSha]);
+		if (branchExists && manifest.createdBranch) await git(mainRoot, ["update-ref", "-d", ref, expectedSha]);
 		return destination;
 	} finally {
 		for (const release of releases.reverse()) await release();

@@ -1040,6 +1040,100 @@ test("cleanup migrates saved sessions after main contains the branch", async () 
 	for (const file of [current, older]) assert.equal(await loadResumeRecord(file), null);
 });
 
+test("cleanup returns detached managed sessions to main after their feature branch was deleted", async () => {
+	const { root, agentDir } = createRepo();
+	const plan = await createLaunchPlan(root, agentDir, "feat/deleted");
+	fs.writeFileSync(path.join(plan.childCwd, "work.txt"), "merged\n");
+	command(plan.childCwd, ["add", "work.txt"]);
+	command(plan.childCwd, ["commit", "-m", "feat: merged work"]);
+	const sessionDir = sessionDirectoryForCwd(plan.childCwd, agentDir);
+	const current = path.join(sessionDir, "current.jsonl");
+	const older = path.join(sessionDir, "older.jsonl");
+	fs.writeFileSync(current, `${JSON.stringify({ type: "session", cwd: plan.childCwd })}\n`);
+	fs.writeFileSync(older, `${JSON.stringify({ type: "session", cwd: plan.childCwd })}\n`);
+	await checkpointSession(plan.manifest, older);
+	command(root, ["merge", "--ff-only", "feat/deleted"]);
+	command(plan.childCwd, ["switch", "--detach"]);
+	command(root, ["branch", "-D", "feat/deleted"]);
+	const { mainRoot, branchSha, branchExists } = await prepareBranchCleanup(plan.manifest);
+	assert.equal(branchExists, false);
+	assert.equal(branchSha, command(root, ["rev-parse", "main"]));
+	assert.equal(await finishBranchCleanup(plan.manifest, current, mainRoot, branchSha, branchExists), fs.realpathSync(root));
+	assert.equal(fs.existsSync(plan.childCwd), false);
+	assert.equal(await sessionCwd(current), fs.realpathSync(root));
+	assert.equal(await sessionCwd(older), fs.realpathSync(root));
+	assert.equal(await loadResumeRecord(older), null);
+});
+
+test("cleanup retires a legacy managed worktree whose target branch was deleted", async () => {
+	const { root, agentDir } = createRepo();
+	command(root, ["branch", "feat/legacy"]);
+	const plan = await createLaunchPlan(root, agentDir);
+	plan.manifest.targetBranch = "feat/legacy";
+	plan.manifest.targetRef = "refs/heads/feat/legacy";
+	await saveManifest(plan.manifest);
+	command(root, ["branch", "-D", "feat/legacy"]);
+	const tools = new Map<string, { execute: (...args: unknown[]) => Promise<unknown> }>();
+	await registerIsolation({
+		registerFlag: () => undefined,
+		registerCommand: () => undefined,
+		getFlag: () => false,
+		exec: async () => ({ code: 0, stdout: `${plan.childCwd}\n` }),
+		registerTool: (tool: { name: string; execute: (...args: unknown[]) => Promise<unknown> }) => { tools.set(tool.name, tool); },
+		on: () => undefined,
+	} as unknown as ExtensionAPI);
+	const sessionFile = path.join(agentDir, "current.jsonl");
+	fs.mkdirSync(agentDir, { recursive: true });
+	fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", cwd: plan.childCwd })}\n`);
+	let aborted = false;
+	await tools.get("clean-up-isolated-branch")!.execute("call", {}, undefined, undefined, {
+		sessionManager: { getSessionFile: () => sessionFile },
+		abort: () => { aborted = true; },
+	});
+	assert.equal(aborted, true);
+	const { mainRoot, branchSha, branchExists } = await prepareBranchCleanup(plan.manifest);
+	assert.equal(branchExists, false);
+	assert.equal(await finishBranchCleanup(plan.manifest, sessionFile, mainRoot, branchSha, branchExists), fs.realpathSync(root));
+	assert.equal(fs.existsSync(plan.childCwd), false);
+	assert.equal(await sessionCwd(sessionFile), fs.realpathSync(root));
+});
+
+test("cleanup cannot retire a legacy managed worktree while its target branch exists", async () => {
+	const { root, agentDir } = createRepo();
+	command(root, ["branch", "feat/legacy"]);
+	const plan = await createLaunchPlan(root, agentDir);
+	plan.manifest.targetBranch = "feat/legacy";
+	plan.manifest.targetRef = "refs/heads/feat/legacy";
+	await assert.rejects(prepareBranchCleanup(plan.manifest), /cannot delete a branch/);
+	assert.equal(fs.existsSync(plan.childCwd), true);
+});
+
+test("cleanup preserves a detached worktree if its deleted branch has unmerged work", async () => {
+	const { root, agentDir } = createRepo();
+	const plan = await createLaunchPlan(root, agentDir, "feat/unmerged-deleted");
+	fs.writeFileSync(path.join(plan.childCwd, "work.txt"), "not merged\n");
+	command(plan.childCwd, ["add", "work.txt"]);
+	command(plan.childCwd, ["commit", "-m", "feat: unmerged work"]);
+	command(plan.childCwd, ["switch", "--detach"]);
+	command(root, ["branch", "-D", "feat/unmerged-deleted"]);
+	await assert.rejects(prepareBranchCleanup(plan.manifest), /ask the user before merging/);
+	assert.equal(fs.existsSync(plan.childCwd), true);
+});
+
+test("cleanup rejects a ref recreated after missing-branch verification", async () => {
+	const { root, agentDir } = createRepo();
+	const plan = await createLaunchPlan(root, agentDir, "feat/recreated");
+	command(root, ["merge", "--ff-only", "feat/recreated"]);
+	command(plan.childCwd, ["switch", "--detach"]);
+	command(root, ["branch", "-D", "feat/recreated"]);
+	const { mainRoot, branchSha, branchExists } = await prepareBranchCleanup(plan.manifest);
+	command(root, ["branch", "feat/recreated"]);
+	const sessionFile = path.join(agentDir, "current.jsonl");
+	fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", cwd: plan.childCwd })}\n`);
+	await assert.rejects(finishBranchCleanup(plan.manifest, sessionFile, mainRoot, branchSha, branchExists), /moved during cleanup/);
+	assert.equal(fs.existsSync(plan.childCwd), true);
+});
+
 test("cleanup accepts a squash merge but refuses dirty ignored outputs", async () => {
 	const { root, agentDir } = createRepo();
 	fs.writeFileSync(path.join(root, ".gitignore"), "cache/\n");

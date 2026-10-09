@@ -208,10 +208,9 @@ function registerUnavailableCleanupTool(pi: ExtensionAPI): void {
 }
 
 function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): void {
-	if (!manifest.createdBranch) registerUnavailableCleanupTool(pi);
 	let repairTurns = 0;
 	let enforcementRunning = false;
-	let pendingCleanup: { sessionFile: string; mainRoot: string; branchSha: string } | null = null;
+	let pendingCleanup: { sessionFile: string; mainRoot: string; branchSha: string; branchExists: boolean } | null = null;
 	let releaseSessionLease: (() => Promise<void>) | null = null;
 
 	const releaseTranscript = async (): Promise<void> => {
@@ -315,74 +314,72 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 		}
 	});
 
-	if (manifest.createdBranch) {
-		const finishCleanup = async (sessionFile: string, mainRoot: string, branchSha: string): Promise<never> => {
-			// Do not leave Pi's process cwd pointing into a worktree we remove.
-			process.chdir(mainRoot);
-			const mainCwd = await finishBranchCleanup(manifest, sessionFile, mainRoot, branchSha);
-			await releaseTranscript();
-			return resumeInManagedWorktree(sessionFile, mainCwd);
-		};
-		pi.registerCommand("clean-up-isolated-branch", {
-			description: "Return to main after verifying the isolated branch has been merged",
-			async handler(args, ctx) {
-				if (args.trim()) {
-					ctx.ui.notify("/clean-up-isolated-branch takes no arguments.", "warning");
-					return;
-				}
-				if (!ctx.isIdle()) await ctx.waitForIdle();
-				if (pendingCleanup) {
-					ctx.ui.notify("Cleanup is already in progress.", "warning");
-					return;
-				}
-				const sessionFile = ctx.sessionManager.getSessionFile();
-				if (!sessionFile) {
-					ctx.ui.notify("A saved Pi session is required to clean up this branch.", "warning");
-					return;
-				}
-				let prepared: Awaited<ReturnType<typeof prepareBranchCleanup>>;
-				try {
-					prepared = await prepareBranchCleanup(manifest);
-				} catch (error) {
-					const message = error instanceof Error ? error.message : String(error);
-					if (ctx.hasUI) ctx.ui.notify(message, "warning");
-					else process.stderr.write(`Pi worktree isolation: ${message}\n`);
-					return;
-				}
-				try {
-					await finishCleanup(sessionFile, prepared.mainRoot, prepared.branchSha);
-				} catch (error) {
-					fatal(`isolated branch cleanup stopped: ${error instanceof Error ? error.message : String(error)}`);
-				}
-			},
-		});
-		pi.registerTool({
-			name: "clean-up-isolated-branch",
-			label: "Clean up isolated branch",
-			description: "Return to main and delete this managed worktree and its local feature branch only after the branch changes are already on main. Fetches and safely fast-forwards main. Never merges the feature branch or a PR: ask the user before any such merge, then call this tool again.",
-			parameters: Type.Object({}),
-			executionMode: "sequential",
-			async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
-				if (pendingCleanup) throw new Error("Cleanup is already in progress.");
-				const sessionFile = ctx.sessionManager.getSessionFile();
-				if (!sessionFile) throw new Error("A saved Pi session is required to clean up this branch.");
-				const { mainRoot, branchSha } = await prepareBranchCleanup(manifest);
-				pendingCleanup = { sessionFile, mainRoot, branchSha };
-				ctx.abort();
-				return { content: [{ type: "text", text: `Verified ${manifest.createdBranch} is on main. Cleaning up the isolated branch and returning to main.` }], details: undefined };
-			},
-		});
-		pi.on("agent_end", async () => {
-			if (!pendingCleanup) return;
-			const { sessionFile, mainRoot, branchSha } = pendingCleanup;
-			pendingCleanup = null;
+	const finishCleanup = async (sessionFile: string, mainRoot: string, branchSha: string, branchExists: boolean): Promise<never> => {
+		// Do not leave Pi's process cwd pointing into a worktree we remove.
+		process.chdir(mainRoot);
+		const mainCwd = await finishBranchCleanup(manifest, sessionFile, mainRoot, branchSha, branchExists);
+		await releaseTranscript();
+		return resumeInManagedWorktree(sessionFile, mainCwd);
+	};
+	pi.registerCommand("clean-up-isolated-branch", {
+		description: "Return to main after verifying the isolated work is integrated",
+		async handler(args, ctx) {
+			if (args.trim()) {
+				ctx.ui.notify("/clean-up-isolated-branch takes no arguments.", "warning");
+				return;
+			}
+			if (!ctx.isIdle()) await ctx.waitForIdle();
+			if (pendingCleanup) {
+				ctx.ui.notify("Cleanup is already in progress.", "warning");
+				return;
+			}
+			const sessionFile = ctx.sessionManager.getSessionFile();
+			if (!sessionFile) {
+				ctx.ui.notify("A saved Pi session is required to clean up this branch.", "warning");
+				return;
+			}
+			let prepared: Awaited<ReturnType<typeof prepareBranchCleanup>>;
 			try {
-				await finishCleanup(sessionFile, mainRoot, branchSha);
+				prepared = await prepareBranchCleanup(manifest);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				if (ctx.hasUI) ctx.ui.notify(message, "warning");
+				else process.stderr.write(`Pi worktree isolation: ${message}\n`);
+				return;
+			}
+			try {
+				await finishCleanup(sessionFile, prepared.mainRoot, prepared.branchSha, prepared.branchExists);
 			} catch (error) {
 				fatal(`isolated branch cleanup stopped: ${error instanceof Error ? error.message : String(error)}`);
 			}
-		});
-	}
+		},
+	});
+	pi.registerTool({
+		name: "clean-up-isolated-branch",
+		label: "Clean up isolated branch",
+		description: "Return to main and remove this managed worktree after its changes are already on main. Deletes only a feature branch created by isolated_new_branch if it still exists. Fetches and safely fast-forwards main. Never merges a branch or PR automatically.",
+		parameters: Type.Object({}),
+		executionMode: "sequential",
+		async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+			if (pendingCleanup) throw new Error("Cleanup is already in progress.");
+			const sessionFile = ctx.sessionManager.getSessionFile();
+			if (!sessionFile) throw new Error("A saved Pi session is required to clean up this branch.");
+			const { mainRoot, branchSha, branchExists } = await prepareBranchCleanup(manifest);
+			pendingCleanup = { sessionFile, mainRoot, branchSha, branchExists };
+			ctx.abort();
+			return { content: [{ type: "text", text: `Verified this worktree's HEAD is on main. Cleaning up the isolated worktree and returning to main.` }], details: undefined };
+		},
+	});
+	pi.on("agent_end", async () => {
+		if (!pendingCleanup) return;
+		const { sessionFile, mainRoot, branchSha, branchExists } = pendingCleanup;
+		pendingCleanup = null;
+		try {
+			await finishCleanup(sessionFile, mainRoot, branchSha, branchExists);
+		} catch (error) {
+			fatal(`isolated branch cleanup stopped: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	});
 
 	pi.on("session_before_switch", async (event, ctx) => {
 		const finalized = await enforceRepository(manifest);
