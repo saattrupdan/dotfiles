@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { afterEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import registerIsolation, { continuationArgs, recoveredFromRateLimit } from "./index.ts";
+import registerIsolation, { continuationArgs, isPrintMode, recoveredFromRateLimit } from "./index.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	acquirePublishLock,
@@ -46,6 +46,15 @@ test("preserves output and prompt constraints when continuing in a branch", () =
 			"--session-dir", "/tmp/sessions", "Continue",
 		],
 	);
+});
+
+test("recognizes print-mode continuations without a fabricated prompt", () => {
+	assert.equal(isPrintMode(["--print"]), true);
+	assert.equal(isPrintMode(["-p", "--mode", "json"]), true);
+	assert.equal(isPrintMode(["--mode=json"]), true);
+	assert.equal(isPrintMode(["--mode", "text"]), true);
+	assert.equal(isPrintMode(["--mode", "rpc"]), false);
+	assert.equal(isPrintMode(["--session", "/tmp/session.jsonl"]), false);
 });
 
 test("detects a rate-limit retry only in the current user request", () => {
@@ -159,6 +168,7 @@ test("registers an opt-in branch tool without isolating ordinary sessions", asyn
 		});
 		assert.equal(aborted, true);
 		assert.match(JSON.stringify(result), /feat\/from-tool/);
+		assert.match(JSON.stringify(result), /Do not call isolated_new_branch again/);
 		const render = tools.get("isolated_new_branch")!.renderResult!;
 		const theme = { fg: (_color: string, text: string) => text };
 		const output = result as { content: Array<{ type: "text"; text: string }> };
@@ -1052,15 +1062,25 @@ test("managed feature sessions expose cleanup but do not auto-release on quit", 
 	const tools = new Map<string, { execute: (...args: unknown[]) => Promise<unknown> }>();
 	const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
 	const handlers = new Map<string, Array<(...args: unknown[]) => Promise<unknown>>>();
+	const continuations: Array<{ customType: string; content: string; display: boolean; triggerTurn: boolean }> = [];
 	const pi = {
 		registerFlag: () => undefined,
+		sendMessage: (message: { customType: string; content: string; display: boolean }, options: { triggerTurn: boolean }) => {
+			continuations.push({ ...message, ...options });
+			queueMicrotask(() => {
+				for (const handler of handlers.get("agent_settled") ?? []) void handler({});
+			});
+		},
 		registerCommand: (name: string, options: { handler: (args: string, ctx: unknown) => Promise<void> }) => {
 			commands.set(name, options);
 		},
 		getFlag: () => false,
 		exec: async () => ({ code: 0, stdout: `${plan.childCwd}\n` }),
 		registerTool: (tool: { name: string; execute: (...args: unknown[]) => Promise<unknown> }) => { tools.set(tool.name, tool); },
-		on: (name: string, handler: (...args: unknown[]) => Promise<unknown>) => { handlers.set(name, [...(handlers.get(name) ?? []), handler]); },
+		on: (name: string, handler: (...args: unknown[]) => Promise<unknown>) => {
+			handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+			return () => handlers.set(name, (handlers.get(name) ?? []).filter((item) => item !== handler));
+		},
 	} as unknown as ExtensionAPI;
 	await registerIsolation(pi);
 	assert.ok(tools.has("clean-up-isolated-branch"));
@@ -1068,6 +1088,29 @@ test("managed feature sessions expose cleanup but do not auto-release on quit", 
 	const sessionFile = path.join(agentDir, "current.jsonl");
 	fs.mkdirSync(agentDir, { recursive: true });
 	fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", cwd: plan.childCwd })}\n`);
+	const previousContinuation = process.env.PI_WORKTREE_BRANCH_CONTINUATION;
+	const previousArgv = process.argv;
+	process.argv = ["node", "pi", "--print"];
+	process.env.PI_WORKTREE_BRANCH_CONTINUATION = "1";
+	try {
+		for (const handler of handlers.get("session_start") ?? []) {
+			await handler({ reason: "startup" }, {
+				sessionManager: { getSessionFile: () => sessionFile },
+				ui: { setStatus: () => undefined },
+			});
+		}
+		assert.equal(process.env.PI_WORKTREE_BRANCH_CONTINUATION, undefined);
+		assert.deepEqual(continuations, [{
+			customType: "git-worktree-isolation:continue-branch",
+			content: "Continue the previous request using the branch-creation result above.",
+			display: false,
+			triggerTurn: true,
+		}]);
+	} finally {
+		process.argv = previousArgv;
+		if (previousContinuation === undefined) delete process.env.PI_WORKTREE_BRANCH_CONTINUATION;
+		else process.env.PI_WORKTREE_BRANCH_CONTINUATION = previousContinuation;
+	}
 	let aborted = false;
 	await assert.rejects(tools.get("clean-up-isolated-branch")!.execute("call", {}, undefined, undefined, {
 		sessionManager: { getSessionFile: () => sessionFile },

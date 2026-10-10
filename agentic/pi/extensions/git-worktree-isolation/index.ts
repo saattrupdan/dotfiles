@@ -35,6 +35,7 @@ import {
 } from "./git.ts";
 
 const CHILD_MANIFEST_ENV = "PI_WORKTREE_SESSION_MANIFEST";
+const BRANCH_CONTINUATION_ENV = "PI_WORKTREE_BRANCH_CONTINUATION";
 const DISABLE_ENV = "PI_WORKTREE_ISOLATION_DISABLE";
 const CUSTOM_TYPE = "git-worktree-isolation:finalize";
 const RATE_LIMIT_RETRY_TYPE = "rate-limit-retry:continue";
@@ -57,6 +58,14 @@ Never bypass, remove, or alter the Pi worktree metadata.`;
 
 function cliArgs(): string[] {
 	return process.argv.slice(2);
+}
+
+export function isPrintMode(args = cliArgs()): boolean {
+	return args.some((arg, index) =>
+		arg === "--print" || arg === "-p" ||
+		(arg === "--mode" && ["text", "json"].includes(args[index + 1] ?? "")) ||
+		arg === "--mode=text" || arg === "--mode=json",
+	);
 }
 
 function isMetadataInvocation(args: string[]): boolean {
@@ -123,7 +132,11 @@ async function relaunch(plan: Awaited<ReturnType<typeof createLaunchPlan>>, args
 	const result = spawnSync(process.execPath, [process.argv[1]!, ...args], {
 		cwd: plan.childCwd,
 		stdio: "inherit",
-		env: { ...process.env, [CHILD_MANIFEST_ENV]: plan.manifest.manifestPath },
+		env: {
+			...process.env,
+			[CHILD_MANIFEST_ENV]: plan.manifest.manifestPath,
+			[BRANCH_CONTINUATION_ENV]: "1",
+		},
 	});
 	try {
 		await reapStaleWorktrees(plan.manifest.repoRoot, result.pid || process.pid);
@@ -225,7 +238,10 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 		event.systemPromptOptions.sections["git-worktree-isolation"] = SYSTEM_INSTRUCTION;
 	});
 
-	pi.on("session_start", async (_event, ctx) => {
+	pi.on("session_start", async (event, ctx) => {
+		// Only the freshly relaunched child continues; reloads and later sessions do not.
+		const continueBranch = event.reason === "startup" && process.env[BRANCH_CONTINUATION_ENV] === "1";
+		delete process.env[BRANCH_CONTINUATION_ENV];
 		const sessionFile = ctx.sessionManager.getSessionFile();
 		if (sessionFile) {
 			try {
@@ -236,6 +252,19 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 		}
 		await hydrateIgnoredPaths(manifest);
 		ctx.ui.setStatus("git-worktree-isolation", `🌳 ${manifest.id}`);
+		if (continueBranch) {
+			// Print mode returns as soon as session_start finishes unless we await the
+			// extension-triggered turn. Register before starting it to avoid a race.
+			const settled = isPrintMode() ? new Promise<void>((resolve) => {
+				const unsubscribe = pi.on("agent_settled", () => { unsubscribe(); resolve(); });
+			}) : undefined;
+			pi.sendMessage({
+				customType: "git-worktree-isolation:continue-branch",
+				content: "Continue the previous request using the branch-creation result above.",
+				display: false,
+			}, { triggerTurn: true });
+			if (settled) await settled;
+		}
 	});
 
 	pi.on("session_shutdown", async (event, ctx) => {
@@ -537,7 +566,7 @@ export default async function (pi: ExtensionAPI) {
 			const plan = await createLaunchPlan(ctx.cwd, undefined, name);
 			pending = { plan, sessionFile };
 			ctx.abort();
-			return { content: [{ type: "text", text: `Created ${name} at ${plan.childCwd}. Continuing this session there now; do not perform more work in the original checkout.` }], details: undefined };
+			return { content: [{ type: "text", text: `Created ${name} at ${plan.childCwd}. Continuing this session there now; do not perform more work in the original checkout. Do not call isolated_new_branch again for this request.` }], details: undefined };
 		},
 		renderResult(result, { expanded }, theme, context) {
 			const text = result.content.filter((item) => item.type === "text").map((item) => item.text).join("\n");
@@ -552,9 +581,7 @@ export default async function (pi: ExtensionAPI) {
 		pending = null;
 		try {
 			await rewriteSessionCwd(sessionFile, plan.childCwd);
-			const args = continuationArgs(sessionFile,
-				"Continue the previous request in the newly created isolated branch. Do not call isolated_new_branch again for this request.");
-			await relaunch(plan, args);
+			await relaunch(plan, continuationArgs(sessionFile));
 		} catch (error) {
 			fatal(`could not enter the new branch; worktree remains at ${plan.childCwd}: ${error instanceof Error ? error.message : String(error)}`);
 		}
