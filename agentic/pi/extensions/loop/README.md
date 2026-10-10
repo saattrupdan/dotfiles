@@ -50,7 +50,9 @@ condition after every run. It can inspect the working directory and run verifica
 but it does not inherit the working agent's conversation: it sees the condition
 and a bounded copy of the last final answer. It returns a yes/no verdict with
 evidence. A failed or malformed check stops the loop visibly; it never counts
-as success. The checker is instructed not to modify files, but its shell tool is
+as success. Rate limits during compaction or the completion check instead pause
+and retry the same step after 1–5 minutes (exponential backoff); they do not
+consume a run. `/loop stop` cancels the retry. The checker is instructed not to modify files, but its shell tool is
 **not a read-only sandbox**. Use explicit, verifiable conditions and review
 its work as you would any other agent action.
 

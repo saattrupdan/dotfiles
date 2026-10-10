@@ -10,6 +10,12 @@ import { NON_INTERACTIVE_BANNER } from "../non-interactive/prompt.ts";
 const STATUS_KEY = "loop";
 const MAX_DURATION_MS = 24 * 60 * 60 * 1_000;
 const DEFAULT_UNTIL_CAP = 20;
+const RATE_LIMIT_RETRY_MS = 60_000;
+const MAX_RATE_LIMIT_RETRY_MS = 5 * 60_000;
+
+function isRateLimitError(error: unknown): boolean {
+	return /rate[ -]?limit|too many requests|\b429\b/i.test(String(error));
+}
 const COMPACTION_INSTRUCTIONS =
 	"Summarize this loop's goal, constraints, work completed, failed attempts, current file state, " +
 	"and the next concrete step. Keep the summary brief but retain information needed by the next iteration.";
@@ -74,8 +80,9 @@ interface Dependencies {
 }
 interface ActiveLoop extends LoopOptions {
 	runs: number;
-	phase: "running" | "checking" | "waiting" | "compacting";
+	phase: "running" | "checking" | "waiting" | "compacting" | "rate limited";
 	compacted: boolean;
+	rateLimitRetries: number;
 	lastOutput?: string;
 	failed?: boolean;
 	generation: number;
@@ -123,10 +130,19 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 			?? settings?.keepRecentTokens ?? 20_000;
 		return tokens > keepRecent;
 	}
+	function retryAfterRateLimit(loop: ActiveLoop, callback: () => void) {
+		if (active !== loop) return;
+		loop.phase = "rate limited";
+		updateStatus(loop.ctx);
+		const delay = Math.min(RATE_LIMIT_RETRY_MS * 2 ** Math.min(loop.rateLimitRetries++, 3), MAX_RATE_LIMIT_RETRY_MS);
+		say(`Loop rate limited; retrying in ${Math.ceil(delay / 1_000)}s (run ${loop.runs}).`);
+		timer = setTimer(() => { timer = undefined; if (active === loop) callback(); }, delay);
+	}
 	function schedule(loop: ActiveLoop) {
 		if (active !== loop) return;
 		loop.phase = "waiting";
 		loop.compacted = false;
+		loop.rateLimitRetries = 0;
 		updateStatus(loop.ctx);
 		const token = loop.generation;
 		const tick = () => {
@@ -149,6 +165,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 				const resume = () => {
 					if (active !== loop || generation !== token) return;
 					loop.compacted = true;
+					loop.rateLimitRetries = 0;
 					loop.phase = "waiting";
 					updateStatus(loop.ctx);
 					// Run on a later tick: the compaction callback can fire while Pi
@@ -162,11 +179,13 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 						onError: (error) => {
 							if (active !== loop || generation !== token) return;
 							if (/^(Nothing to compact \(session too small\)|Already compacted)$/.test(error.message)) resume();
+							else if (isRateLimitError(error)) retryAfterRateLimit(loop, tick);
 							else stop(`Loop stopped: compaction failed (${error.message}).`);
 						},
 					});
 				} catch (error) {
-					stop(`Loop stopped: compaction failed (${String(error)}).`);
+					if (isRateLimitError(error)) retryAfterRateLimit(loop, tick);
+					else stop(`Loop stopped: compaction failed (${String(error)}).`);
 				}
 				return;
 			}
@@ -239,7 +258,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 					return;
 				}
 			}
-			active = { ...options, runs: 0, phase: "running", compacted: false, generation: ++generation, ctx };
+			active = { ...options, runs: 0, phase: "running", compacted: false, rateLimitRetries: 0, generation: ++generation, ctx };
 			setLoopActive(true, ctx);
 			run(active);
 		},
@@ -273,12 +292,19 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 		try {
 			verdict = await check(loop.condition!, loop.lastOutput!, ctx, controller.signal);
 		} catch (error) {
-			if (active === loop) stop(`Loop stopped: completion check failed (${String(error)}).`);
+			if (active === loop && !controller.signal.aborted && isRateLimitError(error)) {
+				retryAfterRateLimit(loop, () => {
+					if (active !== loop || controller.signal.aborted) return;
+					loop.phase = "checking";
+					updateStatus(ctx);
+					void evaluate(loop, ctx, controller);
+				});
+			} else if (active === loop) stop(`Loop stopped: completion check failed (${String(error)}).`);
 			return;
-		} finally {
-			if (checker === controller) checker = undefined;
 		}
+		if (checker === controller) checker = undefined;
 		if (active !== loop || controller.signal.aborted) return;
+		loop.rateLimitRetries = 0;
 		if (verdict.done) {
 			stop(`Loop complete after ${loop.runs} run(s): ${verdict.evidence}`);
 			return;

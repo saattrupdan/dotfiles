@@ -43,6 +43,7 @@ import {
 	SUBAGENT_TASK_NAME_PATTERN,
 } from "./session-label.ts";
 import { resolveSkillAllowList } from "./skill-scope.ts";
+import { compactMessage, compactResult } from "./compact-result.ts";
 
 const COLLAPSED_ITEM_COUNT = 10;
 
@@ -211,6 +212,7 @@ interface SingleResult {
 	stderr: string;
 	usage: UsageStats;
 	model?: string;
+	finalOutput?: string;
 	modelAttempts?: ModelAttempt[];
 	stopReason?: string;
 	errorMessage?: string;
@@ -260,9 +262,9 @@ function isRetryableModelAttemptFailure(result: SingleResult): boolean {
 
 function getResultOutput(result: SingleResult): string {
 	if (isFailedResult(result)) {
-		return result.errorMessage || result.stderr || getFinalOutput(result.messages) || "(no output)";
+		return result.errorMessage || result.stderr || result.finalOutput || getFinalOutput(result.messages) || "(no output)";
 	}
-	return getFinalOutput(result.messages) || "(no output)";
+	return result.finalOutput || getFinalOutput(result.messages) || "(no output)";
 }
 
 type DisplayItem =
@@ -781,9 +783,12 @@ async function runSingleAgent(
 
 						if (event.type === "message_end" && event.message) {
 							const msg = event.message as Message;
-							currentResult.messages.push(msg);
+							currentResult.messages.push(compactMessage(msg));
+							if (currentResult.messages.length > 200) currentResult.messages.shift();
 
 							if (msg.role === "assistant") {
+								const output = getFinalOutput([msg]);
+								if (output) currentResult.finalOutput = output;
 								currentResult.usage.turns++;
 								const usage = msg.usage;
 								if (usage) {
@@ -820,8 +825,8 @@ async function runSingleAgent(
 							if (partial) {
 								if (!currentResult.partialResults) currentResult.partialResults = {};
 								currentResult.partialResults[event.toolCallId] = {
-									content: partial.content,
-									details: partial.details,
+									content: [],
+									details: partial.details?.messages ? compactResult(partial.details, true) : undefined,
 									isError: partial.isError,
 								};
 							}
@@ -1182,13 +1187,13 @@ export default function (pi: ExtensionAPI) {
 				const errorMsg = getResultOutput(result);
 				return {
 					content: [{ type: "text", text: `Agent ${result.stopReason || "failed"}: ${errorMsg}` }],
-					details: result,
+					details: compactResult(result),
 					isError: true,
 				};
 			}
 			return {
-				content: [{ type: "text", text: getFinalOutput(result.messages) || "(no output)" }],
-				details: result,
+				content: [{ type: "text", text: result.finalOutput || getFinalOutput(result.messages) || "(no output)" }],
+				details: compactResult(result),
 			};
 		},
 
@@ -1319,7 +1324,9 @@ export default function (pi: ExtensionAPI) {
 			const r = details;
 			const isError = isFailedResult(r);
 			const displayItems = getDisplayItems(r.messages, (r as any).partialResults);
-			const finalOutput = getFinalOutput(r.messages);
+			const output = result.content.find((part) => part.type === "text");
+			const finalOutput = !isPartial && output?.type === "text" && !isFailedResult(r)
+				? output.text : getFinalOutput(r.messages);
 			const modelAttemptSummary = formatModelAttempts(r.modelAttempts);
 			const failureLine = `${theme.fg("error", "✗ failed")}${
 				r.stopReason ? ` ${theme.fg("error", `[${r.stopReason}]`)}` : ""

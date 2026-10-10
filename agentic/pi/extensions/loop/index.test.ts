@@ -102,7 +102,7 @@ test("checker verdict is strict and needs evidence", () => {
 type Handler = (event: unknown, ctx: ExtensionContext) => unknown;
 function harness(
 	check?: (condition: string, output: string, ctx: ExtensionContext, signal: AbortSignal) => Promise<Verdict>,
-	options: { mode?: "tui" | "rpc" | "print"; autoStart?: boolean; compact?: "complete" | "small" | "fail" | "pending"; contextTokens?: number; cwd?: string } = {},
+	options: { mode?: "tui" | "rpc" | "print"; autoStart?: boolean; compact?: "complete" | "small" | "fail" | "pending" | "rateOnce"; contextTokens?: number; cwd?: string } = {},
 ) {
 	const handlers = new Map<string, Handler>();
 	const sent: string[] = [];
@@ -126,7 +126,8 @@ function harness(
 		},
 		compact: (callbacks: { onComplete?: () => void; onError?: (error: Error) => void }) => {
 			compactions++;
-			if (options.compact === "small") callbacks.onError?.(new Error("Nothing to compact (session too small)"));
+			if (options.compact === "rateOnce" && compactions === 1) callbacks.onError?.(new Error('429: {"detail":"Rate limit exceeded"}'));
+			else if (options.compact === "small") callbacks.onError?.(new Error("Nothing to compact (session too small)"));
 			else if (options.compact === "fail") callbacks.onError?.(new Error("provider failed"));
 			else if (options.compact === "pending") finishCompaction = () => callbacks.onComplete?.();
 			else callbacks.onComplete?.();
@@ -283,6 +284,18 @@ test("too-small compaction is skipped; other failures stop the loop", async () =
 	assert.match(failed.notices.at(-1) ?? "", /compaction failed/);
 });
 
+test("rate-limited compaction retries the same run after backoff", async () => {
+	const h = harness(undefined, { compact: "rateOnce" });
+	await h.command("--max-runs 2 work");
+	await h.finish();
+	h.tick();
+	assert.equal(h.tick(), 60_000);
+	assert.equal(h.compactions(), 2);
+	assert.equal(h.tick(), 0);
+	assert.equal(h.sent.length, 2);
+	await h.finish();
+});
+
 test("stop during compaction invalidates its eventual callback", async () => {
 	const h = harness(undefined, { compact: "pending" });
 	await h.command("work");
@@ -304,6 +317,30 @@ test("checker error and aborted iteration fail closed", async () => {
 	await h.finish("oops", "error");
 	assert.equal(h.timers.size, 0);
 	assert.match(h.notices.at(-1) ?? "", /iteration failed/);
+});
+
+test("checker rate limits retry without using another run; stop cancels retry", async () => {
+	let checks = 0;
+	const h = harness(async () => {
+		checks++;
+		if (checks < 3) throw new Error('Checker exited 1: {"detail":"Rate limit exceeded"}');
+		return { done: true, evidence: "verified" };
+	});
+	await h.command("work --until good");
+	await h.finish();
+	assert.equal(h.tick(), 60_000);
+	await Promise.resolve();
+	assert.equal(h.tick(), 120_000);
+	await Promise.resolve();
+	assert.equal(checks, 3);
+	assert.match(h.notices.at(-1) ?? "", /complete after 1 run/);
+	assert.equal(h.timers.size, 0);
+
+	const stopped = harness(async () => { throw new Error("429 Too Many Requests"); });
+	await stopped.command("work --until good");
+	await stopped.finish();
+	await stopped.command("stop");
+	assert.equal(stopped.timers.size, 0);
 });
 
 test("a recovered provider error does not stop the loop", async () => {
