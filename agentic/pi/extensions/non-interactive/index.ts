@@ -1,6 +1,7 @@
 /**
  * `/non-interactive <prompt>` — run a single user request without ever
- * stopping to ask a question. `/loop` enables the same mode for its lifetime.
+ * stopping to ask a question. `/non-interactive off` restores interactive
+ * questions; `/loop` enables non-interactive mode for its lifetime.
  *
  * Two effects, both scoped to the resulting agent run:
  *
@@ -31,11 +32,16 @@
  * stopping the loop clears it. Every iteration carries the same prompt banner.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isLoopActive, onLoopChange } from "../_loop_state/state.ts";
 import { NON_INTERACTIVE_BANNER } from "./prompt.ts";
 
 const ENV_FLAG = "PI_NON_INTERACTIVE";
+const STATUS_KEY = "non-interactive";
+
+function showStatus(ctx: ExtensionContext) {
+	ctx.ui.setStatus(STATUS_KEY, process.env[ENV_FLAG] === "1" ? "🙊" : undefined);
+}
 
 function clearFlag() {
 	if (process.env[ENV_FLAG] !== undefined) {
@@ -54,19 +60,44 @@ export default function (pi: ExtensionAPI) {
 	// input event.
 	let arming = false;
 
-	onLoopChange("non-interactive", (active) => {
+	onLoopChange("non-interactive", (active, ctx) => {
 		if (active) process.env[ENV_FLAG] = "1";
 		else clearFlag();
+		showStatus(ctx);
 	});
 
 	pi.registerCommand("non-interactive", {
-		description: "Run the given request without any user questions. Subagents inherit the gag.",
-		async handler(args, _ctx) {
+		description: "Run a request without questions, or use 'off' to restore interactive questions.",
+		async handler(args, ctx) {
 			const trimmed = args.trim();
+			if (trimmed === "off") {
+				if (isLoopActive()) {
+					pi.sendMessage({
+						customType: "non-interactive:error",
+						content: "Stop the active loop with /loop stop before enabling interactive mode.",
+						display: true,
+					});
+					return;
+				}
+				arming = false;
+				clearFlag();
+				showStatus(ctx);
+				pi.sendMessage({
+					customType: "non-interactive:status",
+					content: "Interactive mode enabled; questions are available again.",
+					display: true,
+				});
+				// Override the earlier banner if this command arrives while the agent
+				// is still working; avoid creating an unnecessary turn when idle.
+				if (!ctx.isIdle()) {
+					pi.sendUserMessage("Interactive mode is enabled again. You may use the question tool when needed.", { deliverAs: "steer" });
+				}
+				return;
+			}
 			if (!trimmed) {
 				pi.sendMessage({
 					customType: "non-interactive:error",
-					content: "Usage: /non-interactive <prompt>",
+					content: "Usage: /non-interactive <prompt> | /non-interactive off",
 					display: true,
 				});
 				return;
@@ -74,6 +105,7 @@ export default function (pi: ExtensionAPI) {
 			arming = true;
 			try {
 				process.env[ENV_FLAG] = "1";
+				showStatus(ctx);
 				// Enter during streaming queues a steering message; without deliverAs,
 				// Pi rejects extension-sent messages while the agent is working.
 				pi.sendUserMessage(`${NON_INTERACTIVE_BANNER}\n\n${trimmed}`, { deliverAs: "steer" });
@@ -87,13 +119,20 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	pi.on("agent_end", async () => {
+	pi.on("agent_end", async (_event, ctx) => {
 		if (!isLoopActive()) clearFlag();
+		showStatus(ctx);
 	});
-	pi.on("agent_start", async () => {
+	pi.on("agent_start", async (_event, ctx) => {
 		if (!arming && !isLoopActive()) clearFlag();
+		showStatus(ctx);
 	});
-	pi.on("input", async (event) => {
+	pi.on("input", async (event, ctx) => {
 		if (!arming && (!isLoopActive() || event.source !== "extension")) clearFlag();
+		showStatus(ctx);
+	});
+	pi.on("session_start", (_event, ctx) => {
+		if (!isLoopActive()) clearFlag();
+		showStatus(ctx);
 	});
 }
