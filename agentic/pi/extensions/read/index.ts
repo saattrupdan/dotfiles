@@ -1,12 +1,14 @@
 /**
  * Index-backed `read` tool extension.
  *
- * Three modes (no pagination — model must use search to locate things):
+ * Normal reads use outlines; explicit byte ranges provide bounded batches:
  *   1. Small file (≤ SMALL_FILE_LINES, no symbol) → verbatim
- *   2. Large file (no symbol)                     → outline (module doc +
+ *   2. Moderate file (no symbol)                  → outline (module doc +
  *      one line per symbol with signature & doc-first-line)
  *   3. `symbol` set                               → body of that symbol
  *      using line_start..line_end from the index. Supports "Class.method".
+ * Very large text files are refused unless offset/limit request a bounded byte range;
+ * all text responses have a separate hard output cap.
  *
  * Outline + symbol ranges come from the shared SQLite index in
  * `~/.pi/index/<repo-id>/index.db`, which is also used by the `search`
@@ -242,6 +244,10 @@ async function loadModules() {
 const callIndex = { current: 0 };
 const dedupeCache = new Map<string, { sha: string; callIndex: number; text: string }>();
 
+function cacheRead(key: string, entry: { sha: string; callIndex: number; text: string }): void {
+	if (Buffer.byteLength(entry.text, "utf-8") <= MAX_RESULT_BYTES) dedupeCache.set(key, entry);
+}
+
 function cacheKey(sha: string, filePath: string, symbol: string | undefined): string {
 	return `${sha}|${filePath}|${symbol ?? ""}`;
 }
@@ -256,7 +262,13 @@ function isLikelyImage(filePath: string): boolean {
 	const ext = path.extname(filePath).toLowerCase();
 	if (!IMAGE_EXTENSIONS.has(ext)) return false;
 	try {
-		const buf = fs.readFileSync(filePath).subarray(0, 64);
+		const fd = fs.openSync(filePath, "r");
+		const buf = Buffer.alloc(64);
+		try {
+			fs.readSync(fd, buf, 0, buf.length, 0);
+		} finally {
+			fs.closeSync(fd);
+		}
 		if (buf[0] === 0xff && buf[1] === 0xd8) return true; // JPEG
 		if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return true; // PNG
 		if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return true; // GIF
@@ -402,6 +414,67 @@ async function convertToMarkdown(source: string, cacheKey: string, signal?: Abor
 
 const SMALL_FILE_LINES = 100;
 const DIR_ENTRY_LIMIT = 200;
+const MAX_SOURCE_BYTES = 1024 * 1024;
+const MAX_RESULT_BYTES = 64 * 1024;
+const DEFAULT_BATCH_BYTES = 16 * 1024;
+const MAX_BATCH_BYTES = 32 * 1024;
+
+function sizeWarning(filePath: string, bytes: number): AgentToolResult<unknown> {
+	return {
+		content: [{ type: "text", text: `${filePath} is very large (${bytes} bytes). No contents were returned. Read it in bounded batches with offset=0 and limit=${DEFAULT_BATCH_BYTES} (byte offsets), then use the next offset reported by each batch. Use search first if you only need a specific section.` }],
+		details: undefined,
+	};
+}
+
+function guardResult(result: AgentToolResult<unknown>, filePath: string): AgentToolResult<unknown> {
+	if (result.content.some((block) => block.type === "text" && Buffer.byteLength(block.text, "utf-8") > MAX_RESULT_BYTES)) {
+		return {
+			content: [{ type: "text", text: `${filePath} would return more than ${MAX_RESULT_BYTES} bytes of text. No contents were returned. Use search to locate a smaller section or read in batches with offset=0 and limit=${DEFAULT_BATCH_BYTES} (byte offsets).` }],
+			details: undefined,
+		};
+	}
+	return result;
+}
+
+/** Return a UTF-8-aligned byte range, with a continuation offset for the next batch. */
+function readBatch(
+	buffer: Buffer, filePath: string, offset: number, limit: number,
+	baseOffset = 0, totalBytes = buffer.length,
+): AgentToolResult<unknown> {
+	if (offset >= totalBytes) {
+		return { content: [{ type: "text", text: `# ${filePath}: offset ${offset} is at or beyond EOF (${totalBytes} bytes).` }], details: undefined };
+	}
+	let start = offset - baseOffset;
+	// If a caller starts inside a multibyte character, move to the next one.
+	while (start < buffer.length && (buffer[start]! & 0xc0) === 0x80) start++;
+	let end = Math.min(start + limit, buffer.length);
+	if (end < buffer.length && (buffer[end]! & 0xc0) === 0x80) {
+		while (end > start && (buffer[end]! & 0xc0) === 0x80) end--;
+		// A tiny limit must still advance past one full character.
+		if (end === start) {
+			end = start + 1;
+			while (end < buffer.length && (buffer[end]! & 0xc0) === 0x80) end++;
+		}
+	}
+	const next = baseOffset + end;
+	return {
+		content: [{ type: "text", text: `# ${filePath}: bytes ${baseOffset + start}-${next - 1} of ${totalBytes}; next offset=${next}${next === totalBytes ? " (EOF)" : ""}\n${buffer.subarray(start, end).toString("utf-8")}` }],
+		details: undefined,
+	};
+}
+
+function readLocalBatch(filePath: string, offset: number, limit: number): AgentToolResult<unknown> {
+	const size = fs.statSync(filePath).size;
+	if (offset >= size) return readBatch(Buffer.alloc(0), filePath, offset, limit, offset, size);
+	const fd = fs.openSync(filePath, "r");
+	try {
+		const bytes = Buffer.allocUnsafe(Math.min(limit + 4, size - offset));
+		const read = fs.readSync(fd, bytes, 0, bytes.length, offset);
+		return readBatch(bytes.subarray(0, read), filePath, offset, limit, offset, size);
+	} finally {
+		fs.closeSync(fd);
+	}
+}
 
 // Footer appended to every outline. This outline IS the whole-file view, so
 // the footer steers the model to drill in (rather than re-read the path).
@@ -454,6 +527,8 @@ const Params = Type.Object({
 				"Use the outline returned by a path-only read to discover symbol names.",
 		}),
 	),
+	offset: Type.Optional(Type.Integer({ minimum: 0, description: "Start byte offset for a bounded text batch (default 0 when limit is set). Cannot be combined with symbol." })),
+	limit: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_BATCH_BYTES, description: `Maximum bytes in a batch (default ${DEFAULT_BATCH_BYTES} when offset is set).` })),
 });
 
 // ---------------------------------------------------------------------------
@@ -547,15 +622,22 @@ export default function (pi: ExtensionAPI, overrides: ReadExtensionOverrides = {
 			"  • Image (JPEG, PNG, GIF, WebP, HEIC/HEIF) → returned as image content; HEIC/HEIF is converted to an orientation-corrected JPEG.\n" +
 			"  • Document (PDF, DOCX, XLSX, PPTX, ODT, ODS, ODP) or URL → converted to Markdown via docling, then rendered exactly like any Markdown file (outline for large ones; read a section with symbol=\"<heading>\"). Conversions are cached, so re-reading the same document/URL is cheap.\n" +
 			"  • No symbol, small file → verbatim contents.\n" +
-			"  • No symbol, large file → outline (module doc, classes/functions with signatures, type hints, and doc-first-line). Use the outline to pick a symbol.\n" +
+			"  • No symbol, moderately large file → outline (module doc, classes/functions with signatures, type hints, and doc-first-line). Use the outline to pick a symbol.\n" +
 			"  • symbol set → body of that symbol only (supports 'Class.method').\n" +
-			"  • symbol=\"__preamble__\" → everything before the first class/function (imports, constants, module setup).\n" +
-			"There is no pagination — you cannot walk a file via offset/limit. If the outline is not enough, use the `search` tool to locate what you need, then read the symbol.\n" +
+			"  • symbol=\"__preamble__\" → everything before the first class/function (imports, constants, module setup), subject to the output cap.\n" +
+			"  • Large text file or large result → warning with no contents. For local text files and converted documents/URLs, use offset and limit (byte offsets, up to 32768 bytes) to read bounded batches; follow the reported next offset. Do not combine ranges with symbol.\n" +
 			"Prefer `read` for fetching web pages — it's quicker and converts to Markdown via docling. Only use `web_browse` for interactive/JS-heavy pages that need clicking, typing, or JavaScript execution.",
 		parameters: Params,
 
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
-			const { path: filePath, symbol } = params;
+			const { path: filePath, symbol, offset, limit } = params;
+			const ranged = offset !== undefined || limit !== undefined;
+			if (ranged && symbol) {
+				return { content: [{ type: "text", text: "Choose either symbol or offset/limit, not both." }], details: undefined };
+			}
+			// The final guard covers every branch (including indexed symbols, cached
+			// responses, and converted documents), not just the plain-file path.
+			return guardResult(await (async (): Promise<AgentToolResult<unknown>> => {
 			let deps: ReadDeps;
 			try {
 				deps = await loadDeps();
@@ -580,7 +662,7 @@ export default function (pi: ExtensionAPI, overrides: ReadExtensionOverrides = {
 				const sha = sha256String(filePath);
 				const key = cacheKey(sha, filePath, symbol);
 				const cached = dedupeCache.get(key);
-				if (cached && cached.sha === sha) {
+				if (!ranged && cached && cached.sha === sha) {
 					return {
 						content: [{ type: "text", text: cached.text }],
 						details: { dedupe: true, callIndex: cached.callIndex },
@@ -592,10 +674,13 @@ export default function (pi: ExtensionAPI, overrides: ReadExtensionOverrides = {
 				} catch (err) {
 					return { content: [{ type: "text", text: `Could not fetch ${filePath} via docling: ${(err as Error).message}` }], details: undefined };
 				}
+				if (ranged) return readBatch(Buffer.from(markdown, "utf-8"), filePath, offset ?? 0, limit ?? DEFAULT_BATCH_BYTES);
+				const bytes = Buffer.byteLength(markdown, "utf-8");
+				if (bytes > MAX_SOURCE_BYTES) return sizeWarning(filePath, bytes);
 				const banner = `# ${filePath} — fetched and converted to Markdown via docling`;
 				const rendered = withBanner(renderContent(filePath, "page.md", markdown, symbol, outline, collapsedView, key, sha), banner);
 				const callIdx = ++callIndex.current;
-				dedupeCache.set(key, { sha, callIndex: callIdx, text: textOf(rendered) });
+				cacheRead(key, { sha, callIndex: callIdx, text: textOf(rendered) });
 				return rendered;
 			}
 
@@ -636,6 +721,10 @@ export default function (pi: ExtensionAPI, overrides: ReadExtensionOverrides = {
 			}
 		} catch {
 			// fall through
+		}
+
+		if (ranged && isLikelyImage(absolutePath)) {
+			return { content: [{ type: "text", text: "Byte ranges are only supported for text files, not images." }], details: undefined };
 		}
 
 		// 2. Convert HEIC/HEIF, then resize in a worker before returning image
@@ -680,11 +769,20 @@ export default function (pi: ExtensionAPI, overrides: ReadExtensionOverrides = {
 			}
 		}
 
+			// Avoid hashing/indexing/parsing oversized local text. Explicit ranges
+			// read only a bounded slice directly from disk, even for huge files.
+			const ext = path.extname(absolutePath).toLowerCase();
+			if (!ALL_DOCUMENT_EXTENSIONS.has(ext)) {
+				if (ranged) return readLocalBatch(absolutePath, offset ?? 0, limit ?? DEFAULT_BATCH_BYTES);
+				const bytes = fs.statSync(absolutePath).size;
+				if (bytes > MAX_SOURCE_BYTES) return sizeWarning(filePath, bytes);
+			}
+
 			// 3. SHA-256 + dedupe lookup
 			const sha = sha256(absolutePath);
 			const key = cacheKey(sha, absolutePath, symbol);
 			const cached = dedupeCache.get(key);
-			if (cached && cached.sha === sha) {
+			if (!ranged && cached && cached.sha === sha) {
 				return {
 					content: [{ type: "text", text: cached.text }],
 					details: { dedupe: true, callIndex: cached.callIndex },
@@ -694,7 +792,6 @@ export default function (pi: ExtensionAPI, overrides: ReadExtensionOverrides = {
 			// 3b. Documents (PDF/DOCX/XLSX/PPTX/ODT/ODS/ODP) → convert to Markdown
 			// via docling (Microsoft Office/PDF) or pandoc (OpenDocument), cached by
 			// content sha, then render like any other Markdown file.
-			const ext = path.extname(absolutePath).toLowerCase();
 			if (ALL_DOCUMENT_EXTENSIONS.has(ext)) {
 				let markdown: string;
 				try {
@@ -703,12 +800,15 @@ export default function (pi: ExtensionAPI, overrides: ReadExtensionOverrides = {
 					const converter = OPENDOCUMENT_EXTENSIONS.has(ext) ? "pandoc" : "docling";
 					return { content: [{ type: "text", text: `Could not convert ${path.basename(absolutePath)} via ${converter}: ${(err as Error).message}` }], details: undefined };
 				}
+				if (ranged) return readBatch(Buffer.from(markdown, "utf-8"), filePath, offset ?? 0, limit ?? DEFAULT_BATCH_BYTES);
+				const bytes = Buffer.byteLength(markdown, "utf-8");
+				if (bytes > MAX_SOURCE_BYTES) return sizeWarning(filePath, bytes);
 				const displayPath = path.basename(absolutePath);
 				const converter = OPENDOCUMENT_EXTENSIONS.has(ext) ? "pandoc" : "docling";
 				const banner = `# ${displayPath} — ${ext.slice(1).toUpperCase()} converted to Markdown via ${converter}`;
 				const rendered = withBanner(renderContent(displayPath, `${displayPath}.md`, markdown, symbol, outline, collapsedView, key, sha), banner);
 				const callIdx = ++callIndex.current;
-				dedupeCache.set(key, { sha, callIndex: callIdx, text: textOf(rendered) });
+				cacheRead(key, { sha, callIndex: callIdx, text: textOf(rendered) });
 				return rendered;
 			}
 
@@ -741,7 +841,7 @@ export default function (pi: ExtensionAPI, overrides: ReadExtensionOverrides = {
 					? `# ${relPath}::__preamble__  lines 1-${lastLine} (before line ${cutoff})`
 					: `# ${relPath}::__preamble__  lines 1-${lastLine} (no class/function found — whole file)`;
 				const callIdx = ++callIndex.current;
-				dedupeCache.set(key, { sha, callIndex: callIdx, text: `${preambleHeader}\n${slice.join("\n")}` });
+				cacheRead(key, { sha, callIndex: callIdx, text: `${preambleHeader}\n${slice.join("\n")}` });
 				return { content: [{ type: "text", text: `${preambleHeader}\n${slice.join("\n")}` }], details: undefined };
 			}
 
@@ -764,7 +864,7 @@ export default function (pi: ExtensionAPI, overrides: ReadExtensionOverrides = {
 				const symbolPreamble = `${symbolHeader}\n`;
 				const numbered = slice.map((line, i) => `  ${sym.line_start + i}: ${line}`).join("\n");
 				const callIdx = ++callIndex.current;
-				dedupeCache.set(key, { sha, callIndex: callIdx, text: `${symbolPreamble}${numbered}` });
+				cacheRead(key, { sha, callIndex: callIdx, text: `${symbolPreamble}${numbered}` });
 				return { content: [{ type: "text", text: `${symbolPreamble}${numbered}` }], details: undefined };
 			}
 
@@ -772,7 +872,7 @@ export default function (pi: ExtensionAPI, overrides: ReadExtensionOverrides = {
 			if (totalLines <= SMALL_FILE_LINES) {
 				const smallFileHeader = `# ${relPath} (${totalLines} lines)`;
 				const callIdx = ++callIndex.current;
-				dedupeCache.set(key, { sha, callIndex: callIdx, text: `${smallFileHeader}\n${content}` });
+				cacheRead(key, { sha, callIndex: callIdx, text: `${smallFileHeader}\n${content}` });
 				return { content: [{ type: "text", text: `${smallFileHeader}\n${content}` }], details: undefined };
 			}
 
@@ -784,7 +884,7 @@ export default function (pi: ExtensionAPI, overrides: ReadExtensionOverrides = {
 			// Nothing to navigate → return the whole file rather than an empty outline.
 			if (result.entries.length === 0) {
 				const callIdx = ++callIndex.current;
-				dedupeCache.set(key, { sha, callIndex: callIdx, text: `# ${relPath} (${totalLines} lines, no sections — full contents)\n${content}` });
+				cacheRead(key, { sha, callIndex: callIdx, text: `# ${relPath} (${totalLines} lines, no sections — full contents)\n${content}` });
 				return { content: [{ type: "text", text: `# ${relPath} (${totalLines} lines, no sections — full contents)\n${content}` }], details: undefined };
 			}
 			// Show all heading levels (section, subsection, subsubsection, etc.) for easier navigation.
@@ -793,13 +893,14 @@ export default function (pi: ExtensionAPI, overrides: ReadExtensionOverrides = {
 			const footer = OUTLINE_FOOTER;
 			const callIdx = ++callIndex.current;
 			const output = `${outlineHeader}\n${view.join("\n")}\n${footer}`;
-			dedupeCache.set(key, { sha, callIndex: callIdx, text: output });
+			cacheRead(key, { sha, callIndex: callIdx, text: output });
 			return {
 				content: [
 					{ type: "text", text: output },
 				],
 				details: undefined,
 			};
+			})(), filePath);
 		},
 
 		renderCall(args, theme) {
@@ -920,7 +1021,7 @@ function renderContent(
 			: `# ${displayPath}::__preamble__  lines 1-${lastLine} (no class/function found — whole file)`;
 		const text = `${header}\n${slice.join("\n")}`;
 		const callIdx = ++callIndex.current;
-		dedupeCache.set(key, { sha, callIndex: callIdx, text });
+		cacheRead(key, { sha, callIndex: callIdx, text });
 		return { content: [{ type: "text", text }], details: undefined };
 	}
 
@@ -962,14 +1063,14 @@ function renderContent(
 		const numbered = slice.map((line, i) => `  ${hit.line + i}: ${line}`).join("\n");
 		const text = `${preamble}${numbered}`;
 		const callIdx = ++callIndex.current;
-		dedupeCache.set(key, { sha, callIndex: callIdx, text });
+		cacheRead(key, { sha, callIndex: callIdx, text });
 		return { content: [{ type: "text", text }], details: undefined };
 	}
 
 	if (totalLines <= SMALL_FILE_LINES) {
 		const text = `# ${displayPath} (${totalLines} lines)\n${content}`;
 		const callIdx = ++callIndex.current;
-		dedupeCache.set(key, { sha, callIndex: callIdx, text });
+		cacheRead(key, { sha, callIndex: callIdx, text });
 		return {
 			content: [{ type: "text", text }],
 			details: undefined,
@@ -983,7 +1084,7 @@ function renderContent(
 	if (result.entries.length === 0) {
 		const text = `# ${displayPath} (${totalLines} lines, no sections — full contents)\n${content}`;
 		const callIdx = ++callIndex.current;
-		dedupeCache.set(key, { sha, callIndex: callIdx, text });
+		cacheRead(key, { sha, callIndex: callIdx, text });
 		return {
 			content: [{ type: "text", text }],
 			details: undefined,
@@ -993,7 +1094,7 @@ function renderContent(
 	const view = collapsedView(result, { hidePrivate: true, maxLines: 200 });
 	const text = `# outline of ${displayPath} (${totalLines} lines)\n${view.join("\n")}\n${OUTLINE_FOOTER}`;
 	const callIdx = ++callIndex.current;
-	dedupeCache.set(key, { sha, callIndex: callIdx, text });
+	cacheRead(key, { sha, callIndex: callIdx, text });
 	return {
 		content: [
 			{ type: "text", text },

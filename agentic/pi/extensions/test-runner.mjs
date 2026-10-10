@@ -22,6 +22,7 @@ await jiti.import(path.join(root, "caffeinate", "watcher.test.ts"), { default: f
 await import(path.join(root, "non-interactive", "test.mjs"));
 await jiti.import(path.join(root, "git-worktree-isolation", "git.test.ts"), { default: false });
 await jiti.import(path.join(root, "read", "heic.test.ts"), { default: false });
+await jiti.import(path.join(root, "read", "size-guard.test.ts"), { default: false });
 await jiti.import(path.join(root, "subagent", "session-label.test.ts"), { default: false });
 await jiti.import(path.join(root, "subagent", "compact-result.test.ts"), { default: false });
 await jiti.import(path.join(root, "statusline", "index.test.ts"), { default: false });
