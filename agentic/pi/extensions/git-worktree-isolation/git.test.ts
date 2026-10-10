@@ -59,6 +59,13 @@ test("detects a rate-limit retry only in the current user request", () => {
 	assert.equal(recoveredFromRateLimit(ctx), false);
 });
 
+type BranchRenderResult = (
+	result: { content: Array<{ type: "text"; text: string }> },
+	options: { expanded: boolean },
+	theme: { fg: (color: string, text: string) => string },
+	context: { isError: boolean },
+) => { render: (width: number) => string[] };
+
 const temporaryRoots: string[] = [];
 
 function command(cwd: string, args: string[]): string {
@@ -105,7 +112,10 @@ test("registers an opt-in branch tool without isolating ordinary sessions", asyn
 	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = agentDir;
 	try {
-		const tools = new Map<string, { execute: (...args: unknown[]) => Promise<unknown> }>();
+		const tools = new Map<string, {
+			execute: (...args: unknown[]) => Promise<unknown>;
+			renderResult?: BranchRenderResult;
+		}>();
 		const commands: string[] = [];
 		const handlers = new Map<string, Array<(...args: unknown[]) => unknown>>();
 		const pi = {
@@ -113,7 +123,7 @@ test("registers an opt-in branch tool without isolating ordinary sessions", asyn
 			registerCommand: (name: string) => { commands.push(name); },
 			getFlag: () => false,
 			exec: async () => ({ code: 0, stdout: `${root}\n` }),
-			registerTool: (registered: { name: string; execute: (...args: unknown[]) => Promise<unknown> }) => {
+			registerTool: (registered: { name: string; execute: (...args: unknown[]) => Promise<unknown>; renderResult?: BranchRenderResult }) => {
 				tools.set(registered.name, registered);
 			},
 			on: (name: string, handler: (...args: unknown[]) => unknown) => {
@@ -149,6 +159,12 @@ test("registers an opt-in branch tool without isolating ordinary sessions", asyn
 		});
 		assert.equal(aborted, true);
 		assert.match(JSON.stringify(result), /feat\/from-tool/);
+		const render = tools.get("isolated_new_branch")!.renderResult!;
+		const theme = { fg: (_color: string, text: string) => text };
+		const output = result as { content: Array<{ type: "text"; text: string }> };
+		assert.equal(render(output, { expanded: false }, theme, { isError: false }).render(100).join("").trimEnd(), "✓ Isolated branch created");
+		assert.match(render(output, { expanded: true }, theme, { isError: false }).render(200).join(""), /Created feat\/from-tool at/);
+		assert.equal(render(output, { expanded: false }, theme, { isError: true }).render(100).join("").trimEnd(), "✗ Could not create isolated branch");
 		assert.equal(command(root, ["branch", "--show-current"]), "main");
 		assert.equal(command(root, ["branch", "--list", "feat/from-tool"]), "+ feat/from-tool");
 	} finally {

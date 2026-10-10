@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
 	acquireResumeClaim,
@@ -537,6 +538,12 @@ export default async function (pi: ExtensionAPI) {
 			pending = { plan, sessionFile };
 			ctx.abort();
 			return { content: [{ type: "text", text: `Created ${name} at ${plan.childCwd}. Continuing this session there now; do not perform more work in the original checkout.` }], details: undefined };
+		},
+		renderResult(result, { expanded }, theme, context) {
+			const text = result.content.filter((item) => item.type === "text").map((item) => item.text).join("\n");
+			if (expanded) return new Text(text, 0, 0);
+			if (context.isError) return new Text(theme.fg("error", "✗ Could not create isolated branch"), 0, 0);
+			return new Text(theme.fg("success", "✓ Isolated branch created"), 0, 0);
 		},
 	});
 	pi.on("agent_end", async () => {
