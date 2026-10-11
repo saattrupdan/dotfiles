@@ -52,7 +52,7 @@ test("does not guess a count for truncated search output", () => {
 test("preserves fixed memory summaries for truncated results", () => {
 	const truncated = result([{ type: "text", text: "partial memory result" }], { outputGuard: { truncated: true } });
 
-	assert.equal(collapsedSummary("memory_query", truncated), "Remembered a thing");
+	assert.equal(collapsedSummary("memory_query", truncated), "remembered a thing");
 });
 
 test("keeps image-only results in the collapsed fallback", () => {
@@ -71,7 +71,7 @@ test("keeps safe fallback and existing scalar summaries", () => {
 });
 
 test("keeps fixed memory summaries ahead of their payload", () => {
-	assert.equal(collapsedSummary("memory_query", result([{ type: "text", text: "a result" }])), "Remembered a thing");
+	assert.equal(collapsedSummary("memory_query", result([{ type: "text", text: "a result" }])), "remembered a thing");
 	assert.equal(collapsedSummary("memory_add", result([{ type: "text", text: "stored" }])), "Stored a memory");
 	assert.equal(collapsedSummary("memory_update", result([{ type: "text", text: "updated" }])), "Updated a memory");
 });

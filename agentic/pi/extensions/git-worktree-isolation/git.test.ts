@@ -70,9 +70,13 @@ test("detects a rate-limit retry only in the current user request", () => {
 
 type BranchRenderResult = (
 	result: { content: Array<{ type: "text"; text: string }> },
-	options: { expanded: boolean },
+	options: { expanded: boolean; isPartial: boolean },
 	theme: { fg: (color: string, text: string) => string },
 	context: { isError: boolean },
+) => { render: (width: number) => string[] };
+type BranchRenderCall = (
+	args: { name?: string },
+	theme: { fg: (color: string, text: string) => string; bold: (text: string) => string },
 ) => { render: (width: number) => string[] };
 
 const temporaryRoots: string[] = [];
@@ -123,6 +127,7 @@ test("registers an opt-in branch tool without isolating ordinary sessions", asyn
 	try {
 		const tools = new Map<string, {
 			execute: (...args: unknown[]) => Promise<unknown>;
+			renderCall?: BranchRenderCall;
 			renderResult?: BranchRenderResult;
 		}>();
 		const commands: string[] = [];
@@ -132,7 +137,7 @@ test("registers an opt-in branch tool without isolating ordinary sessions", asyn
 			registerCommand: (name: string) => { commands.push(name); },
 			getFlag: () => false,
 			exec: async () => ({ code: 0, stdout: `${root}\n` }),
-			registerTool: (registered: { name: string; execute: (...args: unknown[]) => Promise<unknown>; renderResult?: BranchRenderResult }) => {
+			registerTool: (registered: { name: string; execute: (...args: unknown[]) => Promise<unknown>; renderCall?: BranchRenderCall; renderResult?: BranchRenderResult }) => {
 				tools.set(registered.name, registered);
 			},
 			on: (name: string, handler: (...args: unknown[]) => unknown) => {
@@ -176,11 +181,14 @@ test("registers an opt-in branch tool without isolating ordinary sessions", asyn
 		assert.match(JSON.stringify(result), /feat\/from-tool/);
 		assert.match(JSON.stringify(result), /Do not call isolated_new_branch again/);
 		const render = tools.get("isolated_new_branch")!.renderResult!;
-		const theme = { fg: (_color: string, text: string) => text };
+		const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text };
 		const output = result as { content: Array<{ type: "text"; text: string }> };
-		assert.equal(render(output, { expanded: false }, theme, { isError: false }).render(100).join("").trimEnd(), "✓ Isolated branch created");
-		assert.match(render(output, { expanded: true }, theme, { isError: false }).render(200).join(""), /Created feat\/from-tool at/);
-		assert.equal(render(output, { expanded: false }, theme, { isError: true }).render(100).join("").trimEnd(), "✗ Could not create isolated branch");
+		assert.equal(tools.get("isolated_new_branch")!.renderCall!({ name: "feat/from-tool" }, theme).render(100).join("").trimEnd(), "isolated_new_branch feat/from-tool");
+		assert.equal(render(output, { expanded: false, isPartial: true }, theme, { isError: false }).render(100).join("").trimEnd(), "⋯ creating branch");
+		assert.equal(render(output, { expanded: false, isPartial: false }, theme, { isError: false }).render(100).join("").trimEnd(), "✓ switched to new branch");
+		assert.match(render(output, { expanded: true, isPartial: false }, theme, { isError: false }).render(200).join(""), /Created feat\/from-tool at/);
+		const failed = { content: [{ type: "text" as const, text: "Cannot create branch: checkout is dirty" }] };
+		assert.match(render(failed, { expanded: false, isPartial: false }, theme, { isError: true }).render(100).join(""), /checkout is dirty/);
 		assert.equal(command(root, ["branch", "--show-current"]), "main");
 		assert.equal(command(root, ["branch", "--list", "feat/from-tool"]), "+ feat/from-tool");
 	} finally {
@@ -189,21 +197,56 @@ test("registers an opt-in branch tool without isolating ordinary sessions", asyn
 	}
 });
 
+test("cleanup relaunch requests one final completion message on main", async () => {
+	const { root } = createRepo();
+	const previous = process.env.PI_WORKTREE_CLEANUP_CONTINUATION;
+	process.env.PI_WORKTREE_CLEANUP_CONTINUATION = "1";
+	try {
+		const starts: Array<(_event: unknown, ctx: unknown) => Promise<void>> = [];
+		const messages: Array<{ content: string; display: boolean }> = [];
+		await registerIsolation({
+			registerFlag: () => undefined,
+			registerCommand: () => undefined,
+			getFlag: () => false,
+			exec: async () => ({ code: 0, stdout: `${root}\n` }),
+			registerTool: () => undefined,
+			on: (name: string, handler: () => Promise<void>) => {
+				if (name === "session_start") starts.push(handler);
+				return () => undefined;
+			},
+			sendMessage: (message: { content: string; display: boolean }) => { messages.push(message); },
+		} as unknown as ExtensionAPI);
+		assert.equal(process.env.PI_WORKTREE_CLEANUP_CONTINUATION, undefined);
+		for (const start of starts) await start({}, { ui: { setStatus: () => undefined } });
+		assert.equal(messages.length, 1);
+		assert.match(messages[0]!.content, /brief completion message/);
+		assert.equal(messages[0]!.display, false);
+		for (const start of starts) await start({}, { ui: { setStatus: () => undefined } });
+		assert.equal(messages.length, 1, "session changes must not repeat the completion turn");
+	} finally {
+		if (previous === undefined) delete process.env.PI_WORKTREE_CLEANUP_CONTINUATION;
+		else process.env.PI_WORKTREE_CLEANUP_CONTINUATION = previous;
+	}
+});
+
 test("cleanup tool is discoverable in the exempt dotfiles checkout", async () => {
 	const cwd = command(path.dirname(fileURLToPath(import.meta.url)), ["rev-parse", "--show-toplevel"]);
-	const tools: string[] = [];
+	const tools: Array<{ name: string; renderCall: BranchRenderCall; renderResult: BranchRenderResult }> = [];
 	const commands: string[] = [];
 	const pi = {
 		registerFlag: () => undefined,
 		registerCommand: (name: string) => { commands.push(name); },
 		getFlag: () => false,
 		exec: async () => ({ code: 0, stdout: `${cwd}\n` }),
-		registerTool: (tool: { name: string }) => { tools.push(tool.name); },
+		registerTool: (tool: { name: string; renderCall: BranchRenderCall; renderResult: BranchRenderResult }) => { tools.push(tool); },
 		on: () => undefined,
 	} as unknown as ExtensionAPI;
 	await registerIsolation(pi);
-	assert.deepEqual(tools, ["clean-up-isolated-branch"]);
+	assert.deepEqual(tools.map((tool) => tool.name), ["clean-up-isolated-branch"]);
 	assert.deepEqual(commands, ["clean-up-isolated-branch"]);
+	const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text };
+	assert.equal(tools[0]!.renderCall({}, theme).render(100).join("").trimEnd(), "clean-up-isolated-branch");
+	assert.equal(tools[0]!.renderResult({ content: [] }, { expanded: false, isPartial: true }, theme, { isError: false }).render(100).join("").trimEnd(), "⋯ cleaning up branch");
 });
 
 test("ordinary startup reaps a clean abandoned managed worktree", async () => {
@@ -1212,14 +1255,14 @@ test("cleanup retires a legacy managed worktree whose target branch was deleted"
 	plan.manifest.targetRef = "refs/heads/feat/legacy";
 	await saveManifest(plan.manifest);
 	command(root, ["branch", "-D", "feat/legacy"]);
-	const tools = new Map<string, { execute: (...args: unknown[]) => Promise<unknown> }>();
+	const tools = new Map<string, { execute: (...args: unknown[]) => Promise<unknown>; renderResult: BranchRenderResult }>();
 	const handlers = new Map<string, Array<(...args: unknown[]) => unknown>>();
 	await registerIsolation({
 		registerFlag: () => undefined,
 		registerCommand: () => undefined,
 		getFlag: () => false,
 		exec: async () => ({ code: 0, stdout: `${plan.childCwd}\n` }),
-		registerTool: (tool: { name: string; execute: (...args: unknown[]) => Promise<unknown> }) => { tools.set(tool.name, tool); },
+		registerTool: (tool: { name: string; execute: (...args: unknown[]) => Promise<unknown>; renderResult: BranchRenderResult }) => { tools.set(tool.name, tool); },
 		on: (name: string, handler: (...args: unknown[]) => unknown) => {
 			handlers.set(name, [...(handlers.get(name) ?? []), handler]);
 		},
@@ -1230,10 +1273,16 @@ test("cleanup retires a legacy managed worktree whose target branch was deleted"
 	const cleanupGuard = handlers.get("tool_call")?.at(-1);
 	assert.equal(cleanupGuard?.(), undefined);
 	let aborted = false;
-	await tools.get("clean-up-isolated-branch")!.execute("call", {}, undefined, undefined, {
+	const result = await tools.get("clean-up-isolated-branch")!.execute("call", {}, undefined, undefined, {
 		sessionManager: { getSessionFile: () => sessionFile },
 		abort: () => { aborted = true; },
 	});
+	const render = tools.get("clean-up-isolated-branch")!.renderResult;
+	const theme = { fg: (_color: string, text: string) => text };
+	const output = result as { content: Array<{ type: "text"; text: string }> };
+	assert.equal(render(output, { expanded: false, isPartial: true }, theme, { isError: false }).render(100).join("").trimEnd(), "⋯ cleaning up branch");
+	assert.equal(render(output, { expanded: false, isPartial: false }, theme, { isError: false }).render(100).join("").trimEnd(), "✓ cleaned up branch and worktree");
+	assert.match(render(output, { expanded: true, isPartial: false }, theme, { isError: false }).render(200).join(""), /Verified this worktree/);
 	assert.equal(aborted, false, "cleanup handoff must not abort the agent run");
 	assert.deepEqual(cleanupGuard?.(), {
 		block: true, reason: "Branch cleanup is already in progress.", terminate: true,

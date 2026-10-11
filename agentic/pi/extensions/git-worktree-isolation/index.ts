@@ -36,6 +36,7 @@ import {
 
 const CHILD_MANIFEST_ENV = "PI_WORKTREE_SESSION_MANIFEST";
 const BRANCH_CONTINUATION_ENV = "PI_WORKTREE_BRANCH_CONTINUATION";
+const CLEANUP_CONTINUATION_ENV = "PI_WORKTREE_CLEANUP_CONTINUATION";
 const DISABLE_ENV = "PI_WORKTREE_ISOLATION_DISABLE";
 const CUSTOM_TYPE = "git-worktree-isolation:finalize";
 const RATE_LIMIT_RETRY_TYPE = "rate-limit-retry:continue";
@@ -147,10 +148,12 @@ async function relaunch(plan: Awaited<ReturnType<typeof createLaunchPlan>>, args
 	process.exit(result.status ?? (result.signal === "SIGINT" ? 130 : 1));
 }
 
-async function resumeInManagedWorktree(sessionFile: string, cwd: string, manifestPath?: string): Promise<never> {
+async function resumeInManagedWorktree(sessionFile: string, cwd: string, manifestPath?: string, continueCleanup = false): Promise<never> {
 	const env: NodeJS.ProcessEnv = { ...process.env };
 	if (manifestPath) env[CHILD_MANIFEST_ENV] = manifestPath;
 	else delete env[CHILD_MANIFEST_ENV];
+	if (continueCleanup) env[CLEANUP_CONTINUATION_ENV] = "1";
+	else delete env[CLEANUP_CONTINUATION_ENV];
 	const result = spawnSync(process.execPath, [process.argv[1]!, ...continuationArgs(sessionFile)], {
 		cwd,
 		stdio: "inherit",
@@ -204,6 +207,18 @@ function registerReleasedSessionStartup(pi: ExtensionAPI): void {
 
 const CLEANUP_UNAVAILABLE = "No eligible isolated feature branch is active. Run this from the worktree created by isolated_new_branch; older managed sessions without recorded branch ownership cannot safely delete a branch.";
 
+function renderBranchResult(
+	result: { content: Array<{ type: string; text?: string }> },
+	options: { expanded: boolean; isPartial: boolean },
+	theme: { fg: (color: "success" | "warning", text: string) => string },
+	isError: boolean, summary: string, progress: string,
+): Text {
+	if (options.isPartial) return new Text(theme.fg("warning", `⋯ ${progress}`), 0, 0);
+	const text = result.content.filter((item) => item.type === "text").map((item) => item.text ?? "").join("\n");
+	if (options.expanded || isError) return new Text(text || (isError ? "Operation failed" : ""), 0, 0);
+	return new Text(theme.fg("success", `✓ ${summary}`), 0, 0);
+}
+
 function registerUnavailableCleanupTool(pi: ExtensionAPI): void {
 	pi.registerCommand("clean-up-isolated-branch", {
 		description: "Clean up the current isolated feature branch after its changes reach main",
@@ -217,6 +232,12 @@ function registerUnavailableCleanupTool(pi: ExtensionAPI): void {
 		executionMode: "sequential",
 		async execute() {
 			throw new Error(CLEANUP_UNAVAILABLE);
+		},
+		renderCall(_args, theme) {
+			return new Text(theme.fg("toolTitle", theme.bold("clean-up-isolated-branch")), 0, 0);
+		},
+		renderResult(result, options, theme, context) {
+			return renderBranchResult(result, options, theme, context.isError, "cleaned up branch and worktree", "cleaning up branch");
 		},
 	});
 }
@@ -352,7 +373,7 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 		const mainCwd = await finishBranchCleanup(manifest, sessionFile, mainRoot, branchSha, branchExists);
 		clearStatus();
 		await releaseTranscript();
-		return resumeInManagedWorktree(sessionFile, mainCwd);
+		return resumeInManagedWorktree(sessionFile, mainCwd, undefined, true);
 	};
 	pi.registerCommand("clean-up-isolated-branch", {
 		description: "Return to main after verifying the isolated work is integrated",
@@ -381,6 +402,7 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 				return;
 			}
 			try {
+				pi.events.emit("thinking-status:override", { label: "Cleaning up branch..." });
 				await finishCleanup(sessionFile, prepared.mainRoot, prepared.branchSha, prepared.branchExists,
 					() => ctx.ui.setStatus("git-worktree-isolation", undefined));
 			} catch (error) {
@@ -402,6 +424,12 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 			pendingCleanup = { sessionFile, mainRoot, branchSha, branchExists };
 			return { content: [{ type: "text", text: `Verified this worktree's HEAD is on main. Cleaning up the isolated worktree and returning to main.` }], details: undefined };
 		},
+		renderCall(_args, theme) {
+			return new Text(theme.fg("toolTitle", theme.bold("clean-up-isolated-branch")), 0, 0);
+		},
+		renderResult(result, options, theme, context) {
+			return renderBranchResult(result, options, theme, context.isError, "cleaned up branch and worktree", "cleaning up branch");
+		},
 	});
 	// The tool result is persisted before turn_end; aborting inside execute instead
 	// records a spurious provider error and leaves the conversation stopped.
@@ -413,6 +441,7 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 		const { sessionFile, mainRoot, branchSha, branchExists } = pendingCleanup;
 		pendingCleanup = null;
 		try {
+			pi.events.emit("thinking-status:override", { label: "Cleaning up branch..." });
 			await finishCleanup(sessionFile, mainRoot, branchSha, branchExists,
 				() => ctx.ui.setStatus("git-worktree-isolation", undefined));
 		} catch (error) {
@@ -502,6 +531,24 @@ export default async function (pi: ExtensionAPI) {
 	if (process.env.PI_SUBAGENT_CHILD === "1" || isMetadataInvocation(cliArgs())) return;
 
 	const cwd = await extensionCwd(pi);
+	// Cleanup relaunches on main. Complete the interrupted turn there, once only.
+	if (process.env[CLEANUP_CONTINUATION_ENV] === "1") {
+		delete process.env[CLEANUP_CONTINUATION_ENV];
+		let pendingCleanupMessage = true;
+		pi.on("session_start", async (_event, _ctx) => {
+			if (!pendingCleanupMessage) return;
+			pendingCleanupMessage = false;
+			const settled = isPrintMode() ? new Promise<void>((resolve) => {
+				const unsubscribe = pi.on("agent_settled", () => { unsubscribe(); resolve(); });
+			}) : undefined;
+			pi.sendMessage({
+				customType: "git-worktree-isolation:cleanup-complete",
+				content: "The isolated branch cleanup has returned this session to main. Give the user a brief completion message about the finished request and its current state. Do not call clean-up-isolated-branch again.",
+				display: false,
+			}, { triggerTurn: true });
+			if (settled) await settled;
+		});
+	}
 	const explicitManifest = process.env[CHILD_MANIFEST_ENV];
 	const manifest = explicitManifest ? await loadManifest(explicitManifest) : await findManifestForCwd(cwd);
 	if (manifest) {
@@ -571,11 +618,11 @@ export default async function (pi: ExtensionAPI) {
 			pending = { plan, sessionFile };
 			return { content: [{ type: "text", text: `Created ${name} at ${plan.childCwd}. Continuing this session there now; do not perform more work in the original checkout. Do not call isolated_new_branch again for this request.` }], details: undefined };
 		},
-		renderResult(result, { expanded }, theme, context) {
-			const text = result.content.filter((item) => item.type === "text").map((item) => item.text).join("\n");
-			if (expanded) return new Text(text, 0, 0);
-			if (context.isError) return new Text(theme.fg("error", "✗ Could not create isolated branch"), 0, 0);
-			return new Text(theme.fg("success", "✓ Isolated branch created"), 0, 0);
+		renderCall(args, theme) {
+			return new Text(`${theme.fg("toolTitle", theme.bold("isolated_new_branch"))} ${theme.fg("accent", args.name)}`, 0, 0);
+		},
+		renderResult(result, options, theme, context) {
+			return renderBranchResult(result, options, theme, context.isError, "switched to new branch", "creating branch");
 		},
 	});
 	// Stop later tool calls in the same batch before switching checkouts. Handoff
@@ -588,6 +635,7 @@ export default async function (pi: ExtensionAPI) {
 		const { plan, sessionFile } = pending;
 		pending = null;
 		try {
+			pi.events.emit("thinking-status:override", { label: "Switching to new branch..." });
 			await rewriteSessionCwd(sessionFile, plan.childCwd);
 			await relaunch(plan, continuationArgs(sessionFile));
 		} catch (error) {

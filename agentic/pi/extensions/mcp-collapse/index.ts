@@ -125,7 +125,7 @@ const MEMORY_TOOLS = new Set(["memory_query", "memory_add", "memory_update"]);
 // excludeTools), in which case those entries are unused and that extension's own
 // renderers apply; they take effect again only if the direct tools are re-enabled.
 const FIXED_RESULT_SUMMARY: Record<string, string> = {
-	memory_query: "Remembered a thing",
+	memory_query: "remembered a thing",
 	memory_add: "Stored a memory",
 	memory_update: "Updated a memory",
 };
