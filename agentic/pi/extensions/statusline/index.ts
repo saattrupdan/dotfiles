@@ -295,7 +295,7 @@ function buildStatusline(
 		theme.fg("accent", modelName),
 		`${theme.fg("muted", "context")} ${progressBar(contextPercent, theme)} ${theme.fg("dim", contextText)}${contextPercentText}`,
 	];
-	if (branch) parts.push(theme.fg("accent", `🔀 ${branch}`));
+	if (branch) parts.push(theme.fg("accent", `🪾 ${branch}`));
 
 	// Show cached quota immediately for subscription providers, but never for
 	// explicit non-subscription inference models.
