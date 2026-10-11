@@ -177,6 +177,12 @@ Tool results are annotated `[toolCallId: <id>]`. Write `{tool: <id>}` to reprodu
 verbatim — the harness expands it. Use for files, configs, logs, memories when the user
 says "show me", "paste", or "raw output".
 
+### Links to local files
+
+When providing a local file for the user to open, write its full `file:///` URL as plain
+text (for example, `file:///tmp/report.html`). A Markdown link to `/tmp/report.html`
+may not open in the client; do not rely on a bare absolute path as a clickable link.
+
 ### Asking the user: use `question` for genuine user-level decisions
 
 When the questions-and-autonomy policy says user input is required, call the
