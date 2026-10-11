@@ -15,6 +15,8 @@
  * Colors: green > 50%, yellow 20-50%, red < 20%.
  */
 
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
@@ -30,6 +32,18 @@ import {
 	type CodexQuota,
 	type QuotaBucket,
 } from "./codexQuota.ts";
+
+const execFileAsync = promisify(execFile);
+
+/** Return the checked-out branch, or nothing for detached/non-Git directories. */
+export async function readCurrentBranch(cwd: string): Promise<string | undefined> {
+	try {
+		const { stdout } = await execFileAsync("git", ["symbolic-ref", "--quiet", "--short", "HEAD"], { cwd });
+		return stdout.trim() || undefined;
+	} catch {
+		return undefined;
+	}
+}
 
 const BAR_WIDTH = 10;
 const CODEX_CACHE_FILE = `${process.env.HOME}/.pi/agent/state/statusline/codex-quota-cache.json`;
@@ -107,6 +121,22 @@ type SetupFooterOptions = {
 };
 
 export default function (pi: ExtensionAPI) {
+	let branch: string | undefined;
+	let branchCwd: string | undefined;
+	let branchRefreshId = 0;
+	const refreshBranch = (ctx: ExtensionContext) => {
+		const refreshId = ++branchRefreshId;
+		if (branchCwd !== ctx.cwd) {
+			branch = undefined;
+			branchCwd = ctx.cwd;
+		}
+		void readCurrentBranch(ctx.cwd).then((name) => {
+			if (refreshId !== branchRefreshId) return;
+			branch = name;
+			maybeRender?.();
+		});
+	};
+
 	maybeRender = () => {
 		if (installed && requestRender) {
 			requestRender();
@@ -158,7 +188,7 @@ export default function (pi: ExtensionAPI) {
 				},
 				invalidate() {},
 				render(width: number): string[] {
-					const line = buildStatusline(ctx, theme, footerData);
+					const line = buildStatusline(ctx, theme, footerData, branch);
 					return [...wrapStatusline(line, width), ""];
 				},
 			};
@@ -170,6 +200,7 @@ export default function (pi: ExtensionAPI) {
 
 	// Setup footer and load quota on various events
 	pi.on("session_start", (_event, ctx) => {
+		refreshBranch(ctx);
 		// Pi clears the custom footer when it tears down the extension UI for
 		// /reload, /new, /resume and /fork, so the re-registered extension has to
 		// install it again here — otherwise the built-in footer is on screen until
@@ -180,6 +211,7 @@ export default function (pi: ExtensionAPI) {
 		maybeRender?.();
 	});
 	pi.on("agent_start", (_event, ctx) => {
+		refreshBranch(ctx);
 		setupFooter(ctx, { force: true, allowWithoutMessages: true });
 		maybeRender?.();
 	});
@@ -190,6 +222,7 @@ export default function (pi: ExtensionAPI) {
 		maybeRender?.();
 	});
 	pi.on("turn_end", (_event, ctx) => {
+		refreshBranch(ctx);
 		if (setupFooter(ctx)) return;
 		// Usage just changed on the backend — refresh now.
 		refreshQuota(ctx, { force: true });
@@ -249,6 +282,7 @@ function buildStatusline(
 	ctx: ExtensionContext,
 	theme: ExtensionContext["ui"]["theme"],
 	footerData: ReadonlyFooterDataProvider,
+	branch?: string,
 ): string {
 	const model = ctx.model;
 	const modelName = model?.name || model?.id || "no model";
@@ -261,6 +295,7 @@ function buildStatusline(
 		theme.fg("accent", modelName),
 		`${theme.fg("muted", "context")} ${progressBar(contextPercent, theme)} ${theme.fg("dim", contextText)}${contextPercentText}`,
 	];
+	if (branch) parts.push(theme.fg("accent", `🔀 ${branch}`));
 
 	// Show cached quota immediately for subscription providers, but never for
 	// explicit non-subscription inference models.

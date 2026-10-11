@@ -272,7 +272,8 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 			}
 		}
 		await hydrateIgnoredPaths(manifest);
-		ctx.ui.setStatus("git-worktree-isolation", `🌳 ${manifest.id}`);
+		// The statusline shows the checked-out Git branch instead of a worktree ID.
+		ctx.ui.setStatus("git-worktree-isolation", undefined);
 		if (continueBranch) {
 			// Print mode returns as soon as session_start finishes unless we await the
 			// extension-triggered turn. Register before starting it to avoid a race.

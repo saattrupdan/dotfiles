@@ -1,9 +1,28 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 
-import { wrapStatusline } from "./index.ts";
+import { readCurrentBranch, wrapStatusline } from "./index.ts";
+
+test("readCurrentBranch returns the active branch and hides detached/non-Git states", async () => {
+	const cwd = mkdtempSync(join(tmpdir(), "pi-statusline-branch-"));
+	try {
+		assert.equal(await readCurrentBranch(cwd), undefined);
+		execFileSync("git", ["init", "-q", cwd]);
+		execFileSync("git", ["symbolic-ref", "HEAD", "refs/heads/feat/footer"], { cwd });
+		assert.equal(await readCurrentBranch(cwd), "feat/footer");
+		execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "--allow-empty", "-m", "initial"], { cwd });
+		execFileSync("git", ["checkout", "-q", "--detach", "HEAD"], { cwd });
+		assert.equal(await readCurrentBranch(cwd), undefined);
+	} finally {
+		rmSync(cwd, { recursive: true, force: true });
+	}
+});
 
 test("wrapStatusline preserves long footer content", () => {
 	const text = "model | context 12k / 128k | session 25% | weekly 10%";
