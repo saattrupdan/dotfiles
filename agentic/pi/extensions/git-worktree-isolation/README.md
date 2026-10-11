@@ -10,11 +10,12 @@ The `isolated_new_branch` tool takes a `name`, such as `feat/search`. It require
 saved Pi session in a clean Git checkout and creates that branch in a new managed
 worktree at the current `HEAD`. Existing local branches, invalid names, and tracked
 or non-ignored untracked changes are rejected. Commit or remove such changes first.
-The tool stops the current agent run and relaunches the same saved session in the
-new worktree. A hidden extension message starts the next turn without creating
-a user-authored prompt; in print mode Pi waits for that turn to finish before
-exiting. The original checkout stays on its branch.
-Pi's own dotfiles repository is exempt because its deployed configuration must not
+After its result is saved, the tool relaunches the same session in the new
+worktree without aborting the agent run. Later tool calls in the same batch are
+blocked so they cannot run in the original checkout. A hidden extension message
+starts the next turn without creating a user-authored prompt; in print mode Pi
+waits for that turn to finish before exiting. The original checkout stays on its
+branch. Pi's own dotfiles repository is exempt because its deployed configuration must not
 point into a disposable worktree. `PI_SUBAGENT_CHILD=1` is also exempt.
 
 The worktree uses the same session directory as the original checkout. Ignored

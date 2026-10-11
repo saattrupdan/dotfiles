@@ -400,11 +400,15 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 			if (!sessionFile) throw new Error("A saved Pi session is required to clean up this branch.");
 			const { mainRoot, branchSha, branchExists } = await prepareBranchCleanup(manifest);
 			pendingCleanup = { sessionFile, mainRoot, branchSha, branchExists };
-			ctx.abort();
 			return { content: [{ type: "text", text: `Verified this worktree's HEAD is on main. Cleaning up the isolated worktree and returning to main.` }], details: undefined };
 		},
 	});
-	pi.on("agent_end", async (_event, ctx) => {
+	// The tool result is persisted before turn_end; aborting inside execute instead
+	// records a spurious provider error and leaves the conversation stopped.
+	pi.on("tool_call", () => pendingCleanup
+		? { block: true, reason: "Branch cleanup is already in progress.", terminate: true }
+		: undefined);
+	pi.on("turn_end", async (_event, ctx) => {
 		if (!pendingCleanup) return;
 		const { sessionFile, mainRoot, branchSha, branchExists } = pendingCleanup;
 		pendingCleanup = null;
@@ -565,7 +569,6 @@ export default async function (pi: ExtensionAPI) {
 			if (!sessionFile) throw new Error("Save this Pi session before creating an isolated branch.");
 			const plan = await createLaunchPlan(ctx.cwd, undefined, name);
 			pending = { plan, sessionFile };
-			ctx.abort();
 			return { content: [{ type: "text", text: `Created ${name} at ${plan.childCwd}. Continuing this session there now; do not perform more work in the original checkout. Do not call isolated_new_branch again for this request.` }], details: undefined };
 		},
 		renderResult(result, { expanded }, theme, context) {
@@ -575,7 +578,12 @@ export default async function (pi: ExtensionAPI) {
 			return new Text(theme.fg("success", "✓ Isolated branch created"), 0, 0);
 		},
 	});
-	pi.on("agent_end", async () => {
+	// Stop later tool calls in the same batch before switching checkouts. Handoff
+	// at turn_end, once the branch tool's result is safely in the transcript.
+	pi.on("tool_call", () => pending
+		? { block: true, reason: "Branch transition is already in progress.", terminate: true }
+		: undefined);
+	pi.on("turn_end", async () => {
 		if (!pending) return;
 		const { plan, sessionFile } = pending;
 		pending = null;

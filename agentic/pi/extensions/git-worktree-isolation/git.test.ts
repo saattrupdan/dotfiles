@@ -160,13 +160,19 @@ test("registers an opt-in branch tool without isolating ordinary sessions", asyn
 			process.argv = originalArgv;
 		}
 		assert.deepEqual(command(root, ["worktree", "list", "--porcelain"]).match(/^worktree /gm), ["worktree "]);
+		const branchGuard = handlers.get("tool_call")?.at(-1);
+		assert.equal(branchGuard?.(), undefined);
 		let aborted = false;
 		const result = await tools.get("isolated_new_branch")!.execute("call", { name: "feat/from-tool" }, undefined, undefined, {
 			cwd: root,
 			sessionManager: { getSessionFile: () => path.join(agentDir, "session.jsonl") },
 			abort: () => { aborted = true; },
 		});
-		assert.equal(aborted, true);
+		assert.equal(aborted, false, "branch handoff must not abort the agent run");
+		assert.deepEqual(branchGuard?.(), {
+			block: true, reason: "Branch transition is already in progress.", terminate: true,
+		});
+		assert.ok(handlers.get("turn_end")?.length, "handoff waits until the tool result is persisted");
 		assert.match(JSON.stringify(result), /feat\/from-tool/);
 		assert.match(JSON.stringify(result), /Do not call isolated_new_branch again/);
 		const render = tools.get("isolated_new_branch")!.renderResult!;
@@ -1207,23 +1213,32 @@ test("cleanup retires a legacy managed worktree whose target branch was deleted"
 	await saveManifest(plan.manifest);
 	command(root, ["branch", "-D", "feat/legacy"]);
 	const tools = new Map<string, { execute: (...args: unknown[]) => Promise<unknown> }>();
+	const handlers = new Map<string, Array<(...args: unknown[]) => unknown>>();
 	await registerIsolation({
 		registerFlag: () => undefined,
 		registerCommand: () => undefined,
 		getFlag: () => false,
 		exec: async () => ({ code: 0, stdout: `${plan.childCwd}\n` }),
 		registerTool: (tool: { name: string; execute: (...args: unknown[]) => Promise<unknown> }) => { tools.set(tool.name, tool); },
-		on: () => undefined,
+		on: (name: string, handler: (...args: unknown[]) => unknown) => {
+			handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+		},
 	} as unknown as ExtensionAPI);
 	const sessionFile = path.join(agentDir, "current.jsonl");
 	fs.mkdirSync(agentDir, { recursive: true });
 	fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", cwd: plan.childCwd })}\n`);
+	const cleanupGuard = handlers.get("tool_call")?.at(-1);
+	assert.equal(cleanupGuard?.(), undefined);
 	let aborted = false;
 	await tools.get("clean-up-isolated-branch")!.execute("call", {}, undefined, undefined, {
 		sessionManager: { getSessionFile: () => sessionFile },
 		abort: () => { aborted = true; },
 	});
-	assert.equal(aborted, true);
+	assert.equal(aborted, false, "cleanup handoff must not abort the agent run");
+	assert.deepEqual(cleanupGuard?.(), {
+		block: true, reason: "Branch cleanup is already in progress.", terminate: true,
+	});
+	assert.ok(handlers.get("turn_end")?.length, "cleanup waits until the tool result is persisted");
 	const { mainRoot, branchSha, branchExists } = await prepareBranchCleanup(plan.manifest);
 	assert.equal(branchExists, false);
 	assert.equal(await finishBranchCleanup(plan.manifest, sessionFile, mainRoot, branchSha, branchExists), fs.realpathSync(root));
