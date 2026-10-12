@@ -1,7 +1,8 @@
 /**
  * `/non-interactive <prompt>` — run a single user request without questions.
- * Bare `/non-interactive` enables the mode for subsequent requests until
- * `/non-interactive off`; `/loop` enables it for the loop's lifetime.
+ * Bare `/non-interactive` sends the instruction immediately and enables the
+ * mode for subsequent requests until `/non-interactive off`; `/loop` enables
+ * it for the loop's lifetime.
  *
  * Two effects, scoped to one run or to bare mode's lifetime:
  *
@@ -96,16 +97,12 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 			if (!trimmed) persistent = true;
-			const sending = Boolean(trimmed) || !ctx.isIdle();
-			arming = sending;
+			arming = true;
 			try {
 				process.env[ENV_FLAG] = "1";
 				showStatus(ctx);
-				// At idle, bare mode waits for the next request rather than starting
-				// a turn just to repeat the instruction. During a run, steer it now.
-				if (sending) {
-					pi.sendUserMessage(trimmed ? `${NON_INTERACTIVE_BANNER}\n\n${trimmed}` : NON_INTERACTIVE_BANNER, { deliverAs: "steer" });
-				}
+				// Queue the instruction immediately, whether Pi is idle or working.
+				pi.sendUserMessage(trimmed ? `${NON_INTERACTIVE_BANNER}\n\n${trimmed}` : NON_INTERACTIVE_BANNER, { deliverAs: "steer" });
 			} finally {
 				// Release on the next tick so the input event for the message
 				// we just sent has already passed the listener.

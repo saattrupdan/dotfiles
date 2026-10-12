@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import path from "node:path";
 import process from "node:process";
+import { setImmediate } from "node:timers";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
@@ -10,6 +11,7 @@ const require = createRequire(path.join(root, "..", "_outliner", "package.json")
 const { createJiti } = require("jiti");
 const jiti = createJiti(import.meta.url, { moduleCache: false });
 const { default: nonInteractive } = await jiti.import(path.join(root, "index.ts"), { default: false });
+const { NON_INTERACTIVE_BANNER } = await jiti.import(path.join(root, "prompt.ts"), { default: false });
 const { setLoopActive } = await jiti.import(path.join(root, "..", "_loop_state", "state.ts"), { default: false });
 const { dispatchAsk } = await jiti.import(path.join(root, "..", "question", "index.ts"), { default: false });
 const statuses = new Map();
@@ -52,21 +54,28 @@ test("/non-interactive queues during streaming and enables mode for the message"
 	}
 });
 
-test("bare /non-interactive arms future requests without starting an idle turn", async () => {
+test("bare /non-interactive queues the banner immediately at idle and arms future requests", async () => {
 	const previous = process.env.PI_NON_INTERACTIVE;
 	const listeners = new Map();
 	let command;
+	let queued;
 	const pi = {
 		registerCommand(_name, definition) { command = definition.handler; },
 		on(event, listener) { listeners.set(event, listener); },
-		sendUserMessage() { throw new Error("bare command at idle must not start a turn"); },
+		sendUserMessage(content, options) {
+			queued = { content, options };
+			void listeners.get("input")({ source: "extension", text: content }, context);
+		},
 		sendMessage() {},
 	};
 	try {
 		nonInteractive(pi);
 		await command("  ", context);
+		assert.equal(queued.content, NON_INTERACTIVE_BANNER);
+		assert.deepEqual(queued.options, { deliverAs: "steer" });
 		assert.equal(process.env.PI_NON_INTERACTIVE, "1");
 		assert.equal(statuses.get("non-interactive"), "🙊");
+		await new Promise(setImmediate);
 		const transformed = await listeners.get("input")({ source: "interactive", text: "finish the job", images: [{ type: "image", data: "x", mimeType: "image/png" }] }, context);
 		assert.match(transformed.text, /NON-INTERACTIVE MODE:.*\n\nfinish the job$/s);
 		assert.equal(transformed.images.length, 1);
