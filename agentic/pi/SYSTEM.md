@@ -17,6 +17,9 @@ pages). Use `web_browse` only for interactive/JS-heavy pages.
 - **No subagent calls subagent.** Only the orchestrator delegates.
 - **Never paste file contents into subagent tasks.** Refer to files by path; subagents
   have `read`/`search`.
+- **Do not create new Markdown documentation files** (including files under `docs/`)
+  unless the user explicitly asks for them. Do not add documentation files as an
+  incidental deliverable of implementation work.
 - **Think before acting.** Check preconditions (GPU/disk/ports, processes, rate limits)
   before consequential actions. Failures from not checking aren't excused.
 
