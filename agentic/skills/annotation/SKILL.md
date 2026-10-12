@@ -29,22 +29,26 @@ schema for the examples. Put every generated artifact in `/tmp`, never in the re
    `{ "item-id": "yes" }`). Autosave in browser `localStorage` after every edit;
    add an **Export JSON** control that downloads `<descriptive-name>.json`.
 4. Check that the HTML opens, the title describes the task, arrow shortcuts work,
-   labeling advances to the next sample (and stays on the last), an annotation
-   survives reload, export contains the latest labels, and closing with unexported
-   changes prompts for confirmation. Give the user the full `file:///tmp/...html`
-   URL. Tell them the export should be saved to `/tmp/<descriptive-name>.json`;
-   do not claim that
-   a browser download automatically appears there.
+   labeling advances to the next sample (and stays on the last), the progress bar
+   updates as samples are labeled, an annotation survives reload, export contains
+   the latest labels, and closing with unexported changes prompts for confirmation.
+   Give the user the full `file:///tmp/...html` URL. Tell them the export should be
+   saved to `/tmp/<descriptive-name>.json`; do not claim that a browser download
+   automatically appears there.
 
 ## Keyboard and interface rules
 
-- Keep the visible interface **super minimal: a title, the current sample, and
-  its controls**. The title must be a mini-sentence telling the user what to
-  annotate; use it for the HTML `<title>` too. No other headings, instructions,
-  descriptions, progress counts, IDs, metadata panels, status prose, or decorative
-  copy. Controls may have short labels and key glyphs (for example, `← No`,
-  `Yes →`, `↑`, `↓`). Use accessible names for icon-only buttons without adding
-  visible copy.
+- Keep the visible interface **super minimal: a title, a progress bar, the current
+  sample, and its controls**. The title must be a mini-sentence telling the user
+  what to annotate; use it for the HTML `<title>` too. No other headings,
+  instructions, descriptions, progress counts, IDs, metadata panels, status prose,
+  or decorative copy. Controls may have short labels and key glyphs (for example,
+  `← No`, `Yes →`, `↑`, `↓`). Use accessible names for icon-only buttons without
+  adding visible copy.
+- Show a compact progress bar for the number of labeled samples out of the total.
+  Update it after each label change and when restoring saved labels; navigating
+  without labeling must not increase it. Give it an accessible name, such as
+  "Samples labeled", without adding a visible count.
 - **Up**: previous example. **Down**: next example. Do not wrap at either end.
 - For binary classification, **Right = yes** and **Left = no**. Show these exact
   mappings on the controls. A label key must update the current example before
