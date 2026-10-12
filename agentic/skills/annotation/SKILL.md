@@ -17,7 +17,9 @@ schema for the examples. Put every generated artifact in `/tmp`, never in the re
 
 1. Identify the examples, stable IDs, label choices, and any task-specific context.
    Decide whether labels are binary, multiclass, or structured. Use concise,
-   unambiguous control labels; do not add explanatory copy to the interface.
+   unambiguous control labels. Write a very brief, task-specific instruction as
+   the title (for example, "Mark whether this is relevant."); add no other
+   explanatory copy.
 2. Write `/tmp/<descriptive-name>.html`. Embed the examples and all CSS/JS in that
    single file; use no CDN, external assets, build step, or remote requests. Escape
    embedded data for the HTML/script context (in particular `</script>`), and render
@@ -26,25 +28,33 @@ schema for the examples. Put every generated artifact in `/tmp`, never in the re
    Include only the fields needed by this task (for example,
    `{ "item-id": "yes" }`). Autosave in browser `localStorage` after every edit;
    add an **Export JSON** control that downloads `<descriptive-name>.json`.
-4. Check that the HTML opens, arrow shortcuts work, an annotation survives reload,
-   export contains the latest labels, and closing with unexported changes prompts
-   for confirmation. Give the user the full `file:///tmp/...html` URL. Tell them
-   the export should be saved to `/tmp/<descriptive-name>.json`; do not claim that
+4. Check that the HTML opens, the title describes the task, arrow shortcuts work,
+   labeling advances to the next sample (and stays on the last), an annotation
+   survives reload, export contains the latest labels, and closing with unexported
+   changes prompts for confirmation. Give the user the full `file:///tmp/...html`
+   URL. Tell them the export should be saved to `/tmp/<descriptive-name>.json`;
+   do not claim that
    a browser download automatically appears there.
 
 ## Keyboard and interface rules
 
-- Keep the visible interface **super minimal: only the current sample and its
-  controls**. No headings, instructions, descriptions, progress counts, IDs,
-  metadata panels, status prose, or decorative copy. Controls may have short
-  labels and key glyphs (for example, `← No`, `Yes →`, `↑`, `↓`). Use accessible
-  names for icon-only buttons without adding visible copy.
+- Keep the visible interface **super minimal: a title, the current sample, and
+  its controls**. The title must be a mini-sentence telling the user what to
+  annotate; use it for the HTML `<title>` too. No other headings, instructions,
+  descriptions, progress counts, IDs, metadata panels, status prose, or decorative
+  copy. Controls may have short labels and key glyphs (for example, `← No`,
+  `Yes →`, `↑`, `↓`). Use accessible names for icon-only buttons without adding
+  visible copy.
 - **Up**: previous example. **Down**: next example. Do not wrap at either end.
 - For binary classification, **Right = yes** and **Left = no**. Show these exact
-  mappings on the controls. A label key must update the current example, not
-  silently navigate away. Do not map left/right to navigation in this mode.
+  mappings on the controls. A label key must update the current example before
+  advancing; do not map left/right to navigation in this mode.
 - For nonbinary tasks, show the available labels and assign discoverable shortcuts
   only when they do not conflict with up/down. Do not force binary yes/no semantics.
+- After any label choice, by key or click, record the label for the current sample
+  and attempt autosave, then advance to the next sample. Stay on the last sample
+  after labeling it; never wrap. Keep previous/next controls for corrections.
+  Choosing the already-selected label also advances.
 - Ignore global shortcuts when focus is in a text input, textarea, select, editable
   element, or modifier key combination. Call `preventDefault()` for shortcuts that
   are handled. Provide clickable controls as well as keys.
