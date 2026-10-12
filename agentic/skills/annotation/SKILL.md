@@ -16,16 +16,16 @@ schema for the examples. Put every generated artifact in `/tmp`, never in the re
 ## Workflow
 
 1. Identify the examples, stable IDs, label choices, and any task-specific context.
-   Decide whether labels are binary, multiclass, or structured. Do not guess what
-   ambiguous labels mean; put their definitions in the interface.
+   Decide whether labels are binary, multiclass, or structured. Use concise,
+   unambiguous control labels; do not add explanatory copy to the interface.
 2. Write `/tmp/<descriptive-name>.html`. Embed the examples and all CSS/JS in that
    single file; use no CDN, external assets, build step, or remote requests. Escape
    embedded data for the HTML/script context (in particular `</script>`), and render
    untrusted example text with `textContent`, not `innerHTML`.
 3. Use `/tmp/<descriptive-name>.json` for the companion labels. Keep stable example
    IDs in the JSON so reordered examples do not shift annotations. Include only the
-   fields needed by this task (for example, `{ "item-id": "yes" }`); document any
-   more elaborate schema in the page. Preserve existing labels when reopening.
+   fields needed by this task (for example, `{ "item-id": "yes" }`). Preserve
+   existing labels when reopening.
 4. Pick a **real persistence method** before presenting the page. Prefer immediate
    writes to the companion JSON using one of the methods below. If neither is
    available, provide an honest manual export path; do not claim autosave.
@@ -36,19 +36,23 @@ schema for the examples. Put every generated artifact in `/tmp`, never in the re
 
 ## Keyboard and interface rules
 
+- Keep the visible interface **super minimal: only the current sample and its
+  controls**. No headings, instructions, descriptions, progress counts, IDs,
+  metadata panels, status prose, or decorative copy. Controls may have short
+  labels and key glyphs (for example, `← No`, `Yes →`, `↑`, `↓`). Use accessible
+  names for icon-only buttons without adding visible copy.
 - **Up**: previous example. **Down**: next example. Do not wrap at either end.
 - For binary classification, **Right = yes** and **Left = no**. Show these exact
-  mappings visibly next to the choices; if the task uses different terminology,
-  show its meaning alongside yes/no. A label key must update the current example,
-  not silently navigate away. Do not map left/right to navigation in this mode.
+  mappings on the controls. A label key must update the current example, not
+  silently navigate away. Do not map left/right to navigation in this mode.
 - For nonbinary tasks, show the available labels and assign discoverable shortcuts
   only when they do not conflict with up/down. Do not force binary yes/no semantics.
 - Ignore global shortcuts when focus is in a text input, textarea, select, editable
   element, or modifier key combination. Call `preventDefault()` for shortcuts that
   are handled. Provide clickable controls as well as keys.
-- Show current position, stable ID, saved/unsaved status, total labeled, and the
-  current example's label. Mark failed saves visibly and retain the unsaved value
-  for retry; never display "saved" before persistence succeeds.
+- Indicate the current label on its control (for example, selected styling). On a
+  failed save, keep the unsaved value and expose a compact error/retry control;
+  never imply success before persistence succeeds.
 - On startup, restore prior labels **before** allowing edits. Serialize writes to
   avoid an earlier request finishing after a later one and replacing new labels.
   Save after every change; do not rely only on `beforeunload` or `sendBeacon`.
@@ -84,6 +88,6 @@ Downloads rather than update the companion file. Choose explicitly:
   requires live saving, use one of the first two methods instead.
 
 Avoid overwriting existing annotations with an empty object when loading fails.
-Fail visibly and let the user recover the existing JSON before annotating. If an
-existing sidecar and in-browser draft both exist, make their differences visible
-rather than silently discarding either one.
+Expose a compact recovery control and block edits until the existing JSON loads.
+If a sidecar and an in-browser draft conflict, offer a choice through minimal
+controls rather than silently discarding either one.
