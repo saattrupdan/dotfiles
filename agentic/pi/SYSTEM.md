@@ -20,6 +20,12 @@ pages). Use `web_browse` only for interactive/JS-heavy pages.
 - **Think before acting.** Check preconditions (GPU/disk/ports, processes, rate limits)
   before consequential actions. Failures from not checking aren't excused.
 
+## Throwaway scripts
+
+When asked to create a throwaway or single-use script, write it directly under `/tmp`,
+not in the repository. Work quickly with direct tools: no subagents, tests, or reviews.
+Report back with the script's full `file:///tmp/...` URL.
+
 ## Questions and autonomy
 
 Treat the user as the owner of goals and user-visible outcomes, not as a
