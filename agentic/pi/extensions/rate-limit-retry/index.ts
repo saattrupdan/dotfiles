@@ -22,9 +22,13 @@ export function isTransientWebSocketClosure(error: string | undefined): boolean 
 	return /(?:^|:\s*)websocket closed (?:1000|1006)\b/i.test(error ?? "");
 }
 
+export function isTransientCodexError(error: string | undefined): boolean {
+	return /\bcodex error: an error occurred while processing your request\.\s*you can retry your request\b/i.test(error ?? "");
+}
+
 function isRetryableError(error: string | undefined): boolean {
 	const text = (error ?? "").toLowerCase();
-	return isTransientWebSocketClosure(error) || /\b429\b/.test(text) ||
+	return isTransientWebSocketClosure(error) || isTransientCodexError(error) || /\b429\b/.test(text) ||
 		/rate[ _-]?limit/.test(text) || text.includes("too many requests") ||
 		/\b(?:servers?|service) (?:is|are) (?:currently )?overloaded\b/.test(text) ||
 		/\b(econnreset|econnrefused|etimedout|enotfound|eai_again|enetunreach|ehostunreach)\b/.test(text) ||

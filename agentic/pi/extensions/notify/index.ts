@@ -44,7 +44,7 @@ import { spawn } from "node:child_process";
 import * as os from "node:os";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { isTransientWebSocketClosure, RETRY_STATE_EVENT } from "../rate-limit-retry/index.ts";
+import { isTransientCodexError, isTransientWebSocketClosure, RETRY_STATE_EVENT } from "../rate-limit-retry/index.ts";
 
 const IS_MACOS = os.platform() === "darwin";
 
@@ -317,6 +317,7 @@ export default function (pi: ExtensionAPI, send = notify) {
 				msg.includes("rate_limited") ||
 				msg.includes("too many requests") ||
 				msg.includes("our servers are currently overloaded. please try again later.") ||
+				isTransientCodexError(errorMessage) ||
 				msg.includes("tool_call_timeout") ||
 				msg.includes("http_error") ||
 				isTransientWebSocketClosure(errorMessage)

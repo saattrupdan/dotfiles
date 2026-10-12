@@ -62,6 +62,7 @@ function harness(wait: (delay: number, signal: AbortSignal | undefined) => Promi
 const rateLimited = () => ({
 	message: { role: "assistant", stopReason: "error", errorMessage: '{"detail":"Rate limit exceeded"}', content: [] },
 });
+const codexError = "Error: Codex error: An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists.";
 const success = () => ({ message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Done" }] } });
 
 test("masks rate-limit errors, keeps one run, counts each retry and resets on success", async () => {
@@ -141,6 +142,31 @@ test("empty server overload errors retry quietly until recovery", async () => {
 	assert.equal(await run.emit("turn_end"), undefined);
 });
 
+test("generic Codex processing failures retry without rendering an error", async () => {
+	const run = harness();
+	for (let n = 1; n <= 2; n++) {
+		const failed = () => ({ message: { role: "assistant", stopReason: "error", errorMessage: codexError, content: [] } });
+		const start = failed();
+		await run.emit("message_start", start);
+		assert.equal(start.message.stopReason, "pending");
+		assert.equal(start.message.errorMessage, undefined);
+		const masked = await run.emit("message_end", failed()) as { message: {
+			stopReason: string; errorMessage?: string; content: unknown[];
+		} };
+		assert.equal(masked.message.stopReason, "stop");
+		assert.equal(masked.message.errorMessage, undefined);
+		assert.deepEqual(masked.message.content, []);
+		assert.equal(run.workingLabels.at(-1), n === 1 ? "Retrying..." : "Retrying for the 2nd time...");
+		assert.equal((await run.emit("turn_end") as { continue: boolean }).continue, true);
+	}
+	assert.deepEqual(run.delays, [2000, 4000]);
+	assert.deepEqual(run.retryStates, [true, true]);
+	assert.equal(run.messages.length, 0);
+	await run.emit("message_end", success());
+	assert.equal(run.retryStates.at(-1), false);
+	assert.equal(run.workingLabels.at(-1), undefined);
+});
+
 test("WebSocket 1000 closes with empty thinking retry quietly without a budget", async () => {
 	const run = harness();
 	for (let n = 0; n < 6; n++) {
@@ -188,7 +214,7 @@ test("other errors and partial retryable responses keep Pi's normal rendering", 
 	const otherError = { message: { role: "assistant", stopReason: "error", errorMessage: "HTTP 500", content: [] } };
 	assert.equal(await run.emit("message_end", otherError), undefined);
 	assert.equal(await run.emit("turn_end"), undefined);
-	for (const error of [rateLimited().message.errorMessage, "fetch failed", "WebSocket closed 1000", "Our servers are currently overloaded. Please try again later."]) {
+	for (const error of [rateLimited().message.errorMessage, "fetch failed", "WebSocket closed 1000", "Our servers are currently overloaded. Please try again later.", codexError]) {
 		const partial = { message: { ...rateLimited().message, errorMessage: error, content: [{ type: "text", text: "partial" }] } };
 		assert.equal(await run.emit("message_end", partial), undefined);
 		assert.equal(await run.emit("turn_end"), undefined);

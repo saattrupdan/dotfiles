@@ -4,7 +4,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import notifyExtension from "./index.ts";
 import { RETRY_STATE_EVENT } from "../rate-limit-retry/index.ts";
 
-test("quiet WebSocket retries cause no failure or premature finish notification", { skip: process.platform !== "darwin" }, async () => {
+test("quiet WebSocket and Codex retries cause no failure or premature finish notification", { skip: process.platform !== "darwin" }, async () => {
 	const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
 	const listeners = new Map<string, (data: unknown) => void>();
 	const notifications: string[] = [];
@@ -22,8 +22,12 @@ test("quiet WebSocket retries cause no failure or premature finish notification"
 	listeners.get(RETRY_STATE_EVENT)?.({ retrying: true });
 	await emit("agent_end", { messages: [{ role: "assistant", stopReason: "stop", content: [] }] });
 	await emit("agent_end", { messages: [{ role: "assistant", stopReason: "error", errorMessage: "WebSocket closed 1000", content: [] }] });
+	const codexError = "Error: Codex error: An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists.";
+	await emit("agent_end", { messages: [{ role: "assistant", stopReason: "error", errorMessage: codexError, content: [] }] });
 	assert.deepEqual(notifications, []);
 	listeners.get(RETRY_STATE_EVENT)?.({ retrying: false });
+	await emit("agent_end", { messages: [{ role: "assistant", stopReason: "error", errorMessage: codexError, content: [] }] });
+	assert.deepEqual(notifications, [], "the transient error itself never sends a failure notification");
 	await emit("agent_end", { messages: [{ role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Done" }] }] });
 	assert.deepEqual(notifications, ["Pi finished"]);
 });
