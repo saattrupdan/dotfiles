@@ -52,6 +52,70 @@ test("/non-interactive queues during streaming and enables mode for the message"
 	}
 });
 
+test("bare /non-interactive arms future requests without starting an idle turn", async () => {
+	const previous = process.env.PI_NON_INTERACTIVE;
+	const listeners = new Map();
+	let command;
+	const pi = {
+		registerCommand(_name, definition) { command = definition.handler; },
+		on(event, listener) { listeners.set(event, listener); },
+		sendUserMessage() { throw new Error("bare command at idle must not start a turn"); },
+		sendMessage() {},
+	};
+	try {
+		nonInteractive(pi);
+		await command("  ", context);
+		assert.equal(process.env.PI_NON_INTERACTIVE, "1");
+		assert.equal(statuses.get("non-interactive"), "🙊");
+		const transformed = await listeners.get("input")({ source: "interactive", text: "finish the job", images: [{ type: "image", data: "x", mimeType: "image/png" }] }, context);
+		assert.match(transformed.text, /NON-INTERACTIVE MODE:.*\n\nfinish the job$/s);
+		assert.equal(transformed.images.length, 1);
+		await listeners.get("agent_start")({}, context);
+		await listeners.get("agent_end")({}, context);
+		assert.equal(process.env.PI_NON_INTERACTIVE, "1");
+		assert.match((await listeners.get("input")({ source: "interactive", text: "another job" }, context)).text, /\n\nanother job$/);
+		assert.match((await listeners.get("input")({ source: "interactive", text: "", images: [{ type: "image" }] }, context)).text, /^NON-INTERACTIVE MODE:.*\n\n$/s);
+		setLoopActive(true, context);
+		setLoopActive(false, context);
+		assert.equal(process.env.PI_NON_INTERACTIVE, "1");
+		await command("off", context);
+		assert.equal(process.env.PI_NON_INTERACTIVE, undefined);
+		assert.equal(await listeners.get("input")({ source: "interactive", text: "normal" }, context), undefined);
+		await command("", context);
+		await listeners.get("session_start")({}, context);
+		assert.equal(process.env.PI_NON_INTERACTIVE, undefined);
+	} finally {
+		if (previous === undefined) delete process.env.PI_NON_INTERACTIVE;
+		else process.env.PI_NON_INTERACTIVE = previous;
+	}
+});
+
+test("bare /non-interactive steers a running turn immediately", async () => {
+	const previous = process.env.PI_NON_INTERACTIVE;
+	const listeners = new Map();
+	let command;
+	let queued;
+	const pi = {
+		registerCommand(_name, definition) { command = definition.handler; },
+		on(event, listener) { listeners.set(event, listener); },
+		sendUserMessage(content, options) {
+			queued = { content, options };
+			void listeners.get("input")({ source: "extension", text: content }, context);
+		},
+	};
+	try {
+		nonInteractive(pi);
+		await command("", { ...context, isIdle: () => false });
+		assert.match(queued.content, /^NON-INTERACTIVE MODE:/);
+		assert.deepEqual(queued.options, { deliverAs: "steer" });
+		await listeners.get("agent_end")({}, context);
+		assert.equal(process.env.PI_NON_INTERACTIVE, "1");
+	} finally {
+		if (previous === undefined) delete process.env.PI_NON_INTERACTIVE;
+		else process.env.PI_NON_INTERACTIVE = previous;
+	}
+});
+
 test("loop keeps non-interactive mode through turns and clears it when stopped", async () => {
 	const previous = process.env.PI_NON_INTERACTIVE;
 	const listeners = new Map();

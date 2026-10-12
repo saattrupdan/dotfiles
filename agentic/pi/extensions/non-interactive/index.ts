@@ -1,9 +1,9 @@
 /**
- * `/non-interactive <prompt>` — run a single user request without ever
- * stopping to ask a question. `/non-interactive off` restores interactive
- * questions; `/loop` enables non-interactive mode for its lifetime.
+ * `/non-interactive <prompt>` — run a single user request without questions.
+ * Bare `/non-interactive` enables the mode for subsequent requests until
+ * `/non-interactive off`; `/loop` enables it for the loop's lifetime.
  *
- * Two effects, both scoped to the resulting agent run:
+ * Two effects, scoped to one run or to bare mode's lifetime:
  *
  *  1. Sets `PI_NON_INTERACTIVE=1` in this process's env. The `question`
  *     tool's dispatch checks this on every call and refuses with a nudge
@@ -11,14 +11,12 @@
  *     this run inherit the env var (the subagent extension passes
  *     `...process.env` when spawning) so the gag applies to them too.
  *
- *  2. Prepends an explicit instruction to the user's prompt so the
- *     orchestrator (and any subagent it briefs) is told upfront not to
- *     ask anything — even before it would have considered calling
- *     `question`. The model is much better at obeying an explicit
- *     in-prompt instruction than at recovering from a denied tool call.
+ *  2. Prepends an explicit instruction to the user's prompt (including
+ *     subsequent turns when bare mode is enabled) so the orchestrator
+ *     and its subagents know not to ask anything.
  *
- * Outside a loop, cleanup is deliberately aggressive — the flag is cleared
- * at every boundary where a new turn or a new user message could begin:
+ * For a prompted command, cleanup is deliberately aggressive — the flag
+ * is cleared at every boundary where a new turn or user message could begin:
  *
  *   - `agent_end`:    normal finish of the agent loop.
  *   - `agent_start`:  belt-and-braces, before the next loop kicks off, in
@@ -28,8 +26,9 @@
  *                     the message, so the gag doesn't silently survive
  *                     across consecutive user messages.
  *
- * For a loop, the shared loop signal holds the flag across runs and delays;
- * stopping the loop clears it. Every iteration carries the same prompt banner.
+ * Bare mode instead lasts until `off` or a session change. For a loop, the
+ * shared loop signal holds the flag across runs and delays; stopping the loop
+ * clears it. Every iteration carries the same prompt banner.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -59,15 +58,16 @@ export default function (pi: ExtensionAPI) {
 	// undo the flag the command just set, since `sendUserMessage` fires an
 	// input event.
 	let arming = false;
+	let persistent = false;
 
 	onLoopChange("non-interactive", (active, ctx) => {
-		if (active) process.env[ENV_FLAG] = "1";
+		if (active || persistent) process.env[ENV_FLAG] = "1";
 		else clearFlag();
 		showStatus(ctx);
 	});
 
 	pi.registerCommand("non-interactive", {
-		description: "Run a request without questions, or use 'off' to restore interactive questions.",
+		description: "Disable questions until 'off', or run one request without questions.",
 		async handler(args, ctx) {
 			const trimmed = args.trim();
 			if (trimmed === "off") {
@@ -80,6 +80,7 @@ export default function (pi: ExtensionAPI) {
 					return;
 				}
 				arming = false;
+				persistent = false;
 				clearFlag();
 				showStatus(ctx);
 				pi.sendMessage({
@@ -94,21 +95,17 @@ export default function (pi: ExtensionAPI) {
 				}
 				return;
 			}
-			if (!trimmed) {
-				pi.sendMessage({
-					customType: "non-interactive:error",
-					content: "Usage: /non-interactive <prompt> | /non-interactive off",
-					display: true,
-				});
-				return;
-			}
-			arming = true;
+			if (!trimmed) persistent = true;
+			const sending = Boolean(trimmed) || !ctx.isIdle();
+			arming = sending;
 			try {
 				process.env[ENV_FLAG] = "1";
 				showStatus(ctx);
-				// Enter during streaming queues a steering message; without deliverAs,
-				// Pi rejects extension-sent messages while the agent is working.
-				pi.sendUserMessage(`${NON_INTERACTIVE_BANNER}\n\n${trimmed}`, { deliverAs: "steer" });
+				// At idle, bare mode waits for the next request rather than starting
+				// a turn just to repeat the instruction. During a run, steer it now.
+				if (sending) {
+					pi.sendUserMessage(trimmed ? `${NON_INTERACTIVE_BANNER}\n\n${trimmed}` : NON_INTERACTIVE_BANNER, { deliverAs: "steer" });
+				}
 			} finally {
 				// Release on the next tick so the input event for the message
 				// we just sent has already passed the listener.
@@ -120,18 +117,22 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("agent_end", async (_event, ctx) => {
-		if (!isLoopActive()) clearFlag();
+		if (!persistent && !isLoopActive()) clearFlag();
 		showStatus(ctx);
 	});
 	pi.on("agent_start", async (_event, ctx) => {
-		if (!arming && !isLoopActive()) clearFlag();
+		if (!arming && !persistent && !isLoopActive()) clearFlag();
 		showStatus(ctx);
 	});
 	pi.on("input", async (event, ctx) => {
-		if (!arming && (!isLoopActive() || event.source !== "extension")) clearFlag();
+		if (!arming && !persistent && (!isLoopActive() || event.source !== "extension")) clearFlag();
 		showStatus(ctx);
+		if (persistent && !arming && !event.text.startsWith(NON_INTERACTIVE_BANNER)) {
+			return { action: "transform", text: `${NON_INTERACTIVE_BANNER}\n\n${event.text}`, images: event.images };
+		}
 	});
 	pi.on("session_start", (_event, ctx) => {
+		persistent = false;
 		if (!isLoopActive()) clearFlag();
 		showStatus(ctx);
 	});
