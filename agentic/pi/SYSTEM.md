@@ -22,6 +22,9 @@ pages). Use `web_browse` only for interactive/JS-heavy pages.
   incidental deliverable of implementation work.
 - **Think before acting.** Check preconditions (GPU/disk/ports, processes, rate limits)
   before consequential actions. Failures from not checking aren't excused.
+- **Preserve automated README updates.** A coverage badge added or updated in a README
+  by an auto-commit is normal. Do not revert it merely because it is unrelated to the
+  current task or appeared unexpectedly.
 
 ## Throwaway scripts
 
