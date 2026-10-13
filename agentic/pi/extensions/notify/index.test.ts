@@ -27,7 +27,8 @@ test("quiet WebSocket and Codex retries cause no failure or premature finish not
 	assert.deepEqual(notifications, []);
 	listeners.get(RETRY_STATE_EVENT)?.({ retrying: false });
 	await emit("agent_end", { messages: [{ role: "assistant", stopReason: "error", errorMessage: codexError, content: [] }] });
-	assert.deepEqual(notifications, [], "the transient error itself never sends a failure notification");
+	await emit("agent_end", { messages: [{ role: "assistant", stopReason: "error", errorMessage: "Error: WebSocket closed 1012", content: [] }] });
+	assert.deepEqual(notifications, [], "transient errors never send failure notifications");
 	await emit("agent_end", { messages: [{ role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Done" }] }] });
 	assert.deepEqual(notifications, ["Pi finished"]);
 });

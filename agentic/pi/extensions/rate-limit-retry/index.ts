@@ -17,9 +17,9 @@ const BASE_DELAY_MS = 2_000;
 const MAX_DELAY_MS = 60_000;
 
 export function isTransientWebSocketClosure(error: string | undefined): boolean {
-	// 1000 is a clean close without a completed response; 1006 is a dropped connection.
-	// Do not quietly retry policy, auth, or message-too-big close codes.
-	return /(?:^|:\s*)websocket closed (?:1000|1006)\b/i.test(error ?? "");
+	// 1000 is a clean close without a completed response; 1006 is a dropped connection;
+	// 1012 is a service restart. Do not quietly retry policy, auth, or message-too-big close codes.
+	return /(?:^|:\s*)websocket closed (?:1000|1006|1012)\b/i.test(error ?? "");
 }
 
 export function isTransientCodexError(error: string | undefined): boolean {

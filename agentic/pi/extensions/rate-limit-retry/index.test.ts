@@ -167,10 +167,10 @@ test("generic Codex processing failures retry without rendering an error", async
 	assert.equal(run.workingLabels.at(-1), undefined);
 });
 
-test("WebSocket 1000 closes with empty thinking retry quietly without a budget", async () => {
+test("transient WebSocket closes with empty thinking retry quietly without a budget", async () => {
 	const run = harness();
 	for (let n = 0; n < 6; n++) {
-		const error = "WebSocket closed 1000";
+		const error = n % 2 === 0 ? "Error: WebSocket closed 1012" : "WebSocket closed 1000";
 		const failed = () => ({ message: {
 			role: "assistant", stopReason: "error", errorMessage: error,
 			content: [{ type: "thinking", thinking: "" }],
@@ -185,6 +185,7 @@ test("WebSocket 1000 closes with empty thinking retry quietly without a budget",
 		assert.equal(masked.message.stopReason, "stop");
 		assert.equal(masked.message.errorMessage, undefined);
 		assert.deepEqual(masked.message.content, []);
+		assert.equal(run.workingLabels.at(-1), n === 0 ? "Retrying..." : `Retrying for the ${n + 1}${n === 1 ? "nd" : n === 2 ? "rd" : "th"} time...`);
 		assert.equal((await run.emit("turn_end") as { continue: boolean }).continue, true);
 	}
 	assert.deepEqual(run.delays, [2000, 4000, 8000, 16000, 32000, 60000]);
@@ -196,7 +197,7 @@ test("WebSocket 1000 closes with empty thinking retry quietly without a budget",
 });
 
 test("only transient WebSocket close codes are suppressed by retry and notify", async () => {
-	for (const error of ["WebSocket closed 1000", "Error: WebSocket closed 1006"]) {
+	for (const error of ["WebSocket closed 1000", "Error: WebSocket closed 1006", "Error: WebSocket closed 1012"]) {
 		assert.equal(isTransientWebSocketClosure(error), true);
 	}
 	const run = harness();
@@ -214,7 +215,7 @@ test("other errors and partial retryable responses keep Pi's normal rendering", 
 	const otherError = { message: { role: "assistant", stopReason: "error", errorMessage: "HTTP 500", content: [] } };
 	assert.equal(await run.emit("message_end", otherError), undefined);
 	assert.equal(await run.emit("turn_end"), undefined);
-	for (const error of [rateLimited().message.errorMessage, "fetch failed", "WebSocket closed 1000", "Our servers are currently overloaded. Please try again later.", codexError]) {
+	for (const error of [rateLimited().message.errorMessage, "fetch failed", "WebSocket closed 1000", "Error: WebSocket closed 1012", "Our servers are currently overloaded. Please try again later.", codexError]) {
 		const partial = { message: { ...rateLimited().message, errorMessage: error, content: [{ type: "text", text: "partial" }] } };
 		assert.equal(await run.emit("message_end", partial), undefined);
 		assert.equal(await run.emit("turn_end"), undefined);
