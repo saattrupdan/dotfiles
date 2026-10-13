@@ -1108,7 +1108,11 @@ test("managed feature sessions expose cleanup but do not auto-release on quit", 
 	fs.writeFileSync(path.join(plan.childCwd, "work.txt"), "pending\n");
 	command(plan.childCwd, ["add", "work.txt"]);
 	command(plan.childCwd, ["commit", "-m", "feat: pending cleanup"]);
-	const tools = new Map<string, { execute: (...args: unknown[]) => Promise<unknown> }>();
+	const tools = new Map<string, {
+		execute: (...args: unknown[]) => Promise<unknown>;
+		renderCall?: BranchRenderCall;
+		renderResult?: BranchRenderResult;
+	}>();
 	const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
 	const handlers = new Map<string, Array<(...args: unknown[]) => Promise<unknown>>>();
 	const continuations: Array<{ customType: string; content: string; display: boolean; triggerTurn: boolean }> = [];
@@ -1125,7 +1129,7 @@ test("managed feature sessions expose cleanup but do not auto-release on quit", 
 		},
 		getFlag: () => false,
 		exec: async () => ({ code: 0, stdout: `${plan.childCwd}\n` }),
-		registerTool: (tool: { name: string; execute: (...args: unknown[]) => Promise<unknown> }) => { tools.set(tool.name, tool); },
+		registerTool: (tool: { name: string; execute: (...args: unknown[]) => Promise<unknown>; renderCall?: BranchRenderCall; renderResult?: BranchRenderResult }) => { tools.set(tool.name, tool); },
 		on: (name: string, handler: (...args: unknown[]) => Promise<unknown>) => {
 			handlers.set(name, [...(handlers.get(name) ?? []), handler]);
 			return () => handlers.set(name, (handlers.get(name) ?? []).filter((item) => item !== handler));
@@ -1134,6 +1138,13 @@ test("managed feature sessions expose cleanup but do not auto-release on quit", 
 	await registerIsolation(pi);
 	assert.ok(tools.has("clean-up-isolated-branch"));
 	assert.ok(commands.has("clean-up-isolated-branch"));
+	const branchTool = tools.get("isolated_new_branch")!;
+	const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text };
+	const savedResult = { content: [{ type: "text" as const, text: `Created feat/keep at ${plan.childCwd}. Continuing this session there now.` }] };
+	assert.equal(branchTool.renderCall!({ name: "feat/keep" }, theme).render(100).join("").trimEnd(), "isolated_new_branch feat/keep");
+	assert.equal(branchTool.renderResult!(savedResult, { expanded: false, isPartial: false }, theme, { isError: false }).render(100).join("").trimEnd(), "✓ switched to new branch");
+	assert.match(branchTool.renderResult!(savedResult, { expanded: true, isPartial: false }, theme, { isError: false }).render(200).join(""), /Created feat\/keep at/);
+	await assert.rejects(branchTool.execute("call", { name: "feat/nested" }), /already active/);
 	const sessionFile = path.join(agentDir, "current.jsonl");
 	fs.mkdirSync(agentDir, { recursive: true });
 	fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", cwd: plan.childCwd })}\n`);

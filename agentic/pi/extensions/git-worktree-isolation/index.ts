@@ -243,6 +243,24 @@ function registerUnavailableCleanupTool(pi: ExtensionAPI): void {
 }
 
 function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): void {
+	// Keep the renderer registered after the branch handoff so the saved tool
+	// result remains collapsed when the new process redraws the transcript.
+	pi.registerTool({
+		name: "isolated_new_branch",
+		label: "Create isolated branch",
+		description: "Unavailable inside an isolated worktree. Return to an ordinary checkout before creating another branch.",
+		parameters: Type.Object({ name: Type.String({ description: "Name of the new feature branch" }) }),
+		executionMode: "sequential",
+		async execute() {
+			throw new Error("An isolated branch is already active; cannot create another branch from this worktree.");
+		},
+		renderCall(args, theme) {
+			return new Text(`${theme.fg("toolTitle", theme.bold("isolated_new_branch"))} ${theme.fg("accent", args.name)}`, 0, 0);
+		},
+		renderResult(result, options, theme, context) {
+			return renderBranchResult(result, options, theme, context.isError, "switched to new branch", "creating branch");
+		},
+	});
 	let repairTurns = 0;
 	let enforcementRunning = false;
 	let pendingCleanup: { sessionFile: string; mainRoot: string; branchSha: string; branchExists: boolean } | null = null;
