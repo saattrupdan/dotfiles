@@ -29,6 +29,7 @@ export function isTransientCodexError(error: string | undefined): boolean {
 function isRetryableError(error: string | undefined): boolean {
 	const text = (error ?? "").toLowerCase();
 	return isTransientWebSocketClosure(error) || isTransientCodexError(error) || /\b429\b/.test(text) ||
+		text.includes("exceeded request buffer limit while retrying upstream") ||
 		/rate[ _-]?limit/.test(text) || text.includes("too many requests") ||
 		/\b(?:servers?|service) (?:is|are) (?:currently )?overloaded\b/.test(text) ||
 		/\b(econnreset|econnrefused|etimedout|enotfound|eai_again|enetunreach|ehostunreach)\b/.test(text) ||

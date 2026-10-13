@@ -63,6 +63,7 @@ const rateLimited = () => ({
 	message: { role: "assistant", stopReason: "error", errorMessage: '{"detail":"Rate limit exceeded"}', content: [] },
 });
 const codexError = "Error: Codex error: An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists.";
+const upstreamBufferError = "exceeded request buffer limit while retrying upstream";
 const success = () => ({ message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Done" }] } });
 
 test("masks rate-limit errors, keeps one run, counts each retry and resets on success", async () => {
@@ -167,6 +168,27 @@ test("generic Codex processing failures retry without rendering an error", async
 	assert.equal(run.workingLabels.at(-1), undefined);
 });
 
+test("upstream retry buffer failures recover quietly without discarding output", async () => {
+	const run = harness();
+	const failed = () => ({ message: {
+		role: "assistant", stopReason: "error", errorMessage: upstreamBufferError, content: [],
+	} });
+	const start = failed();
+	await run.emit("message_start", start);
+	assert.equal(start.message.stopReason, "pending");
+	assert.equal(start.message.errorMessage, undefined);
+	const masked = await run.emit("message_end", failed()) as { message: {
+		stopReason: string; errorMessage?: string; content: unknown[];
+	} };
+	assert.equal(masked.message.stopReason, "stop");
+	assert.equal(masked.message.errorMessage, undefined);
+	assert.deepEqual(masked.message.content, []);
+	assert.equal((await run.emit("turn_end") as { continue: boolean }).continue, true);
+	assert.deepEqual(run.delays, [2000]);
+	await run.emit("message_end", success());
+	assert.equal(await run.emit("turn_end"), undefined);
+});
+
 test("transient WebSocket closes with empty thinking retry quietly without a budget", async () => {
 	const run = harness();
 	for (let n = 0; n < 6; n++) {
@@ -215,7 +237,7 @@ test("other errors and partial retryable responses keep Pi's normal rendering", 
 	const otherError = { message: { role: "assistant", stopReason: "error", errorMessage: "HTTP 500", content: [] } };
 	assert.equal(await run.emit("message_end", otherError), undefined);
 	assert.equal(await run.emit("turn_end"), undefined);
-	for (const error of [rateLimited().message.errorMessage, "fetch failed", "WebSocket closed 1000", "Error: WebSocket closed 1012", "Our servers are currently overloaded. Please try again later.", codexError]) {
+	for (const error of [rateLimited().message.errorMessage, "fetch failed", "WebSocket closed 1000", "Error: WebSocket closed 1012", "Our servers are currently overloaded. Please try again later.", codexError, upstreamBufferError]) {
 		const partial = { message: { ...rateLimited().message, errorMessage: error, content: [{ type: "text", text: "partial" }] } };
 		assert.equal(await run.emit("message_end", partial), undefined);
 		assert.equal(await run.emit("turn_end"), undefined);
