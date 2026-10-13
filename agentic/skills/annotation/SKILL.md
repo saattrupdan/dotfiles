@@ -30,25 +30,27 @@ schema for the examples. Put every generated artifact in `/tmp`, never in the re
    add an **Export JSON** control that downloads `<descriptive-name>.json`.
 4. Check that the HTML opens, the title describes the task, arrow shortcuts work,
    labeling advances to the next sample (and stays on the last), the progress bar
-   updates as samples are labeled, an annotation survives reload, export contains
-   the latest labels, and closing with unexported changes prompts for confirmation.
+   and labeled/total count update as samples are labeled, an annotation survives
+   reload, export contains the latest labels, and closing with unexported changes
+   prompts for confirmation.
    Give the user the full `file:///tmp/...html` URL. Tell them the export should be
    saved to `/tmp/<descriptive-name>.json`; do not claim that a browser download
    automatically appears there.
 
 ## Keyboard and interface rules
 
-- Keep the visible interface **super minimal: a title, a progress bar, the current
-  sample, and its controls**. The title must be a mini-sentence telling the user
-  what to annotate; use it for the HTML `<title>` too. No other headings,
-  instructions, descriptions, progress counts, IDs, metadata panels, status prose,
-  or decorative copy. Controls may have short labels and key glyphs (for example,
-  `← No`, `Yes →`, `↑`, `↓`). Use accessible names for icon-only buttons without
-  adding visible copy.
-- Show a compact progress bar for the number of labeled samples out of the total.
-  Update it after each label change and when restoring saved labels; navigating
-  without labeling must not increase it. Give it an accessible name, such as
-  "Samples labeled", without adding a visible count.
+- Keep the visible interface **super minimal: a title, a progress bar with a
+  labeled/total count, the current sample, and its controls**. The title must be
+  a mini-sentence telling the user what to annotate; use it for the HTML `<title>`
+  too. No other headings, instructions, descriptions, IDs, metadata panels,
+  status prose, or decorative copy. Place the compact count beside the progress
+  bar. Controls may have short labels and key glyphs (for example, `← No`,
+  `Yes →`, `↑`, `↓`). Use accessible names for icon-only buttons without adding
+  visible copy.
+- Show a compact progress bar and a visible count of labeled samples out of the
+  total (for example, `12 / 50`). Update both after each label change and when
+  restoring saved labels; navigating without labeling must not increase the count.
+  Give the progress bar an accessible name, such as "Samples labeled".
 - **Up**: previous example. **Down**: next example. Do not wrap at either end.
 - For binary classification, **Right = yes** and **Left = no**. Show these exact
   mappings on the controls. A label key must update the current example before
