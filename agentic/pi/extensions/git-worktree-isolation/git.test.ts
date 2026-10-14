@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { afterEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import registerIsolation, { continuationArgs, isPrintMode, recoveredFromRateLimit } from "./index.ts";
+import registerIsolation, { continuationArgs, isPrintMode, launchWithProgress, recoveredFromRateLimit } from "./index.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	acquirePublishLock,
@@ -55,6 +55,28 @@ test("recognizes print-mode continuations without a fabricated prompt", () => {
 	assert.equal(isPrintMode(["--mode", "text"]), true);
 	assert.equal(isPrintMode(["--mode", "rpc"]), false);
 	assert.equal(isPrintMode(["--session", "/tmp/session.jsonl"]), false);
+});
+
+test("branch handoff keeps the event loop running until the child takes over", async () => {
+	const visibility: boolean[] = [];
+	let ticks = 0;
+	const interval = setInterval(() => { ticks++; }, 10);
+	try {
+		const result = await launchWithProgress(process.cwd(), ["-e", `
+			setTimeout(() => process.send('pi-worktree-session-ready', () => process.disconnect()), 100);
+			setTimeout(() => process.exit(0), 200);
+		`], process.env, {
+			mode: "tui", ui: {
+				setWorkingVisible: (visible: boolean) => { visibility.push(visible); },
+				setWidget: () => undefined,
+			},
+		} as ExtensionContext);
+		assert.equal(result.status, 0);
+		assert.ok(ticks >= 3, "the parent must remain responsive while the child starts");
+		assert.deepEqual(visibility, [false], "the spinner yields only when the child is ready");
+	} finally {
+		clearInterval(interval);
+	}
 });
 
 test("detects a rate-limit retry only in the current user request", () => {
@@ -1178,12 +1200,18 @@ test("managed feature sessions expose cleanup but do not auto-release on quit", 
 	}), /ask the user before merging/);
 	assert.equal(aborted, false);
 	const notifications: string[] = [];
+	const widgets: Array<string | undefined> = [];
 	await commands.get("clean-up-isolated-branch")!.handler("", {
 		isIdle: () => true,
 		sessionManager: { getSessionFile: () => sessionFile },
 		hasUI: true,
-		ui: { notify: (message: string) => { notifications.push(message); } },
+		mode: "tui",
+		ui: {
+			notify: (message: string) => { notifications.push(message); },
+			setWidget: (_key: string, content?: unknown) => { widgets.push(content ? "spinner" : undefined); },
+		},
 	});
+	assert.deepEqual(widgets, ["spinner", undefined], "idle cleanup animates and clears progress on failure");
 	assert.match(notifications.join("\n"), /ask the user before merging/);
 	for (const handler of handlers.get("session_shutdown") ?? []) {
 		await handler({ reason: "quit" }, { sessionManager: { getSessionFile: () => sessionFile } });

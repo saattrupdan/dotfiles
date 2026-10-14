@@ -3,11 +3,11 @@
  * Previously managed sessions remain resumable and retain their finalization policy.
  */
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
+import { Loader, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
 	acquireResumeClaim,
@@ -41,6 +41,34 @@ const DISABLE_ENV = "PI_WORKTREE_ISOLATION_DISABLE";
 const CUSTOM_TYPE = "git-worktree-isolation:finalize";
 const RATE_LIMIT_RETRY_TYPE = "rate-limit-retry:continue";
 const MAX_REPAIR_TURNS = 6;
+const CHILD_READY_MESSAGE = "pi-worktree-session-ready";
+const CLEANUP_WIDGET = "git-worktree-isolation:cleanup-progress";
+
+function signalChildReady(): void {
+	if (process.send) process.send(CHILD_READY_MESSAGE, () => process.disconnect?.());
+}
+
+type HandoffContext = Pick<ExtensionContext, "mode" | "ui">;
+
+/** Let the parent spinner animate until the child is ready to own the terminal. */
+export async function launchWithProgress(
+	cwd: string, args: string[], env: NodeJS.ProcessEnv, ctx: HandoffContext,
+): Promise<{ pid: number | undefined; error?: Error; status: number | null; signal: NodeJS.Signals | null }> {
+	if (ctx.mode === "tui") process.stdin.pause();
+	return new Promise((resolve) => {
+		const child = spawn(process.execPath, args, {
+			cwd, stdio: ["inherit", "inherit", "inherit", "ipc"], env,
+		});
+		child.on("message", (message) => {
+			if (message === CHILD_READY_MESSAGE && ctx.mode === "tui") {
+				ctx.ui.setWorkingVisible(false);
+				ctx.ui.setWidget(CLEANUP_WIDGET, undefined);
+			}
+		});
+		child.on("error", (error) => resolve({ pid: child.pid, error, status: null, signal: null }));
+		child.on("close", (status, signal) => resolve({ pid: child.pid, status, signal }));
+	});
+}
 
 /** Was this run resumed from a rate limit since the last genuine user message? */
 export function recoveredFromRateLimit(ctx: ExtensionContext): boolean {
@@ -129,16 +157,12 @@ async function extensionCwd(pi: ExtensionAPI): Promise<string> {
 	return path.resolve(result.stdout.trim());
 }
 
-async function relaunch(plan: Awaited<ReturnType<typeof createLaunchPlan>>, args = cliArgs()): Promise<never> {
-	const result = spawnSync(process.execPath, [process.argv[1]!, ...args], {
-		cwd: plan.childCwd,
-		stdio: "inherit",
-		env: {
-			...process.env,
-			[CHILD_MANIFEST_ENV]: plan.manifest.manifestPath,
-			[BRANCH_CONTINUATION_ENV]: "1",
-		},
-	});
+async function relaunch(plan: Awaited<ReturnType<typeof createLaunchPlan>>, ctx: HandoffContext, args = cliArgs()): Promise<never> {
+	const result = await launchWithProgress(plan.childCwd, [process.argv[1]!, ...args], {
+		...process.env,
+		[CHILD_MANIFEST_ENV]: plan.manifest.manifestPath,
+		[BRANCH_CONTINUATION_ENV]: "1",
+	}, ctx);
 	try {
 		await reapStaleWorktrees(plan.manifest.repoRoot, result.pid || process.pid);
 	} catch (error) {
@@ -148,17 +172,16 @@ async function relaunch(plan: Awaited<ReturnType<typeof createLaunchPlan>>, args
 	process.exit(result.status ?? (result.signal === "SIGINT" ? 130 : 1));
 }
 
-async function resumeInManagedWorktree(sessionFile: string, cwd: string, manifestPath?: string, continueCleanup = false): Promise<never> {
+async function resumeInManagedWorktree(sessionFile: string, cwd: string, manifestPath?: string, continueCleanup = false, ctx?: HandoffContext): Promise<never> {
 	const env: NodeJS.ProcessEnv = { ...process.env };
 	if (manifestPath) env[CHILD_MANIFEST_ENV] = manifestPath;
 	else delete env[CHILD_MANIFEST_ENV];
 	if (continueCleanup) env[CLEANUP_CONTINUATION_ENV] = "1";
 	else delete env[CLEANUP_CONTINUATION_ENV];
-	const result = spawnSync(process.execPath, [process.argv[1]!, ...continuationArgs(sessionFile)], {
-		cwd,
-		stdio: "inherit",
-		env,
-	});
+	const args = continuationArgs(sessionFile);
+	const result = ctx
+		? await launchWithProgress(cwd, [process.argv[1]!, ...args], env, ctx)
+		: spawnSync(process.execPath, [process.argv[1]!, ...args], { cwd, stdio: "inherit", env });
 	const manifest = manifestPath ? await loadManifest(manifestPath).catch(() => null) : null;
 	if (manifest) {
 		try {
@@ -293,6 +316,7 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 		// The statusline shows the checked-out Git branch instead of a worktree ID.
 		ctx.ui.setStatus("git-worktree-isolation", undefined);
 		if (continueBranch) {
+			signalChildReady();
 			// Print mode returns as soon as session_start finishes unless we await the
 			// extension-triggered turn. Register before starting it to avoid a race.
 			const settled = isPrintMode() ? new Promise<void>((resolve) => {
@@ -385,14 +409,14 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 	});
 
 	const finishCleanup = async (
-		sessionFile: string, mainRoot: string, branchSha: string, branchExists: boolean, clearStatus: () => void,
+		sessionFile: string, mainRoot: string, branchSha: string, branchExists: boolean, ctx: ExtensionContext,
 	): Promise<never> => {
 		// Do not leave Pi's process cwd pointing into a worktree we remove.
 		process.chdir(mainRoot);
 		const mainCwd = await finishBranchCleanup(manifest, sessionFile, mainRoot, branchSha, branchExists);
-		clearStatus();
+		ctx.ui.setStatus("git-worktree-isolation", undefined);
 		await releaseTranscript();
-		return resumeInManagedWorktree(sessionFile, mainCwd, undefined, true);
+		return resumeInManagedWorktree(sessionFile, mainCwd, undefined, true, ctx);
 	};
 	pi.registerCommand("clean-up-isolated-branch", {
 		description: "Return to main after verifying the isolated work is integrated",
@@ -412,9 +436,16 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 				return;
 			}
 			let prepared: Awaited<ReturnType<typeof prepareBranchCleanup>>;
+			if (ctx.mode === "tui") {
+				ctx.ui.setWidget(CLEANUP_WIDGET, (tui, theme) => {
+					const loader = new Loader(tui, (text) => theme.fg("accent", text), (text) => text, "Cleaning up branch...");
+					return Object.assign(loader, { dispose: () => loader.stop() });
+				}, { placement: "belowEditor" });
+			}
 			try {
 				prepared = await prepareBranchCleanup(manifest);
 			} catch (error) {
+				if (ctx.mode === "tui") ctx.ui.setWidget(CLEANUP_WIDGET, undefined);
 				const message = error instanceof Error ? error.message : String(error);
 				if (ctx.hasUI) ctx.ui.notify(message, "warning");
 				else process.stderr.write(`Pi worktree isolation: ${message}\n`);
@@ -422,8 +453,7 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 			}
 			try {
 				pi.events.emit("thinking-status:override", { label: "Cleaning up branch..." });
-				await finishCleanup(sessionFile, prepared.mainRoot, prepared.branchSha, prepared.branchExists,
-					() => ctx.ui.setStatus("git-worktree-isolation", undefined));
+				await finishCleanup(sessionFile, prepared.mainRoot, prepared.branchSha, prepared.branchExists, ctx);
 			} catch (error) {
 				fatal(`isolated branch cleanup stopped: ${error instanceof Error ? error.message : String(error)}`);
 			}
@@ -461,8 +491,7 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 		pendingCleanup = null;
 		try {
 			pi.events.emit("thinking-status:override", { label: "Cleaning up branch..." });
-			await finishCleanup(sessionFile, mainRoot, branchSha, branchExists,
-				() => ctx.ui.setStatus("git-worktree-isolation", undefined));
+			await finishCleanup(sessionFile, mainRoot, branchSha, branchExists, ctx);
 		} catch (error) {
 			fatal(`isolated branch cleanup stopped: ${error instanceof Error ? error.message : String(error)}`);
 		}
@@ -565,6 +594,7 @@ export default async function (pi: ExtensionAPI) {
 				content: "The isolated branch cleanup has returned this session to main. Give the user a brief completion message about the finished request and its current state. Do not call clean-up-isolated-branch again.",
 				display: false,
 			}, { triggerTurn: true });
+			signalChildReady();
 			if (settled) await settled;
 		});
 	}
@@ -649,14 +679,14 @@ export default async function (pi: ExtensionAPI) {
 	pi.on("tool_call", () => pending
 		? { block: true, reason: "Branch transition is already in progress.", terminate: true }
 		: undefined);
-	pi.on("turn_end", async () => {
+	pi.on("turn_end", async (_event, ctx) => {
 		if (!pending) return;
 		const { plan, sessionFile } = pending;
 		pending = null;
 		try {
 			pi.events.emit("thinking-status:override", { label: "Switching to new branch..." });
 			await rewriteSessionCwd(sessionFile, plan.childCwd);
-			await relaunch(plan, continuationArgs(sessionFile));
+			await relaunch(plan, ctx, continuationArgs(sessionFile));
 		} catch (error) {
 			fatal(`could not enter the new branch; worktree remains at ${plan.childCwd}: ${error instanceof Error ? error.message : String(error)}`);
 		}
