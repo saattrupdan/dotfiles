@@ -1,18 +1,21 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, stat, symlink, writeFile, mkdir } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
+import { promisify } from "node:util";
 
 import type { WebElement } from "selenium-webdriver";
 
 import { parseCommand, safeCommandPreview } from "./command.ts";
 import { acquireProfileLock, FirefoxSession, releaseProfileLock, requestedBrowserMode } from "./firefox-session.ts";
 import { formatSnapshot, type BrowserSnapshot } from "./snapshot.ts";
-import { isOrphanedPiFirefox, nativeLockHolder, newSecondaryProfile, recordFirefoxOwner, recoverOrphanedFirefox, refreshSeed, removeSecondaryProfile } from "./profile.ts";
+import { isOrphanedPiFirefox, nativeLockHolder, newSecondaryProfile, recordFirefoxOwner, recoverOrphanedFirefox, refreshSeed, removeSecondaryProfile, terminateOwnedFirefoxOnExit } from "./profile.ts";
+
+const run = promisify(execFile);
 
 test("parseCommand handles quoted and escaped arguments without a shell", () => {
 	assert.deepEqual(parseCommand(`fill @e2 "hello world"`), {
@@ -103,6 +106,25 @@ test("only one concurrent caller can replace a stale profile lock", async () => 
 	await rm(root, { recursive: true, force: true });
 });
 
+test("closing during profile acquisition cancels startup and blocks another start", async () => {
+	const root = await mkdtemp(join(tmpdir(), "pi-firefox-start-cancel-"));
+	const profile = join(root, "profile");
+	await mkdir(profile);
+	await writeFile(`${profile}.pi-lock.guard`, JSON.stringify({ pid: process.pid, token: "guard" }));
+	const browser = new FirefoxSession(profile);
+	try {
+		const starting = browser.start("headless");
+		const closing = browser.close();
+		await assert.rejects(browser.start("headless"), /closing/);
+		await assert.rejects(starting, /aborted/);
+		assert.match(await closing, /Firefox closed/);
+		assert.equal(await nativeLockHolder(profile), null);
+	} finally {
+		await browser.shutdown();
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
 test("profile clones retain logins but omit caches, locks and symlinks", async () => {
 	const root = await mkdtemp(join(tmpdir(), "pi-firefox-clone-"));
 	const primary = join(root, "profile");
@@ -169,6 +191,20 @@ test(
 			await recordFirefoxOwner(profile);
 			assert.equal(await recoverOrphanedFirefox(profile), pid);
 			assert.equal(await nativeLockHolder(profile), null);
+			const second = spawn(binary, ["--marionette", "--profile", profile, "--marionette-port", "0", "--no-remote", "-headless"], { stdio: "ignore" });
+			try {
+				for (let attempt = 0; attempt < 100 && await nativeLockHolder(profile) !== second.pid; attempt++) {
+					await new Promise((resolve) => setTimeout(resolve, 100));
+				}
+				const owner = await recordFirefoxOwner(profile);
+				terminateOwnedFirefoxOnExit(profile, owner);
+				for (let attempt = 0; attempt < 50 && await nativeLockHolder(profile) !== null; attempt++) {
+					await new Promise((resolve) => setTimeout(resolve, 100));
+				}
+				assert.equal(await nativeLockHolder(profile), null);
+			} finally {
+				if (second.exitCode === null) second.kill("SIGTERM");
+			}
 		} finally {
 			if (await nativeLockHolder(profile) === pid) process.kill(pid, "SIGTERM");
 			await rm(root, { recursive: true, force: true });
@@ -209,7 +245,14 @@ test(
 				);
 			}
 			assert.match(await browser.execute(parseCommand("click @e5"), async () => false), /# Done/);
+			const headlessPid = await nativeLockHolder(browser.profilePath);
+			assert.ok(headlessPid);
+			if (process.platform === "darwin") {
+				const { stdout } = await run("osascript", ["-e", `tell application "System Events" to get background only of first application process whose unix id is ${headlessPid}`]);
+				assert.equal(stdout.trim(), "true", "headless Firefox must not appear in Cmd+Tab");
+			}
 			await browser.close();
+			assert.equal(await nativeLockHolder(browser.profilePath), null);
 			assert.match(await browser.start("headed"), /headed mode/);
 			assert.match(browser.status(), /running in headed mode/);
 		} finally {

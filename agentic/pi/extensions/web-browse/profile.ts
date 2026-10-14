@@ -1,5 +1,5 @@
 /* Profile isolation and conservative recovery for Firefox sessions. */
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { cp, lstat, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
@@ -39,7 +39,7 @@ export function isOrphanedPiFirefox(command: string, ppid: number, profile: stri
 		command.includes("--marionette") && command.includes("--no-remote");
 }
 
-interface FirefoxIdentity { pid: number; started: string; ppid: number; command: string }
+export interface FirefoxIdentity { pid: number; started: string; ppid: number; command: string }
 
 async function firefoxIdentity(pid: number): Promise<FirefoxIdentity | null> {
 	try {
@@ -59,13 +59,38 @@ function ownerPath(profile: string): string {
 }
 
 /** Record the browser identity while the current Pi process still controls its lock. */
-export async function recordFirefoxOwner(profile: string): Promise<void> {
+export async function recordFirefoxOwner(profile: string): Promise<FirefoxIdentity> {
 	const pid = await nativeLockHolder(profile);
 	const identity = pid && await firefoxIdentity(pid);
 	if (!identity || !identity.command.includes(`--profile ${profile} --marionette-port `)) {
 		throw new Error("Cannot verify launched Firefox process; refusing untracked browser session");
 	}
 	await writeFile(ownerPath(profile), `${JSON.stringify(identity)}\n`, { mode: 0o600 });
+	return identity;
+}
+
+/** Only terminate the exact process launched for this profile, never another Firefox. */
+export async function terminateOwnedFirefox(profile: string, owner: FirefoxIdentity): Promise<void> {
+	if (await nativeLockHolder(profile) !== owner.pid) return;
+	const current = await firefoxIdentity(owner.pid);
+	if (!current || current.started !== owner.started || current.command !== owner.command) {
+		throw new Error(`Firefox profile is still held by process ${owner.pid}, but its identity changed`);
+	}
+	process.kill(owner.pid, "SIGTERM");
+	for (let attempt = 0; attempt < 50; attempt++) {
+		if (await nativeLockHolder(profile) === null) return;
+		await new Promise((resolve) => setTimeout(resolve, 100));
+	}
+	throw new Error(`Firefox process ${owner.pid} did not release the profile after shutdown`);
+}
+
+/** The exit event cannot await WebDriver; signal a verified owned browser synchronously. */
+export function terminateOwnedFirefoxOnExit(profile: string, owner: FirefoxIdentity): void {
+	const start = spawnSync("ps", ["-p", String(owner.pid), "-o", "lstart="], { encoding: "utf8", timeout: 1_000 });
+	const command = spawnSync("ps", ["-p", String(owner.pid), "-o", "command="], { encoding: "utf8", timeout: 1_000 });
+	if (start.status !== 0 || command.status !== 0 || start.stdout.trim() !== owner.started ||
+		command.stdout.trim() !== owner.command || !owner.command.includes(`--profile ${profile} --marionette-port `)) return;
+	try { process.kill(owner.pid, "SIGTERM"); } catch { /* Already gone. */ }
 }
 
 export async function clearFirefoxOwner(profile: string): Promise<void> {

@@ -85,9 +85,22 @@ function resultText(result: AgentToolResult<unknown>): string {
 
 export default function (pi: ExtensionAPI) {
 	const session = new FirefoxSession();
+	// Pi can exit without emitting session_shutdown (e.g. a fatal error or terminal exit).
+	const onExit = () => session.terminateOnExit();
+	const onTerm = () => {
+		session.terminateOnExit();
+		if (process.listenerCount("SIGTERM") === 1) {
+			process.removeListener("SIGTERM", onTerm);
+			process.kill(process.pid, "SIGTERM");
+		}
+	};
+	process.on("exit", onExit);
+	process.on("SIGTERM", onTerm);
 
 	pi.on("session_shutdown", async () => {
 		await session.shutdown();
+		process.removeListener("exit", onExit);
+		process.removeListener("SIGTERM", onTerm);
 	});
 
 	pi.registerTool({

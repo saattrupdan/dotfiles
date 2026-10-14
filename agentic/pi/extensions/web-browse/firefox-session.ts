@@ -12,7 +12,7 @@ import * as firefox from "selenium-webdriver/firefox";
 
 import type { ParsedCommand } from "./command.ts";
 import { formatSnapshot, type SnapshotElement, takeSnapshot } from "./snapshot.ts";
-import { clearFirefoxOwner, invalidateSeed, nativeLockHolder, newSecondaryProfile, recordFirefoxOwner, recoverOrphanedFirefox, refreshSeed, removeSecondaryProfile, seedPath } from "./profile.ts";
+import { clearFirefoxOwner, invalidateSeed, nativeLockHolder, newSecondaryProfile, recordFirefoxOwner, recoverOrphanedFirefox, refreshSeed, removeSecondaryProfile, seedPath, terminateOwnedFirefox, terminateOwnedFirefoxOnExit, type FirefoxIdentity } from "./profile.ts";
 
 export type BrowserMode = "headed" | "headless";
 
@@ -292,6 +292,8 @@ export class FirefoxSession {
 	private lock: ProfileLock | null = null;
 	private startup: Promise<void> | null = null;
 	private startupController: AbortController | null = null;
+	private closing: Promise<string> | null = null;
+	private owner: FirefoxIdentity | null = null;
 	private refs = new Map<string, SnapshotElement>();
 
 	constructor(profilePath = defaultProfilePath()) {
@@ -324,35 +326,51 @@ export class FirefoxSession {
 				.setFirefoxService(new firefox.ServiceBuilder(geckodriverBinary));
 
 			builtDriver = await builder.build();
+			this.owner = await recordFirefoxOwner(this.profilePath);
 			throwIfAborted(signal);
 			await builtDriver.manage().setTimeouts({ implicit: 0, pageLoad: 45_000, script: 15_000 });
 			throwIfAborted(signal);
-			await recordFirefoxOwner(this.profilePath);
 			this.driver = builtDriver;
 			builtDriver = null;
 			this.mode = mode;
 			this.refs.clear();
 		} catch (error) {
-			await builtDriver?.quit().catch(() => undefined);
-			if (this.lock === lock) {
-				this.lock = null;
-				await releaseProfileLock(lock);
+			try {
+				if (builtDriver) await Promise.race([builtDriver.quit().catch(() => undefined), pause(3_000)]);
+				// build() can launch Firefox and then fail before returning a driver.
+				if (!this.owner && await nativeLockHolder(this.profilePath) !== null) {
+					this.owner = await recordFirefoxOwner(this.profilePath);
+				}
+				if (this.owner) await terminateOwnedFirefox(this.profilePath, this.owner);
+				this.owner = null;
+			} finally {
+				if (this.lock === lock) {
+					this.lock = null;
+					await releaseProfileLock(lock);
+				}
 			}
 			throw error;
 		}
 	}
 
 	async start(mode: BrowserMode, signal?: AbortSignal): Promise<string> {
+		if (this.closing) throw new Error("Firefox is closing; retry after shutdown completes.");
+		if (this.owner && !this.driver) throw new Error("Firefox shutdown is incomplete. Use close to retry.");
 		if (this.driver) {
 			if (this.mode !== mode) throw new Error(`Firefox is already running ${this.mode}; close it before changing mode.`);
 			return this.status();
 		}
 		if (this.startup) throw new Error("Firefox is already starting.");
-
+		const controller = new AbortController();
+		const onAbort = () => controller.abort(signal?.reason);
+		if (signal?.aborted) onAbort();
+		else signal?.addEventListener("abort", onAbort, { once: true });
+		this.startupController = controller;
+		const startup = (async () => {
 		let lock: ProfileLock | null = null;
 		let busy: ProfileBusyError | null = null;
 		for (let attempt = 0; attempt < 50; attempt++) {
-			throwIfAborted(signal);
+			throwIfAborted(controller.signal);
 			try {
 				lock = await acquireProfileLock(this.profilePath);
 				break;
@@ -369,7 +387,7 @@ export class FirefoxSession {
 			if (!busy || this.secondaryProfilePath) throw busy ?? new Error("Firefox profile lock is still being changed; retry shortly.");
 			// Another Pi process owns the primary. Clone a quiescent seed, never its live databases.
 			for (let attempt = 0; attempt < 50; attempt++) {
-				throwIfAborted(signal);
+				throwIfAborted(controller.signal);
 				try {
 					await access(seedPath(this.primaryProfilePath));
 					break;
@@ -383,12 +401,6 @@ export class FirefoxSession {
 			lock = await acquireProfileLock(secondary);
 		}
 		this.lock = lock;
-		const controller = new AbortController();
-		const onAbort = () => controller.abort(signal?.reason);
-		if (signal?.aborted) onAbort();
-		else signal?.addEventListener("abort", onAbort, { once: true });
-		this.startupController = controller;
-		const startup = (async () => {
 			try {
 				await recoverOrphanedFirefox(this.profilePath, controller.signal);
 				if (!this.secondaryProfilePath) {
@@ -426,43 +438,61 @@ export class FirefoxSession {
 	}
 
 	status(): string {
+		if (!this.driver && this.owner) return `Firefox shutdown is incomplete. Use close to retry.\nProfile: ${this.profilePath}`;
 		if (!this.driver) return `Firefox is stopped.\nProfile: ${this.profilePath}`;
 		return `Firefox is running in ${this.mode} mode.\nProfile: ${this.profilePath}`;
 	}
 
-	async close(): Promise<string> {
+	close(): Promise<string> {
+		if (this.closing) return this.closing;
+		const closing = this.closeInternal();
+		this.closing = closing;
+		void closing.finally(() => { if (this.closing === closing) this.closing = null; }).catch(() => undefined);
+		return closing;
+	}
+
+	private async closeInternal(): Promise<string> {
 		this.startupController?.abort(abortError());
 		await this.startup?.catch(() => undefined);
 		const driver = this.driver;
 		const lock = this.lock;
+		const hadOwner = this.owner !== null;
 		this.driver = null;
 		this.mode = null;
-		this.lock = null;
 		this.refs.clear();
 		let seedWarning = "";
 		try {
-			await driver?.quit();
-		} catch {
-			// Firefox may already have been closed manually.
-		} finally {
 			try {
-				if (lock && await nativeLockHolder(this.profilePath) === null) {
-					await clearFirefoxOwner(this.profilePath);
-					if (!this.secondaryProfilePath) {
-						try {
-							// Include logins established during this session in future secondary profiles.
-							await refreshSeed(this.profilePath);
-						} catch (error) {
-							await invalidateSeed(this.profilePath);
-							seedWarning = ` Login seed refresh failed: ${error instanceof Error ? error.message : String(error)}. Concurrent browsers cannot inherit logins until a successful refresh.`;
-						}
+				if (driver) await Promise.race([driver.quit(), pause(3_000)]);
+			} catch {
+				// Firefox may already have been closed manually; verify its lock below.
+			}
+			if (this.owner) await terminateOwnedFirefox(this.profilePath, this.owner);
+			if (lock && await nativeLockHolder(this.profilePath) !== null) {
+				throw new Error("Firefox still holds its profile after shutdown; refusing to report it closed");
+			}
+			this.owner = null;
+			if (lock || hadOwner) {
+				await clearFirefoxOwner(this.profilePath);
+				if (!this.secondaryProfilePath) {
+					try {
+						// Include logins established during this session in future secondary profiles.
+						await refreshSeed(this.profilePath);
+					} catch (error) {
+						await invalidateSeed(this.profilePath);
+						seedWarning = ` Login seed refresh failed: ${error instanceof Error ? error.message : String(error)}. Concurrent browsers cannot inherit logins until a successful refresh.`;
 					}
 				}
-			} finally {
-				await releaseProfileLock(lock);
 			}
+		} finally {
+			this.lock = null;
+			await releaseProfileLock(lock);
 		}
 		return `Firefox closed.${seedWarning}`;
+	}
+
+	terminateOnExit(): void {
+		if (this.owner) terminateOwnedFirefoxOnExit(this.profilePath, this.owner);
 	}
 
 	async shutdown(): Promise<void> {
