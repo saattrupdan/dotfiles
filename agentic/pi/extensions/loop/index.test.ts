@@ -108,7 +108,10 @@ function harness(
 	const sent: string[] = [];
 	const rawSent: string[] = [];
 	const notices: string[] = [];
+	const statuses: (string | undefined)[] = [];
 	const timers = new Map<number, { callback: () => void; delay: number }>();
+	const intervals = new Map<number, () => void>();
+	let clock = 0;
 	let nextTimer = 0;
 	let busy = false;
 	let pending = false;
@@ -118,7 +121,7 @@ function harness(
 	const ctx = {
 		mode: options.mode ?? "tui",
 		cwd: options.cwd ?? process.cwd(),
-		ui: { setStatus: () => {} },
+		ui: { setStatus: (_key: string, value?: string) => { statuses.push(value); } },
 		isIdle: () => !busy,
 		hasPendingMessages: () => pending,
 		getContextUsage: () => options.contextTokens === undefined ? undefined : {
@@ -156,9 +159,18 @@ function harness(
 			return id as unknown as ReturnType<typeof setTimeout>;
 		},
 		clearTimer: (id) => { timers.delete(id as unknown as number); },
+		setInterval: (callback, delay) => {
+			assert.equal(delay, 1_000);
+			const id = ++nextTimer;
+			intervals.set(id, callback);
+			return id as unknown as ReturnType<typeof setInterval>;
+		},
+		clearInterval: (id) => { intervals.delete(id as unknown as number); },
+		now: () => clock,
 	});
 	return {
-		sent, rawSent, notices, timers,
+		sent, rawSent, notices, statuses, timers, intervals,
+		advance: (ms: number) => { clock += ms; for (const callback of [...intervals.values()]) callback(); },
 		compactions: () => compactions,
 		finishCompaction: () => finishCompaction?.(),
 		setBusy: (value: boolean) => { busy = value; },
@@ -181,6 +193,7 @@ function harness(
 			const [id, timer] = [...timers][0] ?? [];
 			assert.ok(timer);
 			timers.delete(id);
+			clock += timer.delay;
 			timer.callback();
 			return timer.delay;
 		},
@@ -237,6 +250,53 @@ test("duration applies after settled and defers while another turn is busy", asy
 	assert.equal(h.sent.length, 2);
 	await h.command("stop");
 	assert.equal(h.timers.size, 0);
+});
+
+test("status counts down only during the delay and clears on expiry or stop", async () => {
+	const h = harness(undefined, { contextTokens: 2_000 });
+	await h.command("1m30s --max-runs 3 work");
+	assert.equal(h.statuses.at(-1), "↻ 1/3 running");
+	assert.equal(h.intervals.size, 0);
+	await h.finish();
+	assert.equal(h.statuses.at(-1), "↻ 1/3 waiting 1m30s");
+	assert.equal(h.intervals.size, 1);
+	h.advance(1_000);
+	assert.equal(h.statuses.at(-1), "↻ 1/3 waiting 1m29s");
+	h.advance(89_000);
+	assert.equal(h.statuses.at(-1), "↻ 1/3 waiting");
+	assert.equal(h.intervals.size, 0);
+	h.tick(); // expiry; skip compaction for a short session
+	h.tick(); // next run
+	assert.equal(h.statuses.at(-1), "↻ 2/3 running");
+	await h.finish();
+	assert.equal(h.statuses.at(-1), "↻ 2/3 waiting 1m30s");
+	await h.command("stop");
+	assert.equal(h.statuses.at(-1), undefined);
+	assert.equal(h.intervals.size, 0);
+});
+
+test("countdown ends at the deadline even if pending messages defer the next run", async () => {
+	const h = harness(undefined, { contextTokens: 2_000 });
+	await h.command("1s work");
+	await h.finish();
+	h.setPending(true);
+	assert.equal(h.tick(), 1_000);
+	assert.equal(h.statuses.at(-1), "↻ 1 waiting");
+	assert.equal(h.intervals.size, 0);
+	await h.command("stop");
+});
+
+test("rate-limit retry shows a countdown and stop cancels it", async () => {
+	const h = harness(undefined, { compact: "rateOnce" });
+	await h.command("work");
+	await h.finish();
+	h.tick(); // compaction hits a rate limit
+	assert.equal(h.statuses.at(-1), "↻ 1 rate limited 1m0s");
+	h.advance(1_000);
+	assert.equal(h.statuses.at(-1), "↻ 1 rate limited 59s");
+	await h.command("stop");
+	assert.equal(h.intervals.size, 0);
+	assert.equal(h.statuses.at(-1), undefined);
 });
 
 test("until checker sees final response and stops only on done", async () => {
@@ -379,14 +439,18 @@ test("user messages do not stop a running or waiting loop", async () => {
 
 test("stop and session shutdown invalidate timers", async () => {
 	const h = harness();
-	await h.command("work");
+	await h.command("1m work");
 	await h.finish();
+	assert.equal(h.intervals.size, 1);
 	await h.command("stop");
 	assert.equal(h.timers.size, 0);
-	await h.command("work");
+	assert.equal(h.intervals.size, 0);
+	await h.command("1m work");
 	await h.finish();
+	assert.equal(h.intervals.size, 1);
 	await h.emit("session_shutdown");
 	assert.equal(h.timers.size, 0);
+	assert.equal(h.intervals.size, 0);
 });
 
 test("session startup clears a loop signal left by a reloaded extension", async () => {

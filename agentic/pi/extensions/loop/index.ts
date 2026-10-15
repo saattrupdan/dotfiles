@@ -77,12 +77,16 @@ interface Dependencies {
 	check?: Checker;
 	setTimer?: (callback: () => void, ms: number) => ReturnType<typeof setTimeout>;
 	clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
+	setInterval?: (callback: () => void, ms: number) => ReturnType<typeof setInterval>;
+	clearInterval?: (timer: ReturnType<typeof setInterval>) => void;
+	now?: () => number;
 }
 interface ActiveLoop extends LoopOptions {
 	runs: number;
 	phase: "running" | "checking" | "waiting" | "compacting" | "rate limited";
 	compacted: boolean;
 	rateLimitRetries: number;
+	waitUntil?: number;
 	lastOutput?: string;
 	failed?: boolean;
 	generation: number;
@@ -93,8 +97,12 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 	const check = deps.check ?? checkCondition;
 	const setTimer = deps.setTimer ?? setTimeout;
 	const clearTimer = deps.clearTimer ?? clearTimeout;
+	const setCountdownInterval = deps.setInterval ?? setInterval;
+	const clearCountdownInterval = deps.clearInterval ?? clearInterval;
+	const now = deps.now ?? Date.now;
 	let active: ActiveLoop | undefined;
 	let timer: ReturnType<typeof setTimeout> | undefined;
+	let countdownTimer: ReturnType<typeof setInterval> | undefined;
 	let startWatchdog: ReturnType<typeof setTimeout> | undefined;
 	let checker: AbortController | undefined;
 	let generation = 0;
@@ -103,10 +111,38 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 		pi.sendMessage({ customType: "loop:status", content: message, display: true });
 	}
 	function updateStatus(ctx: ExtensionContext) {
-		ctx.ui.setStatus(STATUS_KEY, active ? `↻ ${active.runs}${active.maxRuns ? `/${active.maxRuns}` : ""} ${active.phase}` : undefined);
+		if (!active) {
+			ctx.ui.setStatus(STATUS_KEY, undefined);
+			return;
+		}
+		const remaining = active.waitUntil === undefined ? 0 : Math.max(0, Math.ceil((active.waitUntil - now()) / 1_000));
+		const hours = Math.floor(remaining / 3_600);
+		const minutes = Math.floor(remaining / 60) % 60;
+		const seconds = remaining % 60;
+		const countdown = active.waitUntil === undefined || remaining === 0 ? "" :
+			` ${hours ? `${hours}h` : ""}${hours || minutes ? `${minutes}m` : ""}${seconds}s`;
+		ctx.ui.setStatus(STATUS_KEY, `↻ ${active.runs}${active.maxRuns ? `/${active.maxRuns}` : ""} ${active.phase}${countdown}`);
+	}
+	function clearCountdown(loop: ActiveLoop) {
+		if (countdownTimer !== undefined) clearCountdownInterval(countdownTimer);
+		countdownTimer = undefined;
+		loop.waitUntil = undefined;
+	}
+	function startCountdown(loop: ActiveLoop, delay: number) {
+		clearCountdown(loop);
+		if (delay > 0) {
+			loop.waitUntil = now() + delay;
+			countdownTimer = setCountdownInterval(() => {
+				if (active !== loop) return;
+				if (now() >= loop.waitUntil!) clearCountdown(loop);
+				updateStatus(loop.ctx);
+			}, 1_000);
+		}
+		updateStatus(loop.ctx);
 	}
 	function stop(reason?: string) {
 		generation++;
+		if (active) clearCountdown(active);
 		if (timer !== undefined) clearTimer(timer);
 		timer = undefined;
 		if (startWatchdog !== undefined) clearTimer(startWatchdog);
@@ -133,21 +169,30 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 	function retryAfterRateLimit(loop: ActiveLoop, callback: () => void) {
 		if (active !== loop) return;
 		loop.phase = "rate limited";
-		updateStatus(loop.ctx);
 		const delay = Math.min(RATE_LIMIT_RETRY_MS * 2 ** Math.min(loop.rateLimitRetries++, 3), MAX_RATE_LIMIT_RETRY_MS);
+		startCountdown(loop, delay);
 		say(`Loop rate limited; retrying in ${Math.ceil(delay / 1_000)}s (run ${loop.runs}).`);
-		timer = setTimer(() => { timer = undefined; if (active === loop) callback(); }, delay);
+		timer = setTimer(() => {
+			timer = undefined;
+			if (active !== loop) return;
+			clearCountdown(loop);
+			callback();
+		}, delay);
 	}
 	function schedule(loop: ActiveLoop) {
 		if (active !== loop) return;
 		loop.phase = "waiting";
 		loop.compacted = false;
 		loop.rateLimitRetries = 0;
-		updateStatus(loop.ctx);
+		startCountdown(loop, loop.intervalMs);
 		const token = loop.generation;
 		const tick = () => {
 			timer = undefined;
 			if (active !== loop || generation !== token) return;
+			if (loop.waitUntil !== undefined) {
+				clearCountdown(loop);
+				updateStatus(loop.ctx);
+			}
 			if (!loop.ctx.isIdle() || loop.ctx.hasPendingMessages()) {
 				timer = setTimer(tick, 1_000);
 				return;
@@ -195,6 +240,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 	}
 	function run(loop: ActiveLoop) {
 		if (active !== loop) return;
+		clearCountdown(loop);
 		loop.runs++;
 		loop.phase = "running";
 		loop.lastOutput = undefined;
