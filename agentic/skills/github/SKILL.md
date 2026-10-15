@@ -106,6 +106,33 @@ Recommended structure:
 Less emphasis on technical internals — agents should know _what_ the PR delivers, not
 _which files changed_. (The diffs page covers that.)
 
+### Visual evidence for UI changes
+
+If a PR changes the UI, add visual evidence to its **body** so reviewers can see the
+result without checking out the branch. Record a video for interactive behaviour
+(typing, navigation, animations, drag and drop); use an image for a static change.
+Capture the actual running application or rendered artifact with the change applied.
+Do not substitute a mockup, recreated slide, or staged illustration for the real UI.
+Inspect the capture before uploading it, and show the interaction and resulting state.
+
+`gh` v2.99.0 or newer supports `--attach` on `pr create`, `pr edit`, and `pr comment`.
+For an existing PR, write the updated body to a temporary file, then upload and embed
+the recording in one command:
+
+```bash
+gh --version  # Check for v2.99.0 or newer.
+gh pr edit <N> --body-file /tmp/pr-body.md --attach /tmp/ui-demo.webm
+gh pr view <N> --json body --jq .body  # Check for the user-attachments URL.
+```
+
+An unreferenced attachment is appended to the body; replace an obsolete demo link in
+the body file before uploading. If the body already references a local image path,
+`gh` replaces it with the uploaded URL and keeps its alt text. For an image, use
+`--attach '/tmp/ui.png#Actual settings screen'`. Videos render as players and have no
+alt text. Supported video formats are MP4, MOV, and WebM. Upload limits are 10 MB for
+video on GitHub Free and 100 MB on paid plans. Keep the capture outside the repo, and
+verify the uploaded URL in the PR body after `gh pr edit` returns.
+
 ### Reviewers and assignment
 
 Always assign yourself (`@me`) to the PR as the author.
