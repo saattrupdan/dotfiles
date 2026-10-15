@@ -103,6 +103,15 @@ Recommended structure:
 3. **Examples** — concrete CLI examples or API calls showing how it works
 4. **Why it helps** (optional) — one short paragraph on the motivation or benefit
 
+**Pre-submit check for every `gh pr create` and `gh pr edit`:** Read the complete
+proposed body before sending it. Check that a reviewer can quickly find what changed,
+the user-facing behavior, how to try it, and why it matters when that is not obvious.
+For a bug fix, state the broken behavior and its user-visible consequence explicitly
+in the body, then say how the change fixes it; the title alone is not enough. Use
+short sections for small fixes; do not replace the structure with one summary
+paragraph plus checks. When adding a video or image later, re-check the whole body,
+not just the attachment. Verify the published body with `gh pr view --json body`.
+
 Less emphasis on technical internals — agents should know _what_ the PR delivers, not
 _which files changed_. (The diffs page covers that.)
 
