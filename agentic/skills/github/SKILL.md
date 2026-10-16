@@ -154,6 +154,13 @@ Auto-close: `Fixes #N`, `Closes #N`, `Resolves #N` in body. Aliases: `gh pr new`
 
 ### Review cycle
 
+**Keep reviews read-only.** When reviewing someone else's PR, investigate follow-up
+observations and add findings as line-level review comments. Do not edit, commit, or
+push to the contributor's branch unless the user explicitly asks you to implement a
+fix. A request to check whether something "needs" a change is review feedback, not
+permission to make the change. Checking out the branch or performing a separate
+operational task, such as publishing datasets, does not change that boundary.
+
 To check for pending reviews:
 
 ```bash
