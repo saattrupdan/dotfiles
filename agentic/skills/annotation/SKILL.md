@@ -1,3 +1,12 @@
+---
+name: annotation
+description: >-
+  Build task-specific, keyboard-first HTML annotation interfaces for reviewing
+  examples, editing labels, comparing model predictions and autosaving decisions.
+  Use when creating or updating an annotation or dataset review page.
+last-updated: 2026-10-16
+---
+
 # Annotation interfaces
 
 Create a **standalone, keyboard-first HTML file** for the specific annotation job. Build
