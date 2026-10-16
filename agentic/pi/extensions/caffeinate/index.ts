@@ -1,13 +1,12 @@
 /**
  * Keep the Mac awake while an agent run or a /loop is active — even with the
- * lid closed. After a loop finishes with the lid shut, hold until it reopens.
+ * lid closed. Release the hold when the run or loop finishes.
  *
  *   • agent_start → the Mac stays awake; closing the lid no longer sleeps it,
  *                   so a long run keeps going while you walk away.
  *   • agent_end   → normal sleep behaviour is restored unless /loop is still
  *                   active (including its wait and completion check). A stopped
- *                   loop keeps power held until any current run finishes. If
- *                   its lid is still shut, keep holding until it opens.
+ *                   loop keeps power held until any current run finishes.
  *
  * Two macOS mechanisms, combined, because neither is sufficient alone:
  *
@@ -45,7 +44,6 @@ import * as path from "node:path";
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isLoopActive, onLoopChange } from "../_loop_state/state.ts";
-import { isLidClosed } from "../_lid_state/lid.ts";
 import { PowerLifecycle } from "./lifecycle.ts";
 import { watcherShell } from "./watcher.ts";
 
@@ -209,7 +207,8 @@ function engage(ctx: ExtensionContext): void {
 	// Idle/display/system assertions for the duration of the work. Dies with us
 	// as an extra backstop even if the watcher is somehow lost.
 	try {
-		const p = spawn("caffeinate", ["-dimsu"], { stdio: "ignore", detached: true });
+		// -w releases assertions if Pi exits before session_shutdown can run.
+		const p = spawn("caffeinate", ["-dimsu", "-w", String(process.pid)], { stdio: "ignore", detached: true });
 		p.on("error", () => {});
 		caffeinateChild = p;
 	} catch {
@@ -272,7 +271,7 @@ export default function (pi: ExtensionAPI) {
 	if (process.env.PI_SUBAGENT_CHILD === "1") return;
 
 	piApi = pi;
-	const lifecycle = new PowerLifecycle<ExtensionContext>(engage, release, () => engaged, isLidClosed);
+	const lifecycle = new PowerLifecycle<ExtensionContext>(engage, release);
 
 	// Surface the setup hint right when Pi opens, before any message is sent, so
 	// it's discoverable. Only when unconfigured, and only once per session.
@@ -328,9 +327,7 @@ export default function (pi: ExtensionAPI) {
 			} else if (engaged && !isSleepDisabled()) {
 				state = "run active, but lid-close protection is off — check battery temperature or power settings.";
 			} else if (engaged) {
-				state = lifecycle.waitingForLid
-					? "active — loop finished with the lid shut; staying awake until it opens."
-					: "active — this run or loop keeps the Mac awake, even with the lid closed.";
+				state = "active — this run or loop keeps the Mac awake, even with the lid closed.";
 			} else {
 				state = "armed — runs will keep the Mac awake (lid-close included) while in progress.";
 			}
