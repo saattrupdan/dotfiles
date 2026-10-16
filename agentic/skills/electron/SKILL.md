@@ -116,6 +116,11 @@ Sources: [security](https://www.electronjs.org/docs/latest/tutorial/security),
   main/UI paths and defer noncritical initialization. If using native Node addons, check
   target OS/architecture and Electron ABI compatibility; use `@electron/rebuild` or
   compatible prebuilds when necessary.
+- In a worktree, check whether the build output is a symlink into another checkout
+  before packaging. A dev build can succeed through the link, while electron-builder
+  omits the output and reports that the main entry file is missing from `app.asar`.
+  Replace only the worktree's output link with a local ignored directory, then rebuild;
+  never remove the link's target or overwrite another checkout's running dev build.
 
 Sources:
 [debug](https://www.electronjs.org/docs/latest/tutorial/debugging-main-process),
@@ -148,7 +153,28 @@ Sources:
    [breaking changes](https://www.electronjs.org/docs/latest/breaking-changes).
    Rebuild/check native addons and rerun packaged smoke tests across platforms.
 
-Sources:
+### App icons with electron-builder
+
+- A 1024×1024 `build/icon.png` is enough: electron-builder discovers it and converts it
+  to the native macOS `.icns` during packaging. Keep an editable SVG source if useful,
+  but do not add a custom ICNS generator or an explicit `mac.icon` for this standard
+  case. Other packaging tools have different icon conventions.
+- For a rounded-square macOS icon, keep the visible artwork around 824×824 within the
+  transparent 1024×1024 canvas (about 100 px padding on every side). Check the actual
+  Dock appearance, including on macOS Tahoe; artwork reaching the canvas edge can look
+  oversized or sit awkwardly on the system's backdrop.
+- A packaged macOS app uses its native bundle icon. Only call `app.dock.setIcon` for an
+  unpackaged development app if it otherwise shows Electron's icon. Do so after
+  `app.whenReady()`, guard `app.dock` for TypeScript/platform safety, and check
+  `!app.isPackaged`; overriding a packaged icon with a PNG loses the native treatment.
+  The development PNG need not be included in the packaged app's `files` solely for this
+  override.
+- Validate conversion by packaging an unsigned macOS directory build with
+  `electron-builder --mac --dir --publish never -c.mac.identity=null`, then inspect
+  `Contents/Resources/icon.icns` and `CFBundleIconFile` in the app's `Info.plist`. This
+  checks asset generation, not signing or notarization.
+
+Sources: [icons and images](https://www.electron.build/docs/features/icons-and-images/),
 [packaging](https://www.electronjs.org/docs/latest/tutorial/tutorial-packaging),
 [Forge makers](https://www.electronforge.io/config/makers),
 [Forge publishers](https://www.electronforge.io/config/publishers),
