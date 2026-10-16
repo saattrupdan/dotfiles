@@ -121,6 +121,11 @@ Sources: [security](https://www.electronjs.org/docs/latest/tutorial/security),
   omits the output and reports that the main entry file is missing from `app.asar`.
   Replace only the worktree's output link with a local ignored directory, then rebuild;
   never remove the link's target or overwrite another checkout's running dev build.
+- For an isolated macOS screenshot or packaged smoke test, do not rely on a temporary
+  `HOME` to redirect Electron's `app.getPath('userData')`: it can still use the real
+  app profile. Set a dedicated `userData` path before readiness or build with a
+  distinct product name, and isolate any separate app-managed vault/data root too.
+  Verify the paths before letting the app access personal data.
 
 Sources:
 [debug](https://www.electronjs.org/docs/latest/tutorial/debugging-main-process),
@@ -152,6 +157,45 @@ Sources:
    [release schedule](https://releases.electronjs.org/schedule), and
    [breaking changes](https://www.electronjs.org/docs/latest/breaking-changes).
    Rebuild/check native addons and rerun packaged smoke tests across platforms.
+
+### GitHub prerelease channels with electron-updater
+
+- Electron's native `autoUpdater` is a low-level feed/Squirrel interface, not a
+  GitHub-release channel manager. For an electron-builder app publishing to GitHub,
+  use `electron-updater`'s built-in `autoUpdater`: set `channel` explicitly to
+  `"dev"` or `"latest"`, toggle `allowPrerelease` with the setting, and permit
+  downgrades on a return to stable. Setting `channel` enables `allowDowngrade` in
+  electron-updater 6.8.9. Do not clear `channel` to `null`: a packaged dev build's
+  `app-update.yml` may still specify `dev`, so the GitHub provider would request
+  `dev-mac.yml` from a stable release. GitHub publishing does not infer a custom
+  channel from the prerelease tag; set `publish.channel=dev` to generate
+  `dev-mac.yml` while stable builds retain `latest-mac.yml`.
+- Give each prerelease a unique ordered SemVer version and tag (for example,
+  `0.1.2-dev.123`). Keep that version in the packed `package.json` using
+  electron-builder's `extraMetadata.version`. macOS plist versions must be numeric:
+  set `mac.bundleShortVersion` to `0.1.2` and `mac.bundleVersion` to a numeric build
+  number. **Do not add a custom `MacUpdater` app adapter just for this mismatch.**
+  Electron 43's `app.getVersion()` returns the packed `package.json` version even
+  with a numeric `CFBundleShortVersionString`; this was verified by running an
+  unsigned packaged app, not only by reading the docs.
+- If users can switch channels while auto-download runs, serialize their choices.
+  `checkForUpdates()` returns before its `downloadPromise` settles; cancel/drain the
+  previous check's download before changing feed and discard its ready state. On
+  macOS, `autoInstallOnAppQuit=true` starts native Squirrel staging once a ZIP is
+  downloaded, and electron-updater exposes no public unstage method. Keep implicit
+  quit installation off for switchable channels; after the app's own quit guards and
+  teardown, call `quitAndInstall()` only for a ready update from the selected channel.
+- GitHub Actions concurrency groups keep only one running and one pending run. A
+  single shared group can silently drop intermediate pushes, so use a per-commit
+  group if the product promises a prerelease for every `main` commit. Serialize
+  stable-release publication separately when multiple commits can race to create
+  the same version tag.
+
+Sources: [app version](https://www.electronjs.org/docs/latest/api/app#appgetversion),
+[channels](https://www.electron.build/docs/tutorials/release-using-channels/),
+[electron-builder macOS options](https://www.electron.build/docs/mac/),
+[Electron native autoUpdater](https://www.electronjs.org/docs/latest/api/auto-updater),
+[electron-builder auto-update](https://www.electron.build/docs/features/auto-update/).
 
 ### App icons with electron-builder
 
