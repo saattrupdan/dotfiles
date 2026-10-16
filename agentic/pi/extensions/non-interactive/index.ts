@@ -73,22 +73,14 @@ export default function (pi: ExtensionAPI) {
 			const trimmed = args.trim();
 			if (trimmed === "off") {
 				if (isLoopActive()) {
-					pi.sendMessage({
-						customType: "non-interactive:error",
-						content: "Stop the active loop with /loop stop before enabling interactive mode.",
-						display: true,
-					});
+					ctx.ui.notify("Stop the active loop with /loop stop before enabling interactive mode.", "error");
 					return;
 				}
 				arming = false;
 				persistent = false;
 				clearFlag();
 				showStatus(ctx);
-				pi.sendMessage({
-					customType: "non-interactive:status",
-					content: "Interactive mode enabled; questions are available again.",
-					display: true,
-				});
+				ctx.ui.notify("Interactive mode enabled; questions are available again.", "info");
 				// Override the earlier banner if this command arrives while the agent
 				// is still working; avoid creating an unnecessary turn when idle.
 				if (!ctx.isIdle()) {

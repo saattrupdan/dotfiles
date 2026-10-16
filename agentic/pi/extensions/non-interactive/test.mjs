@@ -16,7 +16,7 @@ const { setLoopActive } = await jiti.import(path.join(root, "..", "_loop_state",
 const { dispatchAsk } = await jiti.import(path.join(root, "..", "question", "index.ts"), { default: false });
 const statuses = new Map();
 const context = {
-	ui: { setStatus(key, value) { statuses.set(key, value); } },
+	ui: { setStatus(key, value) { statuses.set(key, value); }, notify() {} },
 	isIdle: () => true,
 };
 
@@ -153,28 +153,29 @@ test("loop keeps non-interactive mode through turns and clears it when stopped",
 
 test("/non-interactive off restores questions during a running turn", async () => {
 	const previous = process.env.PI_NON_INTERACTIVE;
-	const messages = [];
+	const notifications = [];
 	const sent = [];
 	let command;
 	let asked = false;
 	const pi = {
 		registerCommand(_name, definition) { command = definition.handler; },
 		on() {},
-		sendMessage(message) { messages.push(message); },
+		sendMessage() { throw new Error("status must not enter agent context"); },
 		sendUserMessage(content, options) { sent.push({ content, options }); },
 	};
 	const ui = {
 		async input() { asked = true; return "yes"; },
+		notify(message, type) { notifications.push({ message, type }); },
 	};
 	try {
 		nonInteractive(pi);
 		process.env.PI_NON_INTERACTIVE = "1";
 		assert.match((await dispatchAsk({ hasUI: true, ui }, [{ question: "Continue?" }])).error, /questions disabled/);
 		assert.equal(asked, false);
-		await command(" off ", { ...context, isIdle: () => false });
+		await command(" off ", { ...context, ui: { ...context.ui, ...ui }, isIdle: () => false });
 		assert.equal(process.env.PI_NON_INTERACTIVE, undefined);
 		assert.equal(statuses.get("non-interactive"), undefined);
-		assert.match(messages.at(-1).content, /Interactive mode enabled/);
+		assert.deepEqual(notifications, [{ message: "Interactive mode enabled; questions are available again.", type: "info" }]);
 		assert.match(sent.at(-1).content, /question tool/);
 		assert.deepEqual(sent.at(-1).options, { deliverAs: "steer" });
 		assert.deepEqual((await dispatchAsk({ hasUI: true, ui }, [{ question: "Continue?" }])).answers, ["yes"]);
@@ -188,17 +189,19 @@ test("/non-interactive off restores questions during a running turn", async () =
 test("/non-interactive off at idle does not start a turn", async () => {
 	const previous = process.env.PI_NON_INTERACTIVE;
 	let command;
+	let notification;
 	const pi = {
 		registerCommand(_name, definition) { command = definition.handler; },
 		on() {},
-		sendMessage() {},
+		sendMessage() { throw new Error("status must not enter agent context"); },
 		sendUserMessage() { throw new Error("off at idle must not start a turn"); },
 	};
 	try {
 		nonInteractive(pi);
 		process.env.PI_NON_INTERACTIVE = "1";
-		await command("off", context);
+		await command("off", { ...context, ui: { ...context.ui, notify(message, type) { notification = { message, type }; } } });
 		assert.equal(process.env.PI_NON_INTERACTIVE, undefined);
+		assert.deepEqual(notification, { message: "Interactive mode enabled; questions are available again.", type: "info" });
 	} finally {
 		if (previous === undefined) delete process.env.PI_NON_INTERACTIVE;
 		else process.env.PI_NON_INTERACTIVE = previous;
@@ -208,20 +211,20 @@ test("/non-interactive off at idle does not start a turn", async () => {
 test("/non-interactive off cannot override an active loop", async () => {
 	const previous = process.env.PI_NON_INTERACTIVE;
 	let command;
-	let message;
+	let notification;
 	const pi = {
 		registerCommand(_name, definition) { command = definition.handler; },
 		on() {},
-		sendMessage(value) { message = value; },
+		sendMessage() { throw new Error("error must not enter agent context"); },
 		sendUserMessage() { throw new Error("must not steer while loop is active"); },
 	};
 	try {
 		nonInteractive(pi);
 		setLoopActive(true, context);
-		await command("off", { ...context, isIdle: () => false });
+		await command("off", { ...context, ui: { ...context.ui, notify(message, type) { notification = { message, type }; } }, isIdle: () => false });
 		assert.equal(process.env.PI_NON_INTERACTIVE, "1");
 		assert.equal(statuses.get("non-interactive"), "🙊");
-		assert.match(message.content, /loop stop/);
+		assert.deepEqual(notification, { message: "Stop the active loop with /loop stop before enabling interactive mode.", type: "error" });
 	} finally {
 		setLoopActive(false, context);
 		if (previous === undefined) delete process.env.PI_NON_INTERACTIVE;
