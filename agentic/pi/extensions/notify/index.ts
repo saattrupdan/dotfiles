@@ -18,9 +18,10 @@
  *    that Pi automatically recovers from.
  *  - Notifications fire only on `agent_end`, not on intermediate `turn_end`
  *    events within multi-step workflows (e.g., planner → builders → reviewer).
- *  - Notifications are also suppressed for extension-injected retry loops
- *    (e.g., rate-limit-retry's 429/WebSocket retries, double-check's nudge turns)
- *    via the retry state signal or their injected user prompts.
+ *  - Completion and failure notifications are suppressed while `/loop` is active.
+ *    Extension-injected retry loops (e.g., rate-limit-retry's 429/WebSocket
+ *    retries, double-check's nudge turns) are suppressed via the retry state
+ *    signal or their injected user prompts.
  *
  * The notification reaches the user even when the terminal is not focused
  * (that's the whole point — macOS surfaces it system-wide). In iTerm2, the
@@ -44,6 +45,7 @@ import { spawn } from "node:child_process";
 import * as os from "node:os";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { isLoopActive } from "../_loop_state/state.ts";
 import { isTransientCodexError, isTransientWebSocketClosure, RETRY_STATE_EVENT } from "../rate-limit-retry/index.ts";
 
 const IS_MACOS = os.platform() === "darwin";
@@ -261,10 +263,9 @@ export default function (pi: ExtensionAPI, send = notify) {
 	// Even if it's async, getSessionName() reads from sessionManager state which is
 	// available by the time agent_end fires.
 	pi.on("agent_end", async (event) => {
-		// A quiet retry can finish its low-level agent run with a masked empty
-		// success before the continuation starts. Neither failure nor completion
-		// should notify the user while that retry is pending.
-		if (retrying) return;
+		// A quiet retry can finish its low-level agent run before continuing.
+		// Loop iterations also end agent runs without needing user attention.
+		if (retrying || isLoopActive()) return;
 		const msgs = event.messages ?? [];
 
 		// Skip notifications for extension-injected nudge/block loops. The retry
