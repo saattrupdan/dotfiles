@@ -1,5 +1,5 @@
 ---
-name: generate_image
+name: generate-image
 description: Generate an image from a brief with MOSS-Image-SFT on sparkie. Enhance the prompt using the bundled official MOSS prompt-enhancer, then call the model router and return a local image link. Use for requests to draw, create, render or generate a new image.
 last-updated: 2026-10-17
 ---
@@ -38,7 +38,7 @@ decodes the response and saves a PNG. It rejects failed requests and unexpected
 responses instead of manufacturing an image.
 
 ```bash
-uv run --no-project python3 ~/.pi/agent/skills/generate_image/scripts/generate.py \
+uv run --no-project python3 ~/.pi/agent/skills/generate-image/scripts/generate.py \
   --draft /tmp/my-image-draft.json \
   --size 1024x1024 \
   --output /tmp/my-image.png
