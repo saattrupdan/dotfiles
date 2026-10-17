@@ -1,5 +1,5 @@
 /**
- * Drive the footer working-spinner to reflect what the agent is actually doing,
+ * Drive the working status indicator to reflect what the agent is doing,
  * and relabel the inline hidden-thinking marker.
  *
  * Two cooperating behaviours:
@@ -11,7 +11,7 @@
  *    swaps the text for a clear static marker. The thinking content stays in the
  *    message, so toggling reasoning display still reveals the full traces.
  *
- * 2. Replace pi's generic "Working..." footer spinner with a phase-specific label:
+ * 2. Replace pi's generic "Working..." status indicator with a phase-specific label:
  *      - "Thinking..."  while reasoning tokens stream
  *      - "Reading..." / "Writing..." / "Editing..." / "Bashing..."  for the
  *        read / write / edit / bash tools
@@ -27,13 +27,13 @@
  *        This dominates for bash/read.
  *    We track both and let execution take precedence over streaming.
  *
- *    The footer spinner is transient — pi clears it when streaming stops — so the
+ *    The working indicator is transient — pi clears it when streaming stops — so the
  *    label is always live and never lingers in the chat.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-// Tool name -> footer label. Unmapped tools fall back to pi's default "Working...".
+// Tool name -> working indicator label. Unmapped tools use pi's default "Working...".
 const TOOL_LABELS: Record<string, string> = {
 	// built-in tools
 	read: "Reading...",

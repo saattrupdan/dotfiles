@@ -5,6 +5,7 @@ import path from "node:path";
 import { test } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import generateImage from "./index.ts";
+import thinkingStatus from "../thinking-status/index.ts";
 
 function setup(exec: ExtensionAPI["exec"]) {
 	let handler: ((args: string, ctx: ExtensionContext) => Promise<void>) | undefined;
@@ -51,7 +52,7 @@ test("command sends the whole brief as one argument and returns the file URL", a
 		});
 		await state.handler(brief, state.ctx);
 		assert.deepEqual(state.messages, [new URL(`file://${output}`).href]);
-		assert.equal(state.statuses.at(-1), undefined);
+		assert.deepEqual(state.statuses, []);
 	} finally {
 		rmSync(directory, { recursive: true, force: true });
 	}
@@ -72,6 +73,7 @@ test("tool returns the path and URL without sending an agent message", async () 
 		assert.equal(result.isError, undefined);
 		assert.deepEqual(result.content, [{ type: "text", text: `${output}\n${new URL(`file://${output}`).href}` }]);
 		assert.deepEqual(state.messages, []);
+		assert.deepEqual(state.statuses, []);
 	} finally {
 		rmSync(directory, { recursive: true, force: true });
 	}
@@ -104,5 +106,27 @@ test("generation errors display without triggering an agent turn", async () => {
 	}));
 	await state.handler("A teapot", state.ctx);
 	assert.deepEqual(state.messages, ["local llama.cpp is unavailable"]);
-	assert.equal(state.statuses.at(-1), undefined);
+	assert.deepEqual(state.statuses, []);
+});
+
+test("tool activity uses the working indicator, not the footer", () => {
+	const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => void>();
+	const working: (string | undefined)[] = [];
+	const footer: string[] = [];
+	const pi = {
+		on: (event: string, handler: (event: unknown, ctx: ExtensionContext) => void) => handlers.set(event, handler),
+		events: { on: () => {} },
+	} as unknown as ExtensionAPI;
+	const ctx = {
+		ui: {
+			setWorkingMessage: (message?: string) => working.push(message),
+			setStatus: (_key: string, message: string) => footer.push(message),
+		},
+	} as ExtensionContext;
+	thinkingStatus(pi);
+	handlers.get("tool_execution_start")?.({ toolName: "generate_image", toolCallId: "image-1" }, ctx);
+	assert.deepEqual(working, ["Generating image..."]);
+	handlers.get("tool_execution_end")?.({ toolCallId: "image-1" }, ctx);
+	assert.deepEqual(working, ["Generating image...", undefined]);
+	assert.deepEqual(footer, []);
 });

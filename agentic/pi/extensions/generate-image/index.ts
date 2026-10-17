@@ -67,7 +67,6 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.notify("Usage: /generate-image <prompt>", "error");
 				return;
 			}
-			ctx.ui.setStatus("generate-image", "Generating image…");
 			try {
 				const output = await generate(prompt, ctx.signal);
 				pi.sendMessage({
@@ -81,8 +80,6 @@ export default function (pi: ExtensionAPI) {
 					content: error instanceof Error ? error.message : String(error),
 					display: true,
 				});
-			} finally {
-				ctx.ui.setStatus("generate-image", undefined);
 			}
 		},
 	});
