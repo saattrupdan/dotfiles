@@ -1,0 +1,1 @@
+Vendored from OpenMOSS/MOSS-Image at c1355e6b1986dfe8fba3c0455783a05899212342 (Apache-2.0); see https://github.com/OpenMOSS/MOSS-Image/blob/c1355e6b1986dfe8fba3c0455783a05899212342/LICENSE
