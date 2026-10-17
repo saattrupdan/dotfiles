@@ -3,6 +3,7 @@ import test from "node:test";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+import { setIncognito, syncIncognito } from "../_incognito_state/state.js";
 import conversationName from "./index.ts";
 
 type Handler = (event: { message: { role: string; content: string } }, ctx: unknown) => Promise<void>;
@@ -32,6 +33,7 @@ function harness(initialName = "") {
 		sessionManager: {
 			getSessionId: () => sessionId,
 			getSessionName: () => name,
+			getSessionFile: () => undefined,
 		},
 	};
 	return {
@@ -126,6 +128,19 @@ test("never applies a result to a different session", async () => {
 	app.responses.shift()?.({ code: 0, stdout: "Original Session" });
 	await flush();
 	assert.deepEqual(app.names, []);
+});
+
+test("incognito messages never generate a title", async () => {
+	const app = harness();
+	setIncognito(true);
+	syncIncognito("new", { getSessionId: () => "session-1", getSessionFile: () => undefined } as Parameters<typeof syncIncognito>[1]);
+	try {
+		await app.message("Private conversation");
+		assert.deepEqual(app.prompts, []);
+		assert.deepEqual(app.names, []);
+	} finally {
+		setIncognito(false);
+	}
 });
 
 test("subagents keep their inherited label without calling the model", async () => {

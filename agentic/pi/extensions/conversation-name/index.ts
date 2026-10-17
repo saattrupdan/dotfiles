@@ -20,6 +20,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { isIncognito } from "../_incognito_state/state.js";
 
 const MAX_NAME_LENGTH = 30;
 const NAMING_TIMEOUT_MS = 30_000;
@@ -55,6 +56,7 @@ export default function (pi: ExtensionAPI) {
 	// Note: the ExtensionContext is the SECOND handler argument, not event.context.
 	pi.on("message_end", async (event, ctx) => {
 		const msg = event.message;
+		if (isIncognito(ctx.sessionManager)) return;
 
 		// Only process user messages
 		if (!msg || msg.role !== "user") {
@@ -118,7 +120,7 @@ export default function (pi: ExtensionAPI) {
 		void (async () => {
 			let message: string | undefined = latestMessage;
 			try {
-				while (message && generation === sessionGeneration && sessionManager.getSessionId() === sessionId) {
+				while (message && generation === sessionGeneration && sessionManager.getSessionId() === sessionId && !isIncognito(sessionManager)) {
 					const currentName = sessionManager.getSessionName() ?? "";
 					let name = "";
 					try {

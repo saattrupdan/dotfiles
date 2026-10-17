@@ -43,6 +43,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { type Component, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { isIncognito } from "../_incognito_state/state.js";
 
 const ROOT = process.env.MEMORY_ASYNC_DIR ?? path.join(os.homedir(), ".pi", "agent", "memory-async");
 const QUEUE_DIR = path.join(ROOT, "queue");
@@ -209,7 +210,10 @@ function registerWriteTool(
 		],
 		parameters,
 
-		async execute(_toolCallId, params) {
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			if (ctx && isIncognito(ctx.sessionManager)) {
+				return { content: [{ type: "text" as const, text: `${name} is disabled in incognito mode.` }], isError: true, details: undefined };
+			}
 			const args = argsOf(params as Record<string, unknown>);
 			let id: string;
 			try {

@@ -23,6 +23,7 @@ import type {
 	ReadonlyFooterDataProvider,
 } from "@earendil-works/pi-coding-agent";
 import { wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { incognitoRequested } from "../_incognito_state/state.js";
 import { mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname } from "path";
 import {
@@ -207,7 +208,7 @@ export default function (pi: ExtensionAPI) {
 		// the next message. Force past any `installed` bookkeeping left over from
 		// the previous load; the message guard still defers install while the
 		// splash owns the chrome (a session with no messages yet).
-		setupFooter(ctx, { force: true });
+		setupFooter(ctx, { force: true, allowWithoutMessages: incognitoRequested() });
 		maybeRender?.();
 	});
 	pi.on("agent_start", (_event, ctx) => {
