@@ -7,7 +7,9 @@ import importlib.util
 import io
 import json
 import struct
+import sys
 import unittest
+import zlib
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -17,6 +19,48 @@ SPEC = importlib.util.spec_from_file_location("generate", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 GENERATE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(GENERATE)
+
+
+def _png(*, width: int, height: int) -> bytes:
+    """Make a complete, synthetic black RGB PNG for request tests.
+
+    Args:
+        width:
+            Canvas width.
+        height:
+            Canvas height.
+
+    Returns:
+        Complete PNG bytes.
+    """
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        """Encode a PNG chunk with its checksum.
+
+        Args:
+            kind:
+                Chunk type.
+            data:
+                Chunk content.
+
+        Returns:
+            Encoded chunk bytes.
+        """
+        return (
+            struct.pack(">I", len(data))
+            + kind
+            + data
+            + struct.pack(">I", zlib.crc32(kind + data))
+        )
+
+    rows = (b"\0" + b"\0" * (3 * width)) * height
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", header)
+        + chunk(b"IDAT", zlib.compress(rows))
+        + chunk(b"IEND", b"")
+    )
 
 
 class GenerateTests(unittest.TestCase):
@@ -36,9 +80,38 @@ class GenerateTests(unittest.TestCase):
             draft.write_text(json.dumps({"caption": "A red teapot."}))
             self.assertEqual(GENERATE._compile(draft_path=draft), "A red teapot.")
 
+    def test_output_does_not_follow_symlink(self) -> None:
+        """An existing predictable temporary symlink cannot redirect writes."""
+        with TemporaryDirectory() as temp:
+            directory = Path(temp)
+            draft = directory / "draft.json"
+            draft.write_text(json.dumps({"caption": "A red teapot."}))
+            output = directory / "generated.png"
+            unrelated = directory / "unrelated.txt"
+            unrelated.write_text("unchanged")
+            output.with_suffix(".png.tmp").symlink_to(unrelated)
+            arguments = [
+                "generate.py",
+                "--draft",
+                str(draft),
+                "--output",
+                str(output),
+                "--size",
+                "512x512",
+            ]
+            with (
+                patch.object(sys, "argv", arguments),
+                patch.object(
+                    GENERATE, "_request", return_value=_png(width=512, height=512)
+                ),
+            ):
+                GENERATE.main()
+            self.assertEqual(unrelated.read_text(), "unchanged")
+            self.assertEqual(output.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
+
     def test_request(self) -> None:
         """Route by model ID and verify the returned PNG dimensions."""
-        image = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + struct.pack(">II", 512, 512)
+        image = _png(width=512, height=512)
         response = io.BytesIO(
             json.dumps(
                 {"data": [{"b64_json": base64.b64encode(image).decode()}]}
@@ -62,9 +135,15 @@ class GenerateTests(unittest.TestCase):
         self.assertEqual(payload["extra_params"]["uncond_skip_layers"], [22])
         self.assertEqual(payload["seed"], 17)
 
+    def test_truncated_png(self) -> None:
+        """A complete-looking header without pixel data is not an image."""
+        image = _png(width=512, height=512)
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            GENERATE._validate_png(image=image[:33], width=512, height=512)
+
     def test_wrong_dimensions(self) -> None:
         """Reject a PNG with dimensions different from the request."""
-        image = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + struct.pack(">II", 768, 512)
+        image = _png(width=768, height=512)
         response = io.BytesIO(
             json.dumps(
                 {"data": [{"b64_json": base64.b64encode(image).decode()}]}
