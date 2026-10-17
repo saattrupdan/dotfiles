@@ -109,6 +109,13 @@ class GenerateTests(unittest.TestCase):
             self.assertEqual(unrelated.read_text(), "unchanged")
             self.assertEqual(output.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
 
+    def test_model_selection_is_not_available(self) -> None:
+        """The CLI cannot request the retired Base checkpoint."""
+        with patch.object(sys, "argv", ["generate.py", "--model", "base"]):
+            with self.assertRaises(SystemExit) as result:
+                GENERATE.main()
+        self.assertEqual(result.exception.code, 2)
+
     def test_request(self) -> None:
         """Route by model ID and verify the returned PNG dimensions."""
         image = _png(width=512, height=512)
@@ -122,7 +129,7 @@ class GenerateTests(unittest.TestCase):
         ) as mock:
             actual = GENERATE._request(
                 endpoint="http://127.0.0.1:31000",
-                model=GENERATE.MODELS["sft"],
+                model=GENERATE.MODEL_ID,
                 prompt="A red teapot.",
                 size="512x512",
                 seed=17,
@@ -153,7 +160,7 @@ class GenerateTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "unexpected dimensions"):
                 GENERATE._request(
                     endpoint="http://127.0.0.1:31000",
-                    model=GENERATE.MODELS["base"],
+                    model=GENERATE.MODEL_ID,
                     prompt="A red teapot.",
                     size="512x512",
                     seed=17,

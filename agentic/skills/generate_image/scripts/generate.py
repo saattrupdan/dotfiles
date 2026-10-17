@@ -18,10 +18,7 @@ import zlib
 from pathlib import Path
 
 DEFAULT_ENDPOINT = "http://100.102.237.34:31000"
-MODELS = {
-    "base": "OpenMOSS-Team/MOSS-Image-Base",
-    "sft": "OpenMOSS-Team/MOSS-Image-SFT",
-}
+MODEL_ID = "OpenMOSS-Team/MOSS-Image-SFT"
 
 
 def main() -> None:
@@ -43,7 +40,6 @@ def main() -> None:
         "--size", default="1024x1024", help="WIDTHxHEIGHT, e.g. 768x1024"
     )
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--model", choices=MODELS, default="sft")
     parser.add_argument(
         "--endpoint", default=os.environ.get("MOSS_IMAGE_URL", DEFAULT_ENDPOINT)
     )
@@ -63,7 +59,7 @@ def main() -> None:
         prompt = _compile(draft_path=args.draft)
         image = _request(
             endpoint=args.endpoint,
-            model=MODELS[args.model],
+            model=MODEL_ID,
             prompt=prompt,
             size=args.size,
             seed=args.seed,

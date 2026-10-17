@@ -1,14 +1,13 @@
 ---
 name: generate_image
-description: Generate an image from a brief with MOSS-Image-SFT on sparkie. Enhance the prompt using the bundled official MOSS prompt-enhancer, then call the model router and return a local image link. Use for requests to draw, create, render or generate a new image; optionally compare MOSS-Image-Base.
+description: Generate an image from a brief with MOSS-Image-SFT on sparkie. Enhance the prompt using the bundled official MOSS prompt-enhancer, then call the model router and return a local image link. Use for requests to draw, create, render or generate a new image.
 last-updated: 2026-10-17
 ---
 
 # Generate an image
 
-The default generator is `OpenMOSS-Team/MOSS-Image-SFT` on sparkie's model
-router. `OpenMOSS-Team/MOSS-Image-Base` is available for comparisons. Both
-checkpoints run on vLLM-Omni. The router is reachable on the tailnet at
+The generator is `OpenMOSS-Team/MOSS-Image-SFT` on sparkie's model router,
+served with vLLM-Omni. The router is reachable on the tailnet at
 `http://100.102.237.34:31000`; it is not a public Internet service.
 
 ## Prepare the prompt
@@ -45,8 +44,8 @@ uv run --no-project python3 ~/.pi/agent/skills/generate_image/scripts/generate.p
   --output /tmp/my-image.png
 ```
 
-Options: `--model sft|base` (default `sft`), `--seed` (default 42),
-`--endpoint` (default `MOSS_IMAGE_URL` or sparkie's tailnet router). Run
+Options: `--seed` (default 42) and `--endpoint` (default `MOSS_IMAGE_URL`
+or sparkie's tailnet router). Run
 `--help` for the full interface. Generation uses 50 Euler steps, CFG 3,
 flow shift 5, negative-branch skip layer 22 and one output. A request can take
 several minutes; the CLI allows 15 minutes. Check the output exists before
@@ -55,18 +54,13 @@ claim the image depicts text or details accurately unless you inspect it; the
 model can miss fine details. When the user asks not to open generated images,
 check only file existence, format signature and metadata, not the contents.
 
-For comparisons, pass the **same compiled draft**, dimensions, seed and
-sampling settings to both `--model base` and `--model sft`. Record the prompt
-and seed beside the outputs. Neither model is guaranteed to win every brief.
-
 ## Availability
 
 ```bash
 curl -fsS --max-time 5 http://100.102.237.34:31000/v1/models
 ```
 
-Expect both `OpenMOSS-Team/MOSS-Image-SFT` and
-`OpenMOSS-Team/MOSS-Image-Base`. If the tailnet, router or either model is
+Expect `OpenMOSS-Team/MOSS-Image-SFT`. If the tailnet, router or model is
 unavailable, report the error; do not send prompts to an unrelated endpoint.
 The router currently has no per-user authentication, so do not submit private
 briefs or sensitive input through this shared tailnet service.
