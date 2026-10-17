@@ -8,6 +8,7 @@ import generateImage from "./index.ts";
 
 function setup(exec: ExtensionAPI["exec"]) {
 	let handler: ((args: string, ctx: ExtensionContext) => Promise<void>) | undefined;
+	let tool: Parameters<ExtensionAPI["registerTool"]>[0] | undefined;
 	const messages: string[] = [];
 	const notifications: string[] = [];
 	const statuses: (string | undefined)[] = [];
@@ -15,6 +16,10 @@ function setup(exec: ExtensionAPI["exec"]) {
 		registerCommand: (name: string, options: { handler: typeof handler }) => {
 			assert.equal(name, "generate-image");
 			handler = options.handler;
+		},
+		registerTool: (definition: Parameters<ExtensionAPI["registerTool"]>[0]) => {
+			assert.equal(definition.name, "generate_image");
+			tool = definition;
 		},
 		exec,
 		sendMessage: (message: { content: string }) => messages.push(message.content),
@@ -27,7 +32,8 @@ function setup(exec: ExtensionAPI["exec"]) {
 	} as ExtensionContext;
 	generateImage(pi);
 	assert.ok(handler);
-	return { handler, ctx, messages, notifications, statuses };
+	assert.ok(tool);
+	return { handler, tool, ctx, messages, notifications, statuses };
 }
 
 test("command sends the whole brief as one argument and returns the file URL", async () => {
@@ -49,6 +55,33 @@ test("command sends the whole brief as one argument and returns the file URL", a
 	} finally {
 		rmSync(directory, { recursive: true, force: true });
 	}
+});
+
+test("tool returns the path and URL without sending an agent message", async () => {
+	const directory = mkdtempSync(path.join(os.tmpdir(), "pi-generate-test-"));
+	const output = path.join(directory, "image.png");
+	writeFileSync(output, "png");
+	try {
+		const state = setup(async (command, args) => {
+			assert.equal(command, "uv");
+			assert.equal(args[4], "A blue teapot");
+			assert.deepEqual(args.slice(5), ["--size", "768x1024", "--seed", "9"]);
+			return { code: 0, stdout: `${output}\n`, stderr: "", killed: false };
+		});
+		const result = await state.tool.execute("call-1", { prompt: "A blue teapot", size: "768x1024", seed: 9 }, undefined, undefined, state.ctx);
+		assert.equal(result.isError, undefined);
+		assert.deepEqual(result.content, [{ type: "text", text: `${output}\n${new URL(`file://${output}`).href}` }]);
+		assert.deepEqual(state.messages, []);
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
+});
+
+test("tool reports failures as tool errors", async () => {
+	const state = setup(async () => ({ code: 1, stdout: "", stderr: "router unavailable\n", killed: false }));
+	const result = await state.tool.execute("call-1", { prompt: "A teapot" }, undefined, undefined, state.ctx);
+	assert.equal(result.isError, true);
+	assert.deepEqual(result.content, [{ type: "text", text: "router unavailable" }]);
 });
 
 test("empty brief does not run the generator", async () => {
