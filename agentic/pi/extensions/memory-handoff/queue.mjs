@@ -94,7 +94,8 @@ export function log(root, event, id, detail = "") {
 export function workerPath() { return path.join(path.dirname(fileURLToPath(import.meta.url)), "worker.mjs"); }
 
 export function wake(root = defaultRoot(), agentDir = process.env.PI_CODING_AGENT_DIR ?? path.join(os.homedir(), ".pi", "agent")) {
-	if (!list(root).length || fs.existsSync(path.join(queueRoot(root), "paused"))) return;
+	if ((!list(root).length && !list(root, "running").length) ||
+		fs.existsSync(path.join(queueRoot(root), "paused"))) return;
 	const child = spawn(process.execPath, [workerPath(), "--root", root, "--agent-dir", agentDir], {
 		stdio: "ignore", detached: true, env: { ...process.env },
 	});

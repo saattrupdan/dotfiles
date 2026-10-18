@@ -5,8 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { test } from "node:test";
+import { setTimeout as sleep } from "node:timers/promises";
 
-import { counts, defaultRoot, enqueue, jobFile, list, queueRoot, readJob, retry, workerPath } from "./queue.mjs";
+import { counts, defaultRoot, enqueue, jobFile, list, queueRoot, readJob, retry, workerPath, wake } from "./queue.mjs";
 
 function fixture() {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-memory-queue-test-"));
@@ -66,6 +67,20 @@ test("interrupted writes are quarantined; no-write failures can be retried", () 
 		assert.deepEqual(fs.readFileSync(f.calls, "utf8").trim().split("\n"), ["no-write request"]);
 		retry(f.root, noWrite);
 		assert.deepEqual(list(f.root), [noWrite]);
+	} finally { f.cleanup(); }
+});
+
+test("next session quarantines an interrupted write with no other pending jobs", async () => {
+	const f = fixture();
+	try {
+		const id = enqueue("may already be stored", f.root);
+		fs.renameSync(jobFile(f.root, "pending", id), jobFile(f.root, "running", id));
+		fs.writeFileSync(path.join(queueRoot(f.root), "worker.pid"), "99999999");
+		wake(f.root, f.agentDir);
+		for (let n = 0; n < 60 && !fs.existsSync(jobFile(f.root, "failed", id)); n++) await sleep(50);
+		assert.equal(readJob(f.root, "failed", id).unknownOutcome, true);
+		assert.ok(!fs.existsSync(f.calls), "uncertain write must not be replayed");
+		assert.deepEqual(counts(f.root), { pending: 0, running: 0, failed: 1, done: 0 });
 	} finally { f.cleanup(); }
 });
 
