@@ -7,7 +7,6 @@ model:
 tools:
   - read
   - skill
-  - memory_query
   - question
 skills: []
 worktree: false

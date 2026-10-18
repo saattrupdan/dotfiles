@@ -51,22 +51,21 @@ They use separate session storage so resume/continue retain their tool set.
 profile to `agents/`, never by exposing its extensions to the default main list.
 The `librarian` profile has only five concept tools and the tool-free
 `rate-limit-retry` extension. Main has only the two `store_memory` and
-`recall_memory` handoff tools. The existing Understory extensions remain in
-main until its bundle is migrated; `memory-snapshot` will then be repointed
-to a bounded overview of `~/memory`.
+`recall_memory` handoff tools. `store_memory` queues durable writes under
+`~/memory/requests/`; `memory-snapshot` injects a bounded local overview.
 
 ## Key agents
 
 | Agent      | Role                                                             | Worktree | Tools                                                                              |
 | ---------- | ---------------------------------------------------------------- | -------- | --------------------------------------------------------------------------------- |
-| `planner`  | Turns requests into ordered, parallel-friendly plans. Read-only. | No       | `read`, `memory_query`, `question`                                     |
-| `builder`  | Implements one scoped code change. Commits before exiting.       | **Yes**  | `search`, `read`, `write`, `edit`, `bash`, `memory_query`, `question`  |
-| `explorer` | Read-only navigation of local codebase and the web.              | No       | `code_tree`, `search`, `read`, `web_browse`, `web_search`, `memory_query`, `question` |
-| `reviewer` | Audits recent commits, produces verdict.                         | No       | `read`, `search`, `bash`, `memory_query`, `question`                   |
+| `planner`  | Turns requests into ordered, parallel-friendly plans. Read-only. | No       | `read`, `skill`, `question` |
+| `builder`  | Implements one scoped code change. Commits before exiting.       | **Yes**  | `search`, `read`, `write`, `edit`, `skill`, `bash`, `question` |
+| `explorer` | Read-only code and web navigation.                                | No       | `code_tree`, `search`, `read`, `skill`, `web_browse`, `web_search`, `question` |
+| `reviewer` | Audits recent commits and produces a verdict.                    | No       | `read`, `search`, `skill`, `bash`, `question` |
 
 Only the **orchestrator** (you) may call `subagent`. Subagents may not delegate further.
-Subagents can **query** memory (`memory_query`) but cannot write it — only the
-orchestrator has `memory_add` / `_update`.
+Only the main profile can invoke the native librarian through `store_memory` and
+`recall_memory`. Pass relevant recalled context to subagents in their tasks.
 
 ## Extensions (tools)
 

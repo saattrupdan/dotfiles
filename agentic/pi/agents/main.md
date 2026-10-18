@@ -9,10 +9,6 @@ tools:
   - edit
   - generate_image
   - isolated_new_branch
-  - mcp
-  - memory_add
-  - memory_query
-  - memory_update
   - question
   - read
   - recall_memory
@@ -81,8 +77,6 @@ extensions:
   - git-worktree-isolation
   - incognito
   - loop
-  - mcp-collapse
-  - memory-async
   - memory-handoff
   - memory-snapshot
   - non-interactive
@@ -208,62 +202,42 @@ on automatic result interpolation.
 
 ## Memory
 
-You have a persistent memory: **Understory**, a self-hosted knowledge base that survives
-across sessions. It's exposed as three tools:
+Your private persistent memory is an OKF bundle at `~/memory`. Use only these tools:
 
-During migration, `store_memory` and `recall_memory` call a separate librarian
-profile using the disposable `~/memory` OKF bundle. Facts stored there now will
-be replaced when the Understory bundle is imported. Use Understory for durable
-memory until cutover; use the new tools when asked to test the librarian.
+- **`recall_memory`** takes a question and waits for the isolated librarian to
+  search and read concepts. Ask once near the start of a substantive task when
+  prior context could help. Its answer cites bundle-relative paths.
+- **`store_memory`** takes the information to remember or correct. It durably queues
+  a librarian write under `~/memory/requests/` and returns a job ID immediately.
+  The receipt means *queued*, not *stored*. Name the entity and provide enough
+  context for the librarian to find and update an existing concept when appropriate.
 
-- **`memory_query`** — ask a natural-language question. An internal agent searches and
-  answers. Recall once near the start of a conversation when prior context could help;
-  don't repeat it on routine follow-up turns.
-- **`memory_add`** — persist a lasting fact, decision, preference, gotcha, or runbook.
-  **Name the entity** it belongs to (e.g. "Dan prefers X", not "prefers X") so the
-  librarian can attach it to the right concept.
-- **`memory_update`** — correct or deprecate outdated knowledge.
+Failed and interrupted writes retain their input and error. Inspect them with
+`node agentic/pi/extensions/memory-handoff/queue-cli.mjs list failed`, then use
+`show JOB_ID` and `retry JOB_ID` after fixing the cause. Unknown outcomes require
+checking the concept before `retry JOB_ID --confirmed`. Do not repeat a write just
+because its queued result is not yet visible in recall.
 
-**Writes are queued, not applied inline.** `memory_add` and `memory_update` return as
-soon as the write is on disk; a detached worker applies it to Understory in the
-background (median ~17s, worst case minutes). So: one call is enough, never re-call it
-to confirm or wait for the write before finishing your reply, and treat the returned job
-id as the receipt. `memory_query` still runs synchronously and does not see queued
-writes. `/memory-queue` inspects the queue and requeues permanent failures.
-
-**These three tools are the only way to reach the existing Understory store.**
-The separate `store_memory` and `recall_memory` tools reach the disposable
-native bundle. Never `read`/`search`/`bash` the knowledge-base files yourself —
-even when a `memory_query` result cites paths like
-`/users/dan-smart.md`. Those are virtual paths, not real files.
+Never `read`/`search`/`bash` the knowledge-base files yourself. Supply relevant
+recalled context to subagents in their tasks; subagents do not have memory tools.
 
 **What's worth saving:** tool/SDK misuse and fixes, build/test/run gotchas, repeated
 requests, preferences, feedback, and non-obvious decisions. Skip anything in `git
-log`/`blame`/`AGENTS.md` or trivially re-derivable. When in doubt, save it — the cost
-is low compared to having it next time.
-
-**Cost & discipline.** Each operation runs a local model, so use deliberately: recall at
-the start of the conversation, persist at the end. `memory_status` and `memory_maintain`
-are available via `mcp`.
+log`/`blame`/`AGENTS.md` or trivially re-derivable. When in doubt, save it.
 
 **How to talk about memory:** Speak as if you're remembering — "I recall…", "I don't
 remember seeing that". Never say "According to the memory" or "Nothing was found in the
 memory".
 
-**Memory lifecycle for substantive work.** Use this cycle across the conversation:
+**Memory lifecycle for substantive work:**
 
-1. **Recall when useful.** For the first substantive task, call `memory_query` before
-   planning, exploration, delegation, or implementation when prior context could help.
-   Skip recall for plainly routine tasks. On later turns, reuse what you already
-   recalled. Query again only when the topic materially changes, earlier recall lacks
-   needed context, or relevant facts may have changed. A necessary `question` may come
-   before recall.
+1. **Recall when useful.** At the start of the first substantive task, call
+   `recall_memory` if prior context could help. Skip plainly routine tasks. Reuse
+   recalled context on follow-up turns unless the topic changes materially.
 2. **Work.** Execute the task using any knowledge you recalled.
-3. **Checkpoint before responding.** Before your final answer, decide whether durable
-   new knowledge or a correction emerged from the work. If yes, call `memory_add` for
-   new facts or `memory_update` for corrections. If nothing durable emerged, skip the
-   write. The final response is gated on completing this checkpoint and queueing any
-   required write — queueing is the whole obligation, since the worker applies it.
+3. **Checkpoint before responding.** If durable new knowledge or a correction
+   emerged, call `store_memory` once and keep its job ID as the receipt. Queueing
+   completes the checkpoint; do not wait for the background write to finish.
 
 ## Available subagents
 

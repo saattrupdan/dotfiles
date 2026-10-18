@@ -22,7 +22,7 @@ function root() {
 }
 
 const profile = (name, data = {}) => parseAgentProfile({
-	name, description: "A test profile", subagent: false, tools: ["memory_query"],
+	name, description: "A test profile", subagent: false, tools: ["recall_memory"],
 	skills: ["memory"], extensions: ["private"], ...data,
 }, "Only use memory.\n", `${name}.md`);
 
@@ -83,7 +83,13 @@ test("main exposes only the two handoff tools, not the librarian's concept tools
 	const dir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 	const main = await loadProfile("main", dir, resolvePiPackage());
 	assert.ok(main.extensions.includes("memory-handoff"));
+	assert.ok(main.extensions.includes("memory-snapshot"));
 	assert.ok(!main.extensions.includes("memory"));
+	assert.ok(!main.extensions.includes("memory-async"));
+	assert.ok(!main.extensions.includes("mcp-collapse"));
+	for (const tool of ["mcp", "memory_query", "memory_add", "memory_update"]) {
+		assert.ok(!main.tools.includes(tool), tool);
+	}
 	assert.ok(main.tools.includes("store_memory") && main.tools.includes("recall_memory"));
 	for (const tool of ["search_concepts", "create_concept", "update_concept", "remove_concept", "lint_concepts"]) {
 		assert.ok(!main.tools.includes(tool), tool);
@@ -99,7 +105,7 @@ test("scopes private tools, skills, extensions and sessions before startup", () 
 		assert.ok(args.includes(flag), `missing ${flag}`);
 	}
 	assert.equal(args.at(-1), "--continue");
-	assert.equal(args[args.indexOf("--tools") + 1], "memory_query");
+	assert.equal(args[args.indexOf("--tools") + 1], "recall_memory");
 	assert.equal(args[args.indexOf("--session-dir") + 1], path.join(dir, "profile-sessions", "librarian"));
 	const none = buildProfileArgs(profile("librarian", { tools: [], skills: [], extensions: [] }), dir, []);
 	assert.ok(none.includes("--no-tools"));
@@ -112,7 +118,7 @@ test("scopes private tools, skills, extensions and sessions before startup", () 
 	assert.throws(() => buildProfileArgs(profile("librarian"), dir, ["--tools=write"]), /cannot override/);
 });
 
-test("keeps main's old storage and rejects cross-profile session paths", () => {
+test("keeps main session storage separate and rejects cross-profile paths", () => {
 	const dir = root();
 	const main = buildProfileArgs(profile("main"), dir, ["--continue"]);
 	assert.ok(!main.includes("--session-dir"));

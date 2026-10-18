@@ -4,12 +4,10 @@ import type {
 	ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
-import { readCache, restoreSnapshotFromCache, runOnce } from "./refresh.mjs";
+import { DEFAULT_PATHS, readCache, refreshCache, restoreSnapshotFromCache } from "./native-refresh.mjs";
 
-const SNAPSHOT_FILE = path.join(os.homedir(), ".pi", "agent", "memory-snapshot.md");
-const CACHE_FILE = path.join(os.homedir(), ".pi", "agent", "memory-snapshot.json");
+const SNAPSHOT_FILE = DEFAULT_PATHS.snapshotFile;
+const CACHE_FILE = DEFAULT_PATHS.cacheFile;
 
 function readSnapshot(): string | null {
 	try {
@@ -48,7 +46,7 @@ export function buildBeforeAgentStartResult(
 export default function api(pi: ExtensionAPI) {
 	pi.on("session_start", async () => {
 		ensureSnapshotSync();
-		await runOnce();
+		await refreshCache();
 	});
 
 	pi.on("before_agent_start", (event: BeforeAgentStartEvent) => {

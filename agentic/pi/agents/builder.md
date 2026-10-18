@@ -11,7 +11,6 @@ tools:
   - edit
   - skill
   - bash
-  - memory_query
   - question
 skills:
   - commit

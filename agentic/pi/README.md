@@ -39,27 +39,24 @@ The `agents/`, `extensions/`, and `skills/` links must already be in place.
 
 ## Native memory bundle
 
-Use `~/memory` as the canonical OKF bundle root, independent of Pi's config
-and separate from Understory's live bundle. On this machine, the directory is
-registered for continuous Jottacloud Backup as `memory`. On another machine,
-create and register it with:
+Use `~/memory` as the canonical OKF bundle root, independent of Pi's config.
+On this machine it is registered for continuous Jottacloud Backup as `memory`.
+On another machine, create and register it with:
 
 ```sh
 mkdir -m 700 "$HOME/memory"
 jotta-cli add "$HOME/memory" --name memory
 ```
 
-`~/memory` holds disposable test concepts until the Understory migration. The
-private `pi --agent librarian` profile loads five concept tools and the
+The private `pi --agent librarian` profile loads five concept tools and the
 tool-free `rate-limit-retry` extension. Main exposes only `store_memory` and
 `recall_memory`. `store_memory` durably queues a write under
 `~/memory/requests/` and immediately returns a job ID, not a storage
 confirmation. A detached worker starts isolated librarian sessions; failed and
 interrupted requests retain their input and error for inspection. `recall_memory`
 waits for a read-only librarian session, which registers only the search tool.
-Main retains Understory's tools and startup snapshot until
-the native migration is verified. At cutover, repoint the startup snapshot to a
-bounded overview of `~/memory` instead of removing that reminder.
+The startup snapshot gives main a bounded overview of local concepts and points
+it to `recall_memory` for details.
 
 OKF Markdown and the atomically published `~/memory/embeddings.sqlite` are
 backed up together. That SQLite
@@ -67,11 +64,12 @@ file holds one 1,024-dimensional float vector per concept, keyed by its bundle
 path and content hash. SQLite FTS5 BM25 and HNSW indexes build in memory from
 concept Markdown and `embeddings.sqlite` when the librarian starts. No
 `search.sqlite` or second vector store is kept on disk. Hybrid results use
-reciprocal rank fusion. After importing the real concepts,
-trigger a Jottacloud scan, verify remote files, and test a restore before
-retiring the existing `understory-bundle` backup. Install the memory extension's
-local SQLite, HNSW, and YAML dependencies on each device before starting the
-librarian:
+reciprocal rank fusion. The old Understory bundle and its `understory-bundle`
+backup remain as inactive rollback copies; its 92 historical failed requests
+were not replayed or imported. The migrated bundle passed a Jottacloud restore
+check with 649 matching Markdown/SQLite files and 603 valid embeddings.
+Install the memory extension's local SQLite, HNSW, and YAML dependencies on
+each device before starting the librarian:
 
 ```sh
 npm ci --prefix agentic/pi/extensions/memory

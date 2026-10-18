@@ -10,7 +10,6 @@ tools:
   - search
   - skill
   - bash
-  - memory_query
   - question
 skills:
   - commit

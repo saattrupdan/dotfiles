@@ -53,10 +53,6 @@ const TOOL_LABELS: Record<string, string> = {
 	recall_memory: "Recalling memory...",
 	isolated_new_branch: "Creating branch...",
 	"clean-up-isolated-branch": "Cleaning up branch...",
-	// MCP tools (understory memory)
-	memory_query: "Remembering...",
-	memory_add: "Storing to memory...",
-	memory_update: "Storing to memory...",
 };
 
 export default function (pi: ExtensionAPI) {

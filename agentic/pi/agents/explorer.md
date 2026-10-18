@@ -11,7 +11,6 @@ tools:
   - skill
   - web_browse
   - web_search
-  - memory_query
   - question
 skills: []
 worktree: false
