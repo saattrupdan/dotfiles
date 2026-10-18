@@ -49,9 +49,32 @@ mkdir -m 700 "$HOME/memory"
 jotta-cli add "$HOME/memory" --name memory
 ```
 
-The directory is empty until migration. After importing the concepts, trigger
-a scan, verify the files arrived remotely, and test a restore before retiring
-the existing `understory-bundle` backup.
+`~/memory` holds disposable test concepts until the Understory migration. The
+private `pi --agent librarian` profile loads five concept tools and the
+tool-free `rate-limit-retry` extension. Main exposes only `store_memory` and
+`recall_memory`, which run isolated librarian sessions; recall sessions register
+only the search tool. Main retains Understory's tools and startup snapshot until
+the native migration is verified. At cutover, repoint the startup snapshot to a
+bounded overview of `~/memory` instead of removing that reminder.
+
+OKF Markdown and the atomically published `~/memory/embeddings.sqlite` are
+backed up together. That SQLite
+file holds one 1,024-dimensional float vector per concept, keyed by its bundle
+path and content hash. SQLite FTS5 BM25 and HNSW indexes build in memory from
+concept Markdown and `embeddings.sqlite` when the librarian starts. No
+`search.sqlite` or second vector store is kept on disk. Hybrid results use
+reciprocal rank fusion. After importing the real concepts,
+trigger a Jottacloud scan, verify remote files, and test a restore before
+retiring the existing `understory-bundle` backup. Install the memory extension's
+local SQLite, HNSW, and YAML dependencies on each device before starting the
+librarian:
+
+```sh
+npm ci --prefix agentic/pi/extensions/memory
+```
+
+The embedding endpoint is the llama.cpp server at `127.0.0.1:8080`, using
+`jina-embeddings-v5-omni-small-retrieval`.
 
 ## Extensions
 

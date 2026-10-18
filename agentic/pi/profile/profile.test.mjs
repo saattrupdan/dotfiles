@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { parseAgentProfile } from "./definition.mjs";
 import { buildProfileArgs, loadProfile, resolvePiPackage, selectProfile } from "./launcher.mjs";
 
@@ -56,6 +57,37 @@ test("loads prompt body rather than YAML and refuses delegatable top-level agent
 	fs.writeFileSync(path.join(dir, "agents", "main.md"), "---\nname: main\ndescription: Main\nsubagent: true\ntools: []\nskills: []\nextensions: [private]\n---\nMain.\n");
 	await assert.rejects(loadProfile("main", dir, resolvePiPackage()), /subagent: false/);
 	assert.throws(() => buildProfileArgs(profile("main", { skills: undefined }), dir, []), /explicit resource allow-lists/);
+});
+
+test("actual librarian profile exposes exactly five private memory tools", async () => {
+	const dir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+	const librarian = await loadProfile("librarian", dir, resolvePiPackage());
+	assert.deepEqual(librarian.tools, ["search_concepts", "create_concept", "update_concept", "remove_concept", "lint_concepts"]);
+	assert.deepEqual(librarian.extensions, ["memory", "rate-limit-retry"]);
+	assert.deepEqual(librarian.skills, []);
+	assert.deepEqual(librarian.model, ["openai-codex/gpt-6-luna"]);
+	const sandbox = root();
+	for (const extension of librarian.extensions) {
+		fs.mkdirSync(path.join(sandbox, "extensions", extension), { recursive: true });
+		fs.writeFileSync(path.join(sandbox, "extensions", extension, "index.ts"), "export default () => {};\n");
+	}
+	const args = buildProfileArgs(librarian, sandbox, ["--no-session"]);
+	assert.ok(args.includes("--no-mcp"));
+	assert.ok(args.includes("--no-skills"));
+	assert.equal(args.filter((arg) => arg === "--extension").length, 2);
+	assert.equal(args[args.indexOf("--tools") + 1], librarian.tools.join(","));
+	assert.equal(args[args.indexOf("--model") + 1], "openai-codex/gpt-6-luna");
+});
+
+test("main exposes only the two handoff tools, not the librarian's concept tools", async () => {
+	const dir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+	const main = await loadProfile("main", dir, resolvePiPackage());
+	assert.ok(main.extensions.includes("memory-handoff"));
+	assert.ok(!main.extensions.includes("memory"));
+	assert.ok(main.tools.includes("store_memory") && main.tools.includes("recall_memory"));
+	for (const tool of ["search_concepts", "create_concept", "update_concept", "remove_concept", "lint_concepts"]) {
+		assert.ok(!main.tools.includes(tool), tool);
+	}
 });
 
 test("scopes private tools, skills, extensions and sessions before startup", () => {

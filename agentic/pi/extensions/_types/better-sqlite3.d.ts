@@ -6,6 +6,7 @@ interface Statement {
 }
 
 interface Database {
+  close(): void;
   pragma(sql: string, options?: { simple?: boolean }): string | number | undefined;
   exec(sql: string): Database;
   prepare(sql: string): Statement;
@@ -13,6 +14,6 @@ interface Database {
 }
 
 declare module "better-sqlite3" {
-  function Database(path: string): Database;
+  function Database(path: string, options?: { readonly?: boolean; fileMustExist?: boolean }): Database;
   export = Database;
 }

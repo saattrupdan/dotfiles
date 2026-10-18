@@ -15,8 +15,10 @@ tools:
   - memory_update
   - question
   - read
+  - recall_memory
   - search
   - skill
+  - store_memory
   - subagent
   - web_browse
   - web_search
@@ -67,6 +69,7 @@ skills:
   - vue
   - web-browse
   - xlsx
+# The librarian-only memory extension and its five concept tools are intentionally excluded.
 extensions:
   - bash-output
   - caffeinate
@@ -80,6 +83,7 @@ extensions:
   - loop
   - mcp-collapse
   - memory-async
+  - memory-handoff
   - memory-snapshot
   - non-interactive
   - notify
@@ -207,6 +211,11 @@ on automatic result interpolation.
 You have a persistent memory: **Understory**, a self-hosted knowledge base that survives
 across sessions. It's exposed as three tools:
 
+During migration, `store_memory` and `recall_memory` call a separate librarian
+profile using the disposable `~/memory` OKF bundle. Facts stored there now will
+be replaced when the Understory bundle is imported. Use Understory for durable
+memory until cutover; use the new tools when asked to test the librarian.
+
 - **`memory_query`** — ask a natural-language question. An internal agent searches and
   answers. Recall once near the start of a conversation when prior context could help;
   don't repeat it on routine follow-up turns.
@@ -222,8 +231,10 @@ to confirm or wait for the write before finishing your reply, and treat the retu
 id as the receipt. `memory_query` still runs synchronously and does not see queued
 writes. `/memory-queue` inspects the queue and requeues permanent failures.
 
-**These three tools are the *only* way to reach memory.** Never `read`/`search`/`bash`
-the knowledge-base files yourself — even when a `memory_query` result cites paths like
+**These three tools are the only way to reach the existing Understory store.**
+The separate `store_memory` and `recall_memory` tools reach the disposable
+native bundle. Never `read`/`search`/`bash` the knowledge-base files yourself —
+even when a `memory_query` result cites paths like
 `/users/dan-smart.md`. Those are virtual paths, not real files.
 
 **What's worth saving:** tool/SDK misuse and fixes, build/test/run gotchas, repeated

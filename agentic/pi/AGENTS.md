@@ -15,6 +15,7 @@ agentic/pi/
 ├── auth.json          # OAuth tokens (secret — do not commit/share)
 ├── agents/            # Agent profiles (*.md, YAML frontmatter)
 │   ├── main.md        # Default top-level prompt; subagent: false
+│   ├── librarian.md   # Private OKF memory profile; subagent: false
 │   ├── planner.md     # Plan tasks → ordered parallel-friendly plan
 │   ├── builder.md     # Implement scoped changes (runs in git worktree)
 │   ├── explorer.md    # Read-only codebase + web navigation
@@ -24,6 +25,8 @@ agentic/pi/
 │   ├── search/        # Repo-wide search + outline index
 │   ├── code-tree/     # Structural project tree navigation
 │   ├── subagent/      # One agent/task delegation per call
+│   ├── memory/        # Librarian-only OKF concept tools and local search
+│   ├── memory-handoff/ # Main-only store/recall subprocess bridge
 │   ├── skill/         # Load named skill SKILL.md verbatim
 │   ├── web-browse/    # Headless browser interaction
 │   ├── copy-paste/    # Clipboard operations
@@ -46,6 +49,11 @@ list `tools:`, `skills:`, and `extensions:`; none inherit discovered defaults.
 They use separate session storage so resume/continue retain their tool set.
 `extensions/subagent/` only delegates to `subagent: true` profiles. Add a private
 profile to `agents/`, never by exposing its extensions to the default main list.
+The `librarian` profile has only five concept tools and the tool-free
+`rate-limit-retry` extension. Main has only the two `store_memory` and
+`recall_memory` handoff tools. The existing Understory extensions remain in
+main until its bundle is migrated; `memory-snapshot` will then be repointed
+to a bounded overview of `~/memory`.
 
 ## Key agents
 

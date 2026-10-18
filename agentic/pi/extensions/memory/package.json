@@ -1,0 +1,14 @@
+{
+  "name": "pi-memory",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": {
+    "better-sqlite3": "^12.10.0",
+    "usearch": "^2.26.4",
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "jiti": "^2.7.0"
+  }
+}
