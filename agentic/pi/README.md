@@ -37,6 +37,21 @@ pi --version
 
 The `agents/`, `extensions/`, and `skills/` links must already be in place.
 
+## Native memory bundle
+
+Use `${XDG_DATA_HOME:-$HOME/.local/share}/pi/memory` as the canonical OKF
+bundle root. Keep it outside the config checkout and separate from Understory's
+live bundle. On this machine, the directory is registered for continuous
+Jottacloud Backup as `pi-memory`. On another machine, register it with:
+
+```sh
+jotta-cli add "${XDG_DATA_HOME:-$HOME/.local/share}/pi/memory" --name pi-memory
+```
+
+The directory is empty until migration. After importing the concepts, trigger
+a scan, verify the files arrived remotely, and test a restore before retiring
+the existing `understory-bundle` backup.
+
 ## Extensions
 
 Each subdirectory under `extensions/` is a self-contained pi extension. They
