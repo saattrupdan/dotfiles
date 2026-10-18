@@ -1,3 +1,10 @@
+# Keep the Core ML build and its encoder next to the local model files, not in
+# Homebrew's whisper.cpp (which is built without Core ML support).
+WHISPER_COREML_DIR := ./.cache/whisper.cpp-coreml
+WHISPER_COREML_SERVER := $(WHISPER_COREML_DIR)/build/bin/whisper-server
+
+.PHONY: whisper whisper-setup
+
 llamacpp:
 	@llama-server \
 		--models-preset ./preset.ini \
@@ -11,13 +18,6 @@ llamacpp:
 		--webui-mcp-proxy \
 		--gpu-layers 99 \
 		--reasoning-preserve
-
-# Keep the Core ML build and its encoder next to the local model files, not in
-# Homebrew's whisper.cpp (which is built without Core ML support).
-WHISPER_COREML_DIR := ./.cache/whisper.cpp-coreml
-WHISPER_COREML_SERVER := $(WHISPER_COREML_DIR)/build/bin/whisper-server
-
-.PHONY: whisper whisper-setup
 
 whisper-setup:
 	@if [ ! -d "$(WHISPER_COREML_DIR)/.git" ]; then \
