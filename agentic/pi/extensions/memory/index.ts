@@ -26,9 +26,10 @@ export default function (pi: ExtensionAPI): void {
 		}),
 		async execute(_id, params) { return answer(await memory().search(params)); },
 	});
-	// Recall subprocesses get only the search tool; normal librarian sessions get all five.
+	// Recall runs can only search; scheduled cleaning can search, update and lint.
 	if (process.env.PI_MEMORY_RECALL_ONLY === "1") return;
-	pi.registerTool({
+	const cleaning = process.env.PI_MEMORY_CLEANING_ONLY === "1";
+	if (!cleaning) pi.registerTool({
 		name: "create_concept",
 		label: "create_concept",
 		description: "Create a typed OKF Markdown concept at a bundle-relative .md path. Large bodies become a " +
@@ -54,7 +55,7 @@ export default function (pi: ExtensionAPI): void {
 		}),
 		async execute(_id, params) { return answer(await memory().update(params)); },
 	});
-	pi.registerTool({
+	if (!cleaning) pi.registerTool({
 		name: "remove_concept",
 		label: "remove_concept",
 		description: "Delete a concept and its embedding. Removing a split parent also deletes its generated parts and embeddings.",

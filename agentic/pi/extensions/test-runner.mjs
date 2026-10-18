@@ -19,6 +19,8 @@ await jiti.import(path.join(root, "mcp-collapse", "index.test.ts"), { default: f
 await jiti.import(path.join(root, "memory", "store.test.ts"), { default: false });
 await import(path.join(root, "memory", "migrate.test.mjs"));
 await import(path.join(root, "memory", "activate.test.mjs"));
+await import(path.join(root, "memory", "clean.test.mjs"));
+await import(path.join(root, "memory", "install-cleaning.test.mjs"));
 await import(path.join(root, "memory-snapshot", "native-refresh.test.mjs"));
 await jiti.import(path.join(root, "memory-snapshot", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "memory", "index.test.ts"), { default: false });

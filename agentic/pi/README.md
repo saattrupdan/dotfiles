@@ -91,6 +91,25 @@ Interrupted or partially applied writes require checking the concept first;
 then use `retry JOB_ID --confirmed`. The CLI also supports `pause` and `resume`.
 The queue and `~/memory/requests/worker.log` are part of the memory backup.
 
+### Hourly cleaning
+
+On macOS, install the hourly launchd job after restoring the native bundle:
+
+```sh
+node agentic/pi/extensions/memory/install-cleaning.mjs
+launchctl print "gui/$(id -u)/com.saattrupdan.pi-memory-cleaning"
+```
+
+It runs on load and at minute zero every hour. A sleeping laptop runs one
+missed calendar invocation after waking. Temporary network failures retry in
+the librarian; a session still failing after 20 minutes logs the failure and
+the next invocation starts a fresh lint instead of resuming a stale model turn.
+A lock prevents overlapping sessions. Scheduled sessions can search, update,
+and lint, but cannot create or delete concepts. They make at most five safe
+repairs per run; ambiguous links, duplicates, and orphans remain for review.
+Each run logs its issue counts and result in `~/memory/cleaning.log`, with its
+latest status in `~/memory/.cleaning-state.json`.
+
 ## Extensions
 
 Each subdirectory under `extensions/` is a self-contained pi extension. They
