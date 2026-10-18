@@ -9,6 +9,7 @@ llamacpp:
 	@llama-server \
 		--models-preset ./preset.ini \
 		--models-dir ./ \
+		--port 8080 \
 		--cache-prompt \
 		--ubatch-size 2048 \
 		--batch-size 2048 \
