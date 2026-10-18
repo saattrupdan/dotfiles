@@ -14,12 +14,12 @@ test("reuses the actual Pi CLI script", () => {
 	).toEqual({ command: "/opt/homebrew/bin/node", args: ["/opt/homebrew/bin/pi", ...args] });
 });
 
-test("uses Pi from PATH when embedded in Pi Web", () => {
+test("uses Pi from PATH when embedded in another Node app", () => {
 	expect(
 		selectPiInvocation(args, {
 			execPath: "/opt/homebrew/bin/node",
-			currentScript: "/usr/local/lib/node_modules/@agegr/pi-web/bin/pi-web.js",
-			resolvedScript: "/usr/local/lib/node_modules/@agegr/pi-web/bin/pi-web.js",
+			currentScript: "/usr/local/lib/node_modules/other-app/bin/other-app.js",
+			resolvedScript: "/usr/local/lib/node_modules/other-app/bin/other-app.js",
 		}),
 	).toEqual({ command: "pi", args });
 });
@@ -28,7 +28,7 @@ test("uses Pi from PATH for a Bun virtual host script", () => {
 	expect(
 		selectPiInvocation(args, {
 			execPath: "/usr/local/bin/bun",
-			currentScript: "/$bunfs/root/pi-web.js",
+			currentScript: "/$bunfs/root/other-app.js",
 		}),
 	).toEqual({ command: "pi", args });
 });
