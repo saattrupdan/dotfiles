@@ -47,7 +47,7 @@ function hash(raw: string): string {
 	return createHash("sha256").update(raw).digest("hex");
 }
 
-function parseConcept(raw: string, conceptPath: string): Concept {
+export function parseConcept(raw: string, conceptPath: string): Concept {
 	const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n){1,2}/.exec(raw);
 	if (!match) throw new Error("missing YAML frontmatter");
 	const data: unknown = YAML.parse(match[1]);
@@ -144,7 +144,8 @@ export class MemoryStore {
 		this.snapshotFile = path.join(this.root, "embeddings.sqlite");
 		this.embed = options.embed ?? createEmbedder();
 		this.log = options.log ?? ((message) => console.error(`[pi-memory] ${message}`));
-		this.lockPath = path.join(this.root, ".write.lock");		const obsolete = path.join(this.root, "search.sqlite");
+		this.lockPath = path.join(this.root, ".write.lock");
+		const obsolete = path.join(this.root, "search.sqlite");
 		const old = fs.lstatSync(obsolete, { throwIfNoEntry: false });
 		if (old && !old.isFile()) throw new Error("Obsolete search index must be a regular file");
 		if (old) fs.unlinkSync(obsolete);
@@ -532,8 +533,10 @@ export class MemoryStore {
 		return output;
 	}
 
-	private async embedDocuments(documents: Array<{ path: string; raw: string }>): Promise<string[]> {
+	private async embedDocuments(documents: Array<{ path: string; raw: string }>,
+		onProgress?: (completed: number, total: number) => void): Promise<string[]> {
 		const failures: string[] = [];
+		let completed = 0;
 		for (const document of documents) {
 			try {
 				const parsed = parseConcept(document.raw, document.path);
@@ -551,7 +554,7 @@ export class MemoryStore {
 			} catch (error) {
 				failures.push(document.path);
 				this.log(`embedding failed for ${document.path}: ${(error as Error).message}`);
-			}
+			} finally { onProgress?.(++completed, documents.length); }
 		}
 		return failures;
 	}
@@ -573,7 +576,7 @@ export class MemoryStore {
 				...(input.tags !== undefined ? { tags: input.tags } : {}) } as Metadata;
 			if (typeof metadata.type !== "string" || !metadata.type.trim()) throw new Error("Concept needs a nonempty type");
 			if (typeof input.body !== "string" || !input.body.trim()) throw new Error("Concept body must not be empty");
-			if (Buffer.byteLength(YAML.stringify(metadata)) > 2_048) throw new Error("Concept metadata exceeds the embedding budget");
+			if (Buffer.byteLength(YAML.stringify(metadata)) > 4_096) throw new Error("Concept metadata exceeds the embedding budget");
 			const documents = this.materialize(input.path, metadata, input.body);
 			const oldParts = previous ? this.generatedParts(input.path) : [];
 			for (const document of documents) {
@@ -593,7 +596,9 @@ export class MemoryStore {
 	}
 
 	/** Rebuild vectors for a restored bundle without rewriting any concept Markdown. */
-	async rebuildEmbeddings(): Promise<{ attempted: number; missingEmbeddings: string[] }> {
+	async rebuildEmbeddings(onProgress?: (completed: number, total: number) => void): Promise<{
+		attempted: number; missingEmbeddings: string[]
+	}> {
 		if (this.reconcile().some((issue) => issue.kind === "malformed_embedding")) {
 			throw new Error("Embedding snapshot is invalid; repair it before rebuilding vectors");
 		}
@@ -603,7 +608,7 @@ export class MemoryStore {
 				const current = vectors.get(row.path);
 				return !current || current.hash !== row.hash || current.model !== MODEL;
 			});
-		return { attempted: documents.length, missingEmbeddings: await this.embedDocuments(documents) };
+		return { attempted: documents.length, missingEmbeddings: await this.embedDocuments(documents, onProgress) };
 	}
 
 	create(input: ConceptInput): Promise<{ paths: string[]; missingEmbeddings: string[] }> { return this.write(input, true); }

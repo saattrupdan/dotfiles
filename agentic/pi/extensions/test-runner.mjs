@@ -17,6 +17,9 @@ await jiti.import(path.join(root, "_voice-input", "syv.test.ts"), { default: fal
 await jiti.import(path.join(root, "search", "index-store.test.ts"), { default: false });
 await jiti.import(path.join(root, "mcp-collapse", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "memory", "store.test.ts"), { default: false });
+await import(path.join(root, "memory", "migrate.test.mjs"));
+await import(path.join(root, "memory", "activate.test.mjs"));
+await import(path.join(root, "memory-snapshot", "native-refresh.test.mjs"));
 await jiti.import(path.join(root, "memory", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "memory-handoff", "index.test.ts"), { default: false });
 await import(path.join(root, "memory-handoff", "queue.test.mjs"));
