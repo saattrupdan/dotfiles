@@ -144,11 +144,23 @@ test("oversized concepts split without losing text; updates and removals clean p
 			assert.ok(fs.statSync(path.join(f.root, p.slice(1))).size <= 24_000, p);
 		}
 		await assert.rejects(f.store.remove(created.paths[0]), /Remove the parent concept/);
+		const originalParent = fs.readFileSync(path.join(f.root, "long.md"), "utf8");
 		const updated = await f.store.update({ path: "/long.md", body: "Now short." });
 		assert.deepEqual(updated.paths, ["/long.md"]);
+		assert.ok(updated.archive?.startsWith("/requests/versions/"));
+		const versionDir = path.join(f.root, updated.archive!.slice(1));
+		const prior = JSON.parse(fs.readFileSync(path.join(versionDir, "manifest.json"), "utf8"));
+		assert.deepEqual(prior.entries.map((entry: { path: string }) => entry.path), ["/long.md", ...created.paths.slice(0, -1)]);
+		assert.equal(fs.readFileSync(path.join(versionDir, prior.entries[0].file), "utf8"), originalParent);
 		assert.equal(f.store.lint().some((issue) => issue.kind === "orphan_embedding"), false);
 		for (const p of created.paths.slice(0, -1)) assert.ok(!fs.existsSync(path.join(f.root, p.slice(1))));
-		assert.deepEqual(await f.store.remove("/long.md"), { removed: ["/long.md"] });
+		const rawBeforeRemoval = fs.readFileSync(path.join(f.root, "long.md"), "utf8");
+		const removal = await f.store.remove("/long.md");
+		assert.deepEqual(removal.removed, ["/long.md"]);
+		const archive = path.join(f.root, removal.archive.slice(1));
+		const manifest = JSON.parse(fs.readFileSync(path.join(archive, "manifest.json"), "utf8"));
+		assert.deepEqual(manifest.entries.map((entry: { path: string }) => entry.path), ["/long.md"]);
+		assert.equal(fs.readFileSync(path.join(archive, manifest.entries[0].file), "utf8"), rawBeforeRemoval);
 		const snapshot = Database(path.join(f.root, "embeddings.sqlite"), { readonly: true });
 		assert.equal(snapshot.prepare("SELECT count(*) AS n FROM embeddings").get().n, 0);
 		snapshot.close();

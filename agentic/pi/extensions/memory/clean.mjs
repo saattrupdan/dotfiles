@@ -12,13 +12,14 @@ import { fileURLToPath } from "node:url";
 
 const DEFAULT_ROOT = path.join(os.homedir(), "memory");
 const DEFAULT_AGENT_DIR = path.join(os.homedir(), ".pi", "agent");
-const PROMPT = "Perform bounded, non-destructive maintenance on the OKF memory bundle. " +
-	"Call lint_concepts first. Repair at most five missing or stale embeddings by reading each concept " +
-	"with search_concepts(path) and calling update_concept with its unchanged body and metadata. " +
-	"Repair a broken link only if the correct existing target is unambiguous, preserving all other text. " +
-	"Do not delete, merge, remove or invent concepts, discard facts, or rewrite duplicate paragraphs. " +
-	"Leave orphans and ambiguous issues for review. Lint again after any repairs, then report " +
-	"only remaining issue counts and successful repairs.";
+const PROMPT = "Clean the OKF memory bundle with at most five mutations. Call lint_concepts first. " +
+	"Fix missing or stale embeddings by reading the exact concept and updating it with the same body. " +
+	"Remove exactly repeated paragraphs only when all unique facts and context remain. " +
+	"Merge two concepts only when they are genuinely duplicates: preserve all unique facts and metadata " +
+	"in the owner, redirect every inbound link, then remove the duplicate after lint shows no inbound links. " +
+	"Removal archives the original; record its archive path. Never delete a concept solely because it is orphaned. " +
+	"Fix broken links only when the correct target is unambiguous. Do not invent facts, and leave uncertain " +
+	"issues unchanged. Lint again after repairs; report only issue counts, repair counts and archive paths.";
 
 function append(root, event, detail = "") {
 	const file = path.join(root, "cleaning.log");
@@ -67,7 +68,8 @@ export async function runCleaning({ root = DEFAULT_ROOT, agentDir = DEFAULT_AGEN
 			const env = { ...process.env, PI_MEMORY_CLEANING_ONLY: "1", PI_MEMORY_RECALL_ONLY: "0" };
 			child = spawn(path.join(agentDir, "bin", "pi"), ["--agent", "librarian", "--no-session", "--mode", "json", "-p", PROMPT],
 				{ stdio: ["ignore", "pipe", "pipe"], detached: true, env });
-			let lintRuns = 0, repairs = 0, failures = 0, issueSummary = {}, buffer = "", stderr = "", timedOut = false, force;
+			let lintRuns = 0, repairs = 0, removals = 0, failures = 0, issueSummary = {}, buffer = "", stderr = "", timedOut = false, force;
+			const archives = [];
 			const stop = (signal) => {
 				try { process.kill(-child.pid, signal); }
 				catch (error) { if (error.code !== "ESRCH") reject(error); }
@@ -91,7 +93,13 @@ export async function runCleaning({ root = DEFAULT_ROOT, agentDir = DEFAULT_AGEN
 							if (Array.isArray(issues)) issueSummary = Object.fromEntries(
 								[...new Set(issues.map((issue) => issue.kind))].sort()
 									.map((kind) => [kind, issues.filter((issue) => issue.kind === kind).length]));
-						} else if (event.toolName === "update_concept") repairs++;
+						} else if (event.toolName === "update_concept") {
+							repairs++;
+							if (typeof event.result?.details?.archive === "string") archives.push(event.result.details.archive);
+						} else if (event.toolName === "remove_concept") {
+							removals++;
+							if (typeof event.result?.details?.archive === "string") archives.push(event.result.details.archive);
+						}
 					} catch { /* Ignore non-JSON launcher status lines. */ }
 				}
 			});
@@ -103,12 +111,13 @@ export async function runCleaning({ root = DEFAULT_ROOT, agentDir = DEFAULT_AGEN
 					reject(new Error(interrupted ? "Cleaning session interrupted; next run will start from lint" :
 						timedOut ? "Cleaning session timed out" :
 						`Cleaning incomplete: exit=${code}, lint=${lintRuns}, toolErrors=${failures}, stderr=${stderr.slice(-350)}`));
-				} else resolve({ lintRuns, repairs, issues: issueSummary });
+				} else resolve({ lintRuns, repairs, removals, archives, issues: issueSummary });
 			});
 		});
 		const done = { startedAt, completedAt: new Date().toISOString(), status: "done", ...result };
 		saveState(root, done);
-		append(root, "done", `lint=${done.lintRuns} repairs=${done.repairs} issues=${JSON.stringify(done.issues)}`);
+		append(root, "done", `lint=${done.lintRuns} updates=${done.repairs} removals=${done.removals} ` +
+			`issues=${JSON.stringify(done.issues)} archives=${done.archives.join(",")}`);
 		return done;
 	} catch (error) {
 		saveState(root, { startedAt, completedAt: new Date().toISOString(), status: "failed", error: error.message });

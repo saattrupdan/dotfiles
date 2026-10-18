@@ -18,6 +18,7 @@ if(process.env.PI_MEMORY_CLEAN_TEST_MODE === 'slow')setInterval(()=>{},1000);
 else {
 if(process.env.PI_MEMORY_CLEAN_TEST_MODE !== 'no-lint')console.log(JSON.stringify({type:'tool_execution_end',toolName:'lint_concepts',isError:false,result:{details:{issues:[{kind:'orphan'},{kind:'orphan'}]}}}));
 if(process.env.PI_MEMORY_CLEAN_TEST_MODE === 'repair')console.log(JSON.stringify({type:'tool_execution_end',toolName:'update_concept',isError:false}));
+if(process.env.PI_MEMORY_CLEAN_TEST_MODE === 'remove')console.log(JSON.stringify({type:'tool_execution_end',toolName:'remove_concept',isError:false,result:{details:{archive:'/requests/removed/example'}}}));
 if(process.env.PI_MEMORY_CLEAN_TEST_MODE === 'fail')process.exit(1);
 console.log(JSON.stringify({type:'agent_end'}));
 }
@@ -34,7 +35,7 @@ test("maintenance logs successful bounded librarian work without leaking concept
 		assert.equal(result.status, "done");
 		assert.equal(result.repairs, 1);
 		assert.deepEqual(result.issues, { orphan: 2 });
-		assert.match(fs.readFileSync(path.join(f.root, "cleaning.log"), "utf8"), /done lint=1 repairs=1 issues=\{"orphan":2\}/);
+		assert.match(fs.readFileSync(path.join(f.root, "cleaning.log"), "utf8"), /done lint=1 updates=1 removals=0 issues=\{"orphan":2\}/);
 		assert.equal(fs.statSync(path.join(f.root, "cleaning.log")).mode & 0o777, 0o600);
 		assert.equal(JSON.parse(fs.readFileSync(path.join(f.root, ".cleaning-state.json"), "utf8")).status, "done");
 		assert.ok(!fs.existsSync(path.join(f.root, ".cleaning.lock")));
@@ -54,6 +55,19 @@ test("failed and interrupted sessions log errors and retry from fresh lint", asy
 		process.env.PI_MEMORY_CLEAN_TEST_MODE = "repair";
 		assert.equal((await runCleaning({ root: f.root, agentDir: f.agentDir, timeoutMs: 3_000 })).status, "done");
 		assert.match(fs.readFileSync(path.join(f.root, "cleaning.log"), "utf8"), /recovered-interrupted-run/);
+	} finally { if (old === undefined) delete process.env.PI_MEMORY_CLEAN_TEST_MODE;
+		else process.env.PI_MEMORY_CLEAN_TEST_MODE = old; f.cleanup(); }
+});
+
+test("successful removals record reversible archive paths", async () => {
+	const f = fixture();
+	const old = process.env.PI_MEMORY_CLEAN_TEST_MODE;
+	try {
+		process.env.PI_MEMORY_CLEAN_TEST_MODE = "remove";
+		const result = await runCleaning({ root: f.root, agentDir: f.agentDir, timeoutMs: 3_000 });
+		assert.equal(result.removals, 1);
+		assert.deepEqual(result.archives, ["/requests/removed/example"]);
+		assert.match(fs.readFileSync(path.join(f.root, "cleaning.log"), "utf8"), /archives=\/requests\/removed\/example/);
 	} finally { if (old === undefined) delete process.env.PI_MEMORY_CLEAN_TEST_MODE;
 		else process.env.PI_MEMORY_CLEAN_TEST_MODE = old; f.cleanup(); }
 });

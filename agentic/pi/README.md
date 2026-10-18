@@ -105,10 +105,15 @@ missed calendar invocation after waking. Temporary network failures retry in
 the librarian; a session still failing after 20 minutes logs the failure and
 the next invocation starts a fresh lint instead of resuming a stale model turn.
 A lock prevents overlapping sessions. Scheduled sessions can search, update,
-and lint, but cannot create or delete concepts. They make at most five safe
-repairs per run; ambiguous links, duplicates, and orphans remain for review.
-Each run logs its issue counts and result in `~/memory/cleaning.log`, with its
-latest status in `~/memory/.cleaning-state.json`.
+remove, and lint, but cannot create concepts. At most five mutations are allowed
+per run. The cleaner may deduplicate exact repeated text or merge proven
+duplicates, preserving unique facts and redirecting inbound links. Removal is
+allowed only after a concept has no inbound links; its original Markdown is
+archived under `~/memory/requests/removed/` before deletion. Updates archive
+the previous version under `~/memory/requests/versions/`. An orphan is not
+itself a reason to delete. Each run logs issue counts, mutations, and archive
+paths in `~/memory/cleaning.log`, with its latest status in
+`~/memory/.cleaning-state.json`. Ambiguous issues remain for review.
 
 ## Extensions
 

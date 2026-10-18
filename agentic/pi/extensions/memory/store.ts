@@ -130,11 +130,13 @@ export class MemoryStore {
 	private ann: Index | undefined;
 	private annPaths: string[] = [];
 	private readonly embed: Embed;
+	private readonly archiveUpdates: boolean;
 	private readonly log: (message: string) => void;
 
 	constructor(options: {
 		root?: string;
 		embed?: Embed;
+		archiveUpdates?: boolean;
 		log?: (message: string) => void;
 	} = {}) {
 		const root = path.resolve(options.root ?? path.join(os.homedir(), "memory"));
@@ -143,6 +145,7 @@ export class MemoryStore {
 		this.root = fs.realpathSync(root);
 		this.snapshotFile = path.join(this.root, "embeddings.sqlite");
 		this.embed = options.embed ?? createEmbedder();
+		this.archiveUpdates = options.archiveUpdates ?? true;
 		this.log = options.log ?? ((message) => console.error(`[pi-memory] ${message}`));
 		this.lockPath = path.join(this.root, ".write.lock");
 		const obsolete = path.join(this.root, "search.sqlite");
@@ -559,8 +562,10 @@ export class MemoryStore {
 		return failures;
 	}
 
-	private async write(input: ConceptInput | ConceptUpdate, create: boolean): Promise<{ paths: string[]; missingEmbeddings: string[] }> {
-		const documents = await this.withWriteLock(async () => {
+	private async write(input: ConceptInput | ConceptUpdate, create: boolean): Promise<{
+		paths: string[]; missingEmbeddings: string[]; archive?: string
+	}> {
+		const { documents, archive } = await this.withWriteLock(async () => {
 			this.checkReservedFiles();
 			if (this.reconcile().some((issue) => issue.kind === "malformed_embedding")) {
 				throw new Error("Embedding snapshot is invalid; repair it before writing concepts");
@@ -584,15 +589,18 @@ export class MemoryStore {
 				if (document.path !== input.path && !oldParts.includes(document.path) &&
 					fs.existsSync(this.resolve(document.path))) throw new Error(`Generated part path already exists: ${document.path}`);
 			}
+			const archive = previous && this.archiveUpdates
+				? this.archiveConcepts([input.path, ...oldParts], "versions") : undefined;
 			for (const document of documents) this.atomicWrite(document.path, document.raw);
 			const removedParts = oldParts.filter((part) => !documents.some((doc) => doc.path === part));
 			for (const removed of removedParts) fs.unlinkSync(this.resolve(removed));
 			if (removedParts.length) this.publishSnapshot([], removedParts);
 			this.reconcile();
 			this.appendLog(create ? "Creation" : "Update", input.path);
-			return documents;
+			return { documents, archive };
 		});
-		return { paths: documents.map((doc) => doc.path), missingEmbeddings: await this.embedDocuments(documents) };
+		return { paths: documents.map((doc) => doc.path), missingEmbeddings: await this.embedDocuments(documents),
+			...(archive ? { archive } : {}) };
 	}
 
 	/** Rebuild vectors for a restored bundle without rewriting any concept Markdown. */
@@ -612,9 +620,32 @@ export class MemoryStore {
 	}
 
 	create(input: ConceptInput): Promise<{ paths: string[]; missingEmbeddings: string[] }> { return this.write(input, true); }
-	update(input: ConceptUpdate): Promise<{ paths: string[]; missingEmbeddings: string[] }> { return this.write(input, false); }
+	update(input: ConceptUpdate): Promise<{ paths: string[]; missingEmbeddings: string[]; archive?: string }> {
+		return this.write(input, false);
+	}
 
-	async remove(conceptPath: string): Promise<{ removed: string[] }> {
+	private archiveConcepts(paths: string[], category: "removed" | "versions"): string {
+		const queue = path.join(this.root, "requests");
+		const base = path.join(queue, category);
+		for (const folder of [queue, base]) {
+			const existing = fs.lstatSync(folder, { throwIfNoEntry: false });
+			if (existing && !existing.isDirectory()) throw new Error("Memory removal archive must be a real directory");
+			if (!existing) fs.mkdirSync(folder, { mode: 0o700 });
+		}
+		const id = `${Date.now()}-${process.pid}-${Math.random().toString(16).slice(2)}`;
+		const folder = path.join(base, id);
+		fs.mkdirSync(folder, { mode: 0o700 });
+		const entries = paths.map((conceptPath) => {
+			const raw = fs.readFileSync(this.resolve(conceptPath), "utf8");
+			const file = `${hash(conceptPath)}.md`;
+			this.atomicWriteFile(path.join(folder, file), raw);
+			return { path: conceptPath, file, sha256: hash(raw) };
+		});
+		this.atomicWriteFile(path.join(folder, "manifest.json"), `${JSON.stringify({ createdAt: new Date().toISOString(), entries }, null, 2)}\n`);
+		return `/requests/${category}/${id}`;
+	}
+
+	async remove(conceptPath: string): Promise<{ removed: string[]; archive: string }> {
 		return this.withWriteLock(async () => {
 			this.checkReservedFiles();
 			if (this.reconcile().some((issue) => issue.kind === "malformed_embedding")) {
@@ -626,6 +657,7 @@ export class MemoryStore {
 				throw new Error("Remove the parent concept instead of a generated part");
 			}
 			const paths = [conceptPath, ...this.generatedParts(conceptPath)];
+			const archive = this.archiveConcepts(paths, "removed");
 			for (const p of paths) fs.unlinkSync(this.resolve(p));
 			this.db.transaction(() => {
 				for (const p of paths) {
@@ -637,7 +669,7 @@ export class MemoryStore {
 			this.pruneEmptyDirs();
 			this.rebuildIndexes();
 			this.appendLog("Deletion", conceptPath);
-			return { removed: paths };
+			return { removed: paths, archive };
 		});
 	}
 

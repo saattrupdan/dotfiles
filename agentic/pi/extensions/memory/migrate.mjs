@@ -84,7 +84,7 @@ export async function prepare({ source, stage, embed, progress = () => {} }) {
 	}
 	progress({ phase: "copied", ...before });
 	const { MemoryStore, parseConcept } = await jiti.import("./store.ts", { default: false });
-	const store = new MemoryStore({ root: stage, ...(embed ? { embed } : {}),
+	const store = new MemoryStore({ root: stage, archiveUpdates: false, ...(embed ? { embed } : {}),
 		log: (message) => process.stderr.write(`[migration] ${message}\n`) });
 	try {
 		let issues = store.lint();

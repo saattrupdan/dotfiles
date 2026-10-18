@@ -32,6 +32,7 @@ test("stages an exact source copy, splits oversize concepts and builds vectors w
 		assert.ok(result.conceptCount > 2);
 		assert.equal(result.lint.missing_embedding, undefined);
 		assert.ok(fs.existsSync(path.join(f.stage, "embeddings.sqlite")));
+		assert.ok(!fs.existsSync(path.join(f.stage, "requests")));
 		assert.ok(!fs.existsSync(path.join(f.source, "embeddings.sqlite")));
 		assert.ok(progress.some((event) => event.phase === "embedding"));
 		await assert.rejects(prepare({ source: f.source, stage: f.stage, embed }), /already exists/);

@@ -12,7 +12,7 @@ function answer(result: unknown) {
 	return { content: [{ type: "text" as const, text: JSON.stringify(result) }], details: result };
 }
 
-export default function (pi: ExtensionAPI): void {
+export default function (pi: ExtensionAPI, getStore: () => MemoryStore = memory): void {
 	pi.registerTool({
 		name: "search_concepts",
 		label: "search_concepts",
@@ -24,11 +24,17 @@ export default function (pi: ExtensionAPI): void {
 			path: Type.Optional(Type.String()),
 			limit: Type.Optional(Type.Number({ minimum: 1, maximum: 25 })),
 		}),
-		async execute(_id, params) { return answer(await memory().search(params)); },
+		async execute(_id, params) { return answer(await getStore().search(params)); },
 	});
-	// Recall runs can only search; scheduled cleaning can search, update and lint.
+	// Recall runs can only search; scheduled cleaning cannot create new concepts.
 	if (process.env.PI_MEMORY_RECALL_ONLY === "1") return;
 	const cleaning = process.env.PI_MEMORY_CLEANING_ONLY === "1";
+	let cleaningWrites = 0;
+	const countWrite = () => {
+		if (!cleaning) return;
+		if (cleaningWrites >= 5) throw new Error("Hourly cleaning is limited to five mutations");
+		cleaningWrites++;
+	};
 	if (!cleaning) pi.registerTool({
 		name: "create_concept",
 		label: "create_concept",
@@ -40,7 +46,7 @@ export default function (pi: ExtensionAPI): void {
 			title: Type.Optional(Type.String()), description: Type.Optional(Type.String()),
 			tags: Type.Optional(Type.Array(Type.String())),
 		}),
-		async execute(_id, params) { return answer(await memory().create(params)); },
+		async execute(_id, params) { return answer(await getStore().create(params)); },
 	});
 	pi.registerTool({
 		name: "update_concept",
@@ -53,14 +59,21 @@ export default function (pi: ExtensionAPI): void {
 			type: Type.Optional(Type.String()), title: Type.Optional(Type.String()),
 			description: Type.Optional(Type.String()), tags: Type.Optional(Type.Array(Type.String())),
 		}),
-		async execute(_id, params) { return answer(await memory().update(params)); },
+		async execute(_id, params) { countWrite(); return answer(await getStore().update(params)); },
 	});
-	if (!cleaning) pi.registerTool({
+	pi.registerTool({
 		name: "remove_concept",
 		label: "remove_concept",
-		description: "Delete a concept and its embedding. Removing a split parent also deletes its generated parts and embeddings.",
+		description: "Archive the complete concept and its generated parts in ~/memory/requests/removed before " +
+			"removing them from active search, along with their embeddings. Returns the archive path.",
 		parameters: Type.Object({ path: Type.String() }),
-		async execute(_id, { path }) { return answer(await memory().remove(path)); },
+		async execute(_id, { path }) {
+			if (cleaning && !getStore().lint().some((issue) => issue.kind === "orphan" && issue.path === path)) {
+				throw new Error("Hourly cleanup can remove only concepts with no inbound links");
+			}
+			countWrite();
+			return answer(await getStore().remove(path));
+		},
 	});
 	pi.registerTool({
 		name: "lint_concepts",
@@ -68,6 +81,6 @@ export default function (pi: ExtensionAPI): void {
 		description: "List malformed or oversized concepts, orphan concepts, broken relative or bundle-root links, " +
 			"duplicate paragraphs, orphan embeddings, and missing or stale embeddings.",
 		parameters: Type.Object({}),
-		async execute() { return answer({ issues: memory().lint() }); },
+		async execute() { return answer({ issues: getStore().lint() }); },
 	});
 }
