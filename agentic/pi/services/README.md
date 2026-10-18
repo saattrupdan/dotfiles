@@ -1,7 +1,8 @@
 # MacBook Tailscale recovery
 
-On Dan's MacBook (`100.64.176.114`), `setup.sh` links this directory and loads
-`io.pi.tailscale-recovery` as a user LaunchAgent (every 30 seconds). The watchdog
+On Dan's MacBook (`100.64.176.114`), this directory is linked at
+`~/.pi/agent/services/` and `io.pi.tailscale-recovery` runs as a user
+LaunchAgent (every 30 seconds). The watchdog
 checks actual SSH connectivity to Sparkie over the tailnet. If it fails twice
 while internet works on Wi-Fi, it asks Tailscale to rebind. It cycles Tailscale
 only if both Sparkie and job-bot are listed online but unreachable through the

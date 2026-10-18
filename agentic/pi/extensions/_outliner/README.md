@@ -116,13 +116,17 @@ cd agentic/pi/extensions/_outliner
 npm install
 ```
 
-`node_modules/` and `package-lock.json` are git-ignored. The native tree-sitter
- grammars compile during `npm install`; on a fresh machine you need a working C
- toolchain. On Linux ARM64, `agentic/pi/setup.sh` deliberately rebuilds
-`tree-sitter-typescript` from source with C++20 and then loads it under Node 24;
-the published 0.23.2 ARM64 artifact is not trusted because it was observed to be
-x86-64. This source-build path has not been live-verified on the Spark from this
-checkout, so a successful local install is not a claim of Spark deployment.
+`node_modules/` is git-ignored. The native tree-sitter grammars compile during
+`npm install`; on a fresh machine you need a working C toolchain. Build under
+the same Node that runs Pi. On Linux ARM64, force the source build with C++20:
+
+```sh
+CXXFLAGS=--std=c++20 npm_config_build_from_source=true npm install
+```
+
+The published `tree-sitter-typescript` 0.23.2 ARM64 artifact has been observed
+to contain x86-64 code, so do not use its prebuild.
+
 ## Consumers
 
 - `agentic/pi/extensions/read/` - file reader with outline-on-overflow.

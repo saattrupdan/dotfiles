@@ -32,8 +32,7 @@ agentic/pi/
 │   ├── _outliner/     # Library: tree-sitter structural outliner
 │   └── _question_protocol/ # Library
 ├── prompts/           # Slash-command flow definitions
-├── themes/            # TUI themes
-└── setup.sh           # Bootstrap: symlinks (skills via agentic/skills/sync.sh), models.json, node + npm deps
+└── themes/            # TUI themes
 ```
 
 ## Key agents
@@ -108,8 +107,8 @@ Omitted = all discoverable; empty array = none.
   content.
 - **Builders normally run in isolated git worktrees.** They must commit before exiting.
   However, when modifying this dotfiles repo itself, never invoke a worktree builder:
-  work directly on `main` as required by the root `AGENTS.md`. Running Pi setup from a
-  temporary worktree repoints the live `~/.pi/agent` symlinks to disposable paths.
+  work directly on `main` as required by the root `AGENTS.md`. Live Pi config
+  symlinks point to this primary checkout; do not repoint them to a temporary worktree.
 - **No pagination on `read`.** Use `symbol=` or `search` to locate content in large files.
 
 ### User questions

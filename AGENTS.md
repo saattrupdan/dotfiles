@@ -48,19 +48,26 @@ that import to `_types/pi-mcp-adapter.d.ts`, which declares the default factory
 used by `mcp-collapse` without checking the dependency's entire source tree.
 
 **How `@earendil-works/*` resolves for the typecheck.** `tsconfig.json` maps
-those specifiers and `typebox` onto `extensions/node_modules`, and `setup.sh`
-(section 5b) fills that directory with symlinks to the packages of the pi build
-that actually runs — located from the pinned launcher, with `npm root -g` as
-fallback. That indirection is load-bearing: each extension's own
-`dependencies: {"@earendil-works/pi-coding-agent": "*"}` installs a *published*
-copy, and mixing it with the live build makes the same interface two unrelated
-types (`TS2719` on every `registerTool`). Consequences:
+those specifiers and `typebox` onto `extensions/node_modules`. The symlinks there
+must point at the installed pi build, not an extension's own *published* copy of
+`@earendil-works/pi-coding-agent`; mixing copies produces `TS2719` on every
+`registerTool`. After installing dependencies in `agentic/pi/extensions/`,
+restore the links (npm prunes foreign symlinks):
 
-- `TS2307: Cannot find module '@earendil-works/...'` for every extension means
-  the links are missing or stale (pi was upgraded/removed, or a fresh clone).
-  Re-run `./agentic/pi/setup.sh`; it also installs the root `@types/node`.
-- Run `npm install` inside `extensions/` last, or re-run `setup.sh` after it —
-  npm prunes the foreign symlinks.
+```sh
+root=agentic/pi/extensions/node_modules
+pi_pkg="$(npm root -g)/@earendil-works/pi-coding-agent"
+test -f "$pi_pkg/package.json" || exit 1
+mkdir -p "$root/@earendil-works"
+ln -sfn "$pi_pkg" "$root/@earendil-works/pi-coding-agent"
+for pkg in "$pi_pkg"/node_modules/@earendil-works/*; do
+  [ -d "$pkg" ] && ln -sfn "$pkg" "$root/@earendil-works/$(basename "$pkg")"
+done
+[ ! -d "$pi_pkg/node_modules/typebox" ] || ln -sfn "$pi_pkg/node_modules/typebox" "$root/typebox"
+```
+
+`TS2307` across extensions means these links or the root `@types/node` are
+missing; run `npm install --prefix agentic/pi/extensions` before relinking.
 - Never add absolute paths (a Node version directory, an nvm root) to
   `tsconfig.json`; they break on another machine. `skipLibCheck` stays on so
   dependency `.d.ts` files, including pi's own, are trusted.
