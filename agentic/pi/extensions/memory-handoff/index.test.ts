@@ -10,7 +10,7 @@ import { runLibrarian } from "./runner.ts";
 test("main registers only two handoff tools; delegated children register none", () => {
 	const previous = process.env.PI_SUBAGENT_CHILD;
 	const tools: string[] = [];
-	const pi = { registerTool: (definition: { name: string }) => tools.push(definition.name) };
+	const pi = { registerTool: (definition: { name: string }) => tools.push(definition.name), on: () => {} };
 	try {
 		delete process.env.PI_SUBAGENT_CHILD;
 		register(pi as never);

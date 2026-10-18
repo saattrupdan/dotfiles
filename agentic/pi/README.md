@@ -52,8 +52,12 @@ jotta-cli add "$HOME/memory" --name memory
 `~/memory` holds disposable test concepts until the Understory migration. The
 private `pi --agent librarian` profile loads five concept tools and the
 tool-free `rate-limit-retry` extension. Main exposes only `store_memory` and
-`recall_memory`, which run isolated librarian sessions; recall sessions register
-only the search tool. Main retains Understory's tools and startup snapshot until
+`recall_memory`. `store_memory` durably queues a write under
+`~/memory/requests/` and immediately returns a job ID, not a storage
+confirmation. A detached worker starts isolated librarian sessions; failed and
+interrupted requests retain their input and error for inspection. `recall_memory`
+waits for a read-only librarian session, which registers only the search tool.
+Main retains Understory's tools and startup snapshot until
 the native migration is verified. At cutover, repoint the startup snapshot to a
 bounded overview of `~/memory` instead of removing that reminder.
 
@@ -75,6 +79,19 @@ npm ci --prefix agentic/pi/extensions/memory
 
 The embedding endpoint is the llama.cpp server at `127.0.0.1:8080`, using
 `jina-embeddings-v5-omni-small-retrieval`.
+
+Inspect or retry queued writes with the local CLI:
+
+```sh
+node agentic/pi/extensions/memory-handoff/queue-cli.mjs status
+node agentic/pi/extensions/memory-handoff/queue-cli.mjs list failed
+node agentic/pi/extensions/memory-handoff/queue-cli.mjs show JOB_ID
+node agentic/pi/extensions/memory-handoff/queue-cli.mjs retry JOB_ID
+```
+
+Interrupted or partially applied writes require checking the concept first;
+then use `retry JOB_ID --confirmed`. The CLI also supports `pause` and `resume`.
+The queue and `~/memory/requests/worker.log` are part of the memory backup.
 
 ## Extensions
 

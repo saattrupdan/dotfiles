@@ -17,6 +17,7 @@ const RRF_K = 60;
 const CANDIDATES = 40;
 const LINK = /\]\(([^)#?\s]+\.md)(?:[?#][^)]*)?\)/g;
 const RESERVED = new Set(["index.md", "log.md"]);
+const RESERVED_ROOT_DIRECTORIES = new Set(["embeddings", "requests"]);
 
 type Metadata = Record<string, unknown> & { type: string; title?: string; description?: string; tags?: string[] };
 type Concept = { path: string; frontmatter: Metadata; body: string; raw: string };
@@ -162,7 +163,7 @@ export class MemoryStore {
 			conceptPath.includes("\\")) throw new Error(`Invalid bundle path: ${conceptPath}`);
 		const parts = conceptPath.slice(1).split("/");
 		if (parts.some((part) => !part || part === "." || part === ".." || part.startsWith(".")) ||
-			parts[0] === "embeddings" || (!allowReserved && RESERVED.has(parts[parts.length - 1]))) {
+			RESERVED_ROOT_DIRECTORIES.has(parts[0]) || (!allowReserved && RESERVED.has(parts[parts.length - 1]))) {
 			throw new Error(`Invalid concept path: ${conceptPath}`);
 		}
 		let target = this.root;
@@ -181,7 +182,8 @@ export class MemoryStore {
 				if ((entry.name === "index.md" || (dir === this.root && entry.name === "log.md")) && entry.isSymbolicLink()) {
 					throw new Error(`Reserved OKF file must not be a symlink: ${entry.name}`);
 				}
-				if (entry.isDirectory() && !entry.name.startsWith(".") && !(dir === this.root && entry.name === "embeddings")) {
+				if (entry.isDirectory() && !entry.name.startsWith(".") &&
+					!(dir === this.root && RESERVED_ROOT_DIRECTORIES.has(entry.name))) {
 					walk(path.join(dir, entry.name));
 				}
 			}
@@ -193,7 +195,8 @@ export class MemoryStore {
 		const result: string[] = [];
 		const walk = (dir: string, prefix: string): void => {
 			for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-				if (entry.isSymbolicLink() || entry.name.startsWith(".") || (dir === this.root && entry.name === "embeddings")) continue;
+				if (entry.isSymbolicLink() || entry.name.startsWith(".") ||
+					(dir === this.root && RESERVED_ROOT_DIRECTORIES.has(entry.name))) continue;
 				const rel = `${prefix}/${entry.name}`;
 				if (entry.isDirectory()) walk(path.join(dir, entry.name), rel);
 				else if (entry.isFile() && entry.name.endsWith(".md") && !RESERVED.has(entry.name)) result.push(rel);
@@ -401,7 +404,7 @@ export class MemoryStore {
 		const write = (dir: string): number => {
 			const entries = fs.readdirSync(dir, { withFileTypes: true })
 				.filter((entry) => !entry.name.startsWith(".") && !entry.isSymbolicLink() &&
-					!(dir === this.root && entry.name === "embeddings"))
+					!(dir === this.root && RESERVED_ROOT_DIRECTORIES.has(entry.name)))
 				.sort((a, b) => a.name.localeCompare(b.name));
 			const concepts: string[] = [];
 			const directories: string[] = [];
@@ -458,7 +461,7 @@ export class MemoryStore {
 	private pruneEmptyDirs(dir = this.root): void {
 		for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
 			if (entry.isDirectory() && !entry.name.startsWith(".") &&
-					!(dir === this.root && entry.name === "embeddings")) this.pruneEmptyDirs(path.join(dir, entry.name));
+					!(dir === this.root && RESERVED_ROOT_DIRECTORIES.has(entry.name))) this.pruneEmptyDirs(path.join(dir, entry.name));
 		}
 		if (dir === this.root) return;
 		const remaining = fs.readdirSync(dir);
@@ -540,11 +543,8 @@ export class MemoryStore {
 				for (let i = 0; i < vector.length; i++) bytes.writeFloatLE(vector[i], i * 4);
 				const digest = hash(document.raw);
 				await this.withWriteLock(async () => {
-					if (this.reconcile().some((issue) => issue.kind === "malformed_embedding")) {
-						throw new Error("Embedding snapshot is invalid; repair it before writing concepts");
-					}
-					const current = this.db.prepare("SELECT hash FROM concepts WHERE path = ?").get(document.path) as { hash: string } | undefined;
-					if (current?.hash === digest) {
+					const file = this.resolve(document.path);
+					if (fs.existsSync(file) && hash(fs.readFileSync(file, "utf8")) === digest) {
 						this.publishSnapshot([{ path: document.path, hash: digest, model: MODEL, vector: bytes }]);
 					}
 				});
@@ -590,6 +590,20 @@ export class MemoryStore {
 			return documents;
 		});
 		return { paths: documents.map((doc) => doc.path), missingEmbeddings: await this.embedDocuments(documents) };
+	}
+
+	/** Rebuild vectors for a restored bundle without rewriting any concept Markdown. */
+	async rebuildEmbeddings(): Promise<{ attempted: number; missingEmbeddings: string[] }> {
+		if (this.reconcile().some((issue) => issue.kind === "malformed_embedding")) {
+			throw new Error("Embedding snapshot is invalid; repair it before rebuilding vectors");
+		}
+		const vectors = new Map(this.snapshotRows.map((row) => [row.path, row]));
+		const documents = (this.db.prepare("SELECT path, raw, hash FROM concepts ORDER BY path").all() as Array<Pick<Indexed, "path" | "raw" | "hash">>)
+			.filter((row) => {
+				const current = vectors.get(row.path);
+				return !current || current.hash !== row.hash || current.model !== MODEL;
+			});
+		return { attempted: documents.length, missingEmbeddings: await this.embedDocuments(documents) };
 	}
 
 	create(input: ConceptInput): Promise<{ paths: string[]; missingEmbeddings: string[] }> { return this.write(input, true); }

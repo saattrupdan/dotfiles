@@ -19,6 +19,7 @@ await jiti.import(path.join(root, "mcp-collapse", "index.test.ts"), { default: f
 await jiti.import(path.join(root, "memory", "store.test.ts"), { default: false });
 await jiti.import(path.join(root, "memory", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "memory-handoff", "index.test.ts"), { default: false });
+await import(path.join(root, "memory-handoff", "queue.test.mjs"));
 await jiti.import(path.join(root, "rate-limit-retry", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "notify", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "loop", "index.test.ts"), { default: false });

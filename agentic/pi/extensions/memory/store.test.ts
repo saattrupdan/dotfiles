@@ -96,6 +96,21 @@ test("embedding failures preserve BM25, log errors, and are visible to lint", as
 	} finally { f.cleanup(); }
 });
 
+test("rebuilds missing vectors without rewriting restored concepts", async () => {
+	const f = fixture(async () => { throw new Error("embedding offline"); });
+	try {
+		await f.store.create({ path: "/record.md", type: "Note", body: "An unchanged restored concept." });
+		const original = fs.readFileSync(path.join(f.root, "record.md"), "utf8");
+		const recovered = f.make(vector);
+		try {
+			assert.deepEqual(await recovered.rebuildEmbeddings(), { attempted: 1, missingEmbeddings: [] });
+			assert.deepEqual(await recovered.rebuildEmbeddings(), { attempted: 0, missingEmbeddings: [] });
+			assert.equal(fs.readFileSync(path.join(f.root, "record.md"), "utf8"), original);
+			assert.equal(snapshotRows(f.root).length, 1);
+		} finally { recovered.close(); }
+	} finally { f.cleanup(); }
+});
+
 test("resolves relative and root links and finds orphans, duplicate paragraphs and drift", async () => {
 	const f = fixture();
 	try {
@@ -147,7 +162,12 @@ test("rejects escaping paths and conflicting generated children, reports orphan 
 	try {
 		await assert.rejects(f.store.create({ path: "/../escape.md", type: "Note", body: "bad" }), /Invalid concept path/);
 		await assert.rejects(f.store.create({ path: "/log.md", type: "Note", body: "bad" }), /Invalid concept path/);
+		await assert.rejects(f.store.create({ path: "/requests/job.md", type: "Note", body: "bad" }), /Invalid concept path/);
+		fs.mkdirSync(path.join(f.root, "requests"));
+		fs.writeFileSync(path.join(f.root, "requests", "failed.json"), '{"text":"private queued memory"}');
+		assert.equal(f.store.lint().some((issue) => issue.path.includes("requests")), false);
 		await f.store.create({ path: "/already-part-001.md", type: "Note", body: "Existing." });
+		assert.ok(!fs.readFileSync(path.join(f.root, "index.md"), "utf8").includes("requests"));
 		await assert.rejects(f.store.create({ path: "/already.md", type: "Note", body: "large ".repeat(12_000) }),
 			/Generated part path already exists/);
 		fs.mkdirSync(path.join(f.root, "symlink-target"));
