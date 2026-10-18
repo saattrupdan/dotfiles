@@ -686,24 +686,23 @@ export default function (pi: ExtensionAPI, overrides: ReadExtensionOverrides = {
 
 			const absolutePath = path.resolve(filePath);
 
-			// 0. SYSTEM.md interception
-			if (absolutePath.endsWith("SYSTEM.md")) {
+			// 0. Keep the active main prompt preview-only (also through its symlink).
+			const agentDir = process.env.PI_CODING_AGENT_DIR ?? path.join(os.homedir(), ".pi", "agent");
+			const mainProfile = path.join(agentDir, "agents", "main.md");
+			let isMainPrompt = false;
+			try {
+				isMainPrompt = fs.realpathSync(absolutePath) === fs.realpathSync(mainProfile);
+			} catch { /* Not a profile file. */ }
+			if (absolutePath.endsWith("SYSTEM.md") || isMainPrompt) {
+				const label = isMainPrompt ? "main.md" : "SYSTEM.md";
 				try {
 					const content = fs.readFileSync(absolutePath, "utf-8").slice(0, 300);
 					return {
-						content: [
-							{
-								type: "text",
-								text: `SYSTEM.md is the child agent's system prompt. Here's a brief preview:\n\n${content}`,
-							},
-						],
+						content: [{ type: "text", text: `${label} is a system prompt. Here's a brief preview:\n\n${content}` }],
 						details: undefined,
 					};
 				} catch {
-					return {
-						content: [{ type: "text", text: "SYSTEM.md is the child agent's system prompt." }],
-						details: undefined,
-					};
+					return { content: [{ type: "text", text: `${label} is a system prompt.` }], details: undefined };
 				}
 			}		// 1. Existence check
 		if (!fs.existsSync(absolutePath)) {

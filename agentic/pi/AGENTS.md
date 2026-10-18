@@ -2,17 +2,19 @@
 
 This directory is the **runtime config + state root** for **Pi**, a local agentic CLI
 harness. Equivalent of `~/.claude/` — Pi reads it on startup to discover models, agents,
-extensions, skills, prompts, and a system prompt, plus writes session state here.
+extensions, skills, prompts, and agent profiles, plus writes session state here.
 
 ## Directory layout
 
 ```
 agentic/pi/
-├── SYSTEM.md          # Orchestrator system prompt
+├── bin/pi             # Version-controlled launcher for top-level profiles
+├── profile/           # Shared profile parser and launcher
 ├── settings.json      # Provider/model/thinking defaults
 ├── models.json        # Provider + model registry
 ├── auth.json          # OAuth tokens (secret — do not commit/share)
-├── agents/            # Subagent definitions (*.md, YAML frontmatter)
+├── agents/            # Agent profiles (*.md, YAML frontmatter)
+│   ├── main.md        # Default top-level prompt; subagent: false
 │   ├── planner.md     # Plan tasks → ordered parallel-friendly plan
 │   ├── builder.md     # Implement scoped changes (runs in git worktree)
 │   ├── explorer.md    # Read-only codebase + web navigation
@@ -34,6 +36,16 @@ agentic/pi/
 ├── prompts/           # Slash-command flow definitions
 └── themes/            # TUI themes
 ```
+
+## Profiles
+
+`agentic/pi/bin/pi` is symlinked at `~/.pi/agent/bin/pi`. Plain `pi` starts
+`agents/main.md`; `pi --agent <name>` starts another profile only when its
+frontmatter says `subagent: false`. Every top-level profile must explicitly
+list `tools:`, `skills:`, and `extensions:`; none inherit discovered defaults.
+They use separate session storage so resume/continue retain their tool set.
+`extensions/subagent/` only delegates to `subagent: true` profiles. Add a private
+profile to `agents/`, never by exposing its extensions to the default main list.
 
 ## Key agents
 
@@ -67,8 +79,8 @@ the direct-on-`main` rule below takes precedence and worktree builders are forbi
   lines), outline (>100 lines, no pagination), or `symbol=` for a single symbol's body.
   Also reads documents (PDF, DOCX, XLSX, PPTX) and http(s) URLs by converting them to
   Markdown via the `docling` CLI (cached on disk), then rendering them like any Markdown
-  file. `SYSTEM.md` is intercepted and returned as a 300-char preview. Images pass
-  through to the image reader.
+  file. `agents/main.md` is intercepted and returned as a 300-char preview. Images
+  pass through to the image reader.
 - **`skill`** — Loads a named skill's `SKILL.md` verbatim (no outlining, no truncation).
   Use this for skill content; `read` will truncate.
 - **`subagent`** — Delegates one agent/task per call. Calls require `agent`, a 1–5-word
@@ -103,8 +115,9 @@ Omitted = all discoverable; empty array = none.
 - **`auth.json`** contains OAuth tokens. Never commit, paste, or screenshot it.
 - **Most files are symlinks** into `~/gitsky/dotfiles/agentic/`. Edit via the symlink —
   the dotfiles repo is the source of truth. Commit changes there.
-- **`SYSTEM.md` is intercepted** by the `read` extension — don't expect verbatim
-  content.
+- **`agents/main.md` is intercepted** by the `read` extension — don't expect verbatim
+  content. The launcher supplies the profile body as the system prompt; there is no
+  global `SYSTEM.md`.
 - **Builders normally run in isolated git worktrees.** They must commit before exiting.
   However, when modifying this dotfiles repo itself, never invoke a worktree builder:
   work directly on `main` as required by the root `AGENTS.md`. Live Pi config

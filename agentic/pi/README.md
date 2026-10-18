@@ -8,12 +8,34 @@ This directory mirrors the layout expected by pi:
 
 ```
 agentic/pi/
+├── bin/pi             version-controlled CLI launcher
+├── profile/           profile validation and startup configuration
 ├── settings.json      pi settings (model, extensions, tool wiring)
-├── SYSTEM.md          system prompt prepended to every session
 ├── prompts/           reusable user prompts
-├── agents/            subagent definitions (markdown + frontmatter)
+├── agents/            top-level and subagent profiles (markdown + frontmatter)
 └── extensions/        custom tool/behavior extensions (this README)
 ```
+
+## Agent profiles
+
+Plain `pi` uses `agents/main.md` as its system prompt. `pi --agent <name>` starts
+another top-level profile; only profiles with `subagent: false` can be selected.
+The four specialist profiles have `subagent: true` and can only be delegated to.
+Every top-level profile explicitly lists tools, skills, and extensions. Non-main
+profiles have separate session storage, so `--resume`
+and `--continue` stay within the selected profile. Existing sessions stay with
+main. The launcher is symlinked at `~/.pi/agent/bin/pi`; the global `SYSTEM.md`
+is no longer used. On another machine with an older launcher, switch it over from
+this repository's root (the old launcher remains available for rollback):
+
+```sh
+mv ~/.pi/agent/bin/pi ~/.pi/agent/bin/pi-before-profiles
+ln -s "$PWD/agentic/pi/bin/pi" ~/.pi/agent/bin/pi
+rm ~/.pi/agent/SYSTEM.md  # remove the old symlink
+pi --version
+```
+
+The `agents/`, `extensions/`, and `skills/` links must already be in place.
 
 ## Extensions
 
@@ -133,8 +155,9 @@ not accept a batch request or automatically interpolate prior results.
 
 Agents are discovered from `~/.pi/agent/agents/*.md` (user scope) and, when
 `agentScope` is `project` or `both`, from `<repo>/.pi/agents/*.md`. Agent
-frontmatter declares `tools`, `model`, optional `worktree: true` (run in a
-fresh git worktree, merged back on exit), and an optional `skills:` allow-list
+frontmatter declares `subagent: true`, `tools`, `model`, `extensions`, optional
+`worktree: true` (run in a fresh git worktree, merged back on exit), and an
+optional `skills:` allow-list
 which scopes the child's `<available_skills>` block. A call's `skills: [...]`
 array adds names to an explicit frontmatter allow-list; when the field is
 omitted, the child's normal unrestricted skill discovery remains unchanged.

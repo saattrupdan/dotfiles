@@ -1,0 +1,16 @@
+#!/bin/sh
+# Resolve symlinks so ~/.pi/agent/bin/pi and ~/.local/bin/pi reach this checkout.
+script=$0
+while [ -L "$script" ]; do
+  target=$(readlink "$script")
+  case $target in
+    /*) script=$target ;;
+    *) script=$(dirname "$script")/$target ;;
+  esac
+done
+if [ -z "${PI_NODE:-}" ]; then
+  if [ -x /opt/homebrew/bin/node ]; then PI_NODE=/opt/homebrew/bin/node
+  else PI_NODE=$(command -v node) || exit 1
+  fi
+fi
+exec "$PI_NODE" "$(dirname "$script")/../profile/launcher.mjs" "$@"

@@ -1,9 +1,14 @@
 ---
 name: planner
+subagent: true
 description: Produces concrete implementation plans for code changes. Read-only. Cannot edit files or spawn subagents.
 model:
   - openai-codex/gpt-6-sol
-tools: read, skill, memory_query, question
+tools:
+  - read
+  - skill
+  - memory_query
+  - question
 skills: []
 worktree: false
 refuse:

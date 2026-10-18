@@ -6,7 +6,9 @@ turn for concurrent work, or make successive calls when later work depends on an
 result. There is no batch payload or automatic result placeholder.
 
 Agents are discovered from `~/.pi/agent/agents/*.md` (user scope) and, when
-`agentScope` is `project` or `both`, from `<repo>/.pi/agents/*.md`.
+`agentScope` is `project` or `both`, from `<repo>/.pi/agents/*.md`. Only profiles
+with `subagent: true` can be delegated to; project definitions cannot override
+a private user profile such as `main`.
 
 ## Tool calls
 
@@ -46,18 +48,31 @@ include the relevant result in the next task yourself.
 ---
 name: builder
 description: One-line description shown to the orchestrator.
-tools: read, write, edit, bash           # optional, comma-separated allow-list
+subagent: true                          # only true profiles can be delegated to
+tools:                                  # optional explicit allow-list
+  - read
+  - write
+  - edit
+  - bash
 model:                                  # optional model fallback list
   - anthropic/claude-sonnet-4-5
   - claude-sonnet-4-5
 worktree: true                          # optional; fresh git worktree
-skills: [commit, python, fastapi]       # optional; see "Skill scoping" below
+skills:                                 # optional; see "Skill scoping" below
+  - commit
+  - python
+  - fastapi
+extensions:                             # optional; explicit extension allow-list
+  - read
+  - edit
+  - question
 refuse:                                 # optional; see "Refusal patterns" below
   - pattern: "full file contents?"
     message: "Ask me for paths and line ranges instead of file contents."
 ---
 
-Body becomes the agent's appended system prompt.
+The body becomes the child's system prompt. `subagent:` defaults to `true` for
+existing project definitions; top-level-only profiles set it to `false`.
 ```
 
 `model:` may also be a single string for backwards compatibility:
@@ -66,8 +81,8 @@ Body becomes the agent's appended system prompt.
 model: anthropic/claude-sonnet-4-5
 ```
 
-String values are normalised to a one-item list. YAML lists preserve order;
-non-string or empty entries are warned to stderr and skipped.
+String values are normalised to a one-item list. YAML lists preserve order.
+Invalid frontmatter fails visibly rather than silently widening access.
 
 ## Model selection
 
@@ -108,7 +123,10 @@ Semantics:
 | `skills: [a, b]`  | Exactly skills `a` and `b` if they exist on disk.         |
 
 Skills referenced in frontmatter but missing on disk are warned to stderr and
-skipped (the child still launches).
+skipped (the child still launches). `extensions:` follows the same allow-list
+pattern: omitted means ordinary discovery, `[]` loads none, and a list loads
+only those extensions via `--no-extensions` and explicit `--extension` paths.
+An explicit `tools: []` disables all tools; omitted `tools:` retains Pi's default.
 
 ### Per-call additive skills
 
@@ -143,8 +161,7 @@ have respected an instruction in its system prompt. Use it for hard contracts
 (e.g. "don't return file contents", "don't implement"); use prompt text for
 softer guidance.
 
-Invalid patterns are warned to stderr at load time and skipped. A missing
-`pattern` or `message` field also causes the entry to be skipped.
+Invalid patterns or missing `pattern`/`message` fields fail profile loading.
 
 ## Worktree mode
 

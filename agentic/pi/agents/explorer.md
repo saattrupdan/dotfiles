@@ -1,9 +1,18 @@
 ---
 name: explorer
+subagent: true
 description: Read-only locator for code and the web. Returns paths, line ranges, and tight summaries. Cannot edit or implement.
 model:
   - openai-codex/gpt-6-luna
-tools: code_tree, search, read, skill, web_browse, web_search, memory_query, question
+tools:
+  - code_tree
+  - search
+  - read
+  - skill
+  - web_browse
+  - web_search
+  - memory_query
+  - question
 skills: []
 worktree: false
 refuse:

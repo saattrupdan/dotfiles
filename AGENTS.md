@@ -83,6 +83,10 @@ missing; run `npm install --prefix agentic/pi/extensions` before relinking.
   repoints links that currently point at another repo). Skills installed elsewhere
   (`~/.agents/skills/`, `gitsky/internal-agentic-coding/skills/`) are linked outside
   this repo's scope and are left alone unless `--adopt` is passed.
+- **Keep `agentic/pi/agents/main.md` in sync with capabilities.** Whenever extensions,
+  tools, or skills are added, removed, or renamed, update its explicit `extensions:`,
+  `tools:`, and `skills:` lists in the same change. Main does not discover new
+  capabilities automatically.
 - `nvim/lua/plugins/*.lua.disabled` are intentionally disabled — lazy.nvim only
   loads `.lua` files, so the suffix turns a plugin off. Don't rename them to
   re-enable without reason.

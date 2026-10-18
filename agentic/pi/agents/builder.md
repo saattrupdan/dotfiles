@@ -1,10 +1,27 @@
 ---
 name: builder
+subagent: true
 description: Implements a concrete, scoped code change. Has full read/write/bash permissions. Always runs in an isolated git worktree that is merged back on completion.
 model:
   - openai-codex/gpt-6-luna
-tools: search, read, write, edit, skill, bash, memory_query, question
-skills: [commit, python, fastapi, vue, sqlmodel, full-stack, slides, agent-browser]
+tools:
+  - search
+  - read
+  - write
+  - edit
+  - skill
+  - bash
+  - memory_query
+  - question
+skills:
+  - commit
+  - python
+  - fastapi
+  - vue
+  - sqlmodel
+  - full-stack
+  - slides
+  - agent-browser
 worktree: true
 refuse:
   - pattern: "```[\\s\\S]{1500,}```"

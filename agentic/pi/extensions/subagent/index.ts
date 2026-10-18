@@ -18,7 +18,7 @@ import { StringEnum, type Message } from "@earendil-works/pi-ai";
 import { type ExtensionAPI, getAgentDir, getMarkdownTheme, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { type AgentConfig, type AgentScope, discoverAgents, findNearestProjectAgentsDir } from "./agents.ts";
+import { type AgentConfig, type AgentScope, delegatableAgents, discoverAgents, findNearestProjectAgentsDir } from "./agents.ts";
 import {
 	createWorktree,
 	findRepoRoot,
@@ -472,10 +472,10 @@ async function runSingleAgent(
 	agentScope?: AgentScope,
 	sessionLabel?: string,
 ): Promise<SingleResult> {
-	const agent = agents.find((a) => a.name === agentName);
+	const agent = agents.find((a) => a.name === agentName && a.subagent);
 
 	if (!agent) {
-		const available = agents.map((a) => `"${a.name}"`).join(", ") || "none";
+		const available = agents.filter((a) => a.subagent).map((a) => `"${a.name}"`).join(", ") || "none";
 		return {
 			agent: agentName,
 			agentSource: "unknown",
@@ -533,7 +533,10 @@ async function runSingleAgent(
 
 	const modelFallbacks = buildModelFallbacks(requestedModel, agent.model, sessionModel);
 	const baseArgs: string[] = ["--mode", "json", "-p", "--no-session"];
-	if (agent.tools && agent.tools.length > 0) baseArgs.push("--tools", agent.tools.join(","));
+	if (agent.tools !== undefined) {
+		if (agent.tools.length === 0) baseArgs.push("--no-tools");
+		else baseArgs.push("--tools", agent.tools.join(","));
+	}
 
 	// Skill scoping.
 	//
@@ -1088,10 +1091,10 @@ function buildSubagentDescription(): string {
 	} catch {
 		return base;
 	}
-	if (agents.length === 0) return base;
+	const available = delegatableAgents(agents);
+	if (available.length === 0) return base;
 
-	const lines = agents
-		.slice()
+	const lines = available
 		.sort((a, b) => a.name.localeCompare(b.name))
 		.map((a) => {
 			const tools = a.tools && a.tools.length > 0 ? a.tools.join(", ") : "(default)";
@@ -1116,7 +1119,7 @@ export default function (pi: ExtensionAPI) {
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			const agentScope: AgentScope = params.agentScope ?? "user";
 			const discovery = discoverAgents(ctx.cwd, agentScope);
-			const agents = discovery.agents;
+			const agents = delegatableAgents(discovery.agents);
 			const confirmProjectAgents = params.confirmProjectAgents ?? true;
 			const sessionModel = modelToCliPattern(ctx.model);
 
