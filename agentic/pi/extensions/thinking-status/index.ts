@@ -49,8 +49,8 @@ const TOOL_LABELS: Record<string, string> = {
 	web_browse: "Browsing...",
 	web_search: "Searching...",
 	subagent: "Whipping the subagents...",
-	store_memory: "Storing memory...",
-	recall_memory: "Recalling memory...",
+	store_memory: "Storing to memory…",
+	recall_memory: "Recalling from memory…",
 	isolated_new_branch: "Creating branch...",
 	"clean-up-isolated-branch": "Cleaning up branch...",
 };

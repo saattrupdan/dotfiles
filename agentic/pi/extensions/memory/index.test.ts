@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { test } from "node:test";
 
 import register from "./index.ts";
@@ -28,6 +31,28 @@ test("librarian registers five tools, while recall handoff registers only search
 		if (previousCleaning === undefined) delete process.env.PI_MEMORY_CLEANING_ONLY;
 		else process.env.PI_MEMORY_CLEANING_ONLY = previousCleaning;
 	}
+});
+
+test("lint fingerprints only the bundle state it actually inspected", async () => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-lint-stamp-test-"));
+	try {
+		const concept = path.join(root, "fact.md");
+		fs.writeFileSync(concept, "before");
+		let changeDuringLint = false;
+		const store = { root, lint: () => {
+			if (changeDuringLint) fs.writeFileSync(concept, "after!");
+			return [];
+		} };
+		type Tool = { name: string; execute: (id: string, params: Record<string, string>) => Promise<{ details: unknown }> };
+		const tools = new Map<string, Tool>();
+		register({ registerTool: (tool: Tool) => tools.set(tool.name, tool) } as never, () => store as never);
+		const lint = tools.get("lint_concepts")!;
+		const stable = await lint.execute("test", {});
+		assert.equal(typeof (stable.details as { fingerprint: unknown }).fingerprint, "string");
+		changeDuringLint = true;
+		const changed = await lint.execute("test", {});
+		assert.equal((changed.details as { fingerprint: unknown }).fingerprint, null);
+	} finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test("scheduled cleaner cannot remove linked concepts or exceed five writes", async () => {

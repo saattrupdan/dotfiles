@@ -4,6 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { test } from "node:test";
+import { URL } from "node:url";
+
+import { atomicJob, enqueue, jobFile, readJob } from "../memory-handoff/queue.mjs";
 
 import { runCleaning } from "./clean.mjs";
 
@@ -13,15 +16,22 @@ function fixture() {
 	fs.mkdirSync(root);
 	fs.mkdirSync(path.join(agentDir, "bin"), { recursive: true });
 	fs.writeFileSync(path.join(agentDir, "bin", "pi"), `#!/usr/bin/env node
+const fs=require('node:fs');
+if(process.env.PI_MEMORY_CLEAN_TEST_CALLS)fs.appendFileSync(process.env.PI_MEMORY_CLEAN_TEST_CALLS,'run\\n');
 if(process.env.PI_MEMORY_CLEANING_ONLY !== '1')process.exit(3);
 if(process.env.PI_MEMORY_CLEAN_TEST_MODE === 'slow')setInterval(()=>{},1000);
-else {
-if(process.env.PI_MEMORY_CLEAN_TEST_MODE !== 'no-lint')console.log(JSON.stringify({type:'tool_execution_end',toolName:'lint_concepts',isError:false,result:{details:{issues:[{kind:'orphan'},{kind:'orphan'}]}}}));
-if(process.env.PI_MEMORY_CLEAN_TEST_MODE === 'repair')console.log(JSON.stringify({type:'tool_execution_end',toolName:'update_concept',isError:false}));
+else import(${JSON.stringify(new URL("./fingerprint.mjs", import.meta.url).href)}).then(({fingerprintBundle})=>{
+const emitLint=(id)=>{
+console.log(JSON.stringify({type:'tool_execution_start',toolName:'lint_concepts',toolCallId:id}));
+console.log(JSON.stringify({type:'tool_execution_end',toolName:'lint_concepts',toolCallId:id,isError:false,result:{details:{issues:[{kind:'orphan'},{kind:'orphan'}],fingerprint:process.env.PI_MEMORY_CLEAN_TEST_MODE==='stale-fingerprint'?'before':fingerprintBundle(${JSON.stringify(root)})}}}));
+};
+if(process.env.PI_MEMORY_CLEAN_TEST_MODE !== 'no-lint')emitLint('lint-1');
+if(['repair','no-final-lint'].includes(process.env.PI_MEMORY_CLEAN_TEST_MODE))console.log(JSON.stringify({type:'tool_execution_end',toolName:'update_concept',isError:false}));
 if(process.env.PI_MEMORY_CLEAN_TEST_MODE === 'remove')console.log(JSON.stringify({type:'tool_execution_end',toolName:'remove_concept',isError:false,result:{details:{archive:'/requests/removed/example'}}}));
+if(['repair','remove'].includes(process.env.PI_MEMORY_CLEAN_TEST_MODE))emitLint('lint-2');
 if(process.env.PI_MEMORY_CLEAN_TEST_MODE === 'fail')process.exit(1);
 console.log(JSON.stringify({type:'agent_end'}));
-}
+}).catch((error)=>{console.error(error);process.exitCode=1});
 `, { mode: 0o700 });
 	return { root, agentDir, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
 }
@@ -35,7 +45,7 @@ test("maintenance logs successful bounded librarian work without leaking concept
 		assert.equal(result.status, "done");
 		assert.equal(result.repairs, 1);
 		assert.deepEqual(result.issues, { orphan: 2 });
-		assert.match(fs.readFileSync(path.join(f.root, "cleaning.log"), "utf8"), /done lint=1 updates=1 removals=0 issues=\{"orphan":2\}/);
+		assert.match(fs.readFileSync(path.join(f.root, "cleaning.log"), "utf8"), /done lint=2 updates=1 removals=0 issues=\{"orphan":2\}/);
 		assert.equal(fs.statSync(path.join(f.root, "cleaning.log")).mode & 0o777, 0o600);
 		assert.equal(JSON.parse(fs.readFileSync(path.join(f.root, ".cleaning-state.json"), "utf8")).status, "done");
 		assert.ok(!fs.existsSync(path.join(f.root, ".cleaning.lock")));
@@ -51,6 +61,8 @@ test("failed and interrupted sessions log errors and retry from fresh lint", asy
 		assert.equal((await runCleaning({ root: f.root, agentDir: f.agentDir, timeoutMs: 3_000 })).status, "failed");
 		process.env.PI_MEMORY_CLEAN_TEST_MODE = "slow";
 		assert.match((await runCleaning({ root: f.root, agentDir: f.agentDir, timeoutMs: 100 })).error, /timed out/);
+		process.env.PI_MEMORY_CLEAN_TEST_MODE = "no-final-lint";
+		assert.match((await runCleaning({ root: f.root, agentDir: f.agentDir, timeoutMs: 3_000 })).error, /finalLint=false/);
 		fs.writeFileSync(path.join(f.root, ".cleaning.lock"), "99999999");
 		process.env.PI_MEMORY_CLEAN_TEST_MODE = "repair";
 		assert.equal((await runCleaning({ root: f.root, agentDir: f.agentDir, timeoutMs: 3_000 })).status, "done");
@@ -70,6 +82,85 @@ test("successful removals record reversible archive paths", async () => {
 		assert.match(fs.readFileSync(path.join(f.root, "cleaning.log"), "utf8"), /archives=\/requests\/removed\/example/);
 	} finally { if (old === undefined) delete process.env.PI_MEMORY_CLEAN_TEST_MODE;
 		else process.env.PI_MEMORY_CLEAN_TEST_MODE = old; f.cleanup(); }
+});
+
+test("unchanged bundle skips the model and logs; a same-size hand edit runs it again", async () => {
+	const f = fixture();
+	const previous = process.env.PI_MEMORY_CLEAN_TEST_CALLS;
+	try {
+		const calls = path.join(f.root, "calls.txt");
+		const concept = path.join(f.root, "fact.md");
+		fs.writeFileSync(concept, "before");
+		process.env.PI_MEMORY_CLEAN_TEST_CALLS = calls;
+		assert.equal((await runCleaning({ root: f.root, agentDir: f.agentDir, timeoutMs: 3_000 })).status, "done");
+		const logBefore = fs.readFileSync(path.join(f.root, "cleaning.log"), "utf8");
+		fs.writeFileSync(path.join(f.root, ".snapshot-cache"), "updated");
+		assert.deepEqual(await runCleaning({ root: f.root, agentDir: f.agentDir }),
+			{ skipped: true, reason: "memory unchanged" });
+		assert.equal(fs.readFileSync(path.join(f.root, "cleaning.log"), "utf8"), logBefore);
+		fs.writeFileSync(concept, "after!");
+		assert.equal((await runCleaning({ root: f.root, agentDir: f.agentDir, timeoutMs: 3_000 })).status, "done");
+		assert.equal(fs.readFileSync(calls, "utf8").trim().split("\n").length, 2);
+	} finally { if (previous === undefined) delete process.env.PI_MEMORY_CLEAN_TEST_CALLS;
+		else process.env.PI_MEMORY_CLEAN_TEST_CALLS = previous; f.cleanup(); }
+});
+
+test("a write after lint inspection cannot be checkpointed as clean", async () => {
+	const f = fixture();
+	const previous = process.env.PI_MEMORY_CLEAN_TEST_MODE;
+	try {
+		process.env.PI_MEMORY_CLEAN_TEST_MODE = "stale-fingerprint";
+		let reads = 0;
+		const fingerprint = () => ++reads === 1 ? "before" : "after";
+		const result = await runCleaning({ root: f.root, agentDir: f.agentDir, fingerprint, timeoutMs: 3_000 });
+		assert.equal(result.status, "done");
+		assert.equal(result.bundleFingerprint, null);
+		assert.equal((await runCleaning({ root: f.root, agentDir: f.agentDir, fingerprint, timeoutMs: 3_000 })).status, "done");
+	} finally { if (previous === undefined) delete process.env.PI_MEMORY_CLEAN_TEST_MODE;
+		else process.env.PI_MEMORY_CLEAN_TEST_MODE = previous; f.cleanup(); }
+});
+
+test("new failed requests get review without running unchanged concept cleanup again", async () => {
+	const f = fixture();
+	const previous = process.env.PI_MEMORY_CLEAN_TEST_CALLS;
+	try {
+		const calls = path.join(f.root, "calls.txt");
+		process.env.PI_MEMORY_CLEAN_TEST_CALLS = calls;
+		await runCleaning({ root: f.root, agentDir: f.agentDir, timeoutMs: 3_000 });
+		const id = enqueue("a missing fact", f.root);
+		fs.renameSync(jobFile(f.root, "pending", id), jobFile(f.root, "failed", id));
+		const file = jobFile(f.root, "failed", id);
+		atomicJob(file, { ...readJob(f.root, "failed", id), attempts: 1, unknownOutcome: true, failedAt: new Date().toISOString() });
+		let reviews = 0;
+		const recover = async () => { reviews++; return { errors: 0, needsReview: 1 }; };
+		const result = await runCleaning({ root: f.root, agentDir: f.agentDir, recover });
+		assert.equal(result.cleaningSkipped, true);
+		assert.equal(reviews, 1);
+		assert.equal(fs.readFileSync(calls, "utf8").trim().split("\n").length, 1);
+		assert.equal((await runCleaning({ root: f.root, agentDir: f.agentDir, recover })).skipped, true);
+		assert.equal(reviews, 1);
+		atomicJob(file, { ...readJob(f.root, "failed", id), attempts: 2, failedAt: new Date(Date.now() + 1000).toISOString() });
+		await runCleaning({ root: f.root, agentDir: f.agentDir, recover });
+		assert.equal(reviews, 2);
+	} finally { if (previous === undefined) delete process.env.PI_MEMORY_CLEAN_TEST_CALLS;
+		else process.env.PI_MEMORY_CLEAN_TEST_CALLS = previous; f.cleanup(); }
+});
+
+test("active queue defers concept cleaning but still handles safe failed retries", async () => {
+	const f = fixture();
+	try {
+		enqueue("pending", f.root);
+		const id = enqueue("definitely not stored", f.root);
+		fs.renameSync(jobFile(f.root, "pending", id), jobFile(f.root, "failed", id));
+		let woke = 0, reviewed = 0;
+		const result = await runCleaning({ root: f.root, agentDir: f.agentDir,
+			wakeQueue: () => { woke++; },
+			recover: async (options) => { assert.equal(options.onlyDefinite, true); reviewed++; return { retried: 1, errors: 0 }; } });
+		assert.equal(result.skipped, true);
+		assert.equal(woke, 1);
+		assert.equal(reviewed, 1);
+		assert.ok(!fs.existsSync(path.join(f.root, ".cleaning-state.json")));
+	} finally { f.cleanup(); }
 });
 
 test("maintenance skips a concurrently active run", async () => {

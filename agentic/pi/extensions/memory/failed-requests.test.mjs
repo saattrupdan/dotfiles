@@ -76,6 +76,21 @@ test("hourly recovery retries bounded absent jobs, resolves present jobs and ret
 	} finally { f.cleanup(); }
 });
 
+test("bounded reviews reach the fourth failed job without cycling the first three", async () => {
+	const f = fixture();
+	try {
+		const ids = Array.from({ length: 4 }, (_, i) => f.failed(`ambiguous ${i}`));
+		const reviewed = [];
+		const review = async (job) => { reviewed.push(job.id); return { status: "uncertain" }; };
+		const first = await recoverFailed({ root: f.root, agentDir: f.agentDir, review, wakeJobs: () => {}, max: 3 });
+		assert.equal(first.needsReview, 3);
+		assert.equal(first.remainingUnreviewed, 1);
+		const second = await recoverFailed({ root: f.root, agentDir: f.agentDir, review, wakeJobs: () => {}, max: 3 });
+		assert.equal(second.remainingUnreviewed, 0);
+		assert.ok(reviewed.includes(ids[3]));
+	} finally { f.cleanup(); }
+});
+
 test("manual retry racing with review cannot recreate a failed copy", async () => {
 	const f = fixture();
 	try {

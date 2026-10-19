@@ -3,6 +3,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
+import { fingerprintBundle } from "./fingerprint.mjs";
 import { MemoryStore } from "./store.ts";
 
 let store: MemoryStore | undefined;
@@ -81,6 +82,12 @@ export default function (pi: ExtensionAPI, getStore: () => MemoryStore = memory)
 		description: "List malformed or oversized concepts, orphan concepts, broken relative or bundle-root links, " +
 			"duplicate paragraphs, orphan embeddings, and missing or stale embeddings.",
 		parameters: Type.Object({}),
-		async execute() { return answer({ issues: getStore().lint() }); },
+		async execute() {
+			const store = getStore();
+			const before = fingerprintBundle(store.root);
+			const issues = store.lint();
+			const after = fingerprintBundle(store.root);
+			return answer({ issues, fingerprint: before === after ? after : null });
+		},
 	});
 }

@@ -24,6 +24,21 @@ test("main registers only two handoff tools; delegated children register none", 
 	}
 });
 
+test("memory handoffs collapse to truthful one-line success and live ellipsis labels", () => {
+	type Renderer = (result: unknown, options: unknown, theme: unknown, context: unknown) => { render(width: number): string[] };
+	const tools = new Map<string, { renderResult: Renderer }>();
+	register({ on: () => {}, registerTool: (tool: { name: string; renderResult: Renderer }) => tools.set(tool.name, tool) } as never);
+	const theme = { fg: (_colour: string, value: string) => value, bold: (value: string) => value };
+	const output = (name: string, result: string, options: object, isError = false) =>
+		tools.get(name)!.renderResult({ content: [{ type: "text", text: result }] }, options, theme, { isError }).render(100).join("\n").trimEnd();
+	assert.equal(output("store_memory", "Queued memory request 123", { expanded: false, isPartial: false }), "✓ Queued a memory");
+	assert.equal(output("recall_memory", "A cited answer", { expanded: false, isPartial: false }), "✓ Recalled a memory");
+	assert.equal(output("store_memory", "", { expanded: false, isPartial: true }), "… Storing to memory");
+	assert.equal(output("recall_memory", "", { expanded: false, isPartial: true }), "… Recalling from memory");
+	assert.equal(output("store_memory", "Queued memory request 123", { expanded: true, isPartial: false }), "Queued memory request 123");
+	assert.equal(output("recall_memory", "Librarian timed out", { expanded: false, isPartial: false }, true), "Librarian timed out");
+});
+
 test("handoff passes memory privately via a temporary file and restricts recall", async () => {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-handoff-test-"));
 	const bin = path.join(dir, "bin");

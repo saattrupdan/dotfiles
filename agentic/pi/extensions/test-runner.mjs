@@ -21,6 +21,7 @@ await import(path.join(root, "memory", "migrate.test.mjs"));
 await import(path.join(root, "memory", "activate.test.mjs"));
 await import(path.join(root, "memory", "clean.test.mjs"));
 await import(path.join(root, "memory", "failed-requests.test.mjs"));
+await import(path.join(root, "memory", "fingerprint.test.mjs"));
 await import(path.join(root, "memory", "install-cleaning.test.mjs"));
 await import(path.join(root, "memory-snapshot", "native-refresh.test.mjs"));
 await jiti.import(path.join(root, "memory-snapshot", "index.test.ts"), { default: false });

@@ -100,7 +100,15 @@ node agentic/pi/extensions/memory/install-cleaning.mjs
 launchctl print "gui/$(id -u)/com.saattrupdan.pi-memory-cleaning"
 ```
 
-It runs on load and at minute zero every hour. A sleeping laptop runs one
+The launchd check runs on load and at minute zero every hour. It hashes active
+concept Markdown and `embeddings.sqlite`, then compares that fingerprint with
+the last successful clean. If nothing changed and there is no new actionable
+failed write, it exits without a librarian session or log update. Failed writes
+can be reviewed separately without running concept cleanup again. Reviews
+continue in bounded batches until all new failures have been considered; a
+pending write defers concept cleanup but not definite no-write retries. Review
+bookkeeping, archives, snapshots, and logs do not count as input changes; a
+failed clean or bundle change during lint does not advance the checkpoint. A sleeping laptop runs one
 missed calendar invocation after waking. Temporary network failures retry in
 the librarian; a session still failing after 20 minutes logs the failure and
 the next invocation starts a fresh lint instead of resuming a stale model turn.
