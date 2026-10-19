@@ -87,6 +87,7 @@ class GenerateTests(unittest.TestCase):
             draft = directory / "draft.json"
             draft.write_text(json.dumps({"caption": "A red teapot."}))
             output = directory / "generated.png"
+            prompt_output = directory / "prompt.txt"
             unrelated = directory / "unrelated.txt"
             unrelated.write_text("unchanged")
             output.with_suffix(".png.tmp").symlink_to(unrelated)
@@ -96,6 +97,8 @@ class GenerateTests(unittest.TestCase):
                 str(draft),
                 "--output",
                 str(output),
+                "--prompt-output",
+                str(prompt_output),
                 "--size",
                 "512x512",
             ]
@@ -108,6 +111,7 @@ class GenerateTests(unittest.TestCase):
                 GENERATE.main()
             self.assertEqual(unrelated.read_text(), "unchanged")
             self.assertEqual(output.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
+            self.assertEqual(prompt_output.read_text(encoding="utf-8"), "A red teapot.")
 
     def test_model_selection_is_not_available(self) -> None:
         """The CLI cannot request the retired Base checkpoint."""

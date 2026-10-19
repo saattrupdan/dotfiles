@@ -36,6 +36,7 @@ def main() -> None:
         help="Official caption or Layout draft JSON",
     )
     parser.add_argument("--output", required=True, type=Path, help="Output PNG")
+    parser.add_argument("--prompt-output", type=Path, help="Compiled prompt output")
     parser.add_argument(
         "--size", default="1024x1024", help="WIDTHxHEIGHT, e.g. 768x1024"
     )
@@ -81,6 +82,8 @@ def main() -> None:
                 temporary.replace(args.output)
             finally:
                 temporary.unlink(missing_ok=True)
+        if args.prompt_output is not None:
+            args.prompt_output.write_text(prompt, encoding="utf-8")
         sys.stdout.write(f"{args.output.resolve().as_uri()}\n")
     except (
         OSError,

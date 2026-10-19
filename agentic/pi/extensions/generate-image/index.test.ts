@@ -13,6 +13,9 @@ function setup(exec: ExtensionAPI["exec"]) {
 	const messages: string[] = [];
 	const notifications: string[] = [];
 	const statuses: (string | undefined)[] = [];
+	const working: (string | undefined)[] = [];
+	const visible: boolean[] = [];
+	const widgets: (string | undefined)[] = [];
 	const pi = {
 		registerCommand: (name: string, options: { handler: typeof handler }) => {
 			assert.equal(name, "generate-image");
@@ -25,19 +28,39 @@ function setup(exec: ExtensionAPI["exec"]) {
 		exec,
 		sendMessage: (message: { content: string }) => messages.push(message.content),
 	} as unknown as ExtensionAPI;
+	let loader: { setMessage: (label: string) => void; stop: () => void } | undefined;
 	const ctx = {
+		mode: "tui",
 		ui: {
 			notify: (message: string) => notifications.push(message),
 			setStatus: (_key: string, value: string | undefined) => statuses.push(value),
+			setWorkingMessage: (value?: string) => working.push(value),
+			setWorkingVisible: (value: boolean) => visible.push(value),
+			setWidget: (key: string, content: unknown, options?: { placement?: string }) => {
+				assert.equal(key, "generate-image:progress");
+				if (typeof content === "function") {
+					assert.equal(options?.placement, "aboveEditor");
+					const component = content({ requestRender: () => {} }, { fg: (_colour: string, text: string) => text });
+					assert.match(component.render(120).join(""), /Enhancing image-generation prompt/);
+					const original = component.setMessage.bind(component);
+					component.setMessage = (label: string) => { widgets.push(label); original(label); };
+					loader = component;
+					widgets.push("Enhancing image-generation prompt...");
+				} else {
+					loader?.stop();
+					loader = undefined;
+					widgets.push(undefined);
+				}
+			},
 		},
 	} as ExtensionContext;
 	generateImage(pi);
 	assert.ok(handler);
 	assert.ok(tool);
-	return { handler, tool, ctx, messages, notifications, statuses };
+	return { handler, tool, ctx, messages, notifications, statuses, working, visible, widgets };
 }
 
-test("command sends the whole brief as one argument and returns the file URL", async () => {
+test("command sends the whole brief as one argument and returns the path", async () => {
 	const directory = mkdtempSync(path.join(os.tmpdir(), "pi-generate-test-"));
 	const output = path.join(directory, "image.png");
 	writeFileSync(output, "png");
@@ -48,17 +71,57 @@ test("command sends the whole brief as one argument and returns the file URL", a
 			assert.deepEqual(args.slice(0, 3), ["run", "--no-project", "python3"]);
 			assert.match(args[3], /generate-image\/scripts\/enhance_and_generate\.py$/);
 			assert.equal(args[4], brief);
-			return { code: 0, stdout: `${output}\n`, stderr: "", killed: false };
+			return { code: 0, stdout: JSON.stringify({ path: output, enhanced_prompt: "A detailed cat." }), stderr: "", killed: false };
 		});
 		await state.handler(brief, state.ctx);
-		assert.deepEqual(state.messages, [new URL(`file://${output}`).href]);
+		assert.deepEqual(state.messages, [`Original prompt:\n${brief}\n\nEnhanced prompt:\nA detailed cat.\n\nImage: ${output}`]);
+		assert.deepEqual(state.working, []);
+		assert.deepEqual(state.visible, []);
+		assert.deepEqual(state.widgets, ["Enhancing image-generation prompt...", "Enhancing image-generation prompt...", undefined]);
 		assert.deepEqual(state.statuses, []);
 	} finally {
 		rmSync(directory, { recursive: true, force: true });
 	}
 });
 
-test("tool returns the path and URL without sending an agent message", async () => {
+test("command switches from enhancement to generation while running", async () => {
+	const directory = mkdtempSync(path.join(os.tmpdir(), "pi-generate-test-"));
+	const output = path.join(directory, "image.png");
+	writeFileSync(output, "png");
+	try {
+		const state = setup(async (_command, args) => {
+			writeFileSync(args[6], "generating");
+			await new Promise((resolve) => setTimeout(resolve, 300));
+			return { code: 0, stdout: JSON.stringify({ path: output, enhanced_prompt: "A sunlit garden." }), stderr: "", killed: false };
+		});
+		await state.handler("A garden", state.ctx);
+		assert.deepEqual(state.working, []);
+		assert.deepEqual(state.visible, []);
+		assert.deepEqual(state.widgets, ["Enhancing image-generation prompt...", "Enhancing image-generation prompt...", "Generating image...", undefined]);
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
+});
+
+test("tool switches from enhancement to generation while running", async () => {
+	const directory = mkdtempSync(path.join(os.tmpdir(), "pi-generate-test-"));
+	const output = path.join(directory, "image.png");
+	writeFileSync(output, "png");
+	try {
+		const state = setup(async (_command, args) => {
+			writeFileSync(args[6], "generating");
+			await new Promise((resolve) => setTimeout(resolve, 300));
+			return { code: 0, stdout: JSON.stringify({ path: output, enhanced_prompt: "A sunlit garden." }), stderr: "", killed: false };
+		});
+		await state.tool.execute("call-1", { prompt: "A garden" }, undefined, undefined, state.ctx);
+		assert.deepEqual(state.working, ["Enhancing image-generation prompt...", "Generating image..."]);
+		assert.deepEqual(state.visible, []);
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
+});
+
+test("tool returns the path without sending an agent message", async () => {
 	const directory = mkdtempSync(path.join(os.tmpdir(), "pi-generate-test-"));
 	const output = path.join(directory, "image.png");
 	writeFileSync(output, "png");
@@ -66,12 +129,13 @@ test("tool returns the path and URL without sending an agent message", async () 
 		const state = setup(async (command, args) => {
 			assert.equal(command, "uv");
 			assert.equal(args[4], "A blue teapot");
-			assert.deepEqual(args.slice(5), ["--size", "768x1024", "--seed", "9"]);
-			return { code: 0, stdout: `${output}\n`, stderr: "", killed: false };
+			assert.deepEqual(args.slice(7), ["--size", "768x1024", "--seed", "9"]);
+			return { code: 0, stdout: JSON.stringify({ path: output, enhanced_prompt: "A blue ceramic teapot." }), stderr: "", killed: false };
 		});
 		const result = await state.tool.execute("call-1", { prompt: "A blue teapot", size: "768x1024", seed: 9 }, undefined, undefined, state.ctx);
 		assert.equal(result.isError, undefined);
-		assert.deepEqual(result.content, [{ type: "text", text: `${output}\n${new URL(`file://${output}`).href}` }]);
+		assert.deepEqual(result.content, [{ type: "text", text: `Original prompt:\nA blue teapot\n\nEnhanced prompt:\nA blue ceramic teapot.\n\nImage: ${output}` }]);
+		assert.deepEqual(state.working, ["Enhancing image-generation prompt..."]);
 		assert.deepEqual(state.messages, []);
 		assert.deepEqual(state.statuses, []);
 	} finally {
@@ -95,6 +159,9 @@ test("empty brief does not run the generator", async () => {
 	await state.handler("  ", state.ctx);
 	assert.equal(calls, 0);
 	assert.deepEqual(state.notifications, ["Usage: /generate-image <prompt>"]);
+	assert.deepEqual(state.working, []);
+	assert.deepEqual(state.visible, []);
+	assert.deepEqual(state.widgets, []);
 });
 
 test("generation errors display without triggering an agent turn", async () => {
@@ -106,6 +173,9 @@ test("generation errors display without triggering an agent turn", async () => {
 	}));
 	await state.handler("A teapot", state.ctx);
 	assert.deepEqual(state.messages, ["local llama.cpp is unavailable"]);
+	assert.deepEqual(state.working, []);
+	assert.deepEqual(state.visible, []);
+	assert.deepEqual(state.widgets, ["Enhancing image-generation prompt...", "Enhancing image-generation prompt...", undefined]);
 	assert.deepEqual(state.statuses, []);
 });
 
@@ -125,8 +195,8 @@ test("tool activity uses the working indicator, not the footer", () => {
 	} as ExtensionContext;
 	thinkingStatus(pi);
 	handlers.get("tool_execution_start")?.({ toolName: "generate_image", toolCallId: "image-1" }, ctx);
-	assert.deepEqual(working, ["Generating image..."]);
+	assert.deepEqual(working, ["Enhancing image-generation prompt..."]);
 	handlers.get("tool_execution_end")?.({ toolCallId: "image-1" }, ctx);
-	assert.deepEqual(working, ["Generating image...", undefined]);
+	assert.deepEqual(working, ["Enhancing image-generation prompt...", undefined]);
 	assert.deepEqual(footer, []);
 });

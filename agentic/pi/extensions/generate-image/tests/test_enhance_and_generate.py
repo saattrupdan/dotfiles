@@ -7,6 +7,7 @@ import io
 import json
 import subprocess
 import sys
+import tempfile
 import unittest
 import urllib.error
 from pathlib import Path
@@ -55,17 +56,24 @@ class EnhanceAndGenerateTests(unittest.TestCase):
             self.assertEqual(command[command.index("--size") + 1], "768x1024")
             self.assertEqual(command[command.index("--seed") + 1], "7")
             Path(command[command.index("--output") + 1]).write_bytes(b"PNG")
+            Path(command[command.index("--prompt-output") + 1]).write_text(
+                "A red ceramic teapot.", encoding="utf-8"
+            )
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
         with (
+            tempfile.TemporaryDirectory() as progress,
             patch.object(
                 ENHANCE.urllib.request, "urlopen", return_value=response
             ) as url,
             patch.object(ENHANCE.subprocess, "run", side_effect=run),
         ):
-            output = ENHANCE.generate_image(
-                prompt="A red teapot", size="768x1024", seed=7
+            phase_file = Path(progress) / "phase"
+            output, enhanced_prompt = ENHANCE.generate_image(
+                prompt="A red teapot", size="768x1024", seed=7,
+                phase_file=phase_file,
             )
+            self.assertEqual(phase_file.read_text(encoding="utf-8"), "generating")
         try:
             request = url.call_args.args[0]
             self.assertEqual(
@@ -76,6 +84,7 @@ class EnhanceAndGenerateTests(unittest.TestCase):
             self.assertIn("A red teapot", body["messages"][1]["content"])
             self.assertEqual(drafts, [{"caption": "A red ceramic teapot."}])
             self.assertEqual(output.read_bytes(), b"PNG")
+            self.assertEqual(enhanced_prompt, "A red ceramic teapot.")
             self.assertEqual(output.parent.parent, Path("/tmp"))
         finally:
             output.unlink()

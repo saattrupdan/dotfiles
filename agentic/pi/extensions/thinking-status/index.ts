@@ -43,7 +43,7 @@ const TOOL_LABELS: Record<string, string> = {
 	// extension tools
 	search: "Searching...",
 	code_tree: "Mapping...",
-	generate_image: "Generating image...",
+	generate_image: "Enhancing image-generation prompt...",
 	skill: "Upskilling...",
 	question: "Questioning...",
 	web_browse: "Browsing...",
