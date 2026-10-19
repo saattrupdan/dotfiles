@@ -1,5 +1,5 @@
 /** Generate images through a direct tool or /generate-image, using one shared pipeline. */
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +14,26 @@ class CommandStatusLoader extends Loader {
 }
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "scripts", "enhance_and_generate.py");
+const MAX_PROMPT_FILE_BYTES = 64 * 1024;
+
+function loadPrompt(input: string, cwd: string): string {
+	const explicit = input.startsWith("@");
+	const rawPath = explicit ? input.slice(1) : input;
+	if (explicit && !rawPath) throw new Error("Prompt file path is empty.");
+	const quoted = /^(["'])([\s\S]*)\1$/.exec(rawPath);
+	const filePath = quoted ? quoted[2] : rawPath;
+	const resolved = filePath.startsWith("~/")
+		? path.join(os.homedir(), filePath.slice(2))
+		: path.resolve(cwd, filePath);
+	if (!explicit && !existsSync(resolved)) return input;
+	const info = statSync(resolved);
+	if (!info.isFile()) throw new Error("Prompt path is not a file.");
+	if (info.size > MAX_PROMPT_FILE_BYTES) throw new Error("Prompt file exceeds 64 KB.");
+	const prompt = readFileSync(resolved, "utf8").trim();
+	if (!prompt) throw new Error("Prompt file is empty.");
+	return prompt;
+}
+
 const Params = Type.Object({
 	prompt: Type.String({ description: "Final, detailed visual prompt for Kromoss. Describe the intended image directly, including subjects, composition, style and exact visible text. This prompt is sent without local LLM enhancement." }),
 	size: Type.Optional(Type.String({ description: "WIDTHxHEIGHT; default 1024x1024. Each side 512–1024 pixels, multiples of 16, at most 1 megapixel." })),
@@ -107,17 +127,24 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("generate-image", {
-		description: "Generate with Kromoss on sparkie: /generate-image [--no-enhance] <prompt>",
+		description: "Generate with Kromoss on sparkie: /generate-image [--no-enhance] <prompt|@file|file>",
 		async handler(args, ctx) {
 			const input = args.trim();
 			const enhance = !/^--no-enhance(?:\s|$)/.test(input);
-			const prompt = enhance ? input : input.slice("--no-enhance".length).trim();
-			if (!prompt) {
-				ctx.ui.notify("Usage: /generate-image [--no-enhance] <prompt>", "error");
+			const source = enhance ? input : input.slice("--no-enhance".length).trim();
+			if (!source) {
+				ctx.ui.notify("Usage: /generate-image [--no-enhance] <prompt|@file|file>", "error");
 				return;
 			}
 			if (running) {
 				ctx.ui.notify("An image is already being generated.", "error");
+				return;
+			}
+			let prompt: string;
+			try {
+				prompt = loadPrompt(source, ctx.cwd);
+			} catch (error) {
+				ctx.ui.notify(`Unable to read prompt file: ${error instanceof Error ? error.message : String(error)}`, "error");
 				return;
 			}
 			let loader: Loader | undefined;

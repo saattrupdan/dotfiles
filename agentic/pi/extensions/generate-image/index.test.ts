@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -7,7 +7,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import generateImage from "./index.ts";
 import thinkingStatus from "../thinking-status/index.ts";
 
-function setup(exec: ExtensionAPI["exec"]) {
+function setup(exec: ExtensionAPI["exec"], cwd = process.cwd()) {
 	let handler: ((args: string, ctx: ExtensionContext) => Promise<void>) | undefined;
 	let tool: Parameters<ExtensionAPI["registerTool"]>[0] | undefined;
 	const messages: string[] = [];
@@ -31,6 +31,7 @@ function setup(exec: ExtensionAPI["exec"]) {
 	let loader: { setMessage: (label: string) => void; stop: () => void } | undefined;
 	const ctx = {
 		mode: "tui",
+		cwd,
 		ui: {
 			notify: (message: string) => notifications.push(message),
 			setStatus: (_key: string, value: string | undefined) => statuses.push(value),
@@ -113,6 +114,66 @@ test("--no-enhance generates directly and labels the result without an enhanced 
 	}
 });
 
+test("@relative file loads the prompt before enhancement", async () => {
+	const directory = mkdtempSync(path.join(os.tmpdir(), "pi-generate-test-"));
+	const prompts = path.join(directory, "prompts");
+	mkdirSync(prompts);
+	writeFileSync(path.join(prompts, "photo.md"), "  A crisp portrait\n");
+	const output = path.join(directory, "image.png");
+	writeFileSync(output, "png");
+	try {
+		const state = setup(async (_command, args) => {
+			assert.equal(args[4], "A crisp portrait");
+			assert.equal(args[5], "--phase-file");
+			return { code: 0, stdout: JSON.stringify({ path: output, compiled_prompt: "A sharp portrait" }), stderr: "", killed: false };
+		}, directory);
+		await state.handler("@prompts/photo.md", state.ctx);
+		assert.deepEqual(state.messages, [`Original prompt:\nA crisp portrait\n\nEnhanced prompt:\nA sharp portrait\n\nImage: ${output}`]);
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
+});
+
+test("bare and quoted file paths work with --no-enhance", async () => {
+	const directory = mkdtempSync(path.join(os.tmpdir(), "pi-generate-test-"));
+	const file = path.join(directory, "photo prompt.txt");
+	const prompt = "Photorealistic flower in clear focus";
+	writeFileSync(file, `${prompt}\n`);
+	const output = path.join(directory, "image.png");
+	writeFileSync(output, "png");
+	try {
+		for (const input of ["photo prompt.txt", `"${file}"`, `@"${file}"`]) {
+			const state = setup(async (_command, args) => {
+				assert.equal(args[4], prompt);
+				assert.deepEqual(args.slice(5), ["--skip-enhancement"]);
+				return { code: 0, stdout: JSON.stringify({ path: output, compiled_prompt: prompt }), stderr: "", killed: false };
+			}, directory);
+			await state.handler(`--no-enhance ${input}`, state.ctx);
+			assert.deepEqual(state.messages, [`Prompt:\n${prompt}\n\nImage: ${output}`]);
+		}
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
+});
+
+test("missing, empty and oversized explicit files fail before generation", async () => {
+	const directory = mkdtempSync(path.join(os.tmpdir(), "pi-generate-test-"));
+	writeFileSync(path.join(directory, "empty.txt"), " \n");
+	writeFileSync(path.join(directory, "large.txt"), "x".repeat(64 * 1024 + 1));
+	let calls = 0;
+	try {
+		for (const [input, message] of [["@missing.txt", "ENOENT"], ["@empty.txt", "empty"], ["@large.txt", "64 KB"], ["@.", "not a file"]]) {
+			const state = setup(async () => { calls++; return { code: 0, stdout: "", stderr: "", killed: false }; }, directory);
+			await state.handler(input, state.ctx);
+			assert.match(state.notifications[0], new RegExp(message));
+			assert.deepEqual(state.widgets, []);
+		}
+		assert.equal(calls, 0);
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
+});
+
 test("command switches from enhancement to generation while running", async () => {
 	const directory = mkdtempSync(path.join(os.tmpdir(), "pi-generate-test-"));
 	const output = path.join(directory, "image.png");
@@ -188,7 +249,7 @@ test("empty brief does not run the generator", async () => {
 	});
 	await state.handler("  ", state.ctx);
 	assert.equal(calls, 0);
-	assert.deepEqual(state.notifications, ["Usage: /generate-image [--no-enhance] <prompt>"]);
+	assert.deepEqual(state.notifications, ["Usage: /generate-image [--no-enhance] <prompt|@file|file>"]);
 	assert.deepEqual(state.working, []);
 	assert.deepEqual(state.visible, []);
 	assert.deepEqual(state.widgets, []);
@@ -202,7 +263,7 @@ test("--no-enhance without a prompt does not run the generator", async () => {
 	});
 	await state.handler("--no-enhance", state.ctx);
 	assert.equal(calls, 0);
-	assert.deepEqual(state.notifications, ["Usage: /generate-image [--no-enhance] <prompt>"]);
+	assert.deepEqual(state.notifications, ["Usage: /generate-image [--no-enhance] <prompt|@file|file>"]);
 	assert.deepEqual(state.widgets, []);
 });
 
