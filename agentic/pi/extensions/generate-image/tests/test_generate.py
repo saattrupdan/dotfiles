@@ -138,8 +138,9 @@ class GenerateTests(unittest.TestCase):
             )
         self.assertEqual(actual, image)
         payload = json.loads(mock.call_args.args[0].data)
-        self.assertEqual(payload["model"], "OpenMOSS-Team/MOSS-Image-SFT")
-        self.assertEqual(payload["extra_params"]["uncond_skip_layers"], [22])
+        self.assertEqual(payload["model"], "lodestones/Kromoss")
+        self.assertNotIn("num_inference_steps", payload)
+        self.assertNotIn("extra_params", payload)
         self.assertEqual(payload["seed"], 17)
 
     def test_truncated_png(self) -> None:

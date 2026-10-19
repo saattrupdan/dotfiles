@@ -40,7 +40,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "generate_image",
 		label: "generate image",
-		description: "Generate one image: enhance the brief with the local qwen3.6-35b-a3b-vision model, compile the MOSS prompt and generate a PNG on sparkie's tailnet router. Returns its /tmp path and file URL. The router is shared and unauthenticated: do not submit private briefs or sensitive input. Generation can take several minutes.",
+		description: "Generate one image: enhance the brief with local qwen3.6-35b-a3b-vision, compile the MOSS prompt and generate a PNG using Kromoss with its unmerged 8-step LoRA on sparkie. Returns its /tmp path and file URL. The router is shared and unauthenticated: do not submit private briefs or sensitive input.",
 		parameters: Params,
 		async execute(_toolCallId, params, signal) {
 			try {
@@ -60,7 +60,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("generate-image", {
-		description: "Enhance a brief locally and generate an image on sparkie: /generate-image <prompt>",
+		description: "Enhance a brief locally and generate with Kromoss on sparkie: /generate-image <prompt>",
 		async handler(args, ctx) {
 			const prompt = args.trim();
 			if (!prompt) {

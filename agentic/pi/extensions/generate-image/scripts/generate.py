@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile a MOSS prompt draft and save one image from sparkie's router."""
+"""Compile a MOSS prompt draft and generate with Kromoss on sparkie."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ import zlib
 from pathlib import Path
 
 DEFAULT_ENDPOINT = "http://100.102.237.34:31000"
-MODEL_ID = "OpenMOSS-Team/MOSS-Image-SFT"
+MODEL_ID = "lodestones/Kromoss"
 
 
 def main() -> None:
@@ -41,7 +41,7 @@ def main() -> None:
     )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
-        "--endpoint", default=os.environ.get("MOSS_IMAGE_URL", DEFAULT_ENDPOINT)
+        "--endpoint", default=os.environ.get("KROMOSS_IMAGE_URL", DEFAULT_ENDPOINT)
     )
     args = parser.parse_args()
     try:
@@ -196,17 +196,8 @@ def _request(
         "prompt": prompt,
         "size": size,
         "n": 1,
-        "num_inference_steps": 50,
-        "guidance_scale": 3.0,
-        "flow_shift": 5.0,
         "seed": seed,
-        "negative_prompt": "",
         "response_format": "b64_json",
-        "extra_params": {
-            "uncond_skip_layers": [22],
-            "slg_start": 0.01,
-            "slg_stop": 1.0,
-        },
     }
     request = urllib.request.Request(
         url=f"{endpoint.rstrip('/')}/v1/images/generations",
