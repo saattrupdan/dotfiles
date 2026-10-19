@@ -42,14 +42,15 @@ function setup(exec: ExtensionAPI["exec"]) {
 					assert.equal(options?.placement, "aboveEditor");
 					const component = content({ requestRender: () => {} }, { fg: (colour: string, text: string) => `[${colour}]${text}` });
 					const lines = component.render(120);
-					assert.equal(lines.length, 1);
+					assert.equal(lines.length, 2);
 					assert.match(lines[0], /\[accent\].*\[muted\]Enhancing image-generation prompt/);
+					assert.equal(lines[1], "");
 					const original = component.setMessage.bind(component);
 					component.setMessage = (label: string) => {
 						widgets.push(label);
 						original(label);
-						assert.equal(component.render(120).length, 1);
 						assert.match(component.render(120)[0], /\[muted\]/);
+						assert.equal(component.render(120)[1], "");
 					};
 					loader = component;
 					widgets.push("Enhancing image-generation prompt...");

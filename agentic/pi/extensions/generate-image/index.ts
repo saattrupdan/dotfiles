@@ -7,9 +7,9 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Loader } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
-class SingleLineLoader extends Loader {
+class CommandStatusLoader extends Loader {
 	override render(width: number): string[] {
-		return super.render(width).slice(1);
+		return [...super.render(width).slice(1), ""];
 	}
 }
 
@@ -107,7 +107,7 @@ export default function (pi: ExtensionAPI) {
 			let loader: Loader | undefined;
 			if (ctx.mode === "tui") {
 				ctx.ui.setWidget("generate-image:progress", (tui, theme) => {
-					loader = new SingleLineLoader(tui, (text) => theme.fg("accent", text), (text) => theme.fg("muted", text), "Enhancing image-generation prompt...");
+					loader = new CommandStatusLoader(tui, (text) => theme.fg("accent", text), (text) => theme.fg("muted", text), "Enhancing image-generation prompt...");
 					return Object.assign(loader, { dispose: () => loader?.stop() });
 				}, { placement: "aboveEditor" });
 			}
