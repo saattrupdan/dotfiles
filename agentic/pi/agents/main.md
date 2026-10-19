@@ -65,7 +65,7 @@ skills:
   - vue
   - web-browse
   - xlsx
-# The librarian-only memory extension and its five concept tools are intentionally excluded.
+# The librarian-only memory extension and its six concept tools are intentionally excluded.
 extensions:
   - bash-output
   - caffeinate

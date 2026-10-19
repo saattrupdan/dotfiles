@@ -6,7 +6,7 @@ import { test } from "node:test";
 
 import register from "./index.ts";
 
-test("librarian registers five tools, while recall handoff registers only search", () => {
+test("librarian registers six tools, while recall handoff registers only search and read", () => {
 	const previous = process.env.PI_MEMORY_RECALL_ONLY;
 	const previousCleaning = process.env.PI_MEMORY_CLEANING_ONLY;
 	try {
@@ -15,22 +15,38 @@ test("librarian registers five tools, while recall handoff registers only search
 		const pi = { registerTool: (definition: { name: string }) => tools.push(definition.name) };
 		delete process.env.PI_MEMORY_RECALL_ONLY;
 		register(pi as never);
-		assert.deepEqual(tools, ["search_concepts", "create_concept", "update_concept", "remove_concept", "lint_concepts"]);
+		assert.deepEqual(tools, ["search_concepts", "read_concept", "create_concept", "update_concept", "remove_concept", "lint_concepts"]);
 		tools.length = 0;
 		process.env.PI_MEMORY_RECALL_ONLY = "1";
 		register(pi as never);
-		assert.deepEqual(tools, ["search_concepts"]);
+		assert.deepEqual(tools, ["search_concepts", "read_concept"]);
 		tools.length = 0;
 		delete process.env.PI_MEMORY_RECALL_ONLY;
 		process.env.PI_MEMORY_CLEANING_ONLY = "1";
 		register(pi as never);
-		assert.deepEqual(tools, ["search_concepts", "update_concept", "remove_concept", "lint_concepts"]);
+		assert.deepEqual(tools, ["search_concepts", "read_concept", "update_concept", "remove_concept", "lint_concepts"]);
 	} finally {
 		if (previous === undefined) delete process.env.PI_MEMORY_RECALL_ONLY;
 		else process.env.PI_MEMORY_RECALL_ONLY = previous;
 		if (previousCleaning === undefined) delete process.env.PI_MEMORY_CLEANING_ONLY;
 		else process.env.PI_MEMORY_CLEANING_ONLY = previousCleaning;
 	}
+});
+
+test("read_concept fetches one exact path without a query", async () => {
+	const calls: unknown[] = [];
+	const concept = { path: "/known.md", frontmatter: { type: "Note" }, body: "A fact." };
+	const store = { search: async (options: unknown) => {
+		calls.push(options);
+		if ((options as { path: string }).path !== "/known.md") throw new Error("Concept not found");
+		return concept;
+	} };
+	type Tool = { name: string; execute: (id: string, params: { path: string }) => Promise<{ details: unknown }> };
+	const tools = new Map<string, Tool>();
+	register({ registerTool: (tool: Tool) => tools.set(tool.name, tool) } as never, () => store as never);
+	assert.deepEqual((await tools.get("read_concept")!.execute("test", { path: "/known.md" })).details, concept);
+	assert.deepEqual(calls, [{ path: "/known.md" }]);
+	await assert.rejects(tools.get("read_concept")!.execute("test", { path: "/missing.md" }), /Concept not found/);
 });
 
 test("lint fingerprints only the bundle state it actually inspected", async () => {

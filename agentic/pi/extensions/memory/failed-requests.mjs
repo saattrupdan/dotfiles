@@ -58,11 +58,14 @@ export async function reviewRequest(job, agentDir, root, timeoutMs = 90_000, sig
 					const line = output.slice(0, end); output = output.slice(end + 1);
 					try {
 						const event = JSON.parse(line);
-						if (event.type === "tool_execution_end" && event.toolName === "search_concepts") {
+						if (event.type === "tool_execution_end" &&
+							(event.toolName === "search_concepts" || event.toolName === "read_concept")) {
 							if (event.isError) toolErrors = true;
 							else {
-								searches++;
-								if (Array.isArray(event.result?.details?.results)) queries++;
+								if (event.toolName === "search_concepts") {
+									searches++;
+									if (Array.isArray(event.result?.details?.results)) queries++;
+								}
 								if (typeof event.result?.details?.path === "string") readPaths.add(event.result.details.path);
 							}
 						} else if (event.type === "message_end" && event.message?.role === "assistant") {

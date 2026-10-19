@@ -59,10 +59,10 @@ test("loads prompt body rather than YAML and refuses delegatable top-level agent
 	assert.throws(() => buildProfileArgs(profile("main", { skills: undefined }), dir, []), /explicit resource allow-lists/);
 });
 
-test("actual librarian profile exposes exactly five private memory tools", async () => {
+test("actual librarian profile exposes exactly six private memory tools", async () => {
 	const dir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 	const librarian = await loadProfile("librarian", dir, resolvePiPackage());
-	assert.deepEqual(librarian.tools, ["search_concepts", "create_concept", "update_concept", "remove_concept", "lint_concepts"]);
+	assert.deepEqual(librarian.tools, ["search_concepts", "read_concept", "create_concept", "update_concept", "remove_concept", "lint_concepts"]);
 	assert.deepEqual(librarian.extensions, ["memory", "rate-limit-retry"]);
 	assert.deepEqual(librarian.skills, []);
 	assert.deepEqual(librarian.model, ["openai-codex/gpt-6-luna"]);
@@ -91,7 +91,7 @@ test("main exposes only the two handoff tools, not the librarian's concept tools
 		assert.ok(!main.tools.includes(tool), tool);
 	}
 	assert.ok(main.tools.includes("store_memory") && main.tools.includes("recall_memory"));
-	for (const tool of ["search_concepts", "create_concept", "update_concept", "remove_concept", "lint_concepts"]) {
+	for (const tool of ["search_concepts", "read_concept", "create_concept", "update_concept", "remove_concept", "lint_concepts"]) {
 		assert.ok(!main.tools.includes(tool), tool);
 	}
 });

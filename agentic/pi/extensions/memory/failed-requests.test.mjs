@@ -21,7 +21,7 @@ if(text.includes('slow'))setInterval(()=>{},1000);
 else if(text.includes('no-search'))console.log(JSON.stringify({type:'message_end',message:{role:'assistant',content:[{type:'text',text:'{"status":"absent"}'}]}}));
 else {
 if(!text.includes('path-only'))console.log(JSON.stringify({type:'tool_execution_end',toolName:'search_concepts',isError:false,result:{details:{results:[{path:'/known.md'}]}}}));
-console.log(JSON.stringify({type:'tool_execution_end',toolName:'search_concepts',isError:false,result:{details:{path:'/known.md'}}}));
+console.log(JSON.stringify({type:'tool_execution_end',toolName:'read_concept',isError:false,result:{details:{path:'/known.md',frontmatter:{type:'Note'},body:'fact'}}}));
 const status=text.includes('present')?'present':'absent';
 console.log(JSON.stringify({type:'message_end',message:{role:'assistant',content:[{type:'text',text:JSON.stringify({status,evidence:['/known.md']})}]}}));
 }

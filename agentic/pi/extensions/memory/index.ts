@@ -1,4 +1,4 @@
-/** The librarian's only five tools. The bundle root is fixed to ~/memory. */
+/** The librarian's private concept tools. The bundle root is fixed to ~/memory. */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -17,8 +17,8 @@ export default function (pi: ExtensionAPI, getStore: () => MemoryStore = memory)
 	pi.registerTool({
 		name: "search_concepts",
 		label: "search_concepts",
-		description: "Hybrid BM25 and embedding search over the private OKF bundle. Provide query for ranked snippets, " +
-			"or path (e.g. /projects/example.md) to read that exact concept's complete frontmatter and body. " +
+		description: "Hybrid BM25 and embedding search over the private OKF bundle. Provide query for ranked snippets; " +
+			"use read_concept for an exact path. The legacy path argument still reads a complete concept. " +
 			"Query embeddings use local llama.cpp; on failure, search logs the error and returns BM25 results.",
 		parameters: Type.Object({
 			query: Type.Optional(Type.String()),
@@ -27,7 +27,14 @@ export default function (pi: ExtensionAPI, getStore: () => MemoryStore = memory)
 		}),
 		async execute(_id, params) { return answer(await getStore().search(params)); },
 	});
-	// Recall runs can only search; scheduled cleaning cannot create new concepts.
+	pi.registerTool({
+		name: "read_concept",
+		label: "read_concept",
+		description: "Read the complete frontmatter and body of one concept by its exact bundle-relative .md path.",
+		parameters: Type.Object({ path: Type.String() }),
+		async execute(_id, { path }) { return answer(await getStore().search({ path })); },
+	});
+	// Recall runs can search and read; scheduled cleaning cannot create new concepts.
 	if (process.env.PI_MEMORY_RECALL_ONLY === "1") return;
 	const cleaning = process.env.PI_MEMORY_CLEANING_ONLY === "1";
 	let cleaningWrites = 0;
@@ -54,7 +61,7 @@ export default function (pi: ExtensionAPI, getStore: () => MemoryStore = memory)
 		label: "update_concept",
 		description: "Replace an existing concept's body (and optionally metadata), preserving other frontmatter. " +
 			"Re-embeds it and any generated parts; report missingEmbeddings if local embedding fails. " +
-			"Use search_concepts with path first to inspect the concept.",
+			"Use read_concept first to inspect the concept.",
 		parameters: Type.Object({
 			path: Type.String(), body: Type.String(),
 			type: Type.Optional(Type.String()), title: Type.Optional(Type.String()),

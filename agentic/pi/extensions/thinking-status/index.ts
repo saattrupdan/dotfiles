@@ -51,6 +51,7 @@ const TOOL_LABELS: Record<string, string> = {
 	subagent: "Whipping the subagents...",
 	store_memory: "Storing to memory…",
 	recall_memory: "Recalling from memory…",
+	read_concept: "Reading concept…",
 	isolated_new_branch: "Creating branch...",
 	"clean-up-isolated-branch": "Cleaning up branch...",
 };
