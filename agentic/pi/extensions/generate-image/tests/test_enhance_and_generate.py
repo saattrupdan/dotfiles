@@ -104,6 +104,7 @@ class EnhanceAndGenerateTests(unittest.TestCase):
             """Capture the draft and simulate a saved image and compiled prompt."""
             draft_path = Path(command[command.index("--draft") + 1])
             drafts.append(json.loads(draft_path.read_text(encoding="utf-8")))
+            self.assertEqual(command[command.index("--size") + 1], "512x512")
             Path(command[command.index("--output") + 1]).write_bytes(b"PNG")
             Path(command[command.index("--prompt-output") + 1]).write_text(
                 prompt, encoding="utf-8"
@@ -139,7 +140,7 @@ class EnhanceAndGenerateTests(unittest.TestCase):
         ):
             ENHANCE.main()
         generate.assert_called_once_with(
-            prompt="A teapot", size="1024x1024", num=2,
+            prompt="A teapot", size="512x512", num=2,
             phase_file=None, enhance=True,
         )
         self.assertEqual(
@@ -170,7 +171,7 @@ class EnhanceAndGenerateTests(unittest.TestCase):
         ):
             outputs, compiled_prompt = ENHANCE.generate_image(prompt=prompt, num=3)
         try:
-            enhance.assert_called_once()
+            enhance.assert_called_once_with(prompt=prompt, width=512, height=512)
             self.assertEqual(generate.call_count, 3)
             self.assertEqual(seen_drafts, [{"caption": prompt}] * 3)
             self.assertEqual(
@@ -231,7 +232,7 @@ class EnhanceAndGenerateTests(unittest.TestCase):
                     "choices": [
                         {
                             "finish_reason": "stop",
-                            "message": {"content": '{"width":512,"height":512}'},
+                            "message": {"content": '{"width":768,"height":512}'},
                         }
                     ]
                 }

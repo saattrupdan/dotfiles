@@ -42,7 +42,7 @@ def main() -> None:
     """Generate an image with optional enhancement and write result JSON."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("prompt", help="Image brief or final visual prompt")
-    parser.add_argument("--size", default="1024x1024", help="WIDTHxHEIGHT")
+    parser.add_argument("--size", default="512x512", help="WIDTHxHEIGHT")
     parser.add_argument("--num", type=int, default=1, help="Number of images (1-10)")
     parser.add_argument("--phase-file", type=Path, help="Progress marker for the caller")
     parser.add_argument("--skip-enhancement", action="store_true")
@@ -60,7 +60,7 @@ def main() -> None:
 
 
 def generate_image(
-    *, prompt: str, size: str = "1024x1024", num: int = 1,
+    *, prompt: str, size: str = "512x512", num: int = 1,
     phase_file: Path | None = None, enhance: bool = True,
 ) -> tuple[list[Path], str]:
     """Save PNGs in one directory under /tmp, optionally enhancing the brief.
@@ -69,7 +69,7 @@ def generate_image(
         prompt:
             The user's image brief.
         size (optional):
-            Canvas dimensions. Defaults to 1024x1024.
+            Canvas dimensions. Defaults to 512x512.
         num (optional):
             Number of images. Defaults to 1.
         phase_file (optional):

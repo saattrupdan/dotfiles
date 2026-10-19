@@ -41,7 +41,7 @@ function loadPrompt(input: string, cwd: string): string {
 
 const Params = Type.Object({
 	prompt: Type.String({ description: "Final, detailed visual prompt for Kromoss. Describe the intended image directly, including subjects, composition, style and exact visible text. This prompt is sent without local LLM enhancement." }),
-	size: Type.Optional(Type.String({ description: "WIDTHxHEIGHT; default 1024x1024. Each side 512–1024 pixels, multiples of 16, at most 1 megapixel." })),
+	size: Type.Optional(Type.String({ description: "WIDTHxHEIGHT; default 512x512. Each side 512–1024 pixels, multiples of 16, at most 1 megapixel." })),
 	num: Type.Optional(Type.Integer({ description: "Number of images to generate (1–10); default 1. All images share one output directory.", minimum: 1, maximum: MAX_IMAGES })),
 });
 

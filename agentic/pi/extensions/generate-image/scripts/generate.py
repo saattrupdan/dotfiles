@@ -39,7 +39,7 @@ def main() -> None:
     parser.add_argument("--output", required=True, type=Path, help="Output PNG")
     parser.add_argument("--prompt-output", type=Path, help="Compiled prompt output")
     parser.add_argument(
-        "--size", default="1024x1024", help="WIDTHxHEIGHT, e.g. 768x1024"
+        "--size", default="512x512", help="WIDTHxHEIGHT, e.g. 768x1024"
     )
     parser.add_argument(
         "--endpoint", default=os.environ.get("KROMOSS_IMAGE_URL", DEFAULT_ENDPOINT)

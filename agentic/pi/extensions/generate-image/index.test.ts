@@ -68,6 +68,7 @@ function setup(exec: ExtensionAPI["exec"], cwd = process.cwd()) {
 	assert.ok(tool);
 	assert.doesNotMatch(JSON.stringify(tool.parameters), /"seed"/);
 	assert.match(JSON.stringify(tool.parameters), /"num"/);
+	assert.match(JSON.stringify(tool.parameters), /default 512x512/);
 	assert.match(tool.description, /photos.*photorealistic.*crisp.*sharp.*soft-focus blur/i);
 	return { handler, tool, ctx, messages, notifications, statuses, working, visible, widgets };
 }
@@ -84,6 +85,7 @@ test("command sends the whole brief as one argument and returns the path", async
 			assert.deepEqual(args.slice(0, 3), ["run", "--no-project", "python3"]);
 			assert.match(args[3], /generate-image\/scripts\/enhance_and_generate\.py$/);
 			assert.equal(args[4], brief);
+			assert.ok(!args.includes("--size"));
 			assert.deepEqual(args.slice(-2), ["--num", "1"]);
 			return { code: 0, stdout: JSON.stringify({ paths: [output], compiled_prompt: "A detailed cat." }), stderr: "", killed: false };
 		});

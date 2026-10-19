@@ -99,16 +99,19 @@ class GenerateTests(unittest.TestCase):
                 str(output),
                 "--prompt-output",
                 str(prompt_output),
-                "--size",
-                "512x512",
             ]
             with (
                 patch.object(sys, "argv", arguments),
                 patch.object(
                     GENERATE, "_request", return_value=_png(width=512, height=512)
-                ),
+                ) as request,
             ):
                 GENERATE.main()
+            self.assertEqual(request.call_args.kwargs["size"], "512x512")
+            self.assertEqual(
+                (request.call_args.kwargs["width"], request.call_args.kwargs["height"]),
+                (512, 512),
+            )
             self.assertEqual(unrelated.read_text(), "unchanged")
             self.assertEqual(output.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
             self.assertEqual(prompt_output.read_text(encoding="utf-8"), "A red teapot.")
