@@ -18,7 +18,7 @@ export default function (pi: ExtensionAPI, getStore: () => MemoryStore = memory)
 		name: "search_concepts",
 		label: "search_concepts",
 		description: "Hybrid BM25 and embedding search over the private OKF bundle. Provide query for ranked snippets; " +
-			"use read_concept for an exact path. The legacy path argument still reads a complete concept. " +
+			"use read_concept for an exact slash-prefixed bundle path (e.g. /area/concept.md). The legacy path argument still reads a complete concept. " +
 			"Query embeddings use local llama.cpp; on failure, search logs the error and returns BM25 results.",
 		parameters: Type.Object({
 			query: Type.Optional(Type.String()),
@@ -30,7 +30,7 @@ export default function (pi: ExtensionAPI, getStore: () => MemoryStore = memory)
 	pi.registerTool({
 		name: "read_concept",
 		label: "read_concept",
-		description: "Read the complete frontmatter and body of one concept by its exact bundle-relative .md path.",
+		description: "Read the complete frontmatter and body by exact slash-prefixed bundle path, e.g. /area/concept.md. Do not use relative or filesystem paths.",
 		parameters: Type.Object({ path: Type.String() }),
 		async execute(_id, { path }) { return answer(await getStore().search({ path })); },
 	});
@@ -46,7 +46,7 @@ export default function (pi: ExtensionAPI, getStore: () => MemoryStore = memory)
 	if (!cleaning) pi.registerTool({
 		name: "create_concept",
 		label: "create_concept",
-		description: "Create a typed OKF Markdown concept at a bundle-relative .md path. Large bodies become a " +
+		description: "Create a typed OKF Markdown concept at a slash-prefixed bundle path (e.g. /area/concept.md). Large bodies become a " +
 			"parent and linked parts below the model's 32,768-token limit. Embedding failures are logged; " +
 			"the concept remains searchable via BM25 and lint_concepts reports missing embeddings.",
 		parameters: Type.Object({
@@ -61,7 +61,7 @@ export default function (pi: ExtensionAPI, getStore: () => MemoryStore = memory)
 		label: "update_concept",
 		description: "Replace an existing concept's body (and optionally metadata), preserving other frontmatter. " +
 			"Re-embeds it and any generated parts; report missingEmbeddings if local embedding fails. " +
-			"Use read_concept first to inspect the concept.",
+			"Use read_concept first to inspect the concept; path must be slash-prefixed and bundle-rooted.",
 		parameters: Type.Object({
 			path: Type.String(), body: Type.String(),
 			type: Type.Optional(Type.String()), title: Type.Optional(Type.String()),
@@ -73,7 +73,7 @@ export default function (pi: ExtensionAPI, getStore: () => MemoryStore = memory)
 		name: "remove_concept",
 		label: "remove_concept",
 		description: "Archive the complete concept and its generated parts in ~/memory/requests/removed before " +
-			"removing them from active search, along with their embeddings. Returns the archive path.",
+			"removing them from active search, along with their embeddings. Provide a slash-prefixed bundle path; returns the archive path.",
 		parameters: Type.Object({ path: Type.String() }),
 		async execute(_id, { path }) {
 			if (cleaning && !getStore().lint().some((issue) => issue.kind === "orphan" && issue.path === path)) {
