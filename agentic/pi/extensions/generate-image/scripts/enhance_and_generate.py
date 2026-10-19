@@ -43,39 +43,42 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("prompt", help="Image brief or final visual prompt")
     parser.add_argument("--size", default="1024x1024", help="WIDTHxHEIGHT")
+    parser.add_argument("--num", type=int, default=1, help="Number of images (1-10)")
     parser.add_argument("--phase-file", type=Path, help="Progress marker for the caller")
     parser.add_argument("--skip-enhancement", action="store_true")
     args = parser.parse_args()
     try:
-        output, compiled_prompt = generate_image(
-            prompt=args.prompt, size=args.size, phase_file=args.phase_file,
-            enhance=not args.skip_enhancement,
+        outputs, compiled_prompt = generate_image(
+            prompt=args.prompt, size=args.size, num=args.num,
+            phase_file=args.phase_file, enhance=not args.skip_enhancement,
         )
     except (OSError, ValueError, KeyError, IndexError, TypeError) as exc:
         parser.exit(status=1, message=f"Image generation failed: {exc}\n")
     sys.stdout.write(
-        json.dumps({"path": str(output), "compiled_prompt": compiled_prompt}) + "\n"
+        json.dumps({"paths": [str(output) for output in outputs], "compiled_prompt": compiled_prompt}) + "\n"
     )
 
 
 def generate_image(
-    *, prompt: str, size: str = "1024x1024",
+    *, prompt: str, size: str = "1024x1024", num: int = 1,
     phase_file: Path | None = None, enhance: bool = True,
-) -> tuple[Path, str]:
-    """Save one PNG from sparkie under /tmp, optionally enhancing the brief.
+) -> tuple[list[Path], str]:
+    """Save PNGs in one directory under /tmp, optionally enhancing the brief.
 
     Args:
         prompt:
             The user's image brief.
         size (optional):
             Canvas dimensions. Defaults to 1024x1024.
+        num (optional):
+            Number of images. Defaults to 1.
         phase_file (optional):
             File for reporting phase transitions to the caller.
         enhance (optional):
             Whether to use local llama.cpp to expand the brief. Defaults to True.
 
     Returns:
-        Absolute path to the generated PNG and the compiled prompt sent to sparkie.
+        Absolute paths to the generated PNGs and the compiled prompt sent to sparkie.
 
     Raises:
         ValueError:
@@ -83,6 +86,8 @@ def generate_image(
     """
     if not prompt.strip():
         raise ValueError("prompt must not be empty")
+    if not 1 <= num <= 10:
+        raise ValueError("num must be between 1 and 10")
     width, height = _dimensions(size=size)
     draft = (
         _enhance(prompt=prompt, width=width, height=height)
@@ -95,36 +100,39 @@ def generate_image(
     try:
         draft_path = directory / "draft.json"
         draft_path.write_text(json.dumps(draft, ensure_ascii=False), encoding="utf-8")
-        output = directory / "image.png"
         prompt_path = directory / "prompt.txt"
         script = Path(__file__).with_name("generate.py")
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(script),
-                "--draft",
-                str(draft_path),
-                "--size",
-                size,
-                "--output",
-                str(output),
-                "--prompt-output",
-                str(prompt_path),
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode:
-            raise ValueError(result.stderr.strip() or "sparkie generation failed")
-        if not output.is_file():
-            raise ValueError("generator did not save an image")
+        outputs: list[Path] = []
+        for index in range(1, num + 1):
+            output = directory / ("image.png" if num == 1 else f"image-{index:02d}.png")
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--draft",
+                    str(draft_path),
+                    "--size",
+                    size,
+                    "--output",
+                    str(output),
+                    "--prompt-output",
+                    str(prompt_path),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode:
+                raise ValueError(result.stderr.strip() or "sparkie generation failed")
+            if not output.is_file():
+                raise ValueError("generator did not save an image")
+            outputs.append(output)
         compiled_prompt = prompt_path.read_text(encoding="utf-8")
         if not compiled_prompt.strip():
             raise ValueError("generator did not return a compiled prompt")
         draft_path.unlink()
         prompt_path.unlink()
-        return output, compiled_prompt
+        return outputs, compiled_prompt
     except BaseException:
         shutil.rmtree(directory)
         raise

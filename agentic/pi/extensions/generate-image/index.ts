@@ -15,6 +15,11 @@ class CommandStatusLoader extends Loader {
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "scripts", "enhance_and_generate.py");
 const MAX_PROMPT_FILE_BYTES = 64 * 1024;
+const MAX_IMAGES = 10;
+
+function formatImages(paths: string[]): string {
+	return paths.length === 1 ? `Image: ${paths[0]}` : `Images:\n${paths.join("\n")}`;
+}
 
 function loadPrompt(input: string, cwd: string): string {
 	const explicit = input.startsWith("@");
@@ -37,6 +42,7 @@ function loadPrompt(input: string, cwd: string): string {
 const Params = Type.Object({
 	prompt: Type.String({ description: "Final, detailed visual prompt for Kromoss. Describe the intended image directly, including subjects, composition, style and exact visible text. This prompt is sent without local LLM enhancement." }),
 	size: Type.Optional(Type.String({ description: "WIDTHxHEIGHT; default 1024x1024. Each side 512–1024 pixels, multiples of 16, at most 1 megapixel." })),
+	num: Type.Optional(Type.Integer({ description: "Number of images to generate (1–10); default 1. All images share one output directory.", minimum: 1, maximum: MAX_IMAGES })),
 });
 
 export default function (pi: ExtensionAPI) {
@@ -44,9 +50,10 @@ export default function (pi: ExtensionAPI) {
 
 	async function generate(
 		prompt: string, onPhase: (label: string) => void, signal?: AbortSignal, size?: string,
-		enhance = true,
-	): Promise<{ path: string; compiledPrompt: string }> {
+		enhance = true, num = 1,
+	): Promise<{ paths: string[]; compiledPrompt: string }> {
 		if (!prompt.trim()) throw new Error("Image prompt must not be empty.");
+		if (!Number.isSafeInteger(num) || num < 1 || num > MAX_IMAGES) throw new Error("num must be between 1 and 10.");
 		if (running) throw new Error("An image is already being generated.");
 		const progressDir = mkdtempSync(path.join(os.tmpdir(), "pi-image-progress-"));
 		running = true;
@@ -67,23 +74,31 @@ export default function (pi: ExtensionAPI) {
 			if (enhance) args.push("--phase-file", phaseFile);
 			else args.push("--skip-enhancement");
 			if (size !== undefined) args.push("--size", size);
-			const result = await pi.exec("uv", args, { timeout: 1_550_000, signal });
+			args.push("--num", String(num));
+			const result = await pi.exec("uv", args, {
+				timeout: 50_000 + (enhance ? 600_000 : 0) + num * 900_000,
+				signal,
+			});
 			if (result.code !== 0 || result.killed) {
 				throw new Error(result.stderr.trim() || "Image generation stopped.");
 			}
-			let output: { path?: unknown; compiled_prompt?: unknown };
+			let output: { paths?: unknown; compiled_prompt?: unknown };
 			try {
 				output = JSON.parse(result.stdout);
 			} catch {
 				throw new Error("Generator did not return a valid result.");
 			}
-			if (!output || typeof output.path !== "string" || !path.isAbsolute(output.path) || !existsSync(output.path)) {
-				throw new Error("Generator did not return an existing image path.");
+			const paths = output?.paths;
+			if (!Array.isArray(paths) || paths.length !== num || !paths.every((p) => typeof p === "string" && path.isAbsolute(p) && existsSync(p))) {
+				throw new Error("Generator did not return all image paths.");
+			}
+			if (!paths.every((p) => path.dirname(p) === path.dirname(paths[0]))) {
+				throw new Error("Generator returned images in different directories.");
 			}
 			if (typeof output.compiled_prompt !== "string" || !output.compiled_prompt.trim()) {
 				throw new Error("Generator did not return a compiled prompt.");
 			}
-			return { path: output.path, compiledPrompt: output.compiled_prompt };
+			return { paths, compiledPrompt: output.compiled_prompt };
 		} finally {
 			clearInterval(poll);
 			rmSync(progressDir, { recursive: true, force: true });
@@ -94,15 +109,15 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "generate_image",
 		label: "generate image",
-		description: "Generate one image from the final visual prompt you provide. Write a complete, concrete image description yourself; the tool does not call a prompt-enhancement model. For photos, specify photorealistic, crisp, sharp subject detail without soft-focus blur unless requested; preserve intentional depth of field and motion blur. It compiles the prompt for Kromoss with its unmerged 8-step LoRA on sparkie and returns a PNG in /tmp. The router is shared and unauthenticated: do not submit private briefs or sensitive input.",
+		description: "Generate one or more images from the final visual prompt you provide. Write a complete, concrete image description yourself; the tool does not call a prompt-enhancement model. For photos, specify photorealistic, crisp, sharp subject detail without soft-focus blur unless requested; preserve intentional depth of field and motion blur. It compiles the prompt for Kromoss with its unmerged 8-step LoRA on sparkie and returns PNG paths in one /tmp directory. The router is shared and unauthenticated: do not submit private briefs or sensitive input.",
 		parameters: Params,
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			try {
 				onUpdate?.({ content: [], details: undefined });
-				const output = await generate(params.prompt, (label) => ctx.ui.setWorkingMessage(label), signal, params.size, false);
+				const output = await generate(params.prompt, (label) => ctx.ui.setWorkingMessage(label), signal, params.size, false, params.num);
 				return {
-					content: [{ type: "text", text: `Prompt:\n${output.compiledPrompt}\n\nImage: ${output.path}` }],
-					details: undefined,
+					content: [{ type: "text", text: `Prompt:\n${output.compiledPrompt}\n\n${formatImages(output.paths)}` }],
+					details: { count: output.paths.length },
 				};
 			} catch (error) {
 				return {
@@ -116,22 +131,47 @@ export default function (pi: ExtensionAPI) {
 			return new Text(theme.fg("toolTitle", theme.bold("generate_image")), 0, 0);
 		},
 		renderResult(result, options, theme, context) {
-			if (options.isPartial) return new Text(theme.fg("warning", "⋯ Generating image"), 0, 0);
+			if (options.isPartial) return new Text(theme.fg("warning", (context.args?.num ?? 1) > 1 ? "⋯ Generating images" : "⋯ Generating image"), 0, 0);
 			const text = result.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
 			if (options.expanded) return new Text(text, 0, 0);
 			if (context.isError) return new Text(theme.fg("error", "✗ image generation failed"), 0, 0);
-			return new Text(theme.fg("success", "✓ Generated image"), 0, 0);
+			const count = (result.details as { count?: number } | undefined)?.count ?? 1;
+			return new Text(theme.fg("success", count === 1 ? "✓ Generated image" : `✓ Generated ${count} images`), 0, 0);
 		},
 	});
 
 	pi.registerCommand("generate-image", {
-		description: "Generate with Kromoss on sparkie: /generate-image [--no-enhance] <prompt|@file|file>",
+		description: "Generate with Kromoss on sparkie: /generate-image [--no-enhance] [--num N] <prompt|@file|file>",
 		async handler(args, ctx) {
-			const input = args.trim();
-			const enhance = !/^--no-enhance(?:\s|$)/.test(input);
-			const source = enhance ? input : input.slice("--no-enhance".length).trim();
+			let source = args.trim();
+			let enhance = true;
+			let num = 1;
+			let countSet = false;
+			while (source.startsWith("--")) {
+				if (/^--no-enhance(?:\s|$)/.test(source)) {
+					if (!enhance) {
+						ctx.ui.notify("--no-enhance was specified twice.", "error");
+						return;
+					}
+					enhance = false;
+					source = source.slice("--no-enhance".length).trimStart();
+					continue;
+				}
+				if (/^--num(?:\s|$)/.test(source)) {
+					const match = /^--num\s+(\S+)(?:\s|$)/.exec(source);
+					if (countSet || !match || !/^\d+$/.test(match[1]) || Number(match[1]) < 1 || Number(match[1]) > MAX_IMAGES) {
+						ctx.ui.notify("--num must be an integer from 1 to 10, specified once.", "error");
+						return;
+					}
+					num = Number(match[1]);
+					countSet = true;
+					source = source.slice(match[0].length).trimStart();
+					continue;
+				}
+				break;
+			}
 			if (!source) {
-				ctx.ui.notify("Usage: /generate-image [--no-enhance] <prompt|@file|file>", "error");
+				ctx.ui.notify("Usage: /generate-image [--no-enhance] [--num N] <prompt|@file|file>", "error");
 				return;
 			}
 			if (running) {
@@ -153,12 +193,12 @@ export default function (pi: ExtensionAPI) {
 				}, { placement: "aboveEditor" });
 			}
 			try {
-				const output = await generate(prompt, (label) => loader?.setMessage(label), ctx.signal, undefined, enhance);
+				const output = await generate(prompt, (label) => loader?.setMessage(label), ctx.signal, undefined, enhance, num);
 				pi.sendMessage({
 					customType: "generate-image:result",
 					content: enhance
-						? `Original prompt:\n${prompt}\n\nEnhanced prompt:\n${output.compiledPrompt}\n\nImage: ${output.path}`
-						: `Prompt:\n${output.compiledPrompt}\n\nImage: ${output.path}`,
+						? `Original prompt:\n${prompt}\n\nEnhanced prompt:\n${output.compiledPrompt}\n\n${formatImages(output.paths)}`
+						: `Prompt:\n${output.compiledPrompt}\n\n${formatImages(output.paths)}`,
 					display: true,
 				});
 			} catch (error) {

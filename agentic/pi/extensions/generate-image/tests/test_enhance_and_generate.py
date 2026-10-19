@@ -69,7 +69,7 @@ class EnhanceAndGenerateTests(unittest.TestCase):
             patch.object(ENHANCE.subprocess, "run", side_effect=run),
         ):
             phase_file = Path(progress) / "phase"
-            output, compiled_prompt = ENHANCE.generate_image(
+            outputs, compiled_prompt = ENHANCE.generate_image(
                 prompt="A red teapot", size="768x1024", phase_file=phase_file,
             )
             self.assertEqual(phase_file.read_text(encoding="utf-8"), "generating")
@@ -84,13 +84,14 @@ class EnhanceAndGenerateTests(unittest.TestCase):
             self.assertIn("soft-focus blur", body["messages"][0]["content"])
             self.assertIn("A red teapot", body["messages"][1]["content"])
             self.assertEqual(drafts, [{"caption": "A red ceramic teapot."}])
-            self.assertEqual(output.read_bytes(), b"PNG")
+            self.assertEqual(len(outputs), 1)
+            self.assertEqual(outputs[0].read_bytes(), b"PNG")
             self.assertEqual(compiled_prompt, "A red ceramic teapot.")
-            self.assertEqual(output.parent.parent, Path("/tmp"))
+            self.assertEqual(outputs[0].parent.parent, Path("/tmp"))
         finally:
-            output.unlink()
-            self.assertFalse(output.parent.joinpath("draft.json").exists())
-            output.parent.rmdir()
+            outputs[0].unlink()
+            self.assertFalse(outputs[0].parent.joinpath("draft.json").exists())
+            outputs[0].parent.rmdir()
 
     def test_direct_prompt_skips_local_model(self) -> None:
         """Send the supplied caption directly to the generator without enhancement."""
@@ -113,17 +114,114 @@ class EnhanceAndGenerateTests(unittest.TestCase):
             patch.object(ENHANCE, "_enhance") as enhance,
             patch.object(ENHANCE.subprocess, "run", side_effect=run),
         ):
-            output, compiled_prompt = ENHANCE.generate_image(
+            outputs, compiled_prompt = ENHANCE.generate_image(
                 prompt=prompt, enhance=False
             )
         try:
             enhance.assert_not_called()
             self.assertEqual(drafts, [{"caption": prompt}])
             self.assertEqual(compiled_prompt, prompt)
-            self.assertEqual(output.read_bytes(), b"PNG")
+            self.assertEqual(len(outputs), 1)
+            self.assertEqual(outputs[0].read_bytes(), b"PNG")
         finally:
-            output.unlink()
-            output.parent.rmdir()
+            outputs[0].unlink()
+            outputs[0].parent.rmdir()
+
+    def test_cli_returns_every_image_path(self) -> None:
+        """Include the complete batch in the JSON consumed by Pi."""
+        outputs = [Path("/tmp/image-01.png"), Path("/tmp/image-02.png")]
+        with (
+            patch.object(sys, "argv", ["generate-image", "A teapot", "--num", "2"]),
+            patch.object(sys, "stdout", new_callable=io.StringIO) as stdout,
+            patch.object(
+                ENHANCE, "generate_image", return_value=(outputs, "A red teapot")
+            ) as generate,
+        ):
+            ENHANCE.main()
+        generate.assert_called_once_with(
+            prompt="A teapot", size="1024x1024", num=2,
+            phase_file=None, enhance=True,
+        )
+        self.assertEqual(
+            json.loads(stdout.getvalue()),
+            {"paths": [str(output) for output in outputs], "compiled_prompt": "A red teapot"},
+        )
+
+    def test_multiple_images_share_a_directory_and_one_enhancement(self) -> None:
+        """Generate distinct image paths from one draft and one enhancement."""
+        prompt = "A red teapot."
+        seen_drafts: list[dict[str, str]] = []
+
+        def run(
+            command: list[str], **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            """Save each image and the compiled prompt as the generator would."""
+            draft_path = Path(command[command.index("--draft") + 1])
+            seen_drafts.append(json.loads(draft_path.read_text(encoding="utf-8")))
+            Path(command[command.index("--output") + 1]).write_bytes(b"PNG")
+            Path(command[command.index("--prompt-output") + 1]).write_text(
+                prompt, encoding="utf-8"
+            )
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        with (
+            patch.object(ENHANCE, "_enhance", return_value={"caption": prompt}) as enhance,
+            patch.object(ENHANCE.subprocess, "run", side_effect=run) as generate,
+        ):
+            outputs, compiled_prompt = ENHANCE.generate_image(prompt=prompt, num=3)
+        try:
+            enhance.assert_called_once()
+            self.assertEqual(generate.call_count, 3)
+            self.assertEqual(seen_drafts, [{"caption": prompt}] * 3)
+            self.assertEqual(
+                [output.name for output in outputs],
+                ["image-01.png", "image-02.png", "image-03.png"],
+            )
+            self.assertEqual(len({output.parent for output in outputs}), 1)
+            self.assertTrue(all(output.read_bytes() == b"PNG" for output in outputs))
+            self.assertEqual(compiled_prompt, prompt)
+            self.assertFalse(outputs[0].parent.joinpath("draft.json").exists())
+            self.assertFalse(outputs[0].parent.joinpath("prompt.txt").exists())
+        finally:
+            for output in outputs:
+                output.unlink()
+            outputs[0].parent.rmdir()
+
+    def test_later_failure_removes_the_entire_batch(self) -> None:
+        """Do not leave incomplete image batches after a failed request."""
+        directories: list[Path] = []
+
+        def run(
+            command: list[str], **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            """Write the first image, then fail the second request."""
+            output = Path(command[command.index("--output") + 1])
+            directories.append(output.parent)
+            if len(directories) == 2:
+                return subprocess.CompletedProcess(command, 1, stderr="router unavailable")
+            output.write_bytes(b"PNG")
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        with (
+            patch.object(ENHANCE.subprocess, "run", side_effect=run),
+            self.assertRaisesRegex(ValueError, "router unavailable"),
+        ):
+            ENHANCE.generate_image(prompt="A teapot", num=3, enhance=False)
+        self.assertEqual(len(directories), 2)
+        self.assertFalse(directories[0].exists())
+
+    def test_invalid_count_skips_both_servers(self) -> None:
+        """Reject counts outside 1-10 before enhancement or generation."""
+        for num in (0, 11):
+            with (
+                self.subTest(num=num),
+                patch.object(ENHANCE, "_enhance") as enhance,
+                patch.object(ENHANCE.subprocess, "run") as generate,
+                self.assertRaisesRegex(ValueError, "num must be between 1 and 10"),
+            ):
+                ENHANCE.generate_image(prompt="A teapot", num=num)
+            enhance.assert_not_called()
+            generate.assert_not_called()
 
     def test_layout_canvas_must_match(self) -> None:
         """Reject a layout at the wrong size before sending it to sparkie."""
