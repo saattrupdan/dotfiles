@@ -76,7 +76,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "generate_image",
 		label: "generate image",
-		description: "Generate one image from the final visual prompt you provide. Write a complete, concrete image description yourself; the tool does not call a prompt-enhancement model. It compiles the prompt for Kromoss with its unmerged 8-step LoRA on sparkie and returns a PNG in /tmp. The router is shared and unauthenticated: do not submit private briefs or sensitive input.",
+		description: "Generate one image from the final visual prompt you provide. Write a complete, concrete image description yourself; the tool does not call a prompt-enhancement model. For photos, specify photorealistic, crisp, sharp subject detail without soft-focus blur unless requested; preserve intentional depth of field and motion blur. It compiles the prompt for Kromoss with its unmerged 8-step LoRA on sparkie and returns a PNG in /tmp. The router is shared and unauthenticated: do not submit private briefs or sensitive input.",
 		parameters: Params,
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			try {

@@ -65,6 +65,7 @@ function setup(exec: ExtensionAPI["exec"]) {
 	generateImage(pi);
 	assert.ok(handler);
 	assert.ok(tool);
+	assert.match(tool.description, /photos.*photorealistic.*crisp.*sharp.*soft-focus blur/i);
 	return { handler, tool, ctx, messages, notifications, statuses, working, visible, widgets };
 }
 

@@ -81,6 +81,8 @@ class EnhanceAndGenerateTests(unittest.TestCase):
             )
             body = json.loads(request.data)
             self.assertEqual(body["model"], "qwen3.6-35b-a3b-vision")
+            self.assertIn("photorealistic", body["messages"][0]["content"])
+            self.assertIn("soft-focus blur", body["messages"][0]["content"])
             self.assertIn("A red teapot", body["messages"][1]["content"])
             self.assertEqual(drafts, [{"caption": "A red ceramic teapot."}])
             self.assertEqual(output.read_bytes(), b"PNG")

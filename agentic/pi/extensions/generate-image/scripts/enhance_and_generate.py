@@ -21,6 +21,9 @@ Preserve subjects, counts, relationships, medium, style, exclusions and exact vi
 (including spelling, punctuation and line breaks). Do not invent facts or unrelated copy.
 Resolve ordinary creative gaps with visible details: setting, framing, lighting, palette,
 materials and composition. Keep minimalist requests minimalist. No generic quality tags.
+For photographic briefs, describe a photorealistic image with crisp, sharp subject detail,
+natural fine textures and clean focus. Avoid soft-focus blur, haze and smeared detail
+unless requested; preserve intentional depth of field, motion blur or softness.
 Use descriptive prose in English unless requested otherwise; keep visible wording in its
 original language. Do not include invisible instructions in image-description fields.
 
