@@ -82,7 +82,7 @@ class EnhanceAndGenerateTests(unittest.TestCase):
             self.assertEqual(body["model"], "qwen3.6-35b-a3b-vision")
             self.assertEqual(body["chat_template_kwargs"], {"enable_thinking": False})
             self.assertEqual(body["reasoning_effort"], "none")
-            self.assertEqual(body["max_tokens"], 8192)
+            self.assertNotIn("max_tokens", body)
             self.assertIn("photorealistic", body["messages"][0]["content"])
             self.assertIn("soft-focus blur", body["messages"][0]["content"])
             self.assertIn("A red teapot", body["messages"][1]["content"])
