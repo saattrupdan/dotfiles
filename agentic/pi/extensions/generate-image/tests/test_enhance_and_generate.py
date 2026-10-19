@@ -1,4 +1,4 @@
-"""Tests for local enhancement followed by sparkie generation."""
+"""Tests for direct and locally enhanced sparkie generation."""
 
 from __future__ import annotations
 
@@ -69,7 +69,7 @@ class EnhanceAndGenerateTests(unittest.TestCase):
             patch.object(ENHANCE.subprocess, "run", side_effect=run),
         ):
             phase_file = Path(progress) / "phase"
-            output, enhanced_prompt = ENHANCE.generate_image(
+            output, compiled_prompt = ENHANCE.generate_image(
                 prompt="A red teapot", size="768x1024", seed=7,
                 phase_file=phase_file,
             )
@@ -84,11 +84,44 @@ class EnhanceAndGenerateTests(unittest.TestCase):
             self.assertIn("A red teapot", body["messages"][1]["content"])
             self.assertEqual(drafts, [{"caption": "A red ceramic teapot."}])
             self.assertEqual(output.read_bytes(), b"PNG")
-            self.assertEqual(enhanced_prompt, "A red ceramic teapot.")
+            self.assertEqual(compiled_prompt, "A red ceramic teapot.")
             self.assertEqual(output.parent.parent, Path("/tmp"))
         finally:
             output.unlink()
             self.assertFalse(output.parent.joinpath("draft.json").exists())
+            output.parent.rmdir()
+
+    def test_direct_prompt_skips_local_model(self) -> None:
+        """Send the supplied caption directly to the generator without enhancement."""
+        prompt = "A red ceramic teapot beside a blue cup."
+        drafts: list[dict[str, str]] = []
+
+        def run(
+            command: list[str], **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            """Capture the draft and simulate a saved image and compiled prompt."""
+            draft_path = Path(command[command.index("--draft") + 1])
+            drafts.append(json.loads(draft_path.read_text(encoding="utf-8")))
+            Path(command[command.index("--output") + 1]).write_bytes(b"PNG")
+            Path(command[command.index("--prompt-output") + 1]).write_text(
+                prompt, encoding="utf-8"
+            )
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        with (
+            patch.object(ENHANCE, "_enhance") as enhance,
+            patch.object(ENHANCE.subprocess, "run", side_effect=run),
+        ):
+            output, compiled_prompt = ENHANCE.generate_image(
+                prompt=prompt, enhance=False
+            )
+        try:
+            enhance.assert_not_called()
+            self.assertEqual(drafts, [{"caption": prompt}])
+            self.assertEqual(compiled_prompt, prompt)
+            self.assertEqual(output.read_bytes(), b"PNG")
+        finally:
+            output.unlink()
             output.parent.rmdir()
 
     def test_layout_canvas_must_match(self) -> None:

@@ -1,4 +1,4 @@
-"""Enhance an image brief locally, then generate a PNG on sparkie."""
+"""Generate a PNG on sparkie, optionally enhancing the image brief locally."""
 
 from __future__ import annotations
 
@@ -36,30 +36,31 @@ or explanations. Never normalise or centre the coordinates yourself."""
 
 
 def main() -> None:
-    """Run local enhancement and remote generation, writing result JSON to stdout."""
+    """Generate an image with optional enhancement and write result JSON."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("prompt", help="Image brief to enhance and generate")
+    parser.add_argument("prompt", help="Image brief or final visual prompt")
     parser.add_argument("--size", default="1024x1024", help="WIDTHxHEIGHT")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--phase-file", type=Path, help="Progress marker for the caller")
+    parser.add_argument("--skip-enhancement", action="store_true")
     args = parser.parse_args()
     try:
-        output, enhanced_prompt = generate_image(
+        output, compiled_prompt = generate_image(
             prompt=args.prompt, size=args.size, seed=args.seed,
-            phase_file=args.phase_file,
+            phase_file=args.phase_file, enhance=not args.skip_enhancement,
         )
     except (OSError, ValueError, KeyError, IndexError, TypeError) as exc:
         parser.exit(status=1, message=f"Image generation failed: {exc}\n")
     sys.stdout.write(
-        json.dumps({"path": str(output), "enhanced_prompt": enhanced_prompt}) + "\n"
+        json.dumps({"path": str(output), "compiled_prompt": compiled_prompt}) + "\n"
     )
 
 
 def generate_image(
     *, prompt: str, size: str = "1024x1024", seed: int = 42,
-    phase_file: Path | None = None,
+    phase_file: Path | None = None, enhance: bool = True,
 ) -> tuple[Path, str]:
-    """Enhance a brief on local llama.cpp and save one PNG from sparkie under /tmp.
+    """Save one PNG from sparkie under /tmp, optionally enhancing the brief.
 
     Args:
         prompt:
@@ -70,20 +71,26 @@ def generate_image(
             Sampling seed. Defaults to 42.
         phase_file (optional):
             File for reporting phase transitions to the caller.
+        enhance (optional):
+            Whether to use local llama.cpp to expand the brief. Defaults to True.
 
     Returns:
         Absolute path to the generated PNG and the compiled prompt sent to sparkie.
 
     Raises:
         ValueError:
-            If the brief, enhanced draft or generation fails.
+            If the brief, draft or generation fails.
     """
     if not prompt.strip():
         raise ValueError("prompt must not be empty")
     width, height = _dimensions(size=size)
     if not 0 <= seed <= 2**32 - 1:
         raise ValueError("seed must be between 0 and 2**32-1")
-    draft = _enhance(prompt=prompt, width=width, height=height)
+    draft = (
+        _enhance(prompt=prompt, width=width, height=height)
+        if enhance
+        else {"caption": prompt}
+    )
     if phase_file is not None:
         phase_file.write_text("generating", encoding="utf-8")
     directory = Path(tempfile.mkdtemp(prefix="moss-image-", dir="/tmp"))
@@ -116,12 +123,12 @@ def generate_image(
             raise ValueError(result.stderr.strip() or "sparkie generation failed")
         if not output.is_file():
             raise ValueError("generator did not save an image")
-        enhanced_prompt = prompt_path.read_text(encoding="utf-8")
-        if not enhanced_prompt.strip():
-            raise ValueError("generator did not return an enhanced prompt")
+        compiled_prompt = prompt_path.read_text(encoding="utf-8")
+        if not compiled_prompt.strip():
+            raise ValueError("generator did not return a compiled prompt")
         draft_path.unlink()
         prompt_path.unlink()
-        return output, enhanced_prompt
+        return output, compiled_prompt
     except BaseException:
         shutil.rmtree(directory)
         raise

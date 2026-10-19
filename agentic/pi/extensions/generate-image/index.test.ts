@@ -79,7 +79,7 @@ test("command sends the whole brief as one argument and returns the path", async
 			assert.deepEqual(args.slice(0, 3), ["run", "--no-project", "python3"]);
 			assert.match(args[3], /generate-image\/scripts\/enhance_and_generate\.py$/);
 			assert.equal(args[4], brief);
-			return { code: 0, stdout: JSON.stringify({ path: output, enhanced_prompt: "A detailed cat." }), stderr: "", killed: false };
+			return { code: 0, stdout: JSON.stringify({ path: output, compiled_prompt: "A detailed cat." }), stderr: "", killed: false };
 		});
 		await state.handler(brief, state.ctx);
 		assert.deepEqual(state.messages, [`Original prompt:\n${brief}\n\nEnhanced prompt:\nA detailed cat.\n\nImage: ${output}`]);
@@ -100,7 +100,7 @@ test("command switches from enhancement to generation while running", async () =
 		const state = setup(async (_command, args) => {
 			writeFileSync(args[6], "generating");
 			await new Promise((resolve) => setTimeout(resolve, 300));
-			return { code: 0, stdout: JSON.stringify({ path: output, enhanced_prompt: "A sunlit garden." }), stderr: "", killed: false };
+			return { code: 0, stdout: JSON.stringify({ path: output, compiled_prompt: "A sunlit garden." }), stderr: "", killed: false };
 		});
 		await state.handler("A garden", state.ctx);
 		assert.deepEqual(state.working, []);
@@ -111,18 +111,17 @@ test("command switches from enhancement to generation while running", async () =
 	}
 });
 
-test("tool switches from enhancement to generation while running", async () => {
+test("tool starts generation without the enhancement phase", async () => {
 	const directory = mkdtempSync(path.join(os.tmpdir(), "pi-generate-test-"));
 	const output = path.join(directory, "image.png");
 	writeFileSync(output, "png");
 	try {
 		const state = setup(async (_command, args) => {
-			writeFileSync(args[6], "generating");
-			await new Promise((resolve) => setTimeout(resolve, 300));
-			return { code: 0, stdout: JSON.stringify({ path: output, enhanced_prompt: "A sunlit garden." }), stderr: "", killed: false };
+			assert.deepEqual(args.slice(5), ["--skip-enhancement"]);
+			return { code: 0, stdout: JSON.stringify({ path: output, compiled_prompt: "A sunlit garden." }), stderr: "", killed: false };
 		});
-		await state.tool.execute("call-1", { prompt: "A garden" }, undefined, undefined, state.ctx);
-		assert.deepEqual(state.working, ["Enhancing image-generation prompt...", "Generating image..."]);
+		await state.tool.execute("call-1", { prompt: "A sunlit garden." }, undefined, undefined, state.ctx);
+		assert.deepEqual(state.working, ["Generating image..."]);
 		assert.deepEqual(state.visible, []);
 	} finally {
 		rmSync(directory, { recursive: true, force: true });
@@ -137,13 +136,15 @@ test("tool returns the path without sending an agent message", async () => {
 		const state = setup(async (command, args) => {
 			assert.equal(command, "uv");
 			assert.equal(args[4], "A blue teapot");
-			assert.deepEqual(args.slice(7), ["--size", "768x1024", "--seed", "9"]);
-			return { code: 0, stdout: JSON.stringify({ path: output, enhanced_prompt: "A blue ceramic teapot." }), stderr: "", killed: false };
+			assert.deepEqual(args.slice(5), ["--skip-enhancement", "--size", "768x1024", "--seed", "9"]);
+			return { code: 0, stdout: JSON.stringify({ path: output, compiled_prompt: "A blue teapot" }), stderr: "", killed: false };
 		});
-		const result = await state.tool.execute("call-1", { prompt: "A blue teapot", size: "768x1024", seed: 9 }, undefined, undefined, state.ctx);
+		const updates: unknown[] = [];
+		const result = await state.tool.execute("call-1", { prompt: "A blue teapot", size: "768x1024", seed: 9 }, undefined, (partial) => updates.push(partial), state.ctx);
+		assert.deepEqual(updates, [{ content: [{ type: "text", text: "Generating image..." }], details: undefined }]);
 		assert.equal(result.isError, undefined);
-		assert.deepEqual(result.content, [{ type: "text", text: `Original prompt:\nA blue teapot\n\nEnhanced prompt:\nA blue ceramic teapot.\n\nImage: ${output}` }]);
-		assert.deepEqual(state.working, ["Enhancing image-generation prompt..."]);
+		assert.deepEqual(result.content, [{ type: "text", text: `Prompt:\nA blue teapot\n\nImage: ${output}` }]);
+		assert.deepEqual(state.working, ["Generating image..."]);
 		assert.deepEqual(state.messages, []);
 		assert.deepEqual(state.statuses, []);
 	} finally {
@@ -187,6 +188,22 @@ test("generation errors display without triggering an agent turn", async () => {
 	assert.deepEqual(state.statuses, []);
 });
 
+test("tool result has a live label and a concise collapsed summary", () => {
+	const state = setup(async () => ({ code: 1, stdout: "", stderr: "", killed: false }));
+	assert.ok(state.tool.renderCall);
+	assert.ok(state.tool.renderResult);
+	const theme = { fg: (_colour: string, text: string) => text, bold: (text: string) => text };
+	const render = (result: { content: Array<{ type: "text"; text: string }> }, expanded: boolean, isPartial: boolean, isError = false) =>
+		state.tool.renderResult!(result, { expanded, isPartial }, theme as never, { isError } as never).render(120).map((line) => line.trimEnd()).join("\n");
+	assert.equal(state.tool.renderCall({}, theme as never, {} as never).render(120).join("").trimEnd(), "generate_image");
+	const pending = { content: [{ type: "text" as const, text: "Generating image..." }] };
+	assert.equal(render(pending, false, true), "… Generating image");
+	const success = { content: [{ type: "text" as const, text: "Prompt:\nA garden\n\nImage: /tmp/image.png" }] };
+	assert.equal(render(success, false, false), "✓ Generated image");
+	assert.equal(render(success, true, false), success.content[0].text);
+	assert.equal(render({ content: [{ type: "text", text: "router unavailable" }] }, false, false, true), "✗ router unavailable");
+});
+
 test("tool activity uses the working indicator, not the footer", () => {
 	const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => void>();
 	const working: (string | undefined)[] = [];
@@ -203,8 +220,8 @@ test("tool activity uses the working indicator, not the footer", () => {
 	} as ExtensionContext;
 	thinkingStatus(pi);
 	handlers.get("tool_execution_start")?.({ toolName: "generate_image", toolCallId: "image-1" }, ctx);
-	assert.deepEqual(working, ["Enhancing image-generation prompt..."]);
+	assert.deepEqual(working, ["Generating image..."]);
 	handlers.get("tool_execution_end")?.({ toolCallId: "image-1" }, ctx);
-	assert.deepEqual(working, ["Enhancing image-generation prompt...", undefined]);
+	assert.deepEqual(working, ["Generating image...", undefined]);
 	assert.deepEqual(footer, []);
 });
