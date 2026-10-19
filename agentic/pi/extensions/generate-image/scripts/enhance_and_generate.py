@@ -188,8 +188,10 @@ def _request_draft(
             {"role": "user", "content": brief},
         ],
         "response_format": {"type": "json_object"},
+        "chat_template_kwargs": {"enable_thinking": False},
+        "reasoning_effort": "none",
         "temperature": 0.6,
-        "max_tokens": 4096,
+        "max_tokens": 8192,
     }
     request = urllib.request.Request(
         url=f"{LOCAL_ENDPOINT}/v1/chat/completions",
