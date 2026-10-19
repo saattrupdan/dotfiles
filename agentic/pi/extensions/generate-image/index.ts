@@ -141,12 +141,13 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("generate-image", {
-		description: "Generate with Kromoss on sparkie: /generate-image [--no-enhance] [--num N] <prompt|@file|file>",
+		description: "Generate with Kromoss on sparkie: /generate-image [--no-enhance] [--num N] [--size WIDTHxHEIGHT] <prompt|@file|file>",
 		async handler(args, ctx) {
 			let source = args.trim();
 			let enhance = true;
 			let num = 1;
 			let countSet = false;
+			let size: string | undefined;
 			while (source.startsWith("--")) {
 				if (/^--no-enhance(?:\s|$)/.test(source)) {
 					if (!enhance) {
@@ -168,10 +169,23 @@ export default function (pi: ExtensionAPI) {
 					source = source.slice(match[0].length).trimStart();
 					continue;
 				}
+				if (/^--size(?:\s|$)/.test(source)) {
+					const match = /^--size\s+(\S+)(?:\s|$)/.exec(source);
+					const dimensions = match && /^(\d+)x(\d+)$/.exec(match[1]);
+					const width = dimensions ? Number(dimensions[1]) : 0;
+					const height = dimensions ? Number(dimensions[2]) : 0;
+					if (size !== undefined || !match || !dimensions || width < 512 || width > 1024 || height < 512 || height > 1024 || width % 16 !== 0 || height % 16 !== 0 || width * height > 1024 * 1024) {
+						ctx.ui.notify("--size must be WIDTHxHEIGHT (512–1024 per side, multiples of 16, at most 1 megapixel), specified once.", "error");
+						return;
+					}
+					size = match[1];
+					source = source.slice(match[0].length).trimStart();
+					continue;
+				}
 				break;
 			}
 			if (!source) {
-				ctx.ui.notify("Usage: /generate-image [--no-enhance] [--num N] <prompt|@file|file>", "error");
+				ctx.ui.notify("Usage: /generate-image [--no-enhance] [--num N] [--size WIDTHxHEIGHT] <prompt|@file|file>", "error");
 				return;
 			}
 			if (running) {
@@ -193,7 +207,7 @@ export default function (pi: ExtensionAPI) {
 				}, { placement: "aboveEditor" });
 			}
 			try {
-				const output = await generate(prompt, (label) => loader?.setMessage(label), ctx.signal, undefined, enhance, num);
+				const output = await generate(prompt, (label) => loader?.setMessage(label), ctx.signal, size, enhance, num);
 				pi.sendMessage({
 					customType: "generate-image:result",
 					content: enhance

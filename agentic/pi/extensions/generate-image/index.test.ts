@@ -129,10 +129,10 @@ test("@relative file loads the prompt before enhancement", async () => {
 		const state = setup(async (_command, args) => {
 			assert.equal(args[4], "A crisp portrait");
 			assert.equal(args[5], "--phase-file");
-			assert.deepEqual(args.slice(-2), ["--num", "2"]);
+			assert.deepEqual(args.slice(-4), ["--size", "768x1024", "--num", "2"]);
 			return { code: 0, stdout: JSON.stringify({ paths: outputs, compiled_prompt: "A sharp portrait" }), stderr: "", killed: false };
 		}, directory);
-		await state.handler("--num 2 @prompts/photo.md", state.ctx);
+		await state.handler("--size 768x1024 --num 2 @prompts/photo.md", state.ctx);
 		assert.deepEqual(state.messages, [`Original prompt:\nA crisp portrait\n\nEnhanced prompt:\nA sharp portrait\n\nImages:\n${outputs.join("\n")}`]);
 	} finally {
 		rmSync(directory, { recursive: true, force: true });
@@ -179,15 +179,19 @@ test("missing, empty and oversized explicit files fail before generation", async
 	}
 });
 
-test("--num and --no-enhance work in either leading order", async () => {
+test("--size, --num and --no-enhance work in any leading order", async () => {
 	const directory = mkdtempSync(path.join(os.tmpdir(), "pi-generate-test-"));
 	const outputs = [path.join(directory, "image-01.png"), path.join(directory, "image-02.png")];
 	outputs.forEach((output) => writeFileSync(output, "png"));
 	try {
-		for (const input of ["--num 2 --no-enhance A garden", "--no-enhance --num 2 A garden"]) {
+		for (const [input, size] of [
+			["--num 2 --no-enhance --size 512x512 A garden", "512x512"],
+			["--no-enhance --size 512x512 --num 2 A garden", "512x512"],
+			["--size 1024x1024 --num 2 --no-enhance A garden", "1024x1024"],
+		]) {
 			const state = setup(async (_command, args) => {
 				assert.equal(args[4], "A garden");
-				assert.deepEqual(args.slice(5), ["--skip-enhancement", "--num", "2"]);
+				assert.deepEqual(args.slice(5), ["--skip-enhancement", "--size", size, "--num", "2"]);
 				return { code: 0, stdout: JSON.stringify({ paths: outputs, compiled_prompt: "A garden" }), stderr: "", killed: false };
 			});
 			await state.handler(input, state.ctx);
@@ -292,7 +296,7 @@ test("empty brief does not run the generator", async () => {
 	});
 	await state.handler("  ", state.ctx);
 	assert.equal(calls, 0);
-	assert.deepEqual(state.notifications, ["Usage: /generate-image [--no-enhance] [--num N] <prompt|@file|file>"]);
+	assert.deepEqual(state.notifications, ["Usage: /generate-image [--no-enhance] [--num N] [--size WIDTHxHEIGHT] <prompt|@file|file>"]);
 	assert.deepEqual(state.working, []);
 	assert.deepEqual(state.visible, []);
 	assert.deepEqual(state.widgets, []);
@@ -306,7 +310,7 @@ test("--no-enhance without a prompt does not run the generator", async () => {
 	});
 	await state.handler("--no-enhance", state.ctx);
 	assert.equal(calls, 0);
-	assert.deepEqual(state.notifications, ["Usage: /generate-image [--no-enhance] [--num N] <prompt|@file|file>"]);
+	assert.deepEqual(state.notifications, ["Usage: /generate-image [--no-enhance] [--num N] [--size WIDTHxHEIGHT] <prompt|@file|file>"]);
 	assert.deepEqual(state.widgets, []);
 });
 
@@ -316,6 +320,21 @@ test("invalid counts do not start image generation", async () => {
 		const state = setup(async () => { calls++; return { code: 0, stdout: "", stderr: "", killed: false }; });
 		await state.handler(`--num ${value} A teapot`, state.ctx);
 		assert.match(state.notifications[0], /--num must be an integer from 1 to 10/);
+		assert.deepEqual(state.widgets, []);
+	}
+	assert.equal(calls, 0);
+});
+
+test("invalid sizes fail before image generation", async () => {
+	let calls = 0;
+	for (const value of [
+		"511x512", "1025x512", "512x511", "512x1025", "513x512", "512x513",
+		"512X512", "512x512x512", "1.5x512", "-512x512", "oops", "",
+		"512x512 --size 768x1024",
+	]) {
+		const state = setup(async () => { calls++; return { code: 0, stdout: "", stderr: "", killed: false }; });
+		await state.handler(`--size ${value} A teapot`, state.ctx);
+		assert.match(state.notifications[0], /--size must be WIDTHxHEIGHT/);
 		assert.deepEqual(state.widgets, []);
 	}
 	assert.equal(calls, 0);
