@@ -80,7 +80,7 @@ export default function (pi: ExtensionAPI) {
 		parameters: Params,
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			try {
-				onUpdate?.({ content: [{ type: "text", text: "Generating image..." }], details: undefined });
+				onUpdate?.({ content: [], details: undefined });
 				const output = await generate(params.prompt, (label) => ctx.ui.setWorkingMessage(label), signal, params.size, params.seed, false);
 				return {
 					content: [{ type: "text", text: `Prompt:\n${output.compiledPrompt}\n\nImage: ${output.path}` }],
@@ -98,10 +98,10 @@ export default function (pi: ExtensionAPI) {
 			return new Text(theme.fg("toolTitle", theme.bold("generate_image")), 0, 0);
 		},
 		renderResult(result, options, theme, context) {
-			if (options.isPartial) return new Text(theme.fg("muted", "… Generating image"), 0, 0);
+			if (options.isPartial) return new Text(theme.fg("warning", "⋯ Generating image"), 0, 0);
 			const text = result.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
 			if (options.expanded) return new Text(text, 0, 0);
-			if (context.isError) return new Text(theme.fg("error", `✗ ${text}`), 0, 0);
+			if (context.isError) return new Text(theme.fg("error", "✗ image generation failed"), 0, 0);
 			return new Text(theme.fg("success", "✓ Generated image"), 0, 0);
 		},
 	});

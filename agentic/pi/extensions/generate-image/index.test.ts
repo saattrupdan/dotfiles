@@ -141,7 +141,7 @@ test("tool returns the path without sending an agent message", async () => {
 		});
 		const updates: unknown[] = [];
 		const result = await state.tool.execute("call-1", { prompt: "A blue teapot", size: "768x1024", seed: 9 }, undefined, (partial) => updates.push(partial), state.ctx);
-		assert.deepEqual(updates, [{ content: [{ type: "text", text: "Generating image..." }], details: undefined }]);
+		assert.deepEqual(updates, [{ content: [], details: undefined }]);
 		assert.equal(result.isError, undefined);
 		assert.deepEqual(result.content, [{ type: "text", text: `Prompt:\nA blue teapot\n\nImage: ${output}` }]);
 		assert.deepEqual(state.working, ["Generating image..."]);
@@ -192,16 +192,17 @@ test("tool result has a live label and a concise collapsed summary", () => {
 	const state = setup(async () => ({ code: 1, stdout: "", stderr: "", killed: false }));
 	assert.ok(state.tool.renderCall);
 	assert.ok(state.tool.renderResult);
-	const theme = { fg: (_colour: string, text: string) => text, bold: (text: string) => text };
+	const theme = { fg: (colour: string, text: string) => `[${colour}]${text}`, bold: (text: string) => text };
 	const render = (result: { content: Array<{ type: "text"; text: string }> }, expanded: boolean, isPartial: boolean, isError = false) =>
 		state.tool.renderResult!(result, { expanded, isPartial }, theme as never, { isError } as never).render(120).map((line) => line.trimEnd()).join("\n");
-	assert.equal(state.tool.renderCall({}, theme as never, {} as never).render(120).join("").trimEnd(), "generate_image");
-	const pending = { content: [{ type: "text" as const, text: "Generating image..." }] };
-	assert.equal(render(pending, false, true), "… Generating image");
+	assert.equal(state.tool.renderCall({}, theme as never, {} as never).render(120).join("").trimEnd(), "[toolTitle]generate_image");
+	assert.equal(render({ content: [] }, false, true), "[warning]⋯ Generating image");
 	const success = { content: [{ type: "text" as const, text: "Prompt:\nA garden\n\nImage: /tmp/image.png" }] };
-	assert.equal(render(success, false, false), "✓ Generated image");
+	assert.equal(render(success, false, false), "[success]✓ Generated image");
 	assert.equal(render(success, true, false), success.content[0].text);
-	assert.equal(render({ content: [{ type: "text", text: "router unavailable" }] }, false, false, true), "✗ router unavailable");
+	const error = { content: [{ type: "text" as const, text: "router unavailable" }] };
+	assert.equal(render(error, false, false, true), "[error]✗ image generation failed");
+	assert.equal(render(error, true, false, true), "router unavailable");
 });
 
 test("tool activity uses the working indicator, not the footer", () => {
