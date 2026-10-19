@@ -76,7 +76,7 @@ export default function (pi: ExtensionAPI) {
 			if (size !== undefined) args.push("--size", size);
 			args.push("--num", String(num));
 			const result = await pi.exec("uv", args, {
-				timeout: 50_000 + (enhance ? 600_000 : 0) + num * 900_000,
+				timeout: 50_000 + (enhance ? 1_200_000 : 0) + num * 900_000,
 				signal,
 			});
 			if (result.code !== 0 || result.killed) {

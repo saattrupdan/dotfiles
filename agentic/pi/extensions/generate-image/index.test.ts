@@ -81,7 +81,7 @@ test("command sends the whole brief as one argument and returns the path", async
 		const brief = `A cat saying "hello"; don't change the words`;
 		const state = setup(async (command, args, options) => {
 			assert.equal(command, "uv");
-			assert.equal(options?.timeout, 1_550_000);
+			assert.equal(options?.timeout, 2_150_000);
 			assert.deepEqual(args.slice(0, 3), ["run", "--no-project", "python3"]);
 			assert.match(args[3], /generate-image\/scripts\/enhance_and_generate\.py$/);
 			assert.equal(args[4], brief);

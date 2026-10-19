@@ -224,6 +224,65 @@ class EnhanceAndGenerateTests(unittest.TestCase):
             enhance.assert_not_called()
             generate.assert_not_called()
 
+    def test_invalid_layout_label_is_retried_before_generation(self) -> None:
+        """Ask the local model to correct a literal union label before GPU work."""
+        def response(label: str) -> io.BytesIO:
+            """Return a local-model Layout response with the given item label."""
+            draft = {
+                "width": 512, "height": 512, "bbox_coord_space": "abs",
+                "bbox_format": "xyxy", "summary": {"caption": "A poster"},
+                "items": [{
+                    "label": label, "caption": "A title", "bbox": [20, 20, 400, 100],
+                    "text": "Hello",
+                }],
+            }
+            return io.BytesIO(json.dumps({"choices": [{
+                "finish_reason": "stop",
+                "message": {"content": json.dumps(draft)},
+            }]}).encode())
+
+        with (
+            patch.object(
+                ENHANCE.urllib.request, "urlopen",
+                side_effect=[response("object|character|text"), response("text")],
+            ) as url,
+            patch.object(ENHANCE.subprocess, "run") as generate,
+        ):
+            draft = ENHANCE._enhance(prompt="A poster", width=512, height=512)
+        self.assertEqual(draft["items"][0]["label"], "text")
+        self.assertEqual(url.call_count, 2)
+        first = json.loads(url.call_args_list[0].args[0].data)
+        self.assertIn('"label":"text"', first["messages"][0]["content"])
+        self.assertIn("exactly one of", first["messages"][0]["content"])
+        second = json.loads(url.call_args_list[1].args[0].data)
+        self.assertIn("invalid items[0].label", second["messages"][1]["content"])
+        generate.assert_not_called()
+
+    def test_repeated_invalid_layout_label_fails_after_one_retry(self) -> None:
+        """Stop before sparkie if the corrected draft is still invalid."""
+        draft = {
+            "width": 512, "height": 512, "bbox_coord_space": "abs",
+            "bbox_format": "xyxy", "summary": {"caption": "A poster"},
+            "items": [{
+                "label": "object|character|text", "caption": "A title",
+                "bbox": [20, 20, 400, 100], "text": "Hello",
+            }],
+        }
+        response = json.dumps({"choices": [{
+            "finish_reason": "stop", "message": {"content": json.dumps(draft)},
+        }]}).encode()
+        with (
+            patch.object(
+                ENHANCE.urllib.request, "urlopen",
+                side_effect=lambda *_args, **_kwargs: io.BytesIO(response),
+            ) as url,
+            patch.object(ENHANCE.subprocess, "run") as generate,
+            self.assertRaisesRegex(ValueError, r"invalid items\[0\]\.label"),
+        ):
+            ENHANCE.generate_image(prompt="A poster")
+        self.assertEqual(url.call_count, 2)
+        generate.assert_not_called()
+
     def test_layout_canvas_must_match(self) -> None:
         """Reject a layout at the wrong size before sending it to sparkie."""
         response = io.BytesIO(

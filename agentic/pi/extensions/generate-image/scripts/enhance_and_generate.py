@@ -31,8 +31,10 @@ For an ordinary scene or illustration return exactly {"caption":"..."} with a co
 specific description. For a poster, designed image, multiple panels, or precise text or
 object placement, return a Layout draft: {"width":W,"height":H,
 "bbox_coord_space":"abs","bbox_format":"xyxy","summary":{"caption":"..."},
-"items":[{"label":"object|character|text","caption":"...","bbox":[x1,y1,x2,y2],
-"text":"exact visible wording for text items only"}]}. Use the requested canvas dimensions.
+"items":[{"label":"text","caption":"...","bbox":[x1,y1,x2,y2],
+"text":"exact visible wording"}]}. Each item's label must be exactly one of
+"object", "character", or "text"; never use "object|character|text" as a label.
+Only text items need a text field. Use the requested canvas dimensions.
 Boxes are absolute pixels within the canvas, top-left origin, and text must fit legibly.
 Keep the exact requested wording in text fields. Do not add any other fields, Markdown,
 or explanations. Never normalise or centre the coordinates yourself."""
@@ -139,15 +141,51 @@ def generate_image(
 
 
 def _enhance(*, prompt: str, width: int, height: int) -> dict[str, object]:
-    """Request an official caption or Layout draft from the local vision model."""
+    """Request a draft and retry once if a Layout item has an invalid label."""
+    correction: str | None = None
+    for _ in range(2):
+        draft = _request_draft(
+            prompt=prompt, width=width, height=height, correction=correction
+        )
+        if "caption" in draft:
+            if set(draft) != {"caption"} or not isinstance(draft["caption"], str):
+                raise ValueError("local model returned an invalid caption draft")
+            return draft
+        if (draft.get("width"), draft.get("height")) != (width, height):
+            raise ValueError("local Layout canvas does not match the requested size")
+        items = draft.get("items")
+        if not isinstance(items, list):
+            return draft
+        invalid = next(
+            (
+                index for index, item in enumerate(items)
+                if isinstance(item, dict)
+                and item.get("label") not in ("object", "character", "text")
+            ),
+            None,
+        )
+        if invalid is None:
+            return draft
+        correction = (
+            f"Your previous draft had an invalid items[{invalid}].label. "
+            'Use exactly "object", "character", or "text" for each label; '
+            'never use "object|character|text".'
+        )
+    raise ValueError(f"local model returned an invalid Layout: {correction}")
+
+
+def _request_draft(
+    *, prompt: str, width: int, height: int, correction: str | None
+) -> dict[str, object]:
+    """Request and parse a single draft from the local model."""
+    brief = f"Canvas: {width}x{height} pixels. Brief:\n{prompt}"
+    if correction:
+        brief += f"\n\n{correction}"
     body = {
         "model": LOCAL_MODEL,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": f"Canvas: {width}x{height} pixels. Brief:\n{prompt}",
-            },
+            {"role": "user", "content": brief},
         ],
         "response_format": {"type": "json_object"},
         "temperature": 0.6,
@@ -179,11 +217,6 @@ def _enhance(*, prompt: str, width: int, height: int) -> dict[str, object]:
         raise ValueError("local model returned invalid draft JSON") from exc
     if not isinstance(draft, dict):
         raise TypeError("local model returned a non-object draft")
-    if "caption" in draft:
-        if set(draft) != {"caption"} or not isinstance(draft["caption"], str):
-            raise ValueError("local model returned an invalid caption draft")
-    elif (draft.get("width"), draft.get("height")) != (width, height):
-        raise ValueError("local Layout canvas does not match the requested size")
     return draft
 
 
