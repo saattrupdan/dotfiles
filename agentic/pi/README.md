@@ -111,8 +111,14 @@ duplicates, preserving unique facts and redirecting inbound links. Removal is
 allowed only after a concept has no inbound links; its original Markdown is
 archived under `~/memory/requests/removed/` before deletion. Updates archive
 the previous version under `~/memory/requests/versions/`. An orphan is not
-itself a reason to delete. Each run logs issue counts, mutations, and archive
-paths in `~/memory/cleaning.log`, with its latest status in
+itself a reason to delete. After cleaning, each run also reviews up to three failed write requests. Definite
+no-write failures are requeued; uncertain outcomes first get a read-only
+librarian search. Requests found already stored are marked resolved, requests
+verified absent are requeued, and ambiguous requests remain failed for review.
+Automatic retries stop after three failed attempts, respect a paused queue, and
+never run concurrently with the cleaning session. Each run logs issue counts,
+mutations, archive paths, and failed-request review counts in
+`~/memory/cleaning.log`, with its latest status in
 `~/memory/.cleaning-state.json`. Ambiguous issues remain for review.
 
 ## Extensions

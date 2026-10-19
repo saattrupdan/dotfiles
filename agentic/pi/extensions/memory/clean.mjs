@@ -10,6 +10,8 @@ import process from "node:process";
 import { clearTimeout, setTimeout } from "node:timers";
 import { fileURLToPath } from "node:url";
 
+import { recoverFailed } from "./failed-requests.mjs";
+
 const DEFAULT_ROOT = path.join(os.homedir(), "memory");
 const DEFAULT_AGENT_DIR = path.join(os.homedir(), ".pi", "agent");
 const PROMPT = "Clean the OKF memory bundle with at most five mutations. Call lint_concepts first. " +
@@ -52,8 +54,10 @@ export async function runCleaning({ root = DEFAULT_ROOT, agentDir = DEFAULT_AGEN
 	const lock = acquire(root);
 	if (!lock) return { skipped: true, reason: "already running" };
 	let child, interrupted = false;
+	const reviewController = new globalThis.AbortController();
 	const interrupt = () => {
 		interrupted = true;
+		reviewController.abort();
 		if (!child?.pid) return;
 		try { process.kill(-child.pid, "SIGTERM"); }
 		catch (error) { if (error.code !== "ESRCH") throw error; }
@@ -63,6 +67,15 @@ export async function runCleaning({ root = DEFAULT_ROOT, agentDir = DEFAULT_AGEN
 	const startedAt = new Date().toISOString();
 	append(root, "started");
 	saveState(root, { startedAt, status: "running" });
+	let requests;
+	const reviewQueue = async () => {
+		try { requests = await recoverFailed({ root, agentDir, signal: reviewController.signal }); }
+		catch (error) {
+			requests = { errors: 1 };
+			append(root, "request-review-failed", error.message);
+		}
+		append(root, "requests", JSON.stringify(requests));
+	};
 	try {
 		const result = await new Promise((resolve, reject) => {
 			const env = { ...process.env, PI_MEMORY_CLEANING_ONLY: "1", PI_MEMORY_RECALL_ONLY: "0" };
@@ -114,13 +127,15 @@ export async function runCleaning({ root = DEFAULT_ROOT, agentDir = DEFAULT_AGEN
 				} else resolve({ lintRuns, repairs, removals, archives, issues: issueSummary });
 			});
 		});
-		const done = { startedAt, completedAt: new Date().toISOString(), status: "done", ...result };
+		if (!interrupted) await reviewQueue();
+		const done = { startedAt, completedAt: new Date().toISOString(), status: "done", requests, ...result };
 		saveState(root, done);
 		append(root, "done", `lint=${done.lintRuns} updates=${done.repairs} removals=${done.removals} ` +
 			`issues=${JSON.stringify(done.issues)} archives=${done.archives.join(",")}`);
 		return done;
 	} catch (error) {
-		saveState(root, { startedAt, completedAt: new Date().toISOString(), status: "failed", error: error.message });
+		if (!interrupted && !requests) await reviewQueue();
+		saveState(root, { startedAt, completedAt: new Date().toISOString(), status: "failed", requests, error: error.message });
 		append(root, "failed", error.message);
 		return { status: "failed", error: error.message };
 	} finally {

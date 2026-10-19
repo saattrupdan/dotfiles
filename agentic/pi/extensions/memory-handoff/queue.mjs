@@ -69,17 +69,46 @@ export function counts(root = defaultRoot()) {
 	return Object.fromEntries(states.map((state) => [state, list(root, state).length]));
 }
 
-export function retry(root, id, confirmed = false) {
-	const job = readJob(root, "failed", id);
-	if (job.unknownOutcome && !confirmed) throw new Error("Outcome unknown: verify the concept first, then retry with --confirmed");
-	const old = jobFile(root, "failed", id);
-	const next = jobFile(root, "pending", id);
-	job.retriedAt = new Date().toISOString();
-	delete job.error;
-	delete job.unknownOutcome;
-	atomicJob(old, job);
-	fs.renameSync(old, next);
-	return job;
+// Serialize review decisions and manual retries across processes. A stale lock is recoverable.
+export function withTransitionLock(root, action) {
+	const lock = path.join(queueRoot(root), ".transition.lock");
+	const acquire = () => {
+		try { fs.writeFileSync(lock, String(process.pid), { flag: "wx", mode: 0o600 }); }
+		catch (error) {
+			if (error.code !== "EEXIST") throw error;
+			const owner = Number(fs.readFileSync(lock, "utf8"));
+			try { if (owner > 0) { process.kill(owner, 0); throw new Error("Memory job transition in progress", { cause: error }); } }
+			catch (check) { if (check.code !== "ESRCH") throw check; }
+			fs.unlinkSync(lock);
+			acquire();
+		}
+	};
+	acquire();
+	try { return action(); }
+	finally { if (fs.readFileSync(lock, "utf8") === String(process.pid)) fs.unlinkSync(lock); }
+}
+
+export function assertUnchanged(current, reviewed) {
+	if (reviewed && (current.id !== reviewed.id || current.attempts !== reviewed.attempts ||
+		current.failedAt !== reviewed.failedAt || current.retriedAt !== reviewed.retriedAt || current.text !== reviewed.text)) {
+		throw new Error("Failed job changed during review; inspect it again next run");
+	}
+}
+
+export function retry(root, id, confirmed = false, reviewed) {
+	return withTransitionLock(root, () => {
+		const job = readJob(root, "failed", id);
+		assertUnchanged(job, reviewed);
+		if (job.unknownOutcome && !confirmed) throw new Error("Outcome unknown: verify the concept first, then retry with --confirmed");
+		const old = jobFile(root, "failed", id);
+		const next = jobFile(root, "pending", id);
+		job.retriedAt = new Date().toISOString();
+		delete job.error;
+		delete job.unknownOutcome;
+		atomicJob(old, job);
+		fs.renameSync(old, next);
+		return job;
+	});
 }
 
 export function log(root, event, id, detail = "") {
