@@ -40,10 +40,17 @@ function setup(exec: ExtensionAPI["exec"]) {
 				assert.equal(key, "generate-image:progress");
 				if (typeof content === "function") {
 					assert.equal(options?.placement, "aboveEditor");
-					const component = content({ requestRender: () => {} }, { fg: (_colour: string, text: string) => text });
-					assert.match(component.render(120).join(""), /Enhancing image-generation prompt/);
+					const component = content({ requestRender: () => {} }, { fg: (colour: string, text: string) => `[${colour}]${text}` });
+					const lines = component.render(120);
+					assert.equal(lines.length, 1);
+					assert.match(lines[0], /\[accent\].*\[muted\]Enhancing image-generation prompt/);
 					const original = component.setMessage.bind(component);
-					component.setMessage = (label: string) => { widgets.push(label); original(label); };
+					component.setMessage = (label: string) => {
+						widgets.push(label);
+						original(label);
+						assert.equal(component.render(120).length, 1);
+						assert.match(component.render(120)[0], /\[muted\]/);
+					};
 					loader = component;
 					widgets.push("Enhancing image-generation prompt...");
 				} else {

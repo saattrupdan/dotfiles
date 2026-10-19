@@ -7,6 +7,12 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Loader } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
+class SingleLineLoader extends Loader {
+	override render(width: number): string[] {
+		return super.render(width).slice(1);
+	}
+}
+
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "scripts", "enhance_and_generate.py");
 const Params = Type.Object({
 	prompt: Type.String({ description: "Complete image brief to enhance locally and generate on sparkie." }),
@@ -101,7 +107,7 @@ export default function (pi: ExtensionAPI) {
 			let loader: Loader | undefined;
 			if (ctx.mode === "tui") {
 				ctx.ui.setWidget("generate-image:progress", (tui, theme) => {
-					loader = new Loader(tui, (text) => theme.fg("accent", text), (text) => text, "Enhancing image-generation prompt...");
+					loader = new SingleLineLoader(tui, (text) => theme.fg("accent", text), (text) => theme.fg("muted", text), "Enhancing image-generation prompt...");
 					return Object.assign(loader, { dispose: () => loader?.stop() });
 				}, { placement: "aboveEditor" });
 			}
