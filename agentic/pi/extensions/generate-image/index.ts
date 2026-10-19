@@ -107,11 +107,13 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("generate-image", {
-		description: "Enhance a brief locally and generate with Kromoss on sparkie: /generate-image <prompt>",
+		description: "Generate with Kromoss on sparkie: /generate-image [--no-enhance] <prompt>",
 		async handler(args, ctx) {
-			const prompt = args.trim();
+			const input = args.trim();
+			const enhance = !/^--no-enhance(?:\s|$)/.test(input);
+			const prompt = enhance ? input : input.slice("--no-enhance".length).trim();
 			if (!prompt) {
-				ctx.ui.notify("Usage: /generate-image <prompt>", "error");
+				ctx.ui.notify("Usage: /generate-image [--no-enhance] <prompt>", "error");
 				return;
 			}
 			if (running) {
@@ -121,15 +123,17 @@ export default function (pi: ExtensionAPI) {
 			let loader: Loader | undefined;
 			if (ctx.mode === "tui") {
 				ctx.ui.setWidget("generate-image:progress", (tui, theme) => {
-					loader = new CommandStatusLoader(tui, (text) => theme.fg("accent", text), (text) => theme.fg("muted", text), "Enhancing image-generation prompt...");
+					loader = new CommandStatusLoader(tui, (text) => theme.fg("accent", text), (text) => theme.fg("muted", text), enhance ? "Enhancing image-generation prompt..." : "Generating image...");
 					return Object.assign(loader, { dispose: () => loader?.stop() });
 				}, { placement: "aboveEditor" });
 			}
 			try {
-				const output = await generate(prompt, (label) => loader?.setMessage(label), ctx.signal);
+				const output = await generate(prompt, (label) => loader?.setMessage(label), ctx.signal, undefined, undefined, enhance);
 				pi.sendMessage({
 					customType: "generate-image:result",
-					content: `Original prompt:\n${prompt}\n\nEnhanced prompt:\n${output.compiledPrompt}\n\nImage: ${output.path}`,
+					content: enhance
+						? `Original prompt:\n${prompt}\n\nEnhanced prompt:\n${output.compiledPrompt}\n\nImage: ${output.path}`
+						: `Prompt:\n${output.compiledPrompt}\n\nImage: ${output.path}`,
 					display: true,
 				});
 			} catch (error) {

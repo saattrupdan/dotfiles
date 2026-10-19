@@ -43,7 +43,7 @@ function setup(exec: ExtensionAPI["exec"]) {
 					const component = content({ requestRender: () => {} }, { fg: (colour: string, text: string) => `[${colour}]${text}` });
 					const lines = component.render(120);
 					assert.equal(lines.length, 2);
-					assert.match(lines[0], /\[accent\].*\[muted\]Enhancing image-generation prompt/);
+					assert.match(lines[0], /\[accent\].*\[muted\](Enhancing image-generation prompt|Generating image)\.\.\./);
 					assert.equal(lines[1], "");
 					const original = component.setMessage.bind(component);
 					component.setMessage = (label: string) => {
@@ -53,7 +53,7 @@ function setup(exec: ExtensionAPI["exec"]) {
 						assert.equal(component.render(120)[1], "");
 					};
 					loader = component;
-					widgets.push("Enhancing image-generation prompt...");
+					widgets.push(lines[0].includes("Enhancing image-generation prompt...") ? "Enhancing image-generation prompt..." : "Generating image...");
 				} else {
 					loader?.stop();
 					loader = undefined;
@@ -87,6 +87,26 @@ test("command sends the whole brief as one argument and returns the path", async
 		assert.deepEqual(state.working, []);
 		assert.deepEqual(state.visible, []);
 		assert.deepEqual(state.widgets, ["Enhancing image-generation prompt...", "Enhancing image-generation prompt...", undefined]);
+		assert.deepEqual(state.statuses, []);
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
+});
+
+test("--no-enhance generates directly and labels the result without an enhanced stage", async () => {
+	const directory = mkdtempSync(path.join(os.tmpdir(), "pi-generate-test-"));
+	const output = path.join(directory, "image.png");
+	writeFileSync(output, "png");
+	try {
+		const prompt = "A crisp, photorealistic teapot";
+		const state = setup(async (_command, args) => {
+			assert.equal(args[4], prompt);
+			assert.deepEqual(args.slice(5), ["--skip-enhancement"]);
+			return { code: 0, stdout: JSON.stringify({ path: output, compiled_prompt: prompt }), stderr: "", killed: false };
+		});
+		await state.handler(`--no-enhance ${prompt}`, state.ctx);
+		assert.deepEqual(state.messages, [`Prompt:\n${prompt}\n\nImage: ${output}`]);
+		assert.deepEqual(state.widgets, ["Generating image...", "Generating image...", undefined]);
 		assert.deepEqual(state.statuses, []);
 	} finally {
 		rmSync(directory, { recursive: true, force: true });
@@ -168,9 +188,21 @@ test("empty brief does not run the generator", async () => {
 	});
 	await state.handler("  ", state.ctx);
 	assert.equal(calls, 0);
-	assert.deepEqual(state.notifications, ["Usage: /generate-image <prompt>"]);
+	assert.deepEqual(state.notifications, ["Usage: /generate-image [--no-enhance] <prompt>"]);
 	assert.deepEqual(state.working, []);
 	assert.deepEqual(state.visible, []);
+	assert.deepEqual(state.widgets, []);
+});
+
+test("--no-enhance without a prompt does not run the generator", async () => {
+	let calls = 0;
+	const state = setup(async () => {
+		calls++;
+		return { code: 0, stdout: "", stderr: "", killed: false };
+	});
+	await state.handler("--no-enhance", state.ctx);
+	assert.equal(calls, 0);
+	assert.deepEqual(state.notifications, ["Usage: /generate-image [--no-enhance] <prompt>"]);
 	assert.deepEqual(state.widgets, []);
 });
 
