@@ -128,15 +128,15 @@ class GenerateTests(unittest.TestCase):
                 {"data": [{"b64_json": base64.b64encode(image).decode()}]}
             ).encode()
         )
-        with patch.object(
-            GENERATE.urllib.request, "urlopen", return_value=response
-        ) as mock:
+        with (
+            patch.object(GENERATE.urllib.request, "urlopen", return_value=response) as mock,
+            patch.object(GENERATE.secrets, "randbits", return_value=17) as random_seed,
+        ):
             actual = GENERATE._request(
                 endpoint="http://127.0.0.1:31000",
                 model=GENERATE.MODEL_ID,
                 prompt="A red teapot.",
                 size="512x512",
-                seed=17,
                 width=512,
                 height=512,
             )
@@ -146,6 +146,36 @@ class GenerateTests(unittest.TestCase):
         self.assertNotIn("num_inference_steps", payload)
         self.assertNotIn("extra_params", payload)
         self.assertEqual(payload["seed"], 17)
+        random_seed.assert_called_once_with(32)
+
+    def test_each_request_uses_a_fresh_random_seed(self) -> None:
+        """Avoid repeating the same server seed across identical image requests."""
+        image = _png(width=512, height=512)
+        response = json.dumps(
+            {"data": [{"b64_json": base64.b64encode(image).decode()}]}
+        ).encode()
+        with (
+            patch.object(
+                GENERATE.urllib.request,
+                "urlopen",
+                side_effect=[io.BytesIO(response), io.BytesIO(response)],
+            ) as url,
+            patch.object(GENERATE.secrets, "randbits", side_effect=[17, 18]) as random_seed,
+        ):
+            for _ in range(2):
+                GENERATE._request(
+                    endpoint="http://127.0.0.1:31000",
+                    model=GENERATE.MODEL_ID,
+                    prompt="A red teapot.",
+                    size="512x512",
+                    width=512,
+                    height=512,
+                )
+        self.assertEqual(
+            [json.loads(call.args[0].data)["seed"] for call in url.call_args_list],
+            [17, 18],
+        )
+        self.assertEqual(random_seed.call_count, 2)
 
     def test_truncated_png(self) -> None:
         """A complete-looking header without pixel data is not an image."""
@@ -168,7 +198,6 @@ class GenerateTests(unittest.TestCase):
                     model=GENERATE.MODEL_ID,
                     prompt="A red teapot.",
                     size="512x512",
-                    seed=17,
                     width=512,
                     height=512,
                 )

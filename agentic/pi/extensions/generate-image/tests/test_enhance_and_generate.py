@@ -54,7 +54,7 @@ class EnhanceAndGenerateTests(unittest.TestCase):
             draft_path = Path(command[command.index("--draft") + 1])
             drafts.append(json.loads(draft_path.read_text(encoding="utf-8")))
             self.assertEqual(command[command.index("--size") + 1], "768x1024")
-            self.assertEqual(command[command.index("--seed") + 1], "7")
+            self.assertNotIn("--seed", command)
             Path(command[command.index("--output") + 1]).write_bytes(b"PNG")
             Path(command[command.index("--prompt-output") + 1]).write_text(
                 "A red ceramic teapot.", encoding="utf-8"
@@ -70,8 +70,7 @@ class EnhanceAndGenerateTests(unittest.TestCase):
         ):
             phase_file = Path(progress) / "phase"
             output, compiled_prompt = ENHANCE.generate_image(
-                prompt="A red teapot", size="768x1024", seed=7,
-                phase_file=phase_file,
+                prompt="A red teapot", size="768x1024", phase_file=phase_file,
             )
             self.assertEqual(phase_file.read_text(encoding="utf-8"), "generating")
         try:

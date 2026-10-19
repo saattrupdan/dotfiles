@@ -8,6 +8,7 @@ import base64
 import binascii
 import json
 import os
+import secrets
 import struct
 import subprocess
 import sys
@@ -40,15 +41,12 @@ def main() -> None:
     parser.add_argument(
         "--size", default="1024x1024", help="WIDTHxHEIGHT, e.g. 768x1024"
     )
-    parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--endpoint", default=os.environ.get("KROMOSS_IMAGE_URL", DEFAULT_ENDPOINT)
     )
     args = parser.parse_args()
     try:
         width, height = _dimensions(size=args.size)
-        if not 0 <= args.seed <= 2**32 - 1:
-            raise ValueError("seed must be between 0 and 2**32-1")
         draft = json.loads(args.draft.read_text(encoding="utf-8"))
         if not isinstance(draft, dict):
             raise ValueError("draft must be a JSON object")
@@ -63,7 +61,6 @@ def main() -> None:
             model=MODEL_ID,
             prompt=prompt,
             size=args.size,
-            seed=args.seed,
             width=width,
             height=height,
         )
@@ -165,7 +162,6 @@ def _request(
     model: str,
     prompt: str,
     size: str,
-    seed: int,
     width: int,
     height: int,
 ) -> bytes:
@@ -180,8 +176,6 @@ def _request(
             Compiled MOSS prompt.
         size:
             Requested dimensions as WIDTHxHEIGHT.
-        seed:
-            Reproducible sampling seed.
         width:
             Expected PNG width.
         height:
@@ -199,7 +193,7 @@ def _request(
         "prompt": prompt,
         "size": size,
         "n": 1,
-        "seed": seed,
+        "seed": secrets.randbits(32),
         "response_format": "b64_json",
     }
     request = urllib.request.Request(

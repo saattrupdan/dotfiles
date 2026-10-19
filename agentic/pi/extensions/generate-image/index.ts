@@ -37,14 +37,13 @@ function loadPrompt(input: string, cwd: string): string {
 const Params = Type.Object({
 	prompt: Type.String({ description: "Final, detailed visual prompt for Kromoss. Describe the intended image directly, including subjects, composition, style and exact visible text. This prompt is sent without local LLM enhancement." }),
 	size: Type.Optional(Type.String({ description: "WIDTHxHEIGHT; default 1024x1024. Each side 512–1024 pixels, multiples of 16, at most 1 megapixel." })),
-	seed: Type.Optional(Type.Integer({ description: "Sampling seed; default 42.", minimum: 0, maximum: 2 ** 32 - 1 })),
 });
 
 export default function (pi: ExtensionAPI) {
 	let running = false;
 
 	async function generate(
-		prompt: string, onPhase: (label: string) => void, signal?: AbortSignal, size?: string, seed?: number,
+		prompt: string, onPhase: (label: string) => void, signal?: AbortSignal, size?: string,
 		enhance = true,
 	): Promise<{ path: string; compiledPrompt: string }> {
 		if (!prompt.trim()) throw new Error("Image prompt must not be empty.");
@@ -68,7 +67,6 @@ export default function (pi: ExtensionAPI) {
 			if (enhance) args.push("--phase-file", phaseFile);
 			else args.push("--skip-enhancement");
 			if (size !== undefined) args.push("--size", size);
-			if (seed !== undefined) args.push("--seed", String(seed));
 			const result = await pi.exec("uv", args, { timeout: 1_550_000, signal });
 			if (result.code !== 0 || result.killed) {
 				throw new Error(result.stderr.trim() || "Image generation stopped.");
@@ -101,7 +99,7 @@ export default function (pi: ExtensionAPI) {
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			try {
 				onUpdate?.({ content: [], details: undefined });
-				const output = await generate(params.prompt, (label) => ctx.ui.setWorkingMessage(label), signal, params.size, params.seed, false);
+				const output = await generate(params.prompt, (label) => ctx.ui.setWorkingMessage(label), signal, params.size, false);
 				return {
 					content: [{ type: "text", text: `Prompt:\n${output.compiledPrompt}\n\nImage: ${output.path}` }],
 					details: undefined,
@@ -155,7 +153,7 @@ export default function (pi: ExtensionAPI) {
 				}, { placement: "aboveEditor" });
 			}
 			try {
-				const output = await generate(prompt, (label) => loader?.setMessage(label), ctx.signal, undefined, undefined, enhance);
+				const output = await generate(prompt, (label) => loader?.setMessage(label), ctx.signal, undefined, enhance);
 				pi.sendMessage({
 					customType: "generate-image:result",
 					content: enhance

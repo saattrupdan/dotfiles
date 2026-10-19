@@ -43,14 +43,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("prompt", help="Image brief or final visual prompt")
     parser.add_argument("--size", default="1024x1024", help="WIDTHxHEIGHT")
-    parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--phase-file", type=Path, help="Progress marker for the caller")
     parser.add_argument("--skip-enhancement", action="store_true")
     args = parser.parse_args()
     try:
         output, compiled_prompt = generate_image(
-            prompt=args.prompt, size=args.size, seed=args.seed,
-            phase_file=args.phase_file, enhance=not args.skip_enhancement,
+            prompt=args.prompt, size=args.size, phase_file=args.phase_file,
+            enhance=not args.skip_enhancement,
         )
     except (OSError, ValueError, KeyError, IndexError, TypeError) as exc:
         parser.exit(status=1, message=f"Image generation failed: {exc}\n")
@@ -60,7 +59,7 @@ def main() -> None:
 
 
 def generate_image(
-    *, prompt: str, size: str = "1024x1024", seed: int = 42,
+    *, prompt: str, size: str = "1024x1024",
     phase_file: Path | None = None, enhance: bool = True,
 ) -> tuple[Path, str]:
     """Save one PNG from sparkie under /tmp, optionally enhancing the brief.
@@ -70,8 +69,6 @@ def generate_image(
             The user's image brief.
         size (optional):
             Canvas dimensions. Defaults to 1024x1024.
-        seed (optional):
-            Sampling seed. Defaults to 42.
         phase_file (optional):
             File for reporting phase transitions to the caller.
         enhance (optional):
@@ -87,8 +84,6 @@ def generate_image(
     if not prompt.strip():
         raise ValueError("prompt must not be empty")
     width, height = _dimensions(size=size)
-    if not 0 <= seed <= 2**32 - 1:
-        raise ValueError("seed must be between 0 and 2**32-1")
     draft = (
         _enhance(prompt=prompt, width=width, height=height)
         if enhance
@@ -111,8 +106,6 @@ def generate_image(
                 str(draft_path),
                 "--size",
                 size,
-                "--seed",
-                str(seed),
                 "--output",
                 str(output),
                 "--prompt-output",

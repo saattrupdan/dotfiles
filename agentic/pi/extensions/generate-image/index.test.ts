@@ -66,6 +66,7 @@ function setup(exec: ExtensionAPI["exec"], cwd = process.cwd()) {
 	generateImage(pi);
 	assert.ok(handler);
 	assert.ok(tool);
+	assert.doesNotMatch(JSON.stringify(tool.parameters), /"seed"/);
 	assert.match(tool.description, /photos.*photorealistic.*crisp.*sharp.*soft-focus blur/i);
 	return { handler, tool, ctx, messages, notifications, statuses, working, visible, widgets };
 }
@@ -218,11 +219,11 @@ test("tool returns the path without sending an agent message", async () => {
 		const state = setup(async (command, args) => {
 			assert.equal(command, "uv");
 			assert.equal(args[4], "A blue teapot");
-			assert.deepEqual(args.slice(5), ["--skip-enhancement", "--size", "768x1024", "--seed", "9"]);
+			assert.deepEqual(args.slice(5), ["--skip-enhancement", "--size", "768x1024"]);
 			return { code: 0, stdout: JSON.stringify({ path: output, compiled_prompt: "A blue teapot" }), stderr: "", killed: false };
 		});
 		const updates: unknown[] = [];
-		const result = await state.tool.execute("call-1", { prompt: "A blue teapot", size: "768x1024", seed: 9 }, undefined, (partial) => updates.push(partial), state.ctx);
+		const result = await state.tool.execute("call-1", { prompt: "A blue teapot", size: "768x1024" }, undefined, (partial) => updates.push(partial), state.ctx);
 		assert.deepEqual(updates, [{ content: [], details: undefined }]);
 		assert.equal(result.isError, undefined);
 		assert.deepEqual(result.content, [{ type: "text", text: `Prompt:\nA blue teapot\n\nImage: ${output}` }]);
