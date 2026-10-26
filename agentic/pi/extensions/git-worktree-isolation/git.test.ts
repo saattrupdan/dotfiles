@@ -48,6 +48,23 @@ test("preserves output and prompt constraints when continuing in a branch", () =
 	);
 });
 
+test("branch handoff preserves explicit-only extension loading across relaunches", () => {
+	const initial = [
+		"--system-prompt", "/tmp/main-prompt.md", "--no-extensions",
+		"--extension", "/tmp/extensions/search", "-e", "/tmp/extensions/read",
+		"--session", "/tmp/old.jsonl",
+	];
+	const expected = [
+		"--session", "/tmp/session.jsonl", "--system-prompt", "/tmp/main-prompt.md",
+		"--no-extensions", "--extension", "/tmp/extensions/search", "-e", "/tmp/extensions/read",
+	];
+	assert.deepEqual(continuationArgs("/tmp/session.jsonl", undefined, initial), expected);
+	assert.deepEqual(continuationArgs("/tmp/session.jsonl", undefined, expected), expected);
+	assert.deepEqual(continuationArgs("/tmp/session.jsonl", undefined, ["-ne", "-e", "/tmp/extensions/read"]), [
+		"--session", "/tmp/session.jsonl", "-ne", "-e", "/tmp/extensions/read",
+	]);
+});
+
 test("recognizes print-mode continuations without a fabricated prompt", () => {
 	assert.equal(isPrintMode(["--print"]), true);
 	assert.equal(isPrintMode(["-p", "--mode", "json"]), true);

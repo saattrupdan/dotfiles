@@ -118,7 +118,7 @@ export function continuationArgs(sessionFile: string, prompt?: string, launchArg
 	]);
 	const flags = new Set([
 		"--print", "-p", "--no-tools", "-nt", "--no-builtin-tools", "-nbt",
-		"--no-mcp", "--no-skills", "-ns", "--no-prompt-templates", "-np",
+		"--no-extensions", "-ne", "--no-mcp", "--no-skills", "-ns", "--no-prompt-templates", "-np",
 		"--no-themes", "--no-context-files", "-nc", "--verbose",
 		"--approve", "-a", "--no-approve", "-na", "--offline",
 	]);
