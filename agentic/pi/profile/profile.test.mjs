@@ -36,7 +36,8 @@ test("validates role, resource lists, and empty allow-lists", () => {
 	for (const tools of [["+read"], ["-bash"], ["mcp__*"], ["*"]]) {
 		assert.throws(() => profile("librarian", { tools }), /literal tool names/);
 	}
-	assert.deepEqual(profile("main", { tools: ["clean-up-isolated-branch"] }).tools, ["clean-up-isolated-branch"]);
+	assert.deepEqual(profile("main", { tools: ["clean-up-isolated-branch", "mcp__zoho_email__ZohoMail_listEmails"] }).tools,
+		["clean-up-isolated-branch", "mcp__zoho_email__ZohoMail_listEmails"]);
 	assert.throws(() => profile("librarian", { refuse: [{ pattern: "[", message: "bad" }] }), SyntaxError);
 });
 
@@ -83,6 +84,10 @@ test("main exposes only the two handoff tools, not the librarian's concept tools
 	const dir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 	const main = await loadProfile("main", dir, resolvePiPackage());
 	assert.ok(main.extensions.includes("memory-handoff"));
+	assert.ok(main.extensions.includes("mcp"));
+	assert.equal(main.tools.filter((tool) => tool.startsWith("mcp__zoho_email__")).length, 10);
+	const args = buildProfileArgs(main, dir, ["--no-session"]);
+	assert.ok(args.some((arg, index) => arg === "--extension" && args[index + 1] === "builtin:mcp"));
 	assert.ok(main.extensions.includes("memory-snapshot"));
 	assert.ok(!main.extensions.includes("memory"));
 	assert.ok(!main.extensions.includes("memory-async"));

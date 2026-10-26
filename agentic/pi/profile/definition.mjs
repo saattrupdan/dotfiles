@@ -29,7 +29,7 @@ export function parseAgentProfile(frontmatter, body, filePath, source = "user") 
 	}
 	const tools = stringList(frontmatter.tools, "tools", filePath);
 	// Pi's +name/-name and wildcard syntax modifies defaults instead of narrowing them.
-	if (tools?.some((name) => !/^[a-z_][a-z0-9_-]*$/.test(name))) {
+	if (tools?.some((name) => !/^[a-z_][A-Za-z0-9_-]*$/.test(name))) {
 		throw new Error(`${filePath}: tools must be literal tool names, not patterns or modifiers`);
 	}
 	const skills = stringList(frontmatter.skills, "skills", filePath);

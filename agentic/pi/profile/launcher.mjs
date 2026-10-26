@@ -134,6 +134,10 @@ export function buildProfileArgs(profile, agentDir, args, cwd = process.cwd(), s
 	// Preserve explicit main-session opt-outs used by lightweight helper processes.
 	if (profile.name !== "main" || !args.includes("--no-extensions")) {
 		for (const name of profile.extensions) {
+			if (name === "mcp") {
+				flags.push("--extension", "builtin:mcp");
+				continue;
+			}
 			const extension = path.join(agentDir, "extensions", name);
 			if (!fs.existsSync(path.join(extension, "index.ts"))) throw new Error(`Missing profile extension: ${name}`);
 			flags.push("--extension", extension);
