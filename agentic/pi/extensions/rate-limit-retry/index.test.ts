@@ -3,7 +3,7 @@ import test from "node:test";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import thinkingStatus from "../thinking-status/index.ts";
-import rateLimitRetry, { isTransientWebSocketClosure, RETRY_STATE_EVENT } from "./index.ts";
+import rateLimitRetry, { isTransientWebSocketClosure, RETRY_STATE_EVENT, summarizeHtmlError } from "./index.ts";
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
 
@@ -230,6 +230,32 @@ test("only transient WebSocket close codes are suppressed by retry and notify", 
 		assert.equal(await run.emit("turn_end"), undefined);
 	}
 	assert.deepEqual(run.delays, []);
+});
+
+test("HTML provider errors render briefly without dropping partial output or retrying", async () => {
+	const run = harness();
+	const html = `Error: <html><head><style>lots of CSS</style></head><body><div class="cf-error-details cf-error-504"><h1>Gateway time-out</h1><p>Your IP address: 2.110.88.139</p><li>Ray ID: abc</li><li>Error reference number: 504</li></div></body></html>`;
+	const expected = "Model provider returned an HTML error page (HTTP 504).";
+	assert.equal(summarizeHtmlError(html), expected);
+	assert.equal(summarizeHtmlError("<!doctype html><html><body><div class='cf-error-502'>Bad gateway</div></body></html>"), "Model provider returned an HTML error page (HTTP 502).");
+	assert.equal(summarizeHtmlError("<html><body>Unknown failure</body></html>"), "Model provider returned an HTML error page.");
+	assert.equal(summarizeHtmlError("Error: <html><p>HTTP 503 unavailable</p></html>"), "Model provider returned an HTML error page (HTTP 503).");
+	assert.equal(summarizeHtmlError("A source file contains <html>"), undefined);
+	for (const content of [[], [{ type: "text", text: "Partial answer" }]]) {
+		const failed = () => ({ message: { role: "assistant", stopReason: "error", errorMessage: html, content } });
+		const start = failed();
+		await run.emit("message_start", start);
+		assert.equal(start.message.errorMessage, expected, "the first frame must not show raw HTML");
+		const masked = await run.emit("message_end", failed()) as { message: { stopReason: string; errorMessage: string; content: unknown[] } };
+		assert.equal(masked.message.errorMessage, expected);
+		assert.equal(masked.message.stopReason, "error");
+		assert.deepEqual(masked.message.content, content);
+		assert.equal(await run.emit("turn_end"), undefined);
+	}
+	assert.deepEqual(run.delays, []);
+	run.command("off");
+	const masked = await run.emit("message_end", { message: { role: "assistant", stopReason: "error", errorMessage: html, content: [] } }) as { message: { errorMessage: string } };
+	assert.equal(masked.message.errorMessage, expected, "formatting works even when retries are disabled");
 });
 
 test("other errors and partial retryable responses keep Pi's normal rendering", async () => {

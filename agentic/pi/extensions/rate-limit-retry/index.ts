@@ -36,6 +36,13 @@ function isRetryableError(error: string | undefined): boolean {
 		/\b(fetch failed|network error|socket hang up|connection (?:reset|refused|timed out)|no route to host|temporary failure in name resolution)\b/.test(text);
 }
 
+export function summarizeHtmlError(error: string | undefined): string | undefined {
+	if (!/^\s*(?:Error:\s*)?(?:<!doctype html\b[^>]*>\s*)?<html\b/i.test(error ?? "")) return;
+	const status = error?.match(/\bcf-error-([45]\d{2})\b|\bError reference number:\s*([45]\d{2})\b|\bHTTP\s+([45]\d{2})\b/i);
+	const code = status?.[1] ?? status?.[2] ?? status?.[3];
+	return code ? `Model provider returned an HTML error page (HTTP ${code}).` : "Model provider returned an HTML error page.";
+}
+
 function hasNoOutput(content: ReadonlyArray<{ type: string; text?: string; thinking?: string }>): boolean {
 	return content.every((block) =>
 		(block.type === "thinking" && !block.thinking) || (block.type === "text" && !block.text));
@@ -82,11 +89,10 @@ export default function (pi: ExtensionAPI, wait = waitForRetry) {
 		// the assistant component with the *final error* before message_end.
 		// This is a shallow copy of the final message, safe to mask for the UI.
 		const message = event.message;
-		if (
-			sessionEnabled && message.role === "assistant" &&
-			message.stopReason === "error" && isRetryableError(message.errorMessage) &&
-			hasNoOutput(message.content)
-		) {
+		if (message.role !== "assistant" || message.stopReason !== "error") return;
+		const summary = summarizeHtmlError(message.errorMessage);
+		if (summary) message.errorMessage = summary;
+		else if (sessionEnabled && isRetryableError(message.errorMessage) && hasNoOutput(message.content)) {
 			message.stopReason = "pending";
 			message.errorMessage = undefined;
 		}
@@ -103,6 +109,11 @@ export default function (pi: ExtensionAPI, wait = waitForRetry) {
 	pi.on("message_end", (event) => {
 		const message = event.message;
 		if (message.role !== "assistant") return;
+		const summary = summarizeHtmlError(message.errorMessage);
+		if (summary) {
+			if (retryCount > 0) clearRetry();
+			return { message: { ...message, errorMessage: summary } };
+		}
 		if (
 			!sessionEnabled || message.stopReason !== "error" ||
 			!isRetryableError(message.errorMessage) || !hasNoOutput(message.content)
