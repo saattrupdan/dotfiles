@@ -80,14 +80,17 @@ test("actual librarian profile exposes exactly six private memory tools", async 
 	assert.equal(args[args.indexOf("--model") + 1], "openai-codex/gpt-6-luna");
 });
 
-test("main exposes only the two handoff tools, not the librarian's concept tools", async () => {
+test("main exposes MCP through codemode and keeps concept tools private", async () => {
 	const dir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 	const main = await loadProfile("main", dir, resolvePiPackage());
 	assert.ok(main.extensions.includes("memory-handoff"));
-	assert.ok(!main.extensions.includes("mcp"));
+	assert.ok(main.extensions.includes("mcp"));
+	assert.ok(main.extensions.includes("codemode"));
+	assert.ok(main.tools.includes("codemode"));
 	assert.ok(!main.tools.some((tool) => tool.startsWith("mcp__")));
 	const args = buildProfileArgs(main, dir, ["--no-session"]);
-	assert.ok(!args.includes("builtin:mcp"));
+	assert.ok(args.includes("builtin:mcp"));
+	assert.ok(args.includes("builtin:codemode"));
 	assert.ok(main.extensions.includes("memory-snapshot"));
 	assert.ok(!main.extensions.includes("memory"));
 	assert.ok(!main.extensions.includes("memory-async"));

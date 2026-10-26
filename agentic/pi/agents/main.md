@@ -5,6 +5,7 @@ subagent: false
 tools:
   - bash
   - clean-up-isolated-branch
+  - codemode
   - code_tree
   - edit
   - generate_image
@@ -70,6 +71,7 @@ extensions:
   - bash-output
   - caffeinate
   - code-tree
+  - codemode
   - conversation-name
   - copy-paste
   - edit
@@ -77,6 +79,7 @@ extensions:
   - git-worktree-isolation
   - incognito
   - loop
+  - mcp
   - memory-handoff
   - memory-snapshot
   - non-interactive
