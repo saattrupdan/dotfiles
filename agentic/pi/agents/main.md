@@ -72,6 +72,7 @@ extensions:
   - caffeinate
   - code-tree
   - codemode
+  - codemode-collapse
   - conversation-name
   - copy-paste
   - edit
