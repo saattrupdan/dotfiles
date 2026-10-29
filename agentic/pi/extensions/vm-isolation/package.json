@@ -2,7 +2,10 @@
   "name": "vm-isolation",
   "version": "1.0.0",
   "type": "module",
-  "dependencies": {
+  "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": { "optional": true }
   }
 }
