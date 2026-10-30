@@ -115,10 +115,31 @@ test("a deferred write is reviewed again and resolved automatically", async () =
 			{ status: "present", evidence: ["/known.md"] };
 		const first = await recoverFailed({ root: f.root, agentDir: f.agentDir, review });
 		assert.equal(first.deferred, 1);
+		assert.equal((await recoverFailed({ root: f.root, agentDir: f.agentDir, review })).skipped, 1);
+		assert.equal(searches, 1);
+		const file = jobFile(f.root, "failed", id);
+		atomicJob(file, { ...readJob(f.root, "failed", id),
+			reviewedAt: new Date(Date.now() - 7 * 60 * 60_000).toISOString() });
 		const second = await recoverFailed({ root: f.root, agentDir: f.agentDir, review });
 		assert.equal(second.alreadyPresent, 1);
 		assert.equal(readJob(f.root, "done", id).resolution, "verified already present");
 		assert.equal(searches, 2);
+	} finally { f.cleanup(); }
+});
+
+test("review errors cool down without losing the failed request", async () => {
+	const f = fixture();
+	try {
+		const id = f.failed("temporarily unavailable");
+		let reviews = 0;
+		const review = async () => { reviews++; throw new Error("search offline"); };
+		const first = await recoverFailed({ root: f.root, agentDir: f.agentDir, review });
+		assert.equal(first.errors, 1);
+		assert.equal(readJob(f.root, "failed", id).reviewStatus, "error");
+		const second = await recoverFailed({ root: f.root, agentDir: f.agentDir, review });
+		assert.equal(second.skipped, 1);
+		assert.equal(second.remainingFailed, 1);
+		assert.equal(reviews, 1);
 	} finally { f.cleanup(); }
 });
 

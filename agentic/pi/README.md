@@ -125,11 +125,13 @@ itself a reason to delete. After cleaning, each run also reviews up to three
 failed write requests. Definite no-write failures are requeued; uncertain
 outcomes first get a read-only librarian search. Requests found already stored
 are marked resolved, requests verified absent are requeued, and inconclusive
-requests are automatically reviewed again on later runs. Automatic retries
-use exponential backoff capped at one day, respect a paused queue, and never
-run concurrently with the cleaning session. Each run logs issue counts, mutations,
+requests are automatically reviewed again after a six-hour cooldown. Automatic
+write retries use exponential backoff capped at one day, respect a paused queue,
+and never run concurrently with the cleaning session. Each run logs issue counts, mutations,
 archive paths, and failed-request review counts in `~/memory/cleaning.log`, with
-its latest status in `~/memory/.cleaning-state.json`. Orphans are informational
+its latest status in `~/memory/.cleaning-state.json`. Unresolved failed writes
+set the status to `incomplete` without losing the valid concept-clean checkpoint.
+Orphans are informational
 and do not fail a run. Unrepairable issues prevent a successful clean checkpoint
 and are attempted again on later runs. The cleaner evaluates broken links itself: it retargets a link
 only with clear evidence, otherwise it preserves the visible label as plain

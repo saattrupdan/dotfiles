@@ -95,6 +95,8 @@ export async function reviewRequest(job, agentDir, root, timeoutMs = 90_000, sig
 	} finally { fs.rmSync(file, { force: true }); }
 }
 
+const REVIEW_COOLDOWN_MS = 6 * 60 * 60_000;
+
 function retryDelay(job) {
 	return Math.min(24, 2 ** Math.max(0, (job.attempts ?? 1) - 1)) * 60 * 60_000;
 }
@@ -114,7 +116,9 @@ export async function recoverFailed({ root, agentDir = path.join(os.homedir(), "
 		if (fs.existsSync(path.join(queue, "paused"))) { result.paused = true; result.skipped++; break; }
 		if (result.retried + result.alreadyPresent + result.deferred + result.errors >= max) break;
 		const delay = retryDelay(job);
-		if (job.retriedAt && Date.now() - Date.parse(job.retriedAt) < delay) {
+		if ((job.reviewedInputKey === failedJobKey(job) && job.reviewedAt &&
+			Date.now() - Date.parse(job.reviewedAt) < REVIEW_COOLDOWN_MS) ||
+			(job.retriedAt && Date.now() - Date.parse(job.retriedAt) < delay)) {
 			result.skipped++; continue;
 		}
 		try {
@@ -152,6 +156,16 @@ export async function recoverFailed({ root, agentDir = path.join(os.homedir(), "
 			}
 		} catch (error) {
 			result.errors++;
+			withTransitionLock(root, () => {
+				const file = jobFile(root, "failed", job.id);
+				if (!fs.existsSync(file)) return;
+				const latest = readJob(root, "failed", job.id);
+				try { assertUnchanged(latest, job); } catch { return; }
+				latest.reviewedAt = new Date().toISOString();
+				latest.reviewStatus = "error";
+				latest.reviewedInputKey = failedJobKey(latest);
+				atomicJob(file, latest);
+			});
 			log(root, "review-error", job.id, error.message);
 		}
 	}

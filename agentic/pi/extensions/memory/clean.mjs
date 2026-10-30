@@ -46,6 +46,11 @@ function saveState(root, state) {
 	try { fs.writeFileSync(temp, JSON.stringify(state), { flag: "wx", mode: 0o600 }); fs.renameSync(temp, file); }
 	finally { if (fs.existsSync(temp)) fs.unlinkSync(temp); }
 }
+function requestsIncomplete(requests) {
+	return !!(requests?.errors || requests?.paused || requests?.interrupted ||
+		requests?.remainingFailed || requests?.remainingUnreviewed);
+}
+
 function acquire(root) {
 	const lock = path.join(root, ".cleaning.lock");
 	try { fs.writeFileSync(lock, String(process.pid), { flag: "wx", mode: 0o600 }); return lock; }
@@ -96,8 +101,9 @@ export async function runCleaning({ root = DEFAULT_ROOT, agentDir = DEFAULT_AGEN
 			if (queue.failed) await reviewQueue(true); // No read-only verification while another writer is active.
 			return { skipped: true, reason: "memory writes still pending", requests };
 		}
-		const unchanged = previous?.status === "done" && previous.bundleFingerprint === before;
-		if (unchanged && previous.failedWorkSignature === failedBefore) {
+		const unchanged = (previous?.status === "done" || previous?.status === "incomplete") &&
+			previous.bundleFingerprint === before;
+		if (unchanged && previous.status === "done" && previous.failedWorkSignature === failedBefore) {
 			return { skipped: true, reason: "memory unchanged" };
 		}
 		append(root, "started");
@@ -105,11 +111,12 @@ export async function runCleaning({ root = DEFAULT_ROOT, agentDir = DEFAULT_AGEN
 		cleaningStarted = true;
 		if (unchanged) {
 			await reviewQueue();
-			const done = { ...previous, startedAt, completedAt: new Date().toISOString(), status: "done", requests,
-				cleaningSkipped: true,
-				failedWorkSignature: requests.errors || requests.paused || requests.interrupted || requests.remainingFailed
-					? null : failedWorkSignature(root) };
+			const incomplete = requestsIncomplete(requests);
+			const done = { ...previous, startedAt, completedAt: new Date().toISOString(),
+				status: incomplete ? "incomplete" : "done", requests, cleaningSkipped: true,
+				failedWorkSignature: incomplete ? null : failedWorkSignature(root) };
 			saveState(root, done);
+			if (incomplete) append(root, "incomplete", `requests=${JSON.stringify(requests)}`);
 			return done;
 		}
 		const result = await new Promise((resolve, reject) => {
@@ -186,13 +193,13 @@ export async function runCleaning({ root = DEFAULT_ROOT, agentDir = DEFAULT_AGEN
 		});
 		if (!interrupted) await reviewQueue();
 		const { lastLintFingerprint, ...report } = result;
-		const done = { startedAt, completedAt: new Date().toISOString(), status: "done", requests, ...report,
-			bundleFingerprint: lastLintFingerprint,
-			failedWorkSignature: requests?.errors || requests?.paused || requests?.interrupted || requests?.remainingFailed
-				? null : failedWorkSignature(root) };
+		const incomplete = requestsIncomplete(requests);
+		const done = { startedAt, completedAt: new Date().toISOString(), status: incomplete ? "incomplete" : "done",
+			requests, ...report, bundleFingerprint: lastLintFingerprint,
+			failedWorkSignature: incomplete ? null : failedWorkSignature(root) };
 		saveState(root, done);
-		append(root, "done", `lint=${done.lintRuns} updates=${done.repairs} removals=${done.removals} ` +
-			`issues=${JSON.stringify(done.issues)} archives=${done.archives.join(",")}`);
+		append(root, done.status, `lint=${done.lintRuns} updates=${done.repairs} removals=${done.removals} ` +
+			`issues=${JSON.stringify(done.issues)} requests=${JSON.stringify(requests)} archives=${done.archives.join(",")}`);
 		return done;
 	} catch (error) {
 		if (cleaningStarted && !interrupted && !requests) await reviewQueue();
@@ -208,6 +215,6 @@ export async function runCleaning({ root = DEFAULT_ROOT, agentDir = DEFAULT_AGEN
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-	runCleaning().then((result) => { if (result.status === "failed") process.exitCode = 1; })
+	runCleaning().then((result) => { if (result.status === "failed" || result.status === "incomplete") process.exitCode = 1; })
 		.catch((error) => { append(DEFAULT_ROOT, "crash", error.message); process.exitCode = 1; });
 }

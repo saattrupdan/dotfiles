@@ -186,14 +186,16 @@ test("new failed requests get review without running unchanged concept cleanup a
 		let reviews = 0;
 		const recover = async () => { reviews++; return { errors: 0, deferred: 1, remainingFailed: 1 }; };
 		const result = await runCleaning({ root: f.root, agentDir: f.agentDir, recover });
+		assert.equal(result.status, "incomplete");
 		assert.equal(result.cleaningSkipped, true);
 		assert.equal(reviews, 1);
 		assert.equal(fs.readFileSync(calls, "utf8").trim().split("\n").length, 1);
-		assert.equal((await runCleaning({ root: f.root, agentDir: f.agentDir, recover })).cleaningSkipped, true);
+		assert.equal((await runCleaning({ root: f.root, agentDir: f.agentDir, recover })).status, "incomplete");
 		assert.equal(reviews, 2);
 		atomicJob(file, { ...readJob(f.root, "failed", id), attempts: 2, failedAt: new Date(Date.now() + 1000).toISOString() });
 		await runCleaning({ root: f.root, agentDir: f.agentDir, recover });
 		assert.equal(reviews, 3);
+		assert.equal(JSON.parse(fs.readFileSync(path.join(f.root, ".cleaning-state.json"), "utf8")).status, "incomplete");
 	} finally { if (previous === undefined) delete process.env.PI_MEMORY_CLEAN_TEST_CALLS;
 		else process.env.PI_MEMORY_CLEAN_TEST_CALLS = previous; f.cleanup(); }
 });
