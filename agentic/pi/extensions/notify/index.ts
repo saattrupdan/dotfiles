@@ -27,7 +27,8 @@
  * (that's the whole point — macOS surfaces it system-wide). In iTerm2, the
  * terminal-notifier helper makes alerts clickable: a click runs AppleScript
  * that reveals the originating window, tab, and pane. Alerts are suppressed
- * when that iTerm2 pane is already active and iTerm2 is frontmost. No
+ * when that iTerm2 pane is already active and iTerm2 is frontmost; pending
+ * alerts are dismissed when the user returns to that pane. No
  * notification is sent outside iTerm2 or if terminal-notifier is unavailable.
  *
  * Orchestrator-only: subagent processes never have a UI and their question
@@ -129,6 +130,56 @@ function isOriginatingITermPaneFocused(sessionID: string, callback: (focused: bo
 	}
 }
 
+type FocusCheck = (sessionID: string, callback: (focused: boolean) => void) => void;
+
+// Poll only while this session has alerts in Notification Center. iTerm2 does
+// not send Pi a pane-focus event, so use the same focused-pane check that
+// suppresses alerts at delivery time.
+export function createDismissalTracker(
+	sessionID: string,
+	isFocused: FocusCheck,
+	remove: (group: string) => void,
+	schedule: (poll: () => void) => () => void = (poll) => {
+		const timer = setInterval(poll, 1_500);
+		timer.unref();
+		return () => clearInterval(timer);
+	},
+): (group: string) => void {
+	const groups = new Set<string>();
+	let cancelPolling: (() => void) | undefined;
+	let checking = false;
+	const poll = () => {
+		if (checking || groups.size === 0) return;
+		checking = true;
+		isFocused(sessionID, (focused) => {
+			checking = false;
+			if (!focused) return;
+			const toRemove = [...groups];
+			groups.clear();
+			cancelPolling?.();
+			cancelPolling = undefined;
+			for (const group of toRemove) remove(group);
+		});
+	};
+	return (group) => {
+		groups.add(group);
+		cancelPolling ??= schedule(poll);
+	};
+}
+
+const dismissalTrackers = new Map<string, ReturnType<typeof createDismissalTracker>>();
+let notificationSequence = 0;
+
+function removeNotification(group: string): void {
+	try {
+		const p = spawn("terminal-notifier", ["-remove", group], { stdio: "ignore", detached: true });
+		p.on("error", () => {});
+		p.unref();
+	} catch {
+		// Notification removal is best-effort.
+	}
+}
+
 function notifyViaITerm(title: string, body: string, sound: string): void {
 	if (process.env.TERM_PROGRAM !== "iTerm.app") return;
 	const rawSessionID = process.env.ITERM_SESSION_ID;
@@ -164,13 +215,20 @@ function notifyViaITerm(title: string, body: string, sound: string): void {
 			// terminal-notifier treats leading JSON/quote/bracket characters as
 			// argument syntax unless escaped (e.g. {"detail":"Rate limit exceeded"}).
 			const message = /^[{[('"]/.test(body) ? `\\${body}` : body;
+			const group = `pi-${process.pid}-${Date.now()}-${++notificationSequence}`;
 			const p = spawn(
 				"terminal-notifier",
-				["-title", title, "-message", message, "-sound", sound, "-execute", clickCommand],
+				["-title", title, "-message", message, "-sound", sound, "-execute", clickCommand, "-group", group],
 				{ stdio: "ignore", detached: true },
 			);
 			p.on("error", () => {});
 			p.unref();
+			let track = dismissalTrackers.get(sessionID);
+			if (!track) {
+				track = createDismissalTracker(sessionID, isOriginatingITermPaneFocused, removeNotification);
+				dismissalTrackers.set(sessionID, track);
+			}
+			track(group);
 		} catch {
 			// Best-effort: don't fail the agent when terminal-notifier is unavailable.
 		}

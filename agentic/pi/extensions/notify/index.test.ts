@@ -2,8 +2,47 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { setLoopActive } from "../_loop_state/state.ts";
-import notifyExtension from "./index.ts";
+import notifyExtension, { createDismissalTracker } from "./index.ts";
 import { RETRY_STATE_EVENT } from "../rate-limit-retry/index.ts";
+
+test("dismisses only the originating pane's pending alerts when it becomes active", () => {
+	const removed: string[] = [];
+	const checks: Array<{ sessionID: string; done: (focused: boolean) => void }> = [];
+	const polls: Array<() => void> = [];
+	let cancelled = 0;
+	const focus = (sessionID: string, done: (focused: boolean) => void) => { checks.push({ sessionID, done }); };
+	const schedule = (poll: () => void) => {
+		polls.push(poll);
+		return () => { cancelled++; };
+	};
+	const trackFirst = createDismissalTracker("pane-1", focus, (group) => { removed.push(group); }, schedule);
+	const trackSecond = createDismissalTracker("pane-2", focus, (group) => { removed.push(group); }, schedule);
+	trackFirst("first-alert");
+	trackFirst("second-alert");
+	trackSecond("other-pane-alert");
+	assert.equal(polls.length, 2, "one poller per pane, not per alert");
+	polls[0]();
+	polls[0]();
+	assert.equal(checks.length, 1, "focus checks must not overlap");
+	assert.equal(checks[0].sessionID, "pane-1");
+	checks[0].done(false);
+	assert.deepEqual(removed, []);
+	polls[0]();
+	trackFirst("alert-arriving-during-focus-check");
+	checks[1].done(true);
+	assert.deepEqual(removed, ["first-alert", "second-alert", "alert-arriving-during-focus-check"]);
+	assert.equal(cancelled, 1);
+	polls[1]();
+	assert.equal(checks[2].sessionID, "pane-2");
+	checks[2].done(true);
+	assert.deepEqual(removed.at(-1), "other-pane-alert");
+	assert.equal(cancelled, 2);
+	trackFirst("new-alert");
+	assert.equal(polls.length, 3, "polling resumes when a new alert arrives");
+	polls[2]();
+	checks[3].done(true);
+	assert.equal(removed.at(-1), "new-alert");
+});
 
 test("quiet WebSocket and Codex retries cause no failure or premature finish notification", { skip: process.platform !== "darwin" }, async () => {
 	const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
