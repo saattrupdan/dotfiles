@@ -131,6 +131,58 @@ test("resolves relative and root links and finds orphans, duplicate paragraphs a
 	} finally { f.cleanup(); }
 });
 
+test("malformed concept repair archives the original bytes and preserves their content", async () => {
+	const f = fixture();
+	try {
+		const original = "---\ntype: [bad YAML\n---\n\nA unique fact remains here.\n";
+		fs.writeFileSync(path.join(f.root, "broken.md"), original);
+		assert.ok(f.store.lint().some((issue) => issue.kind === "malformed"));
+		const result = await f.store.repairMalformed();
+		assert.equal(result.repaired, 1);
+		assert.deepEqual(result.missingEmbeddings, []);
+		const manifestDir = path.join(f.root, result.archives[0].slice(1));
+		const manifest = JSON.parse(fs.readFileSync(path.join(manifestDir, "manifest.json"), "utf8"));
+		assert.equal(fs.readFileSync(path.join(manifestDir, manifest.entries[0].file), "utf8"), original);
+		const recovered = await f.store.search({ path: "/broken.md" });
+		assert.ok("body" in recovered && recovered.body === original);
+		assert.equal(f.store.lint().some((issue) => issue.kind === "malformed"), false);
+	} finally { f.cleanup(); }
+});
+
+test("orphan repair creates an incoming navigation link without deleting unique facts", async () => {
+	const f = fixture();
+	try {
+		await f.store.create({ path: "/first.md", type: "Note", body: "First unique fact." });
+		await f.store.create({ path: "/second.md", type: "Note", body: "Second unique fact." });
+		await f.store.create({ path: "/A name #1.md", type: "Note", body: "A third unique fact." });
+		const result = await f.store.repairOrphans();
+		assert.equal(result.linked, 3);
+		assert.equal(result.catalog, "/notes/pi-memory-catalog.md");
+		assert.deepEqual(f.store.lint(), []);
+		const first = await f.store.search({ path: "/first.md" });
+		assert.ok("body" in first && first.body.includes("First unique fact."));
+		assert.equal((await f.store.repairOrphans()).linked, 0);
+		await f.store.create({ path: "/third.md", type: "Note", body: "Third unique fact." });
+		assert.equal((await f.store.repairOrphans()).linked, 1);
+		assert.deepEqual(f.store.lint(), []);
+	} finally { f.cleanup(); }
+});
+
+test("a split navigation catalog links a large orphan backlog", async () => {
+	const f = fixture();
+	try {
+		for (let n = 0; n < 260; n++) {
+			const filename = `record-${String(n).padStart(3, "0")}-${"long-name-".repeat(7)}.md`;
+			fs.writeFileSync(path.join(f.root, filename), `---\ntype: Note\n---\n\nFact ${n}.\n`);
+		}
+		const result = await f.store.repairOrphans();
+		assert.equal(result.linked, 260);
+		const issues = f.store.lint();
+		assert.deepEqual(issues.filter((issue) => issue.kind === "orphan" || issue.kind === "broken_link"), []);
+		assert.ok((await f.store.search({ path: result.catalog! })));
+	} finally { f.cleanup(); }
+});
+
 test("scheduled cleanup rejects bulk orphan deletion but permits archived exact duplicates", async () => {
 	const f = fixture();
 	try {
@@ -336,6 +388,12 @@ test("corrupt embedding snapshots fall back to BM25 and block mutations", async 
 		assert.deepEqual(found.results[0].matchedBy, ["bm25"]);
 		await assert.rejects(f.store.remove("/invoice.md"), /Embedding snapshot is invalid/);
 		assert.ok(fs.existsSync(path.join(f.root, "invoice.md")));
+		const repaired = await f.store.repairEmbeddings();
+		assert.equal(repaired.attempted, 1);
+		assert.deepEqual(repaired.missingEmbeddings, []);
+		assert.equal(fs.readFileSync(path.join(f.root, repaired.snapshotArchive!.slice(1)), "utf8"),
+			"not a SQLite database");
+		assert.equal(f.store.lint().some((issue) => issue.kind === "malformed_embedding"), false);
 	} finally { f.cleanup(); }
 });
 

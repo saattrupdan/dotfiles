@@ -110,18 +110,21 @@ pending write defers concept cleanup but not definite no-write retries. Review
 bookkeeping, archives, snapshots, and logs do not count as input changes; a
 failed clean or bundle change during lint does not advance the checkpoint. A sleeping laptop runs one
 missed calendar invocation after waking. Temporary network failures retry in
-the librarian; a session still failing after 20 minutes logs the failure and
-the next invocation starts a fresh lint instead of resuming a stale model turn.
-A run with remaining lint errors or a stale final lint also fails and retries
+the librarian; each session has a 20-minute limit. If it times out after
+saving repairs, the cleaner starts a fresh session and lint within the same
+run. A session with no progress fails for automatic retry next hour.
+A run with any remaining lint finding or a stale final lint fails and retries
 on the next invocation, even if the bundle has not changed.
 A lock prevents overlapping sessions. Scheduled sessions can search, update,
-remove, and lint, but cannot create concepts. The cleaner works through every
-safely repairable finding in each run. It may deduplicate exact repeated text.
+remove, and lint. It cannot create arbitrary concepts; its orphan-repair tool
+maintains a navigational catalog linking all stored concepts. The cleaner starts a fresh librarian session for each batch that changes the
+bundle, until a final lint returns zero findings. A batch with no progress
+fails rather than looping. It may deduplicate exact repeated text.
 Scheduled removal is allowed only for an unlinked concept with an exact copy
 (including metadata) elsewhere in the bundle; its original Markdown is
 archived under `~/memory/requests/removed/` before deletion. Updates archive
-the previous version under `~/memory/requests/versions/`. An orphan is not
-itself a reason to delete. After cleaning, each run also reviews up to three
+the previous version under `~/memory/requests/versions/`. Orphans receive
+inbound links through the catalog rather than being deleted. After cleaning, each run also reviews up to three
 failed write requests. Definite no-write failures are requeued; uncertain
 outcomes first get a read-only librarian search. Requests found already stored
 are marked resolved, requests verified absent are requeued, and inconclusive
@@ -131,12 +134,13 @@ and never run concurrently with the cleaning session. Each run logs issue counts
 archive paths, and failed-request review counts in `~/memory/cleaning.log`, with
 its latest status in `~/memory/.cleaning-state.json`. Unresolved failed writes
 set the status to `incomplete` without losing the valid concept-clean checkpoint.
-Orphans are informational
-and do not fail a run. Unrepairable issues prevent a successful clean checkpoint
-and are attempted again on later runs. The cleaner evaluates broken links itself: it retargets a link
+Every lint finding prevents a successful clean checkpoint until repaired.
+Operational failures are retried automatically on later runs. The cleaner evaluates broken links itself: it retargets a link
 only with clear evidence, otherwise it preserves the visible label as plain
-text. Missing/stale vectors are rebuilt without rewriting concepts, and
-vectors without a surviving Markdown file are pruned. Uncertain failed writes
+text. Malformed concepts are archived byte-for-byte before their content is
+wrapped in a valid Note. Corrupt vector snapshots are archived before rebuilding
+from Markdown; missing/stale vectors are rebuilt without rewriting concepts,
+and vectors without a surviving Markdown file are pruned. Uncertain failed writes
 are searched again on later runs; they are never replayed without verification.
 No finding is assigned to the owner for manual triage.
 

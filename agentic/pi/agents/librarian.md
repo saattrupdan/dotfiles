@@ -10,6 +10,8 @@ tools:
   - create_concept
   - update_concept
   - remove_concept
+  - repair_malformed
+  - repair_orphans
   - repair_embeddings
   - lint_concepts
 skills: []

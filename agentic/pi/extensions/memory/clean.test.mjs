@@ -17,20 +17,24 @@ function fixture() {
 	fs.mkdirSync(path.join(agentDir, "bin"), { recursive: true });
 	fs.writeFileSync(path.join(agentDir, "bin", "pi"), `#!/usr/bin/env node
 const fs=require('node:fs');
+const runCount=process.env.PI_MEMORY_CLEAN_TEST_CALLS&&fs.existsSync(process.env.PI_MEMORY_CLEAN_TEST_CALLS)?fs.readFileSync(process.env.PI_MEMORY_CLEAN_TEST_CALLS,'utf8').trim().split('\\n').length+1:1;
 if(process.env.PI_MEMORY_CLEAN_TEST_CALLS)fs.appendFileSync(process.env.PI_MEMORY_CLEAN_TEST_CALLS,'run\\n');
 if(process.env.PI_MEMORY_CLEANING_ONLY !== '1')process.exit(3);
 if(process.env.PI_MEMORY_CLEAN_TEST_MODE === 'slow')setInterval(()=>{},1000);
 else import(${JSON.stringify(new URL("./fingerprint.mjs", import.meta.url).href)}).then(({fingerprintBundle})=>{
 const emitLint=(id)=>{
 console.log(JSON.stringify({type:'tool_execution_start',toolName:'lint_concepts',toolCallId:id}));
-console.log(JSON.stringify({type:'tool_execution_end',toolName:'lint_concepts',toolCallId:id,isError:false,result:{details:{issues:process.env.PI_MEMORY_CLEAN_TEST_MODE==='remaining'?[{kind:'broken_link',path:'/source.md'}]:[{kind:'orphan',path:'/a.md'},{kind:'orphan',path:'/b.md'}],fingerprint:process.env.PI_MEMORY_CLEAN_TEST_MODE==='stale-fingerprint'?'before':fingerprintBundle(${JSON.stringify(root)})}}}));
+console.log(JSON.stringify({type:'tool_execution_end',toolName:'lint_concepts',toolCallId:id,isError:false,result:{details:{issues:process.env.PI_MEMORY_CLEAN_TEST_MODE==='remaining'||process.env.PI_MEMORY_CLEAN_TEST_MODE==='batches-stall'||process.env.PI_MEMORY_CLEAN_TEST_MODE==='batches'&&runCount===1?[{kind:'broken_link',path:'/source.md'}]:process.env.PI_MEMORY_CLEAN_TEST_MODE==='orphan-only'||process.env.PI_MEMORY_CLEAN_TEST_MODE==='orphan-repair'&&id==='lint-1'?[{kind:'orphan',path:'/a.md'},{kind:'orphan',path:'/b.md'}]:[],fingerprint:process.env.PI_MEMORY_CLEAN_TEST_MODE==='stale-fingerprint'?'before':fingerprintBundle(${JSON.stringify(root)})}}}));
 };
 if(process.env.PI_MEMORY_CLEAN_TEST_MODE !== 'no-lint')emitLint('lint-1');
 if(['repair','no-final-lint','remaining'].includes(process.env.PI_MEMORY_CLEAN_TEST_MODE))console.log(JSON.stringify({type:'tool_execution_end',toolName:'update_concept',isError:false}));
 if(process.env.PI_MEMORY_CLEAN_TEST_MODE==='six-repairs')for(let n=0;n<6;n++)console.log(JSON.stringify({type:'tool_execution_end',toolName:'update_concept',isError:false}));
 if(['embeddings','embeddings-no-final-lint'].includes(process.env.PI_MEMORY_CLEAN_TEST_MODE))console.log(JSON.stringify({type:'tool_execution_end',toolName:'repair_embeddings',isError:false,result:{details:{attempted:2,pruned:['/old.md'],missingEmbeddings:[]}}}));
+if(process.env.PI_MEMORY_CLEAN_TEST_MODE==='orphan-repair')console.log(JSON.stringify({type:'tool_execution_end',toolName:'repair_orphans',isError:false,result:{details:{linked:2,catalog:'/notes/pi-memory-catalog.md'}}}));
+if(process.env.PI_MEMORY_CLEAN_TEST_MODE==='batches'&&runCount===1){fs.writeFileSync(${JSON.stringify(path.join(root,"batch-marker.md"))},'progress');console.log(JSON.stringify({type:'tool_execution_end',toolName:'update_concept',isError:false}));}
+if(process.env.PI_MEMORY_CLEAN_TEST_MODE==='slow-progress'&&runCount===1){fs.writeFileSync(${JSON.stringify(path.join(root,"batch-marker.md"))},'progress');console.log(JSON.stringify({type:'tool_execution_end',toolName:'update_concept',isError:false}));setInterval(()=>{},1000);return;}
 if(process.env.PI_MEMORY_CLEAN_TEST_MODE === 'remove')console.log(JSON.stringify({type:'tool_execution_end',toolName:'remove_concept',isError:false,result:{details:{archive:'/requests/removed/example'}}}));
-if(['repair','remove','six-repairs','remaining','embeddings'].includes(process.env.PI_MEMORY_CLEAN_TEST_MODE))emitLint('lint-2');
+if(['repair','remove','six-repairs','remaining','embeddings','orphan-repair','batches'].includes(process.env.PI_MEMORY_CLEAN_TEST_MODE))emitLint('lint-2');
 if(process.env.PI_MEMORY_CLEAN_TEST_MODE === 'fail')process.exit(1);
 console.log(JSON.stringify({type:'agent_end'}));
 }).catch((error)=>{console.error(error);process.exitCode=1});
@@ -46,8 +50,8 @@ test("maintenance logs successful librarian work without leaking concept content
 		const result = await runCleaning({ root: f.root, agentDir: f.agentDir, timeoutMs: 3_000 });
 		assert.equal(result.status, "done");
 		assert.equal(result.repairs, 1);
-		assert.deepEqual(result.issues, { orphan: 2 });
-		assert.match(fs.readFileSync(path.join(f.root, "cleaning.log"), "utf8"), /done lint=2 updates=1 removals=0 issues=\{"orphan":2\}/);
+		assert.deepEqual(result.issues, {});
+		assert.match(fs.readFileSync(path.join(f.root, "cleaning.log"), "utf8"), /done lint=2 updates=1 removals=0 issues=\{\}/);
 		assert.equal(fs.statSync(path.join(f.root, "cleaning.log")).mode & 0o777, 0o600);
 		assert.equal(JSON.parse(fs.readFileSync(path.join(f.root, ".cleaning-state.json"), "utf8")).status, "done");
 		assert.ok(!fs.existsSync(path.join(f.root, ".cleaning.lock")));
@@ -83,6 +87,75 @@ test("more than five repairs complete when final lint has no actionable issues",
 		const result = await runCleaning({ root: f.root, agentDir: f.agentDir, timeoutMs: 3_000 });
 		assert.equal(result.status, "done");
 		assert.equal(result.repairs, 6);
+	} finally { if (old === undefined) delete process.env.PI_MEMORY_CLEAN_TEST_MODE;
+		else process.env.PI_MEMORY_CLEAN_TEST_MODE = old; f.cleanup(); }
+});
+
+test("large cleanup resumes from a fresh lint in a second librarian session", async () => {
+	const f = fixture();
+	const oldMode = process.env.PI_MEMORY_CLEAN_TEST_MODE;
+	const oldCalls = process.env.PI_MEMORY_CLEAN_TEST_CALLS;
+	try {
+		process.env.PI_MEMORY_CLEAN_TEST_MODE = "batches";
+		const calls = path.join(f.root, "calls.txt");
+		process.env.PI_MEMORY_CLEAN_TEST_CALLS = calls;
+		const result = await runCleaning({ root: f.root, agentDir: f.agentDir, timeoutMs: 3_000 });
+		assert.equal(result.status, "done");
+		assert.equal(result.lintRuns, 4);
+		assert.equal(result.repairs, 1);
+		assert.equal(fs.readFileSync(calls, "utf8").trim().split("\n").length, 2);
+	} finally {
+		if (oldMode === undefined) delete process.env.PI_MEMORY_CLEAN_TEST_MODE;
+		else process.env.PI_MEMORY_CLEAN_TEST_MODE = oldMode;
+		if (oldCalls === undefined) delete process.env.PI_MEMORY_CLEAN_TEST_CALLS;
+		else process.env.PI_MEMORY_CLEAN_TEST_CALLS = oldCalls;
+		f.cleanup();
+	}
+});
+
+test("a timed-out batch with saved work restarts from a fresh lint", async () => {
+	const f = fixture();
+	const oldMode = process.env.PI_MEMORY_CLEAN_TEST_MODE;
+	const oldCalls = process.env.PI_MEMORY_CLEAN_TEST_CALLS;
+	try {
+		process.env.PI_MEMORY_CLEAN_TEST_MODE = "slow-progress";
+		const calls = path.join(f.root, "calls.txt");
+		process.env.PI_MEMORY_CLEAN_TEST_CALLS = calls;
+		const result = await runCleaning({ root: f.root, agentDir: f.agentDir, timeoutMs: 800 });
+		assert.equal(result.status, "done");
+		assert.equal(fs.readFileSync(calls, "utf8").trim().split("\n").length, 2);
+	} finally {
+		if (oldMode === undefined) delete process.env.PI_MEMORY_CLEAN_TEST_MODE;
+		else process.env.PI_MEMORY_CLEAN_TEST_MODE = oldMode;
+		if (oldCalls === undefined) delete process.env.PI_MEMORY_CLEAN_TEST_CALLS;
+		else process.env.PI_MEMORY_CLEAN_TEST_CALLS = oldCalls;
+		f.cleanup();
+	}
+});
+
+test("a batch without progress fails instead of looping or checkpointing", async () => {
+	const f = fixture();
+	const old = process.env.PI_MEMORY_CLEAN_TEST_MODE;
+	try {
+		process.env.PI_MEMORY_CLEAN_TEST_MODE = "batches-stall";
+		const result = await runCleaning({ root: f.root, agentDir: f.agentDir, timeoutMs: 3_000 });
+		assert.equal(result.status, "failed");
+		assert.match(result.error, /Cleaning stalled after 1 batches/);
+	} finally { if (old === undefined) delete process.env.PI_MEMORY_CLEAN_TEST_MODE;
+		else process.env.PI_MEMORY_CLEAN_TEST_MODE = old; f.cleanup(); }
+});
+
+test("orphan findings cannot pass the zero-issue gate", async () => {
+	const f = fixture();
+	const old = process.env.PI_MEMORY_CLEAN_TEST_MODE;
+	try {
+		process.env.PI_MEMORY_CLEAN_TEST_MODE = "orphan-only";
+		assert.match((await runCleaning({ root: f.root, agentDir: f.agentDir, timeoutMs: 3_000 })).error,
+			/remaining=\{"orphan":2\}/);
+		process.env.PI_MEMORY_CLEAN_TEST_MODE = "orphan-repair";
+		const result = await runCleaning({ root: f.root, agentDir: f.agentDir, timeoutMs: 3_000 });
+		assert.equal(result.status, "done");
+		assert.equal(result.repairs, 2);
 	} finally { if (old === undefined) delete process.env.PI_MEMORY_CLEAN_TEST_MODE;
 		else process.env.PI_MEMORY_CLEAN_TEST_MODE = old; f.cleanup(); }
 });

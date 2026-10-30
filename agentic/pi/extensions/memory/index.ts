@@ -73,10 +73,27 @@ export default function (pi: ExtensionAPI, getStore: () => MemoryStore = memory)
 		async execute(_id, { path }) { return answer(await getStore().remove(path, cleaning)); },
 	});
 	if (cleaning) pi.registerTool({
+		name: "repair_malformed",
+		label: "repair_malformed",
+		description: "Archive malformed concept files byte-for-byte, then wrap their original content in a valid Note " +
+			"without discarding any text. Re-embeds recovered files and reports failures.",
+		parameters: Type.Object({}),
+		async execute() { return answer(await getStore().repairMalformed()); },
+	});
+	if (cleaning) pi.registerTool({
+		name: "repair_orphans",
+		label: "repair_orphans",
+		description: "Create or refresh a navigational catalog linking all stored concepts and link it from a concept. " +
+			"Resolves orphan lint findings without deleting concepts or inventing facts; archives prior versions.",
+		parameters: Type.Object({}),
+		async execute() { return answer(await getStore().repairOrphans()); },
+	});
+	if (cleaning) pi.registerTool({
 		name: "repair_embeddings",
 		label: "repair_embeddings",
 		description: "Restore missing or stale concept vectors and prune vectors only when their Markdown is truly absent. " +
-			"Preserves concept text, including malformed files; reports embedding failures for automatic retry.",
+			"Archives corrupt vector snapshots before rebuilding from Markdown; preserves concept text " +
+			"and reports embedding failures for automatic retry.",
 		parameters: Type.Object({}),
 		async execute() { return answer(await getStore().repairEmbeddings()); },
 	});

@@ -18,7 +18,9 @@ import { failedWorkSignature, fingerprintBundle } from "./fingerprint.mjs";
 const DEFAULT_ROOT = path.join(os.homedir(), "memory");
 const DEFAULT_AGENT_DIR = path.join(os.homedir(), ".pi", "agent");
 const PROMPT = "Clean every safely repairable lint issue in the OKF memory bundle. Call lint_concepts first. " +
-	"Call repair_embeddings to restore missing or stale vectors and remove truly orphaned vectors without changing Markdown. " +
+	"Call repair_embeddings to restore missing or stale vectors, archive corrupt snapshots and prune orphan vectors. " +
+	"Call repair_malformed to archive unreadable concepts and preserve their original text in valid Notes. " +
+	"Call repair_orphans to link every orphan through a navigational catalog; do not leave orphan findings. " +
 	"Remove exactly repeated paragraphs only when all unique facts and context remain. " +
 	"Merge concepts by removal only when their full Markdown and metadata are identical; " +
 	"the removal tool enforces this and requires no inbound links. " +
@@ -27,7 +29,8 @@ const PROMPT = "Clean every safely repairable lint issue in the OKF memory bundl
 	"If no target can be established, remove only the Markdown link markup, keeping its visible label and surrounding text. " +
 	"Do not invent facts or delete unique content. Review every issue yourself; no human will triage leftovers. " +
 	"Continue through all lint findings; do not stop after a few updates. Lint again after all repairs. " +
-	"If a non-orphan issue remains because a safe repair is impossible, report its kind and cause for automatic retry. " +
+	"Keep repairing until lint_concepts returns zero issues; do not treat any category as informational. " +
+	"If an issue remains because a repair is impossible, report its kind and cause for automatic retry. " +
 	"Report only issue counts, repair counts and archive paths.";
 
 function append(root, event, detail = "") {
@@ -66,7 +69,7 @@ function acquire(root) {
 }
 
 export async function runCleaning({ root = DEFAULT_ROOT, agentDir = DEFAULT_AGENT_DIR, timeoutMs = 20 * 60_000,
-	recover = recoverFailed, fingerprint = fingerprintBundle, wakeQueue = wake } = {}) {
+	maxBatches = 100, recover = recoverFailed, fingerprint = fingerprintBundle, wakeQueue = wake } = {}) {
 	if (!fs.statSync(root).isDirectory() || fs.lstatSync(root).isSymbolicLink()) throw new Error("Memory bundle is not a real directory");
 	const lock = acquire(root);
 	if (!lock) return { skipped: true, reason: "already running" };
@@ -119,7 +122,11 @@ export async function runCleaning({ root = DEFAULT_ROOT, agentDir = DEFAULT_AGEN
 			if (incomplete) append(root, "incomplete", `requests=${JSON.stringify(requests)}`);
 			return done;
 		}
-		const result = await new Promise((resolve, reject) => {
+		const result = { lintRuns: 0, repairs: 0, removals: 0, archives: [], issues: {}, lastLintFingerprint: null };
+		let batchFingerprint = before;
+		for (let batch = 1; batch <= maxBatches; batch++) {
+		let current;
+		try { current = await new Promise((resolve, reject) => {
 			const env = { ...process.env, PI_MEMORY_CLEANING_ONLY: "1", PI_MEMORY_RECALL_ONLY: "0" };
 			child = spawn(path.join(agentDir, "bin", "pi"), ["--agent", "librarian", "--no-session", "--mode", "json", "-p", PROMPT],
 				{ stdio: ["ignore", "pipe", "pipe"], detached: true, env });
@@ -155,10 +162,21 @@ export async function runCleaning({ root = DEFAULT_ROOT, agentDir = DEFAULT_AGEN
 						const inspected = event.result?.details?.fingerprint;
 						lastLintFingerprint = typeof inspected === "string" && inspected === fingerprint(root)
 							? inspected : undefined;
+						} else if (event.toolName === "repair_malformed") {
+							lastMutation = ++sequence;
+							repairs += event.result?.details?.repaired ?? 0;
+							archives.push(...(event.result?.details?.archives ?? []));
+						} else if (event.toolName === "repair_orphans") {
+							lastMutation = ++sequence;
+							repairs += event.result?.details?.linked ?? 0;
+							if (typeof event.result?.details?.archive === "string") archives.push(event.result.details.archive);
 						} else if (event.toolName === "repair_embeddings") {
 							lastMutation = ++sequence;
 							repairs += event.result?.details?.attempted ?? 0;
 							repairs += event.result?.details?.pruned?.length ?? 0;
+							if (typeof event.result?.details?.snapshotArchive === "string") {
+								archives.push(event.result.details.snapshotArchive);
+							}
 						} else if (event.toolName === "update_concept") {
 							lastMutation = ++sequence;
 							repairs++;
@@ -180,17 +198,40 @@ export async function runCleaning({ root = DEFAULT_ROOT, agentDir = DEFAULT_AGEN
 			child.on("close", (code) => {
 				clearTimeout(timer); clearTimeout(force);
 				if (interrupted || timedOut || code !== 0 || failures || !lintRuns || lastMutation > lastLint ||
-					!lastLintIssues || !lastLintFingerprint || lastLintFingerprint !== fingerprint(root) ||
-					lastLintIssues.some((issue) => issue.kind !== "orphan")) {
+					!lastLintIssues || !lastLintFingerprint || lastLintFingerprint !== fingerprint(root)) {
 					reject(new Error(interrupted ? "Cleaning session interrupted; next run will start from lint" :
 						timedOut ? "Cleaning session timed out" :
 						`Cleaning incomplete: exit=${code}, lint=${lintRuns}, toolErrors=${failures}, ` +
 						`finalLint=${lastLint >= lastMutation}, fingerprint=${!!lastLintFingerprint}, ` +
-						`remaining=${JSON.stringify(Object.fromEntries(Object.entries(issueSummary)
-							.filter(([kind]) => kind !== "orphan")))}, stderr=${stderr.slice(-350)}`));
+						`remaining=${JSON.stringify(issueSummary)}, stderr=${stderr.slice(-350)}`));
 				} else resolve({ lintRuns, repairs, removals, archives, issues: issueSummary, lastLintFingerprint });
 			});
-		});
+		}); }
+		catch (error) {
+			child = undefined;
+			const changed = fingerprint(root);
+			if (!interrupted && error.message === "Cleaning session timed out" &&
+				changed !== batchFingerprint && batch < maxBatches) {
+				append(root, "batch-timeout", `number=${batch} restarting from fresh lint`);
+				batchFingerprint = changed;
+				continue;
+			}
+			throw error;
+		}
+		child = undefined;
+		result.lintRuns += current.lintRuns;
+		result.repairs += current.repairs;
+		result.removals += current.removals;
+		result.archives.push(...current.archives);
+		result.issues = current.issues;
+		result.lastLintFingerprint = current.lastLintFingerprint;
+		if (!Object.keys(current.issues).length) break;
+		if (batch === maxBatches || current.lastLintFingerprint === batchFingerprint) {
+			throw new Error(`Cleaning stalled after ${batch} batches: remaining=${JSON.stringify(current.issues)}`);
+		}
+		append(root, "batch", `number=${batch} updates=${current.repairs} removals=${current.removals} remaining=${JSON.stringify(current.issues)}`);
+		batchFingerprint = current.lastLintFingerprint;
+		}
 		if (!interrupted) await reviewQueue();
 		const { lastLintFingerprint, ...report } = result;
 		const incomplete = requestsIncomplete(requests);

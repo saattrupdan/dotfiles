@@ -24,7 +24,7 @@ test("librarian registers private maintenance tools, while recall handoff only r
 		delete process.env.PI_MEMORY_RECALL_ONLY;
 		process.env.PI_MEMORY_CLEANING_ONLY = "1";
 		register(pi as never);
-		assert.deepEqual(tools, ["search_concepts", "read_concept", "update_concept", "remove_concept", "repair_embeddings", "lint_concepts"]);
+		assert.deepEqual(tools, ["search_concepts", "read_concept", "update_concept", "remove_concept", "repair_malformed", "repair_orphans", "repair_embeddings", "lint_concepts"]);
 	} finally {
 		if (previous === undefined) delete process.env.PI_MEMORY_RECALL_ONLY;
 		else process.env.PI_MEMORY_RECALL_ONLY = previous;

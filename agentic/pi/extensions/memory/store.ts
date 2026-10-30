@@ -619,8 +619,111 @@ export class MemoryStore {
 		return { attempted: documents.length, missingEmbeddings: await this.embedDocuments(documents, onProgress) };
 	}
 
+	/** Preserve malformed originals byte-for-byte in the version archive before making them searchable. */
+	async repairMalformed(): Promise<{ repaired: number; archives: string[]; missingEmbeddings: string[] }> {
+		const paths = this.reconcile().filter((issue) => issue.kind === "malformed").map((issue) => issue.path);
+		const archives: string[] = [], missingEmbeddings: string[] = [];
+		for (const conceptPath of paths) {
+			const result = await this.withWriteLock(async () => {
+				this.checkReservedFiles();
+				if (this.reconcile().some((issue) => issue.kind === "malformed_embedding")) {
+					throw new Error("Embedding snapshot is invalid; repair it before repairing concepts");
+				}
+				const target = this.resolve(conceptPath);
+				if (!fs.existsSync(target)) return undefined;
+				const raw = fs.readFileSync(target, "utf8");
+				try { parseConcept(raw, conceptPath); return undefined; }
+				catch { /* Preserve unreadable frontmatter in the recovered body. */ }
+				const body = raw || "Original concept file was empty.\n";
+				const documents = this.materialize(conceptPath, { type: "Note",
+					title: path.posix.basename(conceptPath, ".md") }, body);
+				for (const document of documents) {
+					if (document.path !== conceptPath && fs.existsSync(this.resolve(document.path))) {
+						throw new Error(`Generated part path already exists: ${document.path}`);
+					}
+				}
+				const archive = this.archiveConcepts([conceptPath], "versions");
+				for (const document of documents) this.atomicWrite(document.path, document.raw);
+				this.reconcile();
+				this.appendLog("Update", conceptPath);
+				return { documents, archive };
+			});
+			if (!result) continue;
+			archives.push(result.archive);
+			missingEmbeddings.push(...await this.embedDocuments(result.documents));
+		}
+		return { repaired: archives.length, archives, missingEmbeddings };
+	}
+
+	/** Connect orphan concepts through a navigational catalog without changing their facts. */
+	async repairOrphans(): Promise<{ catalog?: string; linked: number; archive?: string }> {
+		const orphans = this.lint().filter((issue) => issue.kind === "orphan").map((issue) => issue.path);
+		if (!orphans.length) return { linked: 0 };
+		const rows = this.db.prepare("SELECT path, raw FROM concepts ORDER BY path").all() as Array<{ path: string; raw: string }>;
+		const catalogTag = "pi-memory-catalog";
+		const existing = rows.find((row) => {
+			const tags = parseConcept(row.raw, row.path).frontmatter.tags;
+			return Array.isArray(tags) && tags.includes(catalogTag);
+		});
+		let catalog = existing?.path;
+		if (!catalog) {
+			for (let n = 1; ; n++) {
+				const candidate = `/notes/pi-memory-catalog${n === 1 ? "" : `-${n}`}.md`;
+				if (!fs.existsSync(this.resolve(candidate))) { catalog = candidate; break; }
+			}
+		}
+		const targets = rows.filter((row) => row.path !== catalog &&
+			parseConcept(row.raw, row.path).frontmatter.memory_split_parent !== catalog)
+			.map((row) => row.path);
+		const body = `# Memory catalog\n\nNavigation links to stored concepts.\n\n` +
+			targets.map((target) => {
+				const label = path.posix.basename(target, ".md").replaceAll("[", "\\[").replaceAll("]", "\\]");
+				const href = target.split("/").map((segment) => encodeURIComponent(segment)
+					.replaceAll("(", "%28").replaceAll(")", "%29")).join("/");
+				return `- [${label}](${href})`;
+			}).join("\n") + "\n";
+		let archive: string | undefined;
+		if (existing) {
+			if (parseConcept(existing.raw, existing.path).body !== body) {
+				archive = (await this.update({ path: catalog!, body })).archive;
+			}
+		} else {
+			await this.create({ path: catalog!, type: "Index", title: "Memory catalog",
+				body, tags: [catalogTag] });
+		}
+		const editable = rows.filter((row) => row.path !== catalog &&
+			!parseConcept(row.raw, row.path).frontmatter.memory_split_parent);
+		const anchor = orphans.find((orphan) => editable.some((row) => row.path === orphan)) ?? editable[0]?.path;
+		if (!anchor) throw new Error("No editable concept can link the catalog");
+		const source = rows.find((row) => row.path === anchor)!;
+		const parsed = parseConcept(source.raw, anchor);
+		if (!parsed.body.includes(`](${catalog})`)) {
+			const updated = await this.update({ path: anchor,
+				body: `${parsed.body.trimEnd()}\n\nSee [Memory catalog](${catalog}).\n` });
+			archive = updated.archive ?? archive;
+		}
+		return { catalog, linked: orphans.length, archive };
+	}
+
 	/** Repair vectors unattended; never discard a vector while its Markdown still exists. */
-	async repairEmbeddings(): Promise<{ attempted: number; missingEmbeddings: string[]; pruned: string[] }> {
+	async repairEmbeddings(): Promise<{ attempted: number; missingEmbeddings: string[]; pruned: string[];
+		snapshotArchive?: string }> {
+		const snapshotArchive = await this.withWriteLock(async () => {
+			if (!this.reconcile().some((issue) => issue.kind === "malformed_embedding")) return undefined;
+			const source = this.snapshotFile;
+			const info = fs.lstatSync(source, { throwIfNoEntry: false });
+			if (!info?.isFile()) throw new Error("Invalid embedding snapshot is not a regular file");
+			const queue = path.join(this.root, "requests");
+			const folder = path.join(queue, "snapshot-backups");
+			for (const directory of [queue, folder]) {
+				const existing = fs.lstatSync(directory, { throwIfNoEntry: false });
+				if (existing && !existing.isDirectory()) throw new Error("Snapshot archive must be a real directory");
+				if (!existing) fs.mkdirSync(directory, { mode: 0o700 });
+			}
+			const archive = path.join(folder, `${Date.now()}-${process.pid}-${Math.random().toString(16).slice(2)}.sqlite`);
+			fs.renameSync(source, archive);
+			return `/requests/snapshot-backups/${path.basename(archive)}`;
+		});
 		const rebuilt = await this.rebuildEmbeddings();
 		const pruned = await this.withWriteLock(async () => {
 			if (this.reconcile().some((issue) => issue.kind === "malformed_embedding")) {
@@ -631,7 +734,7 @@ export class MemoryStore {
 			if (absent.length) this.publishSnapshot([], absent);
 			return absent;
 		});
-		return { ...rebuilt, pruned };
+		return { ...rebuilt, pruned, ...(snapshotArchive ? { snapshotArchive } : {}) };
 	}
 
 	create(input: ConceptInput): Promise<{ paths: string[]; missingEmbeddings: string[] }> { return this.write(input, true); }
