@@ -112,10 +112,13 @@ failed clean or bundle change during lint does not advance the checkpoint. A sle
 missed calendar invocation after waking. Temporary network failures retry in
 the librarian; a session still failing after 20 minutes logs the failure and
 the next invocation starts a fresh lint instead of resuming a stale model turn.
+A run with remaining lint errors or a stale final lint also fails and retries
+on the next invocation, even if the bundle has not changed.
 A lock prevents overlapping sessions. Scheduled sessions can search, update,
-remove, and lint, but cannot create concepts. At most five mutations are allowed
-per run. The cleaner may deduplicate exact repeated text or merge proven
-duplicates, preserving unique facts and redirecting inbound links. Removal is
+remove, and lint, but cannot create concepts. The cleaner works through every
+safely repairable finding in each run. It may deduplicate exact repeated text
+or merge proven duplicates, preserving unique facts and redirecting inbound
+links. Removal is
 allowed only after a concept has no inbound links; its original Markdown is
 archived under `~/memory/requests/removed/` before deletion. Updates archive
 the previous version under `~/memory/requests/versions/`. An orphan is not
@@ -127,7 +130,9 @@ Automatic retries stop after three failed attempts, respect a paused queue, and
 never run concurrently with the cleaning session. Each run logs issue counts,
 mutations, archive paths, and failed-request review counts in
 `~/memory/cleaning.log`, with its latest status in
-`~/memory/.cleaning-state.json`. Ambiguous issues remain for review.
+`~/memory/.cleaning-state.json`. Orphans are informational and do not fail a
+run. Ambiguous or unrepairable issues remain for review and prevent a successful
+clean checkpoint.
 
 ## Extensions
 

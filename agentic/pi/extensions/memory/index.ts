@@ -37,12 +37,6 @@ export default function (pi: ExtensionAPI, getStore: () => MemoryStore = memory)
 	// Recall runs can search and read; scheduled cleaning cannot create new concepts.
 	if (process.env.PI_MEMORY_RECALL_ONLY === "1") return;
 	const cleaning = process.env.PI_MEMORY_CLEANING_ONLY === "1";
-	let cleaningWrites = 0;
-	const countWrite = () => {
-		if (!cleaning) return;
-		if (cleaningWrites >= 5) throw new Error("Hourly cleaning is limited to five mutations");
-		cleaningWrites++;
-	};
 	if (!cleaning) pi.registerTool({
 		name: "create_concept",
 		label: "create_concept",
@@ -67,7 +61,7 @@ export default function (pi: ExtensionAPI, getStore: () => MemoryStore = memory)
 			type: Type.Optional(Type.String()), title: Type.Optional(Type.String()),
 			description: Type.Optional(Type.String()), tags: Type.Optional(Type.Array(Type.String())),
 		}),
-		async execute(_id, params) { countWrite(); return answer(await getStore().update(params)); },
+		async execute(_id, params) { return answer(await getStore().update(params)); },
 	});
 	pi.registerTool({
 		name: "remove_concept",
@@ -79,7 +73,6 @@ export default function (pi: ExtensionAPI, getStore: () => MemoryStore = memory)
 			if (cleaning && !getStore().lint().some((issue) => issue.kind === "orphan" && issue.path === path)) {
 				throw new Error("Hourly cleanup can remove only concepts with no inbound links");
 			}
-			countWrite();
 			return answer(await getStore().remove(path));
 		},
 	});

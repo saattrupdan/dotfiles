@@ -17,14 +17,16 @@ import { failedWorkSignature, fingerprintBundle } from "./fingerprint.mjs";
 
 const DEFAULT_ROOT = path.join(os.homedir(), "memory");
 const DEFAULT_AGENT_DIR = path.join(os.homedir(), ".pi", "agent");
-const PROMPT = "Clean the OKF memory bundle with at most five mutations. Call lint_concepts first. " +
+const PROMPT = "Clean every safely repairable lint issue in the OKF memory bundle. Call lint_concepts first. " +
 	"Fix missing or stale embeddings by reading the exact concept and updating it with the same body. " +
 	"Remove exactly repeated paragraphs only when all unique facts and context remain. " +
 	"Merge two concepts only when they are genuinely duplicates: preserve all unique facts and metadata " +
 	"in the owner, redirect every inbound link, then remove the duplicate after lint shows no inbound links. " +
 	"Removal archives the original; record its archive path. Never delete a concept solely because it is orphaned. " +
 	"Fix broken links only when the correct target is unambiguous. Do not invent facts, and leave uncertain " +
-	"issues unchanged. Lint again after repairs; report only issue counts, repair counts and archive paths.";
+	"issues unchanged. Continue through all lint findings; do not stop after a few updates. " +
+	"Lint again after all repairs. If any non-orphan issues remain, identify why they cannot safely be fixed. " +
+	"Report only issue counts, repair counts and archive paths.";
 
 function append(root, event, detail = "") {
 	const file = path.join(root, "cleaning.log");
@@ -113,7 +115,7 @@ export async function runCleaning({ root = DEFAULT_ROOT, agentDir = DEFAULT_AGEN
 			child = spawn(path.join(agentDir, "bin", "pi"), ["--agent", "librarian", "--no-session", "--mode", "json", "-p", PROMPT],
 				{ stdio: ["ignore", "pipe", "pipe"], detached: true, env });
 			let lintRuns = 0, repairs = 0, removals = 0, failures = 0, issueSummary = {}, buffer = "", stderr = "", timedOut = false, force;
-			let lastLintFingerprint, sequence = 0, lastLint = 0, lastMutation = 0;
+			let lastLintFingerprint, lastLintIssues, sequence = 0, lastLint = 0, lastMutation = 0;
 			const archives = [];
 			const stop = (signal) => {
 				try { process.kill(-child.pid, signal); }
@@ -136,9 +138,11 @@ export async function runCleaning({ root = DEFAULT_ROOT, agentDir = DEFAULT_AGEN
 							lastLint = ++sequence;
 							lintRuns++;
 							const issues = event.result?.details?.issues;
-							if (Array.isArray(issues)) issueSummary = Object.fromEntries(
-								[...new Set(issues.map((issue) => issue.kind))].sort()
-									.map((kind) => [kind, issues.filter((issue) => issue.kind === kind).length]));
+							lastLintIssues = Array.isArray(issues) && issues.every((issue) =>
+								issue && typeof issue.kind === "string" && typeof issue.path === "string") ? issues : undefined;
+							if (lastLintIssues) issueSummary = Object.fromEntries(
+								[...new Set(lastLintIssues.map((issue) => issue.kind))].sort()
+									.map((kind) => [kind, lastLintIssues.filter((issue) => issue.kind === kind).length]));
 						const inspected = event.result?.details?.fingerprint;
 						lastLintFingerprint = typeof inspected === "string" && inspected === fingerprint(root)
 							? inspected : undefined;
@@ -162,18 +166,22 @@ export async function runCleaning({ root = DEFAULT_ROOT, agentDir = DEFAULT_AGEN
 			child.on("error", (error) => { clearTimeout(timer); clearTimeout(force); reject(error); });
 			child.on("close", (code) => {
 				clearTimeout(timer); clearTimeout(force);
-				if (interrupted || timedOut || code !== 0 || failures || !lintRuns || lastMutation > lastLint) {
+				if (interrupted || timedOut || code !== 0 || failures || !lintRuns || lastMutation > lastLint ||
+					!lastLintIssues || !lastLintFingerprint || lastLintFingerprint !== fingerprint(root) ||
+					lastLintIssues.some((issue) => issue.kind !== "orphan")) {
 					reject(new Error(interrupted ? "Cleaning session interrupted; next run will start from lint" :
 						timedOut ? "Cleaning session timed out" :
 						`Cleaning incomplete: exit=${code}, lint=${lintRuns}, toolErrors=${failures}, ` +
-						`finalLint=${lastLint >= lastMutation}, stderr=${stderr.slice(-350)}`));
+						`finalLint=${lastLint >= lastMutation}, fingerprint=${!!lastLintFingerprint}, ` +
+						`remaining=${JSON.stringify(Object.fromEntries(Object.entries(issueSummary)
+							.filter(([kind]) => kind !== "orphan")))}, stderr=${stderr.slice(-350)}`));
 				} else resolve({ lintRuns, repairs, removals, archives, issues: issueSummary, lastLintFingerprint });
 			});
 		});
 		if (!interrupted) await reviewQueue();
 		const { lastLintFingerprint, ...report } = result;
 		const done = { startedAt, completedAt: new Date().toISOString(), status: "done", requests, ...report,
-			bundleFingerprint: lastLintFingerprint ?? null,
+			bundleFingerprint: lastLintFingerprint,
 			failedWorkSignature: requests?.errors || requests?.paused || requests?.interrupted || requests?.remainingUnreviewed
 				? null : failedWorkSignature(root) };
 		saveState(root, done);

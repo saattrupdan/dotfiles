@@ -71,7 +71,7 @@ test("lint fingerprints only the bundle state it actually inspected", async () =
 	} finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test("scheduled cleaner cannot remove linked concepts or exceed five writes", async () => {
+test("scheduled cleaner cannot remove linked concepts but permits all necessary writes", async () => {
 	const previous = process.env.PI_MEMORY_CLEANING_ONLY;
 	const previousRecall = process.env.PI_MEMORY_RECALL_ONLY;
 	try {
@@ -88,11 +88,9 @@ test("scheduled cleaner cannot remove linked concepts or exceed five writes", as
 		register({ registerTool: (tool: Tool) => tools.set(tool.name, tool) } as never, () => store as never);
 		const remove = tools.get("remove_concept")!;
 		await assert.rejects(remove.execute("test", { path: "/linked.md" }), /no inbound links/);
-		for (let n = 0; n < 4; n++) await tools.get("update_concept")!.execute("test", { path: "/orphan.md", body: "fact" });
+		for (let n = 0; n < 6; n++) await tools.get("update_concept")!.execute("test", { path: "/orphan.md", body: "fact" });
 		await remove.execute("test", { path: "/orphan.md" });
-		assert.equal(writes, 5);
-		await assert.rejects(remove.execute("test", { path: "/orphan.md" }), /limited to five/);
-		assert.equal(writes, 5);
+		assert.equal(writes, 7);
 	} finally {
 		if (previous === undefined) delete process.env.PI_MEMORY_CLEANING_ONLY;
 		else process.env.PI_MEMORY_CLEANING_ONLY = previous;
