@@ -39,6 +39,18 @@ test("memory handoffs collapse to truthful one-line success and live ellipsis la
 	assert.equal(output("recall_memory", "Librarian timed out", { expanded: false, isPartial: false }, true), "Librarian timed out");
 });
 
+test("expanded recall calls show the original question", () => {
+	type Renderer = (args: { text: string }, theme: unknown, context: unknown) => { render(width: number): string[] };
+	const tools = new Map<string, { renderCall: Renderer }>();
+	register({ on: () => {}, registerTool: (tool: { name: string; renderCall: Renderer }) => tools.set(tool.name, tool) } as never);
+	const theme = { fg: (_colour: string, value: string) => value, bold: (value: string) => value };
+	const output = (expanded: boolean) => tools.get("recall_memory")!.renderCall(
+		{ text: "What did we decide about\nthe memory renderer?" }, theme, { expanded },
+	).render(100).map((line) => line.trimEnd()).join("\n");
+	assert.equal(output(false), "recall_memory");
+	assert.equal(output(true), "recall_memory\nWhat did we decide about\nthe memory renderer?");
+});
+
 test("handoff passes memory privately via a temporary file and restricts recall", async () => {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-handoff-test-"));
 	const bin = path.join(dir, "bin");

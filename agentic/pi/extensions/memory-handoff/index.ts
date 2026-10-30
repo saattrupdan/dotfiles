@@ -51,7 +51,10 @@ export default function (pi: ExtensionAPI): void {
 		description: "Ask the isolated librarian to search and read concepts in ~/memory. " +
 			"Returns a cited answer. This read-only handoff cannot register write tools.",
 		parameters: Params,
-		renderCall(_args, theme) { return new Text(theme.fg("toolTitle", theme.bold("recall_memory")), 0, 0); },
+		renderCall(args, theme, context) {
+			const title = theme.fg("toolTitle", theme.bold("recall_memory"));
+			return new Text(context.expanded ? `${title}\n${args.text}` : title, 0, 0);
+		},
 		renderResult: renderMemoryResult("recall"),
 		async execute(_id, { text }, signal) {
 			const answer = await runLibrarian("recall", text, signal);
