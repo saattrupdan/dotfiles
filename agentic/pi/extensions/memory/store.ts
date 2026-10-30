@@ -43,7 +43,7 @@ export type SearchResult = {
 	matchedBy: string[];
 };
 
-function hash(raw: string): string {
+function hash(raw: string | Buffer): string {
 	return createHash("sha256").update(raw).digest("hex");
 }
 
@@ -264,7 +264,7 @@ export class MemoryStore {
 		this.atomicWriteFile(target, raw);
 	}
 
-	private atomicWriteFile(target: string, raw: string): void {
+	private atomicWriteFile(target: string, raw: string | Buffer): void {
 		fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
 		const temp = `${target}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
 		try {
@@ -631,7 +631,8 @@ export class MemoryStore {
 				}
 				const target = this.resolve(conceptPath);
 				if (!fs.existsSync(target)) return undefined;
-				const raw = fs.readFileSync(target, "utf8");
+				const original = fs.readFileSync(target);
+				const raw = original.toString("utf8");
 				try { parseConcept(raw, conceptPath); return undefined; }
 				catch { /* Preserve unreadable frontmatter in the recovered body. */ }
 				const body = raw || "Original concept file was empty.\n";
@@ -642,6 +643,7 @@ export class MemoryStore {
 						throw new Error(`Generated part path already exists: ${document.path}`);
 					}
 				}
+				if (!fs.readFileSync(target).equals(original)) throw new Error("Malformed concept changed during repair");
 				const archive = this.archiveConcepts([conceptPath], "versions");
 				for (const document of documents) this.atomicWrite(document.path, document.raw);
 				this.reconcile();
@@ -675,18 +677,26 @@ export class MemoryStore {
 		const targets = rows.filter((row) => row.path !== catalog &&
 			parseConcept(row.raw, row.path).frontmatter.memory_split_parent !== catalog)
 			.map((row) => row.path);
-		const body = `# Memory catalog\n\nNavigation links to stored concepts.\n\n` +
-			targets.map((target) => {
-				const label = path.posix.basename(target, ".md").replaceAll("[", "\\[").replaceAll("]", "\\]");
-				const href = target.split("/").map((segment) => encodeURIComponent(segment)
-					.replaceAll("(", "%28").replaceAll(")", "%29")).join("/");
-				return `- [${label}](${href})`;
-			}).join("\n") + "\n";
+		const parentBody = existing ? parseConcept(existing.raw, existing.path).body : "";
+		const parts = existing ? this.generatedParts(catalog!) : [];
+		const expectedIntro = `This concept is split into ${parts.length} parts:\n\n` +
+			parts.map((part, index) => `- [Part ${index + 1}](${part})`).join("\n");
+		const existingBody = parts.length ? parts.map((part) =>
+			parseConcept(fs.readFileSync(this.resolve(part), "utf8"), part).body).join("") +
+			(parentBody === expectedIntro ? "" : `\n\n${parentBody}`) : parentBody;
+		const linked = new Set([...existingBody.matchAll(LINK)].map((match) => normalizeLink(catalog!, match[1])));
+		const additions = targets.filter((target) => !linked.has(target)).map((target) => {
+			const label = path.posix.basename(target, ".md").replaceAll("[", "\\[").replaceAll("]", "\\]");
+			const href = target.split("/").map((segment) => encodeURIComponent(segment)
+				.replaceAll("(", "%28").replaceAll(")", "%29")).join("/");
+			return `- [${label}](${href})`;
+		});
+		const body = existing ? existingBody + (existingBody.endsWith("\n") ? "" : "\n") +
+			(additions.length ? `${additions.join("\n")}\n` : "") :
+			`# Memory catalog\n\nNavigation links to stored concepts.\n\n${additions.join("\n")}\n`;
 		let archive: string | undefined;
 		if (existing) {
-			if (parseConcept(existing.raw, existing.path).body !== body) {
-				archive = (await this.update({ path: catalog!, body })).archive;
-			}
+			if (additions.length) archive = (await this.update({ path: catalog!, body })).archive;
 		} else {
 			await this.create({ path: catalog!, type: "Index", title: "Memory catalog",
 				body, tags: [catalogTag] });
@@ -754,7 +764,7 @@ export class MemoryStore {
 		const folder = path.join(base, id);
 		fs.mkdirSync(folder, { mode: 0o700 });
 		const entries = paths.map((conceptPath) => {
-			const raw = fs.readFileSync(this.resolve(conceptPath), "utf8");
+			const raw = fs.readFileSync(this.resolve(conceptPath));
 			const file = `${hash(conceptPath)}.md`;
 			this.atomicWriteFile(path.join(folder, file), raw);
 			return { path: conceptPath, file, sha256: hash(raw) };

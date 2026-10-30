@@ -146,6 +146,12 @@ test("malformed concept repair archives the original bytes and preserves their c
 		const recovered = await f.store.search({ path: "/broken.md" });
 		assert.ok("body" in recovered && recovered.body === original);
 		assert.equal(f.store.lint().some((issue) => issue.kind === "malformed"), false);
+		const binary = Buffer.from([0xff, 0xfe, 0x00, 0x61]);
+		fs.writeFileSync(path.join(f.root, "binary.md"), binary);
+		const binaryRepair = await f.store.repairMalformed();
+		const binaryFolder = path.join(f.root, binaryRepair.archives[0].slice(1));
+		const binaryManifest = JSON.parse(fs.readFileSync(path.join(binaryFolder, "manifest.json"), "utf8"));
+		assert.deepEqual(fs.readFileSync(path.join(binaryFolder, binaryManifest.entries[0].file)), binary);
 	} finally { f.cleanup(); }
 });
 
@@ -162,8 +168,13 @@ test("orphan repair creates an incoming navigation link without deleting unique 
 		const first = await f.store.search({ path: "/first.md" });
 		assert.ok("body" in first && first.body.includes("First unique fact."));
 		assert.equal((await f.store.repairOrphans()).linked, 0);
+		const catalog = await f.store.search({ path: result.catalog! });
+		assert.ok("body" in catalog);
+		await f.store.update({ path: result.catalog!, body: `${catalog.body}\nUnique catalog guidance.\n` });
 		await f.store.create({ path: "/third.md", type: "Note", body: "Third unique fact." });
 		assert.equal((await f.store.repairOrphans()).linked, 1);
+		const refreshed = await f.store.search({ path: result.catalog! });
+		assert.ok("body" in refreshed && refreshed.body.includes("Unique catalog guidance."));
 		assert.deepEqual(f.store.lint(), []);
 	} finally { f.cleanup(); }
 });
@@ -180,6 +191,9 @@ test("a split navigation catalog links a large orphan backlog", async () => {
 		const issues = f.store.lint();
 		assert.deepEqual(issues.filter((issue) => issue.kind === "orphan" || issue.kind === "broken_link"), []);
 		assert.ok((await f.store.search({ path: result.catalog! })));
+		await f.store.create({ path: "/new-entry.md", type: "Note", body: "A new fact." });
+		assert.equal((await f.store.repairOrphans()).linked, 1);
+		assert.deepEqual(f.store.lint().filter((issue) => issue.kind === "orphan" || issue.kind === "broken_link"), []);
 	} finally { f.cleanup(); }
 });
 
