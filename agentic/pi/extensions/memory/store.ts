@@ -645,7 +645,14 @@ export class MemoryStore {
 		return `/requests/${category}/${id}`;
 	}
 
-	async remove(conceptPath: string): Promise<{ removed: string[]; archive: string }> {
+	/** A scheduled deletion is safe only if another concept retains the exact same facts and metadata. */
+	private isExactDuplicate(conceptPath: string): boolean {
+		const row = this.db.prepare("SELECT raw FROM concepts WHERE path = ?").get(conceptPath) as { raw: string } | undefined;
+		if (!row) return false;
+		return !!this.db.prepare("SELECT 1 FROM concepts WHERE raw = ? AND path != ? LIMIT 1").get(row.raw, conceptPath);
+	}
+
+	async remove(conceptPath: string, scheduled = false): Promise<{ removed: string[]; archive: string }> {
 		return this.withWriteLock(async () => {
 			this.checkReservedFiles();
 			if (this.reconcile().some((issue) => issue.kind === "malformed_embedding")) {
@@ -653,6 +660,10 @@ export class MemoryStore {
 			}
 			const target = this.resolve(conceptPath);
 			if (!fs.existsSync(target)) throw new Error(`Concept not found: ${conceptPath}`);
+			if (scheduled && (!this.lint().some((issue) => issue.kind === "orphan" && issue.path === conceptPath) ||
+				!this.isExactDuplicate(conceptPath))) {
+				throw new Error("Hourly cleanup can remove only unlinked exact duplicates");
+			}
 			if (parseConcept(fs.readFileSync(target, "utf8"), conceptPath).frontmatter.memory_split_parent) {
 				throw new Error("Remove the parent concept instead of a generated part");
 			}

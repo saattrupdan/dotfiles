@@ -71,7 +71,7 @@ test("lint fingerprints only the bundle state it actually inspected", async () =
 	} finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test("scheduled cleaner cannot remove linked concepts but permits all necessary writes", async () => {
+test("scheduled cleaner forwards safe-removal guard and permits all necessary writes", async () => {
 	const previous = process.env.PI_MEMORY_CLEANING_ONLY;
 	const previousRecall = process.env.PI_MEMORY_RECALL_ONLY;
 	try {
@@ -79,15 +79,18 @@ test("scheduled cleaner cannot remove linked concepts but permits all necessary 
 		delete process.env.PI_MEMORY_RECALL_ONLY;
 		let writes = 0;
 		const store = {
-			lint: () => [{ kind: "orphan", path: "/orphan.md" }],
 			update: async () => { writes++; return { paths: ["/orphan.md"], missingEmbeddings: [] }; },
-			remove: async () => { writes++; return { removed: ["/orphan.md"], archive: "/requests/removed/1" }; },
+			remove: async (path: string, scheduled: boolean) => {
+				assert.equal(scheduled, true);
+				if (path !== "/orphan.md") throw new Error("Hourly cleanup can remove only unlinked exact duplicates");
+				writes++; return { removed: [path], archive: "/requests/removed/1" };
+			},
 		};
 		type Tool = { name: string; execute: (id: string, params: Record<string, string>) => Promise<unknown> };
 		const tools = new Map<string, Tool>();
 		register({ registerTool: (tool: Tool) => tools.set(tool.name, tool) } as never, () => store as never);
 		const remove = tools.get("remove_concept")!;
-		await assert.rejects(remove.execute("test", { path: "/linked.md" }), /no inbound links/);
+		await assert.rejects(remove.execute("test", { path: "/linked.md" }), /unlinked exact duplicates/);
 		for (let n = 0; n < 6; n++) await tools.get("update_concept")!.execute("test", { path: "/orphan.md", body: "fact" });
 		await remove.execute("test", { path: "/orphan.md" });
 		assert.equal(writes, 7);

@@ -131,6 +131,24 @@ test("resolves relative and root links and finds orphans, duplicate paragraphs a
 	} finally { f.cleanup(); }
 });
 
+test("scheduled cleanup rejects bulk orphan deletion but permits archived exact duplicates", async () => {
+	const f = fixture();
+	try {
+		for (let n = 0; n < 6; n++) {
+			await f.store.create({ path: `/unique-${n}.md`, type: "Note", body: `Unique fact ${n}.` });
+		}
+		for (let n = 0; n < 6; n++) {
+			await assert.rejects(f.store.remove(`/unique-${n}.md`, true), /unlinked exact duplicates/);
+			assert.ok(fs.existsSync(path.join(f.root, `unique-${n}.md`)));
+		}
+		await f.store.create({ path: "/copy.md", type: "Note", body: "Unique fact 0." });
+		const removed = await f.store.remove("/copy.md", true);
+		assert.deepEqual(removed.removed, ["/copy.md"]);
+		assert.ok(fs.existsSync(path.join(f.root, "unique-0.md")));
+		assert.ok(fs.existsSync(path.join(f.root, removed.archive.slice(1), "manifest.json")));
+	} finally { f.cleanup(); }
+});
+
 test("oversized concepts split without losing text; updates and removals clean parts and vectors", async () => {
 	const f = fixture();
 	try {

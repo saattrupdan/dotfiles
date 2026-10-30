@@ -116,10 +116,9 @@ A run with remaining lint errors or a stale final lint also fails and retries
 on the next invocation, even if the bundle has not changed.
 A lock prevents overlapping sessions. Scheduled sessions can search, update,
 remove, and lint, but cannot create concepts. The cleaner works through every
-safely repairable finding in each run. It may deduplicate exact repeated text
-or merge proven duplicates, preserving unique facts and redirecting inbound
-links. Removal is
-allowed only after a concept has no inbound links; its original Markdown is
+safely repairable finding in each run. It may deduplicate exact repeated text.
+Scheduled removal is allowed only for an unlinked concept with an exact copy
+(including metadata) elsewhere in the bundle; its original Markdown is
 archived under `~/memory/requests/removed/` before deletion. Updates archive
 the previous version under `~/memory/requests/versions/`. An orphan is not
 itself a reason to delete. After cleaning, each run also reviews up to three failed write requests. Definite

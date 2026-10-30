@@ -67,14 +67,10 @@ export default function (pi: ExtensionAPI, getStore: () => MemoryStore = memory)
 		name: "remove_concept",
 		label: "remove_concept",
 		description: "Archive the complete concept and its generated parts in ~/memory/requests/removed before " +
-			"removing them from active search, along with their embeddings. Provide a slash-prefixed bundle path; returns the archive path.",
+			"removing them from active search, along with their embeddings. Scheduled cleanup permits removal " +
+			"only of an unlinked exact duplicate. Provide a slash-prefixed bundle path; returns the archive path.",
 		parameters: Type.Object({ path: Type.String() }),
-		async execute(_id, { path }) {
-			if (cleaning && !getStore().lint().some((issue) => issue.kind === "orphan" && issue.path === path)) {
-				throw new Error("Hourly cleanup can remove only concepts with no inbound links");
-			}
-			return answer(await getStore().remove(path));
-		},
+		async execute(_id, { path }) { return answer(await getStore().remove(path, cleaning)); },
 	});
 	pi.registerTool({
 		name: "lint_concepts",

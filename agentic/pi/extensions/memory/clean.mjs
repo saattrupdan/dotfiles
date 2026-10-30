@@ -20,8 +20,8 @@ const DEFAULT_AGENT_DIR = path.join(os.homedir(), ".pi", "agent");
 const PROMPT = "Clean every safely repairable lint issue in the OKF memory bundle. Call lint_concepts first. " +
 	"Fix missing or stale embeddings by reading the exact concept and updating it with the same body. " +
 	"Remove exactly repeated paragraphs only when all unique facts and context remain. " +
-	"Merge two concepts only when they are genuinely duplicates: preserve all unique facts and metadata " +
-	"in the owner, redirect every inbound link, then remove the duplicate after lint shows no inbound links. " +
+	"Merge concepts by removal only when their full Markdown and metadata are identical; " +
+	"the removal tool enforces this and requires no inbound links. " +
 	"Removal archives the original; record its archive path. Never delete a concept solely because it is orphaned. " +
 	"Fix broken links only when the correct target is unambiguous. Do not invent facts, and leave uncertain " +
 	"issues unchanged. Continue through all lint findings; do not stop after a few updates. " +
