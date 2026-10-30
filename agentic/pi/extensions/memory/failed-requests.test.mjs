@@ -57,6 +57,8 @@ test("hourly recovery retries bounded absent jobs, resolves present jobs and ret
 		const ambiguous = f.failed("ambiguous fact");
 		const definite = f.failed("definitely not stored", false);
 		const exhausted = f.failed("old fact", true, 3);
+		const oldFile = jobFile(f.root, "failed", exhausted);
+		atomicJob(oldFile, { ...readJob(f.root, "failed", exhausted), retriedAt: new Date().toISOString() });
 		const woken = [];
 		const review = async (job) => job.id === absent ? { status: "absent" } :
 			job.id === present ? { status: "present", evidence: ["/known.md"] } : { status: "uncertain" };
@@ -64,7 +66,7 @@ test("hourly recovery retries bounded absent jobs, resolves present jobs and ret
 			wakeJobs: (root) => woken.push(root), max: 4 });
 		assert.equal(first.retried, 2);
 		assert.equal(first.alreadyPresent, 1);
-		assert.equal(first.needsReview, 1);
+		assert.equal(first.deferred, 1);
 		assert.equal(first.errors, 0);
 		assert.equal(woken.length, 1);
 		assert.equal(counts(f.root).failed, 2);
@@ -76,6 +78,19 @@ test("hourly recovery retries bounded absent jobs, resolves present jobs and ret
 	} finally { f.cleanup(); }
 });
 
+test("a failed write past three attempts retries after capped backoff", async () => {
+	const f = fixture();
+	try {
+		const id = f.failed("definite no-write", false, 4);
+		const file = jobFile(f.root, "failed", id);
+		atomicJob(file, { ...readJob(f.root, "failed", id),
+			retriedAt: new Date(Date.now() - 25 * 60 * 60_000).toISOString() });
+		const result = await recoverFailed({ root: f.root, agentDir: f.agentDir, wakeJobs: () => {} });
+		assert.equal(result.retried, 1);
+		assert.ok(fs.existsSync(jobFile(f.root, "pending", id)));
+	} finally { f.cleanup(); }
+});
+
 test("bounded reviews reach the fourth failed job without cycling the first three", async () => {
 	const f = fixture();
 	try {
@@ -83,11 +98,27 @@ test("bounded reviews reach the fourth failed job without cycling the first thre
 		const reviewed = [];
 		const review = async (job) => { reviewed.push(job.id); return { status: "uncertain" }; };
 		const first = await recoverFailed({ root: f.root, agentDir: f.agentDir, review, wakeJobs: () => {}, max: 3 });
-		assert.equal(first.needsReview, 3);
+		assert.equal(first.deferred, 3);
 		assert.equal(first.remainingUnreviewed, 1);
 		const second = await recoverFailed({ root: f.root, agentDir: f.agentDir, review, wakeJobs: () => {}, max: 3 });
 		assert.equal(second.remainingUnreviewed, 0);
 		assert.ok(reviewed.includes(ids[3]));
+	} finally { f.cleanup(); }
+});
+
+test("a deferred write is reviewed again and resolved automatically", async () => {
+	const f = fixture();
+	try {
+		const id = f.failed("sometimes searchable");
+		let searches = 0;
+		const review = async () => ++searches === 1 ? { status: "uncertain" } :
+			{ status: "present", evidence: ["/known.md"] };
+		const first = await recoverFailed({ root: f.root, agentDir: f.agentDir, review });
+		assert.equal(first.deferred, 1);
+		const second = await recoverFailed({ root: f.root, agentDir: f.agentDir, review });
+		assert.equal(second.alreadyPresent, 1);
+		assert.equal(readJob(f.root, "done", id).resolution, "verified already present");
+		assert.equal(searches, 2);
 	} finally { f.cleanup(); }
 });
 

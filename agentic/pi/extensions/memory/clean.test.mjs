@@ -28,8 +28,9 @@ console.log(JSON.stringify({type:'tool_execution_end',toolName:'lint_concepts',t
 if(process.env.PI_MEMORY_CLEAN_TEST_MODE !== 'no-lint')emitLint('lint-1');
 if(['repair','no-final-lint','remaining'].includes(process.env.PI_MEMORY_CLEAN_TEST_MODE))console.log(JSON.stringify({type:'tool_execution_end',toolName:'update_concept',isError:false}));
 if(process.env.PI_MEMORY_CLEAN_TEST_MODE==='six-repairs')for(let n=0;n<6;n++)console.log(JSON.stringify({type:'tool_execution_end',toolName:'update_concept',isError:false}));
+if(['embeddings','embeddings-no-final-lint'].includes(process.env.PI_MEMORY_CLEAN_TEST_MODE))console.log(JSON.stringify({type:'tool_execution_end',toolName:'repair_embeddings',isError:false,result:{details:{attempted:2,pruned:['/old.md'],missingEmbeddings:[]}}}));
 if(process.env.PI_MEMORY_CLEAN_TEST_MODE === 'remove')console.log(JSON.stringify({type:'tool_execution_end',toolName:'remove_concept',isError:false,result:{details:{archive:'/requests/removed/example'}}}));
-if(['repair','remove','six-repairs','remaining'].includes(process.env.PI_MEMORY_CLEAN_TEST_MODE))emitLint('lint-2');
+if(['repair','remove','six-repairs','remaining','embeddings'].includes(process.env.PI_MEMORY_CLEAN_TEST_MODE))emitLint('lint-2');
 if(process.env.PI_MEMORY_CLEAN_TEST_MODE === 'fail')process.exit(1);
 console.log(JSON.stringify({type:'agent_end'}));
 }).catch((error)=>{console.error(error);process.exitCode=1});
@@ -64,6 +65,8 @@ test("failed and interrupted sessions log errors and retry from fresh lint", asy
 		assert.match((await runCleaning({ root: f.root, agentDir: f.agentDir, timeoutMs: 100 })).error, /timed out/);
 		process.env.PI_MEMORY_CLEAN_TEST_MODE = "no-final-lint";
 		assert.match((await runCleaning({ root: f.root, agentDir: f.agentDir, timeoutMs: 3_000 })).error, /finalLint=false/);
+		process.env.PI_MEMORY_CLEAN_TEST_MODE = "embeddings-no-final-lint";
+		assert.match((await runCleaning({ root: f.root, agentDir: f.agentDir, timeoutMs: 3_000 })).error, /finalLint=false/);
 		fs.writeFileSync(path.join(f.root, ".cleaning.lock"), "99999999");
 		process.env.PI_MEMORY_CLEAN_TEST_MODE = "repair";
 		assert.equal((await runCleaning({ root: f.root, agentDir: f.agentDir, timeoutMs: 3_000 })).status, "done");
@@ -80,6 +83,18 @@ test("more than five repairs complete when final lint has no actionable issues",
 		const result = await runCleaning({ root: f.root, agentDir: f.agentDir, timeoutMs: 3_000 });
 		assert.equal(result.status, "done");
 		assert.equal(result.repairs, 6);
+	} finally { if (old === undefined) delete process.env.PI_MEMORY_CLEAN_TEST_MODE;
+		else process.env.PI_MEMORY_CLEAN_TEST_MODE = old; f.cleanup(); }
+});
+
+test("bulk embedding repairs require a fresh lint and count their work", async () => {
+	const f = fixture();
+	const old = process.env.PI_MEMORY_CLEAN_TEST_MODE;
+	try {
+		process.env.PI_MEMORY_CLEAN_TEST_MODE = "embeddings";
+		const result = await runCleaning({ root: f.root, agentDir: f.agentDir, timeoutMs: 3_000 });
+		assert.equal(result.status, "done");
+		assert.equal(result.repairs, 3);
 	} finally { if (old === undefined) delete process.env.PI_MEMORY_CLEAN_TEST_MODE;
 		else process.env.PI_MEMORY_CLEAN_TEST_MODE = old; f.cleanup(); }
 });
@@ -169,16 +184,16 @@ test("new failed requests get review without running unchanged concept cleanup a
 		const file = jobFile(f.root, "failed", id);
 		atomicJob(file, { ...readJob(f.root, "failed", id), attempts: 1, unknownOutcome: true, failedAt: new Date().toISOString() });
 		let reviews = 0;
-		const recover = async () => { reviews++; return { errors: 0, needsReview: 1 }; };
+		const recover = async () => { reviews++; return { errors: 0, deferred: 1, remainingFailed: 1 }; };
 		const result = await runCleaning({ root: f.root, agentDir: f.agentDir, recover });
 		assert.equal(result.cleaningSkipped, true);
 		assert.equal(reviews, 1);
 		assert.equal(fs.readFileSync(calls, "utf8").trim().split("\n").length, 1);
-		assert.equal((await runCleaning({ root: f.root, agentDir: f.agentDir, recover })).skipped, true);
-		assert.equal(reviews, 1);
+		assert.equal((await runCleaning({ root: f.root, agentDir: f.agentDir, recover })).cleaningSkipped, true);
+		assert.equal(reviews, 2);
 		atomicJob(file, { ...readJob(f.root, "failed", id), attempts: 2, failedAt: new Date(Date.now() + 1000).toISOString() });
 		await runCleaning({ root: f.root, agentDir: f.agentDir, recover });
-		assert.equal(reviews, 2);
+		assert.equal(reviews, 3);
 	} finally { if (previous === undefined) delete process.env.PI_MEMORY_CLEAN_TEST_CALLS;
 		else process.env.PI_MEMORY_CLEAN_TEST_CALLS = previous; f.cleanup(); }
 });

@@ -46,10 +46,8 @@ export function failedJobKey(job) {
 		textHash: createHash("sha256").update(job.text).digest("hex") })]]);
 }
 
-export function failedWorkSignature(root, now = Date.now()) {
+export function failedWorkSignature(root) {
 	const entries = list(root, "failed").map((id) => readJob(root, "failed", id))
-		.filter((job) => (job.attempts ?? 0) < 3 &&
-			(!job.retriedAt || now - Date.parse(job.retriedAt) >= 60 * 60_000))
 		.map((job) => [job.id, failedJobKey(job)]);
 	return digest(entries);
 }

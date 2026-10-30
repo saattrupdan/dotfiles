@@ -619,6 +619,21 @@ export class MemoryStore {
 		return { attempted: documents.length, missingEmbeddings: await this.embedDocuments(documents, onProgress) };
 	}
 
+	/** Repair vectors unattended; never discard a vector while its Markdown still exists. */
+	async repairEmbeddings(): Promise<{ attempted: number; missingEmbeddings: string[]; pruned: string[] }> {
+		const rebuilt = await this.rebuildEmbeddings();
+		const pruned = await this.withWriteLock(async () => {
+			if (this.reconcile().some((issue) => issue.kind === "malformed_embedding")) {
+				throw new Error("Embedding snapshot is invalid; repair it before pruning vectors");
+			}
+			const absent = this.snapshotRows.map((row) => row.path)
+				.filter((conceptPath) => !fs.existsSync(this.resolve(conceptPath)));
+			if (absent.length) this.publishSnapshot([], absent);
+			return absent;
+		});
+		return { ...rebuilt, pruned };
+	}
+
 	create(input: ConceptInput): Promise<{ paths: string[]; missingEmbeddings: string[] }> { return this.write(input, true); }
 	update(input: ConceptUpdate): Promise<{ paths: string[]; missingEmbeddings: string[]; archive?: string }> {
 		return this.write(input, false);

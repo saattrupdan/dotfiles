@@ -95,11 +95,15 @@ export async function reviewRequest(job, agentDir, root, timeoutMs = 90_000, sig
 	} finally { fs.rmSync(file, { force: true }); }
 }
 
-/** Retry only verified-absent or definite no-write jobs; keep all ambiguous requests. */
+function retryDelay(job) {
+	return Math.min(24, 2 ** Math.max(0, (job.attempts ?? 1) - 1)) * 60 * 60_000;
+}
+
+/** Retry only verified-absent or definite no-write jobs; reassess ambiguous requests later. */
 export async function recoverFailed({ root, agentDir = path.join(os.homedir(), ".pi", "agent"),
 	review = reviewRequest, wakeJobs = wake, max = 3, onlyDefinite = false, signal } = {}) {
 	const queue = queueRoot(root);
-	const result = { retried: 0, alreadyPresent: 0, needsReview: 0, errors: 0, skipped: 0 };
+	const result = { retried: 0, alreadyPresent: 0, deferred: 0, errors: 0, skipped: 0 };
 	if (fs.existsSync(path.join(queue, "paused"))) return { ...result, paused: true };
 	const jobs = list(root, "failed").map((id) => readJob(root, "failed", id))
 		.filter((job) => !onlyDefinite || !job.unknownOutcome)
@@ -108,8 +112,9 @@ export async function recoverFailed({ root, agentDir = path.join(os.homedir(), "
 	for (const job of jobs) {
 		if (signal?.aborted) { result.interrupted = true; result.skipped++; break; }
 		if (fs.existsSync(path.join(queue, "paused"))) { result.paused = true; result.skipped++; break; }
-		if (result.retried + result.alreadyPresent + result.needsReview + result.errors >= max) break;
-		if ((job.attempts ?? 0) >= 3 || (job.retriedAt && Date.now() - Date.parse(job.retriedAt) < 60 * 60_000)) {
+		if (result.retried + result.alreadyPresent + result.deferred + result.errors >= max) break;
+		const delay = retryDelay(job);
+		if (job.retriedAt && Date.now() - Date.parse(job.retriedAt) < delay) {
 			result.skipped++; continue;
 		}
 		try {
@@ -142,18 +147,19 @@ export async function recoverFailed({ root, agentDir = path.join(os.homedir(), "
 					latest.reviewedInputKey = failedJobKey(latest);
 					atomicJob(jobFile(root, "failed", job.id), latest);
 				});
-				result.needsReview++;
-				log(root, "needs-review", job.id, "read-only search could not establish whether stored");
+				result.deferred++;
+				log(root, "auto-deferred", job.id, "read-only search inconclusive; hourly cleaner will reassess");
 			}
 		} catch (error) {
 			result.errors++;
 			log(root, "review-error", job.id, error.message);
 		}
 	}
-	result.remainingUnreviewed = list(root, "failed").map((id) => readJob(root, "failed", id))
-		.filter((job) => (job.attempts ?? 0) < 3 &&
-			(!job.retriedAt || Date.now() - Date.parse(job.retriedAt) >= 60 * 60_000) &&
-			job.reviewedInputKey !== failedJobKey(job)).length;
+	const remaining = list(root, "failed").map((id) => readJob(root, "failed", id));
+	result.remainingFailed = remaining.length;
+	result.remainingUnreviewed = remaining.filter((job) =>
+		(!job.retriedAt || Date.now() - Date.parse(job.retriedAt) >= retryDelay(job)) &&
+		job.reviewedInputKey !== failedJobKey(job)).length;
 	if (result.retried) wakeJobs(root, agentDir);
 	return result;
 }

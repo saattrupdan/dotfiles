@@ -7,4 +7,4 @@ export function failedJobKey(job: {
 	unknownOutcome?: boolean;
 	retriedAt?: string;
 }): string;
-export function failedWorkSignature(root: string, now?: number): string;
+export function failedWorkSignature(root: string): string;

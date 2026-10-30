@@ -72,6 +72,14 @@ export default function (pi: ExtensionAPI, getStore: () => MemoryStore = memory)
 		parameters: Type.Object({ path: Type.String() }),
 		async execute(_id, { path }) { return answer(await getStore().remove(path, cleaning)); },
 	});
+	if (cleaning) pi.registerTool({
+		name: "repair_embeddings",
+		label: "repair_embeddings",
+		description: "Restore missing or stale concept vectors and prune vectors only when their Markdown is truly absent. " +
+			"Preserves concept text, including malformed files; reports embedding failures for automatic retry.",
+		parameters: Type.Object({}),
+		async execute() { return answer(await getStore().repairEmbeddings()); },
+	});
 	pi.registerTool({
 		name: "lint_concepts",
 		label: "lint_concepts",

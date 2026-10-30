@@ -18,14 +18,16 @@ import { failedWorkSignature, fingerprintBundle } from "./fingerprint.mjs";
 const DEFAULT_ROOT = path.join(os.homedir(), "memory");
 const DEFAULT_AGENT_DIR = path.join(os.homedir(), ".pi", "agent");
 const PROMPT = "Clean every safely repairable lint issue in the OKF memory bundle. Call lint_concepts first. " +
-	"Fix missing or stale embeddings by reading the exact concept and updating it with the same body. " +
+	"Call repair_embeddings to restore missing or stale vectors and remove truly orphaned vectors without changing Markdown. " +
 	"Remove exactly repeated paragraphs only when all unique facts and context remain. " +
 	"Merge concepts by removal only when their full Markdown and metadata are identical; " +
 	"the removal tool enforces this and requires no inbound links. " +
 	"Removal archives the original; record its archive path. Never delete a concept solely because it is orphaned. " +
-	"Fix broken links only when the correct target is unambiguous. Do not invent facts, and leave uncertain " +
-	"issues unchanged. Continue through all lint findings; do not stop after a few updates. " +
-	"Lint again after all repairs. If any non-orphan issues remain, identify why they cannot safely be fixed. " +
+	"For each broken link, search for its intended concept and repair the target only with clear evidence. " +
+	"If no target can be established, remove only the Markdown link markup, keeping its visible label and surrounding text. " +
+	"Do not invent facts or delete unique content. Review every issue yourself; no human will triage leftovers. " +
+	"Continue through all lint findings; do not stop after a few updates. Lint again after all repairs. " +
+	"If a non-orphan issue remains because a safe repair is impossible, report its kind and cause for automatic retry. " +
 	"Report only issue counts, repair counts and archive paths.";
 
 function append(root, event, detail = "") {
@@ -105,7 +107,7 @@ export async function runCleaning({ root = DEFAULT_ROOT, agentDir = DEFAULT_AGEN
 			await reviewQueue();
 			const done = { ...previous, startedAt, completedAt: new Date().toISOString(), status: "done", requests,
 				cleaningSkipped: true,
-				failedWorkSignature: requests.errors || requests.paused || requests.interrupted || requests.remainingUnreviewed
+				failedWorkSignature: requests.errors || requests.paused || requests.interrupted || requests.remainingFailed
 					? null : failedWorkSignature(root) };
 			saveState(root, done);
 			return done;
@@ -146,6 +148,10 @@ export async function runCleaning({ root = DEFAULT_ROOT, agentDir = DEFAULT_AGEN
 						const inspected = event.result?.details?.fingerprint;
 						lastLintFingerprint = typeof inspected === "string" && inspected === fingerprint(root)
 							? inspected : undefined;
+						} else if (event.toolName === "repair_embeddings") {
+							lastMutation = ++sequence;
+							repairs += event.result?.details?.attempted ?? 0;
+							repairs += event.result?.details?.pruned?.length ?? 0;
 						} else if (event.toolName === "update_concept") {
 							lastMutation = ++sequence;
 							repairs++;
@@ -182,7 +188,7 @@ export async function runCleaning({ root = DEFAULT_ROOT, agentDir = DEFAULT_AGEN
 		const { lastLintFingerprint, ...report } = result;
 		const done = { startedAt, completedAt: new Date().toISOString(), status: "done", requests, ...report,
 			bundleFingerprint: lastLintFingerprint,
-			failedWorkSignature: requests?.errors || requests?.paused || requests?.interrupted || requests?.remainingUnreviewed
+			failedWorkSignature: requests?.errors || requests?.paused || requests?.interrupted || requests?.remainingFailed
 				? null : failedWorkSignature(root) };
 		saveState(root, done);
 		append(root, "done", `lint=${done.lintRuns} updates=${done.repairs} removals=${done.removals} ` +

@@ -61,10 +61,9 @@ test("failed-work signature ignores review bookkeeping but notices new failure a
 		assert.notEqual(failedWorkSignature(f.root), failed);
 		const retriedAt = Date.now();
 		atomicJob(file, { ...job, attempts: 2, retriedAt: new Date(retriedAt).toISOString() });
-		assert.equal(failedWorkSignature(f.root, retriedAt), empty);
-		assert.notEqual(failedWorkSignature(f.root, retriedAt + 60 * 60_000), empty);
+		assert.notEqual(failedWorkSignature(f.root), empty);
 		atomicJob(file, { ...job, attempts: 3 });
-		assert.equal(failedWorkSignature(f.root), empty);
+		assert.notEqual(failedWorkSignature(f.root), empty);
 	} finally { f.cleanup(); }
 });
 

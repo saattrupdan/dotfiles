@@ -103,8 +103,8 @@ test("rebuilds missing vectors without rewriting restored concepts", async () =>
 		const original = fs.readFileSync(path.join(f.root, "record.md"), "utf8");
 		const recovered = f.make(vector);
 		try {
-			assert.deepEqual(await recovered.rebuildEmbeddings(), { attempted: 1, missingEmbeddings: [] });
-			assert.deepEqual(await recovered.rebuildEmbeddings(), { attempted: 0, missingEmbeddings: [] });
+			assert.deepEqual(await recovered.repairEmbeddings(), { attempted: 1, missingEmbeddings: [], pruned: [] });
+			assert.deepEqual(await recovered.repairEmbeddings(), { attempted: 0, missingEmbeddings: [], pruned: [] });
 			assert.equal(fs.readFileSync(path.join(f.root, "record.md"), "utf8"), original);
 			assert.equal(snapshotRows(f.root).length, 1);
 		} finally { recovered.close(); }
@@ -205,6 +205,14 @@ test("rejects escaping paths and conflicting generated children, reports orphan 
 		await assert.rejects(f.store.create({ path: "/escape/out.md", type: "Note", body: "bad" }), /Symlinks are not allowed/);
 		fs.unlinkSync(path.join(f.root, "already-part-001.md"));
 		assert.ok(f.store.lint().some((issue) => issue.kind === "orphan_embedding" && issue.path === "/already-part-001.md"));
+		fs.writeFileSync(path.join(f.root, "already-part-001.md"), "invalid frontmatter");
+		assert.deepEqual(await f.store.repairEmbeddings(), { attempted: 0, missingEmbeddings: [], pruned: [] });
+		assert.equal(fs.readFileSync(path.join(f.root, "already-part-001.md"), "utf8"), "invalid frontmatter");
+		fs.unlinkSync(path.join(f.root, "already-part-001.md"));
+		assert.deepEqual(await f.store.repairEmbeddings(), {
+			attempted: 0, missingEmbeddings: [], pruned: ["/already-part-001.md"],
+		});
+		assert.equal(f.store.lint().some((issue) => issue.kind === "orphan_embedding"), false);
 	} finally { f.cleanup(); }
 });
 
