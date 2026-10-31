@@ -188,8 +188,9 @@ async function verifyKnownLinks(manifest: LinkedPaths): Promise<void> {
 	}
 }
 
-async function removeKnownLinks(manifest: LinkedPaths): Promise<void> {
-	await verifyKnownLinks(manifest);
+async function removeKnownLinks(manifest: LinkedPaths, preserveReplaced = false): Promise<string[]> {
+	if (!preserveReplaced) await verifyKnownLinks(manifest);
+	const replaced: string[] = [];
 	for (const relativePath of manifest.linkedIgnoredPaths ?? []) {
 		const destination = path.join(manifest.worktreeRoot, relativePath);
 		const stat = await fs.promises.lstat(destination).catch((error: NodeJS.ErrnoException) => {
@@ -198,8 +199,12 @@ async function removeKnownLinks(manifest: LinkedPaths): Promise<void> {
 		});
 		if (stat?.isSymbolicLink() && (await fs.promises.readlink(destination)) === path.join(manifest.repoRoot, relativePath)) {
 			await fs.promises.unlink(destination);
+		} else if (preserveReplaced && stat) {
+			// Keep ownership recorded so cleanup still refuses to discard session files.
+			replaced.push(relativePath);
 		}
 	}
+	return replaced;
 }
 
 async function removeDisposableOutputs(manifest: SessionManifest): Promise<void> {
@@ -314,9 +319,9 @@ async function linkIgnoredPaths(repoRoot: string, worktreeRoot: string): Promise
 }
 
 export async function hydrateIgnoredPaths(manifest: SessionManifest): Promise<void> {
-	await removeKnownLinks(manifest);
+	const replaced = await removeKnownLinks(manifest, true);
 	await removeEnvFiles(manifest.worktreeRoot, manifest.copiedEnvFiles ?? []);
-	manifest.linkedIgnoredPaths = await linkIgnoredPaths(manifest.repoRoot, manifest.worktreeRoot);
+	manifest.linkedIgnoredPaths = [...replaced, ...await linkIgnoredPaths(manifest.repoRoot, manifest.worktreeRoot)];
 	manifest.copiedEnvFiles = [];
 	await saveManifest(manifest);
 }

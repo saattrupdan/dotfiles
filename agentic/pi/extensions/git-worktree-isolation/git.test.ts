@@ -515,6 +515,33 @@ test("moves a replaced ignored link without deleting session data", async () => 
 	assert.equal(fs.readFileSync(path.join(plan.childCwd, "assets/important"), "utf8"), "keep\n");
 });
 
+test("resumes with a locally replaced ignored directory without allowing cleanup", async () => {
+	const { root, agentDir } = createRepo();
+	fs.writeFileSync(path.join(root, ".gitignore"), "apps/desktop/out/\nassets/\n");
+	command(root, ["add", ".gitignore"]);
+	command(root, ["commit", "-m", "chore: ignore outputs"]);
+	fs.mkdirSync(path.join(root, "apps/desktop/out"), { recursive: true });
+	fs.writeFileSync(path.join(root, "apps/desktop/out/original"), "root\n");
+	fs.mkdirSync(path.join(root, "assets"));
+	fs.writeFileSync(path.join(root, "assets/data"), "shared\n");
+	const plan = await createLaunchPlan(root, agentDir);
+	const localOutput = path.join(plan.childCwd, "apps/desktop/out");
+	fs.unlinkSync(localOutput);
+	fs.mkdirSync(localOutput);
+	fs.writeFileSync(path.join(localOutput, "local"), "session\n");
+
+	await hydrateIgnoredPaths(plan.manifest);
+	await hydrateIgnoredPaths(plan.manifest);
+	assert.equal(fs.readFileSync(path.join(localOutput, "local"), "utf8"), "session\n");
+	assert.equal(fs.readFileSync(path.join(root, "apps/desktop/out/original"), "utf8"), "root\n");
+	assert.equal(fs.readlinkSync(path.join(plan.childCwd, "assets")), path.join(fs.realpathSync(root), "assets"));
+	assert.ok(plan.manifest.linkedIgnoredPaths?.includes("apps/desktop/out"));
+	const saved = await findManifestForCwd(plan.childCwd);
+	assert.ok(saved?.linkedIgnoredPaths?.includes("apps/desktop/out"));
+	await assert.rejects(releaseManagedWorktree(saved!), /Linked ignored path apps\/desktop\/out was replaced/);
+	assert.equal(fs.readFileSync(path.join(localOutput, "local"), "utf8"), "session\n");
+});
+
 test("does not treat a tracked directory on a new branch as a replaced ignored link", async () => {
 	const { root, agentDir } = createRepo();
 	fs.writeFileSync(path.join(root, ".gitignore"), "data/experiments/\n");
