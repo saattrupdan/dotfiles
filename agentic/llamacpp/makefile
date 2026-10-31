@@ -3,7 +3,7 @@
 WHISPER_COREML_DIR := ./.cache/whisper.cpp-coreml
 WHISPER_COREML_SERVER := $(WHISPER_COREML_DIR)/build/bin/whisper-server
 
-.PHONY: whisper whisper-setup
+.PHONY: whisper whisper-setup whisper-tiny
 
 llamacpp:
 	@llama-server \
@@ -32,6 +32,13 @@ whisper-setup:
 	@cmake --build "$(WHISPER_COREML_DIR)/build" --target whisper-server -j 2
 
 whisper:
+	@command -v whisper-server >/dev/null && test -f ggml-large-v3-turbo.bin || { \
+		echo "Whisper server or large-v3-turbo model missing" >&2; exit 1; \
+	}
+	@echo "Starting whisper-server on port 8081 with large-v3-turbo + Metal..."
+	@whisper-server -m ./ggml-large-v3-turbo.bin --port 8081 -l da -t 2 -bs 1 -bo 1 -nf
+
+whisper-tiny:
 	@test -x "$(WHISPER_COREML_SERVER)" && test -f ggml-tiny.bin && \
 		test -d ggml-tiny-encoder.mlmodelc || { \
 		echo "Core ML tiny model missing; run make whisper-setup first" >&2; exit 1; \
