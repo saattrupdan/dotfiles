@@ -1,6 +1,8 @@
 ---
 name: python
-description: Conventions for Python code style, organisation, quality checks, and documentation. Use when building or reviewing Python projects.
+description:
+  Conventions for Python code style, organisation, quality checks, and documentation.
+  Use when building or reviewing Python projects.
 tagline: Python code style, organisation, quality checks
 last-updated: 2026-05-09
 autoload:
@@ -65,8 +67,8 @@ autoload:
     adding ignore rules in the `pyproject.toml` file. You have to fix them.
   - If you have linting mistakes, then they can often be fixed automatically by running
     `make check`, since that runs the checks with the `--fix` flag.
-- You can usually run tests with `make test`. If this doesn't work, you can use `uv run
-  pytest` instead. Only run tests if the `tests/` directory exists.
+- You can usually run tests with `make test`. If this doesn't work, you can use
+  `uv run pytest` instead. Only run tests if the `tests/` directory exists.
 
 #### General Code Conventions
 
@@ -112,9 +114,9 @@ autoload:
 - For `Iterable`, `Generator` and `Callable`, use these from the `collections.abc`
   module, not from `typing`. Import this as `import collections.abc as c` and refer to
   the types as `c.Iterable`, `c.Generator` and `c.Callable`, etc.
-- Do not use the `Any` type. You can often use `t.TypeVar` instead, but always give
-  such type variables meaningful names, and not just single letter names like `T`. If
-  it's a dictionary, you can use `t.TypedDict` instead.
+- Do not use the `Any` type. You can often use `t.TypeVar` instead, but always give such
+  type variables meaningful names, and not just single letter names like `T`. If it's a
+  dictionary, you can use `t.TypedDict` instead.
 - Use the `None` return type for functions that do not return anything. Never use the
   `NoReturn` type.
 
@@ -138,7 +140,11 @@ autoload:
 - Avoid tutorial-style `#` comments that explain what code does.
 - Comments should explain **why**, not **what** (the code itself should be
   self-explanatory)
-- Use Google-style docstrings for all public functions, classes, and modules.
+- Use Google-style docstrings for all functions and methods, including private ones, and
+  for all public classes and modules.
+- Include an `Args` section when a function or method has arguments (excluding `self`
+  and `cls`), and a `Returns` section when it returns a non-`None` value. These
+  requirements also apply to private functions and methods.
 - Always include a newline after the name of each argument and exception in the
   docstring.
 - Always prefer ascii characters over unicode (e.g., arrows as -> over →)
@@ -166,12 +172,11 @@ autoload:
       return batch_process(items=items)
   ```
 
-- You don't have to include the "Returns" section if the function doesn't return
-  anything - example:
+- Omit the `Returns` section when the function returns `None` - example:
 
   ```python
   def process_items(items: list[Item], log: bool) -> None:
-      """Process items and return results.
+      """Process items.
 
       Args:
           items:
