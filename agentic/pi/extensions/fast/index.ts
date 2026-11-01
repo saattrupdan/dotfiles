@@ -45,6 +45,7 @@ export default function (pi: ExtensionAPI) {
 	});
 	pi.on("before_provider_request", (event, ctx) => {
 		if (!enabled || !isCodex(ctx) || !event.payload || typeof event.payload !== "object" || Array.isArray(event.payload)) return;
-		return { ...event.payload, service_tier: "fast" };
+		// The ChatGPT Codex endpoint accepts the original Fast mode wire value.
+		return { ...event.payload, service_tier: "priority" };
 	});
 }

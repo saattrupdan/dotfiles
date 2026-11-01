@@ -40,7 +40,7 @@ test("/fast toggles request tier and footer on Codex", () => {
 	const payload = { model: "gpt-6-sol", input: [] };
 	app.command();
 	assert.equal(app.statuses.at(-1), "⚡️");
-	assert.deepEqual(app.event("before_provider_request", { payload }), { ...payload, service_tier: "fast" });
+	assert.deepEqual(app.event("before_provider_request", { payload }), { ...payload, service_tier: "priority" });
 	assert.deepEqual(payload, { model: "gpt-6-sol", input: [] });
 	app.command();
 	assert.equal(app.statuses.at(-1), undefined);
