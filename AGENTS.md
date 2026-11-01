@@ -9,6 +9,7 @@ deployed config land back in this repo).
 | Path | Purpose |
 |------|---------|
 | `nvim/` | Neovim config, built on LazyVim. `init.lua` bootstraps `lua/config/` (options, keymaps, autocmds, lazy.nvim setup) and `lua/plugins/` (one file per plugin). |
+| `iterm2/` | Pi tab sorter and iTerm2 AutoLaunch installer. |
 | `agentic/` | Configs for AI coding tools and LLM runtimes. |
 | `agentic/pi/` | The `pi` agent harness — see its own `agentic/pi/AGENTS.md`. Holds `agents/` (subagent prompts), `extensions/` (TypeScript extensions), `prompts/`, `bin/`, and JSON/Markdown settings. |
 | `agentic/skills/` | Skill definitions, one folder per skill (web-service helpers, language conventions, tools). This folder is the ground truth; `sync.sh` symlinks every skill into `~/.pi/agent/skills/`. |
@@ -74,6 +75,15 @@ missing; run `npm install --prefix agentic/pi/extensions` before relinking.
 
 ## Gotchas
 
+- **iTerm2 sorting is a separate live script.** `iterm2/sort_pi_tabs.py` reads
+  `user.pi_agent_sort_status` from the host terminal session, not a Pi pane.
+  `~/gitsky/pi-agent.nvim` publishes that variable only while plugin-managed
+  Pi panes exist; align its installed lazy.nvim checkout and `nvim/lazy-lock.json`
+  when updating the producer. Run `uv run --directory iterm2 pytest -q`,
+  `uv run --directory iterm2 ruff check .`, and
+  `uv run --directory iterm2 ty check .` before installing the AutoLaunch link.
+  The sorter requires iTerm2's local Python API; use `sh iterm2/install.sh --remove`
+  to remove future AutoLaunch, then stop the running script in Scripts > Manage.
 - **These files are symlinked into their real locations** (e.g. `~/.config/nvim`).
   Editing here edits the live config, and vice versa.
 - **Skills are discovered through symlinks in `~/.pi/agent/skills/`**, not from this

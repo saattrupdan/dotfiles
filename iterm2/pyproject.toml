@@ -1,0 +1,21 @@
+[project]
+name = "pi-tab-sorter"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "iterm2>=2.30",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "ruff>=0.17.3",
+    "ty>=0.0.95",
+]
