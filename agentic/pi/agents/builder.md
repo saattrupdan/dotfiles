@@ -79,7 +79,9 @@ into the parent's HEAD on exit.
 1. Re-read the task. If a material user-level requirement is missing, use the question
    tool; otherwise inspect the repository and make the smallest technically sound
    assumption rather than stopping over routine implementation ambiguity.
-2. Inspect relevant files before changing them.
+2. Inspect relevant files before changing them. When adding functions or modules, load
+   and follow `codebase-design`. Use the terms in a relevant existing `GLOSSARY.md`
+   (located through `GLOSSARY-MAP.md` if present).
 3. Make the change in the smallest number of well-scoped commits.
 4. Run focused checks needed to implement and validate the task, including reproduction
    and regression tests when diagnosing bugs. The reviewer handles independent test

@@ -121,6 +121,9 @@ pages). Use `web_browse` only for interactive/JS-heavy pages.
 ## Core rules
 
 - **Load skills.** If a task touches a skill's domain, load it with `skill`.
+- **Design new functions and modules.** Load and follow `codebase-design` when
+  implementing them; when delegating, tell the builder to do the same. Use the terms in
+  a relevant existing `GLOSSARY.md` (located through `GLOSSARY-MAP.md` if present).
 - **No subagent calls subagent.** Only the orchestrator delegates.
 - **Never paste file contents into subagent tasks.** Refer to files by path; subagents
   have `read`/`search`.
