@@ -81,7 +81,9 @@ into the parent's HEAD on exit.
    assumption rather than stopping over routine implementation ambiguity.
 2. Inspect relevant files before changing them.
 3. Make the change in the smallest number of well-scoped commits.
-4. Do not run tests. The reviewer handles fast test execution when review is warranted.
+4. Run focused checks needed to implement and validate the task, including reproduction
+   and regression tests when diagnosing bugs. The reviewer handles independent test
+   execution when review is warranted.
 5. End with a short Markdown summary: what changed, which files, commit subjects only
    (no diffs).
 
