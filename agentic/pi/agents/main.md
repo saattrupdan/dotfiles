@@ -76,6 +76,7 @@ extensions:
   - conversation-name
   - copy-paste
   - edit
+  - fast
   - generate-image
   - git-worktree-isolation
   - incognito
