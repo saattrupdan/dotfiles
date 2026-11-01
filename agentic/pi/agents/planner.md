@@ -8,7 +8,8 @@ tools:
   - read
   - skill
   - question
-skills: []
+skills:
+  - codebase-design
 worktree: false
 refuse:
   - pattern: "```[\\s\\S]{1500,}```"

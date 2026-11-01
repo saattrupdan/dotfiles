@@ -14,6 +14,9 @@ tools:
   - question
 skills:
   - commit
+  - codebase-design
+  - diagnosing-bugs
+  - domain-modeling
   - python
   - fastapi
   - vue

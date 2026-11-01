@@ -13,6 +13,7 @@ tools:
   - question
 skills:
   - commit
+  - codebase-design
   - python
   - fastapi
   - vue

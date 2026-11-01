@@ -28,11 +28,14 @@ skills:
   - bolig-dk
   - chrome-extension
   - citizen-dk
+  - codebase-design
   - commit
   - create-a-skill
   - create-new-project
+  - diagnosing-bugs
   - discord-context
   - dmi-dk
+  - domain-modeling
   - docx
   - electron
   - fastapi
