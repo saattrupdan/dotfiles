@@ -270,7 +270,7 @@ test("registers an opt-in branch tool without isolating ordinary sessions", asyn
 	}
 });
 
-test("branch continuation keeps a visible loader while the child works", async () => {
+test("branch continuation restores Pi's existing working indicator", async () => {
 	const { root, agentDir } = createRepo();
 	const plan = await createLaunchPlan(root, agentDir, "feat/visible-continuation");
 	const sessionFile = path.join(agentDir, "continuation.jsonl");
@@ -280,8 +280,11 @@ test("branch continuation keeps a visible loader while the child works", async (
 	process.env.PI_WORKTREE_SESSION_MANIFEST = plan.manifest.manifestPath;
 	process.env.PI_WORKTREE_BRANCH_CONTINUATION = "1";
 	const handlers = new Map<string, Array<(...args: unknown[]) => unknown>>();
-	const widgets: Array<{ key: string; visible: boolean }> = [];
+	const widgets: string[] = [];
 	let sent = false;
+	let streaming = false;
+	let builtinSpinner = false;
+	let ctx: ExtensionContext;
 	try {
 		await registerIsolation({
 			registerFlag: () => undefined,
@@ -295,21 +298,26 @@ test("branch continuation keeps a visible loader while the child works", async (
 			},
 			sendMessage: () => {
 				sent = true;
-				assert.equal(widgets.at(-1)?.visible, true, "the continuation must have a spinner before starting work");
+				streaming = true;
+				for (const start of handlers.get("agent_start") ?? []) start({}, ctx);
+				assert.equal(builtinSpinner, true, "Pi's original working indicator must be visible during the run");
+				assert.deepEqual(widgets, [], "the handoff must not add a separate spinner widget");
 			},
 		} as unknown as ExtensionAPI);
-		const ctx = {
+		ctx = {
 			mode: "tui", sessionManager: { getSessionFile: () => sessionFile },
 			ui: {
 				setStatus: () => undefined,
-				setWidget: (key: string, content: unknown) => { widgets.push({ key, visible: content !== undefined }); },
-				setWorkingVisible: () => undefined,
+				setWidget: (key: string) => { widgets.push(key); },
+				setWorkingVisible: (visible: boolean) => { builtinSpinner = visible && streaming; },
 			},
 		} as unknown as ExtensionContext;
 		for (const start of handlers.get("session_start") ?? []) await start({ reason: "startup" }, ctx);
 		assert.equal(sent, true);
+		streaming = false;
 		for (const settled of handlers.get("agent_settled") ?? []) await settled({}, ctx);
-		assert.equal(widgets.at(-1)?.visible, false, "the spinner must clear when the child settles");
+		assert.equal(builtinSpinner, false, "a fast child must not leave the built-in indicator running");
+		assert.deepEqual(widgets, []);
 		for (const shutdown of handlers.get("session_shutdown") ?? []) await shutdown({ reason: "reload" }, ctx);
 	} finally {
 		if (previousManifest === undefined) delete process.env.PI_WORKTREE_SESSION_MANIFEST;
