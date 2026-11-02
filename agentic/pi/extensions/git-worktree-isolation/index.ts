@@ -44,6 +44,7 @@ const MAX_REPAIR_TURNS = 6;
 const CHILD_READY_MESSAGE = "pi-worktree-session-ready";
 const PARENT_YIELDED_MESSAGE = "pi-worktree-parent-yielded";
 const CLEANUP_WIDGET = "git-worktree-isolation:cleanup-progress";
+const BRANCH_CONTINUATION_WIDGET = "git-worktree-isolation:branch-continuation";
 
 export async function signalChildReady(): Promise<void> {
 	if (!process.send) return;
@@ -336,6 +337,21 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 		// The statusline shows the checked-out Git branch instead of a worktree ID.
 		ctx.ui.setStatus("git-worktree-isolation", undefined);
 		if (continueBranch) {
+			if (ctx.mode === "tui") {
+				// session_start runs before the TUI subscribes to agent events. A
+				// continuation started here can miss turn_start entirely, leaving Pi's
+				// regular working indicator absent for the whole run.
+				ctx.ui.setWorkingVisible(false);
+				ctx.ui.setWidget(BRANCH_CONTINUATION_WIDGET, (tui, theme) => {
+					const loader = new Loader(tui, (text) => theme.fg("accent", text), (text) => text, "Working on new branch...");
+					return Object.assign(loader, { dispose: () => loader.stop() });
+				}, { placement: "belowEditor" });
+				const unsubscribe = pi.on("agent_settled", (_event, settledCtx) => {
+					settledCtx.ui.setWidget(BRANCH_CONTINUATION_WIDGET, undefined);
+					settledCtx.ui.setWorkingVisible(true);
+					unsubscribe();
+				});
+			}
 			await signalChildReady();
 			// Print mode returns as soon as session_start finishes unless we await the
 			// extension-triggered turn. Register before starting it to avoid a race.

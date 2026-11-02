@@ -270,6 +270,55 @@ test("registers an opt-in branch tool without isolating ordinary sessions", asyn
 	}
 });
 
+test("branch continuation keeps a visible loader while the child works", async () => {
+	const { root, agentDir } = createRepo();
+	const plan = await createLaunchPlan(root, agentDir, "feat/visible-continuation");
+	const sessionFile = path.join(agentDir, "continuation.jsonl");
+	fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", cwd: plan.childCwd })}\n`);
+	const previousManifest = process.env.PI_WORKTREE_SESSION_MANIFEST;
+	const previousContinuation = process.env.PI_WORKTREE_BRANCH_CONTINUATION;
+	process.env.PI_WORKTREE_SESSION_MANIFEST = plan.manifest.manifestPath;
+	process.env.PI_WORKTREE_BRANCH_CONTINUATION = "1";
+	const handlers = new Map<string, Array<(...args: unknown[]) => unknown>>();
+	const widgets: Array<{ key: string; visible: boolean }> = [];
+	let sent = false;
+	try {
+		await registerIsolation({
+			registerFlag: () => undefined,
+			registerCommand: () => undefined,
+			getFlag: () => false,
+			exec: async () => ({ code: 0, stdout: `${plan.childCwd}\n` }),
+			registerTool: () => undefined,
+			on: (name: string, handler: (...args: unknown[]) => unknown) => {
+				handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+				return () => undefined;
+			},
+			sendMessage: () => {
+				sent = true;
+				assert.equal(widgets.at(-1)?.visible, true, "the continuation must have a spinner before starting work");
+			},
+		} as unknown as ExtensionAPI);
+		const ctx = {
+			mode: "tui", sessionManager: { getSessionFile: () => sessionFile },
+			ui: {
+				setStatus: () => undefined,
+				setWidget: (key: string, content: unknown) => { widgets.push({ key, visible: content !== undefined }); },
+				setWorkingVisible: () => undefined,
+			},
+		} as unknown as ExtensionContext;
+		for (const start of handlers.get("session_start") ?? []) await start({ reason: "startup" }, ctx);
+		assert.equal(sent, true);
+		for (const settled of handlers.get("agent_settled") ?? []) await settled({}, ctx);
+		assert.equal(widgets.at(-1)?.visible, false, "the spinner must clear when the child settles");
+		for (const shutdown of handlers.get("session_shutdown") ?? []) await shutdown({ reason: "reload" }, ctx);
+	} finally {
+		if (previousManifest === undefined) delete process.env.PI_WORKTREE_SESSION_MANIFEST;
+		else process.env.PI_WORKTREE_SESSION_MANIFEST = previousManifest;
+		if (previousContinuation === undefined) delete process.env.PI_WORKTREE_BRANCH_CONTINUATION;
+		else process.env.PI_WORKTREE_BRANCH_CONTINUATION = previousContinuation;
+	}
+});
+
 test("cleanup relaunch requests one final completion message on main", async () => {
 	const { root } = createRepo();
 	const previous = process.env.PI_WORKTREE_CLEANUP_CONTINUATION;

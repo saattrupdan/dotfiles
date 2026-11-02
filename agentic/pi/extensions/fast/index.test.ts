@@ -7,7 +7,9 @@ type Model = ExtensionContext["model"];
 const codex = { provider: "openai-codex", api: "openai-codex-responses", id: "gpt-6-sol" } as Model;
 const other = { provider: "anthropic", api: "anthropic-messages", id: "claude" } as Model;
 
-function setup(model: Model = codex) {
+type FastEntry = { type: "custom"; customType: string; data: { enabled: boolean } };
+
+function setup(model: Model = codex, entries: FastEntry[] = []) {
 	const statuses: (string | undefined)[] = [];
 	const notices: { text: string; level: string }[] = [];
 	const listeners = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>();
@@ -15,6 +17,7 @@ function setup(model: Model = codex) {
 	let activeModel = model;
 	const ctx = {
 		get model() { return activeModel; },
+		sessionManager: { getBranch: () => entries },
 		ui: {
 			setStatus: (key: string, value: string | undefined) => { assert.equal(key, "fast"); statuses.push(value); },
 			notify: (text: string, level: string) => { notices.push({ text, level }); },
@@ -26,9 +29,10 @@ function setup(model: Model = codex) {
 			command = options.handler;
 		},
 		on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) => { listeners.set(name, handler); },
+		appendEntry: (customType: string, data: { enabled: boolean }) => { entries.push({ type: "custom", customType, data }); },
 	} as unknown as ExtensionAPI);
 	return {
-		statuses, notices,
+		statuses, notices, entries,
 		command: (args = "") => { assert.ok(command); return command(args, ctx); },
 		event: (name: string, payload: unknown = {}) => { const listener = listeners.get(name); assert.ok(listener); return listener(payload, ctx); },
 		select: (next: Model) => { activeModel = next; const listener = listeners.get("model_select"); assert.ok(listener); listener({}, ctx); },
@@ -66,6 +70,20 @@ test("Fast mode requires Codex and turns off when switching away", () => {
 	app.select(codex);
 	assert.equal(app.statuses.at(-1), undefined);
 	assert.equal(app.event("before_provider_request", { payload: {} }), undefined);
+});
+
+test("Fast mode survives the branch handoff to a new Pi process", () => {
+	const entries: FastEntry[] = [];
+	const original = setup(codex, entries);
+	original.command();
+	const resumed = setup(codex, entries);
+	resumed.event("session_start");
+	assert.equal(resumed.statuses.at(-1), "⚡️");
+	assert.deepEqual(resumed.event("before_provider_request", { payload: {} }), { service_tier: "priority" });
+	resumed.command("off");
+	const restarted = setup(codex, entries);
+	restarted.event("session_start");
+	assert.equal(restarted.statuses.at(-1), undefined);
 });
 
 test("session restores status without applying Fast mode to non-Codex requests", () => {
