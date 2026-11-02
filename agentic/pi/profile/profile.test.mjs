@@ -104,6 +104,35 @@ test("main exposes MCP through codemode and keeps concept tools private", async 
 	}
 });
 
+test("resolves allow-listed skills from either user skills directory", () => {
+	const dir = root();
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), "pi-profile-home-"));
+	roots.push(home);
+	const originalHome = process.env.HOME;
+	try {
+		process.env.HOME = home;
+		const external = path.join(home, ".agents", "skills", "external");
+		fs.mkdirSync(external, { recursive: true });
+		fs.writeFileSync(path.join(external, "SKILL.md"), "---\nname: external\ndescription: External\n---\n");
+		const args = buildProfileArgs(profile("main", { skills: ["external", "memory"] }), dir, []);
+		assert.deepEqual(args.filter((arg, i) => args[i - 1] === "--skill"), [
+			external, path.join(dir, "skills", "memory"),
+		]);
+		const privateArgs = buildProfileArgs(profile("librarian", { skills: ["external"] }), dir, []);
+		assert.equal(privateArgs[privateArgs.indexOf("--skill") + 1], external);
+		const local = path.join(dir, "skills", "external");
+		fs.mkdirSync(local);
+		fs.writeFileSync(path.join(local, "SKILL.md"), "---\nname: external\ndescription: Local\n---\n");
+		const preferred = buildProfileArgs(profile("main", { skills: ["external"] }), dir, []);
+		assert.equal(preferred[preferred.indexOf("--skill") + 1], local);
+		assert.throws(() => buildProfileArgs(profile("librarian", { skills: ["missing"] }), dir, []),
+			/Missing profile skill: missing/);
+	} finally {
+		if (originalHome === undefined) delete process.env.HOME;
+		else process.env.HOME = originalHome;
+	}
+});
+
 test("scopes private tools, skills, extensions and sessions before startup", () => {
 	const dir = root();
 	const args = buildProfileArgs(profile("librarian"), dir, ["--continue"]);

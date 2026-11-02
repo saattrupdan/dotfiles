@@ -150,8 +150,12 @@ export function buildProfileArgs(profile, agentDir, args, cwd = process.cwd(), s
 	if (profile.skills !== undefined) {
 		flags.push("--no-skills");
 		for (const skill of profile.skills) {
-			const skillDir = path.join(agentDir, "skills", skill);
-			if (!fs.existsSync(path.join(skillDir, "SKILL.md"))) {
+			const candidates = [
+				path.join(agentDir, "skills", skill),
+				path.join(os.homedir(), ".agents", "skills", skill),
+			];
+			const skillDir = candidates.find((dir) => fs.existsSync(path.join(dir, "SKILL.md")));
+			if (!skillDir) {
 				if (profile.name !== "main") throw new Error(`Missing profile skill: ${skill}`);
 				console.error(`pi profile: main skill ${skill} is not installed; skipping`);
 				continue;
