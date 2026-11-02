@@ -33,6 +33,9 @@ vim.opt.filetype.indent="on"
 vim.opt.ai=true
 vim.opt.si=true
 
+-- Enable mouse-wheel scrolling in Pi panes and other Neovim windows
+vim.opt.mouse="a"
+
 -- Offset lines when scrolling
 vim.opt.scrolloff=30
 
