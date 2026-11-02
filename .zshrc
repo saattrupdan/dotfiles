@@ -206,7 +206,8 @@ export BUN_INSTALL="$HOME/.bun"
 # is just ~/.local/bin spelled differently. All of that is gone for good.
 for _p in /opt/homebrew/bin /opt/homebrew/opt/openjdk/bin "$HOME/Applications/nvim/bin" \
           "$HOME/.poetry/bin" "$HOME/.lmstudio/bin" "$HOME/.local/share/nvim/mason/bin" \
-          "$BUN_INSTALL/bin" "$HOME/.cargo/bin" "$HOME/.local/bin"; do
+          "$BUN_INSTALL/bin" "$HOME/.cargo/bin" "$HOME/.local/bin" \
+          "$HOME/Library/Application Support/Holi/bin"; do
   [[ -d $_p ]] && PATH="$_p:$PATH"
 done
 unset _p
