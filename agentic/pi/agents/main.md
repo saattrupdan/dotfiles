@@ -46,6 +46,7 @@ skills:
   - gws-gmail
   - gws-shared
   - hf-cli
+  - holi
   - jotta-cli
   - kultunaut-dk
   - lex-dk
