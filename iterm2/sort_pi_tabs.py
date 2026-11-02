@@ -4,6 +4,7 @@
 import asyncio
 import fcntl
 import logging
+import os
 import tempfile
 import time
 from pathlib import Path
@@ -12,6 +13,7 @@ import iterm2
 
 MARKER = "user.pi_agent_sort_status"
 POLL_INTERVAL = 2
+REQUEST_TIMEOUT = 30
 RANK = {
     "need_input": 0,
     "error": 0,
@@ -25,34 +27,68 @@ LOGGER = logging.getLogger(__name__)
 
 
 def main() -> None:
-    """Run one sorter per user while iTerm2 is open."""
+    """Run one sorter per iTerm2 instance while its API connection is live."""
     logging.basicConfig(level=logging.INFO)
-    lock_path = Path(tempfile.gettempdir()) / "pi-iterm-tab-sorter.lock"
-    with lock_path.open("w") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            LOGGER.info("Pi tab sorter is already running")
-            return
-        iterm2.run_forever(sort_tabs)
+    iterm2.run_until_complete(sort_tabs)
 
 
 async def sort_tabs(connection: iterm2.Connection) -> None:
-    """Refresh iTerm2's layout and sort each ungrouped window periodically.
+    """Sort ungrouped windows until this iTerm2 API instance is replaced.
 
     Args:
         connection:
             Live iTerm2 Python API connection.
     """
-    while True:
+    identity = _api_socket_identity()
+    if identity is None:
+        LOGGER.error("iTerm2 API socket is unavailable")
+        return
+
+    # An old sorter can survive iTerm2 quitting. Its lock must not block a new instance.
+    lock_path = Path(tempfile.gettempdir()) / (
+        f"pi-iterm-tab-sorter-{identity[0]}-{identity[1]}.lock"
+    )
+    with lock_path.open("a") as lock:
         try:
-            app = await iterm2.async_get_app(connection)
-            if app is not None:
-                for window in app.windows:
-                    await sort_window(window=window, now=int(time.time()))
-        except (iterm2.RPCException, OSError):
-            LOGGER.exception("Could not refresh iTerm2 tab order")
-        await asyncio.sleep(POLL_INTERVAL)
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            LOGGER.info("Pi tab sorter is already running for this iTerm2 instance")
+            return
+
+        while _api_socket_identity() == identity:
+            try:
+                async with asyncio.timeout(REQUEST_TIMEOUT):
+                    app = await iterm2.async_get_app(connection)
+                    if app is not None:
+                        for window in app.windows:
+                            await sort_window(window=window, now=int(time.time()))
+            except TimeoutError:
+                LOGGER.warning("Timed out refreshing iTerm2 tab order")
+            except (iterm2.RPCException, OSError):
+                LOGGER.exception("Could not refresh iTerm2 tab order")
+            await asyncio.sleep(POLL_INTERVAL)
+        LOGGER.info("iTerm2 API instance changed; stopping old tab sorter")
+
+
+def _api_socket_identity() -> tuple[int, int] | None:
+    """Identify the current iTerm2 API server by its Unix socket.
+
+    Returns:
+        Device and inode of the server socket, or None if it is unavailable.
+    """
+    socket_path = (
+        Path.home()
+        / "Library"
+        / "Application Support"
+        / os.environ.get("IT2_SUITE", "iTerm2")
+        / "private"
+        / "socket"
+    )
+    try:
+        stat = socket_path.stat()
+    except FileNotFoundError:
+        return None
+    return stat.st_dev, stat.st_ino
 
 
 async def sort_window(window: iterm2.Window, now: int) -> bool:

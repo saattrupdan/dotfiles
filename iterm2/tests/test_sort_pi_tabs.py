@@ -1,12 +1,15 @@
 """Exercise Pi tab ordering without moving live iTerm2 tabs."""
 
 import asyncio
+import fcntl
 import typing as t
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import iterm2
 import pytest
 
+import sort_pi_tabs
 from sort_pi_tabs import MARKER, sort_window
 
 NOW = 1_900_000_000
@@ -182,3 +185,97 @@ def test_new_tab_and_manual_tie_order() -> None:
     window.tabs.insert(0, FakeTab("new shell", [FakeSession()]))
     assert sort_fake(window=window)
     assert [tab.tab_id for tab in window.tabs] == ["idle-b", "idle-a", "new shell"]
+
+
+def test_restart_starts_sorter_while_old_instance_holds_lock(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A previous iTerm2 instance's lock must not block the new AutoLaunch."""
+    old_lock_path = tmp_path / "pi-iterm-tab-sorter.lock"
+    identity = [(7, 8)]
+    reads: list[object] = []
+    original_sleep = asyncio.sleep
+
+    async def no_app(connection: iterm2.Connection) -> None:
+        """Record an API read from the new instance."""
+        reads.append(connection)
+
+    async def restart(seconds: float) -> None:
+        """Replace the new instance's socket after it begins sorting."""
+        del seconds
+        identity[0] = (7, 9)
+        await original_sleep(0)
+
+    monkeypatch.setattr(sort_pi_tabs.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(sort_pi_tabs, "_api_socket_identity", lambda: identity[0])
+    monkeypatch.setattr(iterm2, "async_get_app", no_app)
+    monkeypatch.setattr(asyncio, "sleep", restart)
+
+    with old_lock_path.open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        asyncio.run(
+            asyncio.wait_for(
+                sort_pi_tabs.sort_tabs(
+                    connection=t.cast("iterm2.Connection", object())
+                ),
+                timeout=0.3,
+            )
+        )
+
+    assert len(reads) == 1
+
+
+def test_second_sorter_for_same_iterm2_instance_stays_inactive(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Two launch requests must not race to reorder the same iTerm2 window."""
+    lock_path = tmp_path / "pi-iterm-tab-sorter-7-8.lock"
+    monkeypatch.setattr(sort_pi_tabs.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(sort_pi_tabs, "_api_socket_identity", lambda: (7, 8))
+
+    async def unexpected_read(connection: iterm2.Connection) -> None:
+        """Fail if a duplicate sorter tries to use its API connection."""
+        del connection
+        pytest.fail("duplicate sorter attempted to sort tabs")
+
+    monkeypatch.setattr(iterm2, "async_get_app", unexpected_read)
+    with lock_path.open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        asyncio.run(
+            asyncio.wait_for(
+                sort_pi_tabs.sort_tabs(
+                    connection=t.cast("iterm2.Connection", object())
+                ),
+                timeout=0.3,
+            )
+        )
+
+
+def test_old_sorter_exits_after_iterm2_restarts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An old API connection must release its lock after the socket changes."""
+    identity = [(7, 8)]
+    original_sleep = asyncio.sleep
+
+    async def no_app(connection: iterm2.Connection) -> None:
+        """Return no windows while exercising the sorter's polling loop."""
+        del connection
+
+    async def restart(seconds: float) -> None:
+        """Replace iTerm2's socket on the next poll."""
+        del seconds
+        identity[0] = (7, 9)
+        await original_sleep(0)
+
+    monkeypatch.setattr(sort_pi_tabs.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(sort_pi_tabs, "_api_socket_identity", lambda: identity[0])
+    monkeypatch.setattr(iterm2, "async_get_app", no_app)
+    monkeypatch.setattr(asyncio, "sleep", restart)
+
+    asyncio.run(
+        asyncio.wait_for(
+            sort_pi_tabs.sort_tabs(connection=t.cast("iterm2.Connection", object())),
+            timeout=0.3,
+        )
+    )
