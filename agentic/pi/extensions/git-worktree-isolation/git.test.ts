@@ -80,7 +80,12 @@ test("branch handoff keeps the event loop running until the child takes over", a
 	const interval = setInterval(() => { ticks++; }, 10);
 	try {
 		const result = await launchWithProgress(process.cwd(), ["-e", `
-			setTimeout(() => process.send('pi-worktree-session-ready', () => process.disconnect()), 100);
+			setTimeout(() => {
+				process.on('message', (message) => {
+					if (message === 'pi-worktree-parent-yielded') process.disconnect();
+				});
+				process.send('pi-worktree-session-ready');
+			}, 100);
 			setTimeout(() => process.exit(0), 200);
 		`], process.env, {
 			mode: "tui", ui: {
@@ -93,6 +98,35 @@ test("branch handoff keeps the event loop running until the child takes over", a
 		assert.deepEqual(visibility, [false], "the spinner yields only when the child is ready");
 	} finally {
 		clearInterval(interval);
+	}
+});
+
+test("child working indicator is drawn after the parent yields the terminal", async () => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-handoff-status-"));
+	const trace = path.join(root, "trace");
+	const extension = path.join(path.dirname(fileURLToPath(import.meta.url)), "index.ts");
+	const child = `
+		const { appendFileSync } = await import('node:fs');
+		const { createRequire } = await import('node:module');
+		const require = createRequire(${JSON.stringify(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "_outliner", "package.json"))});
+		const { createJiti } = require('jiti');
+		const { signalChildReady } = await createJiti(import.meta.url).import(${JSON.stringify(extension)}, { default: false });
+		await signalChildReady();
+		appendFileSync(${JSON.stringify(trace)}, 'child-working\\n');
+	`;
+	try {
+		const result = await launchWithProgress(process.cwd(), ["--input-type=module", "-e", child], process.env, {
+			mode: "tui", ui: {
+				setWorkingVisible: (visible: boolean) => {
+					if (!visible) setTimeout(() => fs.appendFileSync(trace, "parent-cleared\n"), 16);
+				},
+				setWidget: () => undefined,
+			},
+		} as ExtensionContext);
+		assert.equal(result.status, 0);
+		assert.deepEqual(fs.readFileSync(trace, "utf8").trim().split("\n"), ["parent-cleared", "child-working"]);
+	} finally {
+		fs.rmSync(root, { recursive: true, force: true });
 	}
 });
 

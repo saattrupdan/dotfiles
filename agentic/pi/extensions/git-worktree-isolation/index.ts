@@ -42,10 +42,25 @@ const CUSTOM_TYPE = "git-worktree-isolation:finalize";
 const RATE_LIMIT_RETRY_TYPE = "rate-limit-retry:continue";
 const MAX_REPAIR_TURNS = 6;
 const CHILD_READY_MESSAGE = "pi-worktree-session-ready";
+const PARENT_YIELDED_MESSAGE = "pi-worktree-parent-yielded";
 const CLEANUP_WIDGET = "git-worktree-isolation:cleanup-progress";
 
-function signalChildReady(): void {
-	if (process.send) process.send(CHILD_READY_MESSAGE, () => process.disconnect?.());
+export async function signalChildReady(): Promise<void> {
+	if (!process.send) return;
+	await new Promise<void>((resolve) => {
+		const done = () => {
+			process.off("message", onMessage);
+			process.off("disconnect", done);
+			if (process.connected) process.disconnect();
+			resolve();
+		};
+		const onMessage = (message: unknown) => {
+			if (message === PARENT_YIELDED_MESSAGE) done();
+		};
+		process.on("message", onMessage);
+		process.once("disconnect", done);
+		process.send!(CHILD_READY_MESSAGE);
+	});
 }
 
 type HandoffContext = Pick<ExtensionContext, "mode" | "ui">;
@@ -59,11 +74,16 @@ export async function launchWithProgress(
 		const child = spawn(process.execPath, args, {
 			cwd, stdio: ["inherit", "inherit", "inherit", "ipc"], env,
 		});
-		child.on("message", (message) => {
-			if (message === CHILD_READY_MESSAGE && ctx.mode === "tui") {
+		child.on("message", async (message) => {
+			if (message !== CHILD_READY_MESSAGE) return;
+			if (ctx.mode === "tui") {
 				ctx.ui.setWorkingVisible(false);
 				ctx.ui.setWidget(CLEANUP_WIDGET, undefined);
+				// Pi throttles TUI redraws to 16 ms. Let the parent's scheduled
+				// clear reach the terminal before the child draws its status.
+				await new Promise<void>((done) => setTimeout(done, 25));
 			}
+			if (child.connected) child.send(PARENT_YIELDED_MESSAGE);
 		});
 		child.on("error", (error) => resolve({ pid: child.pid, error, status: null, signal: null }));
 		child.on("close", (status, signal) => resolve({ pid: child.pid, status, signal }));
@@ -316,7 +336,7 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 		// The statusline shows the checked-out Git branch instead of a worktree ID.
 		ctx.ui.setStatus("git-worktree-isolation", undefined);
 		if (continueBranch) {
-			signalChildReady();
+			await signalChildReady();
 			// Print mode returns as soon as session_start finishes unless we await the
 			// extension-triggered turn. Register before starting it to avoid a race.
 			const settled = isPrintMode() ? new Promise<void>((resolve) => {
@@ -589,12 +609,12 @@ export default async function (pi: ExtensionAPI) {
 			const settled = isPrintMode() ? new Promise<void>((resolve) => {
 				const unsubscribe = pi.on("agent_settled", () => { unsubscribe(); resolve(); });
 			}) : undefined;
+			await signalChildReady();
 			pi.sendMessage({
 				customType: "git-worktree-isolation:cleanup-complete",
 				content: "The isolated branch cleanup has returned this session to main. Give the user a brief completion message about the finished request and its current state. Do not call clean-up-isolated-branch again.",
 				display: false,
 			}, { triggerTurn: true });
-			signalChildReady();
 			if (settled) await settled;
 		});
 	}
