@@ -36,6 +36,9 @@ vim.opt.si=true
 -- Enable mouse-wheel scrolling in Pi panes and other Neovim windows
 vim.opt.mouse="a"
 
+-- Keep more terminal history available for Pi conversations
+vim.opt.scrollback=100000
+
 -- Offset lines when scrolling
 vim.opt.scrolloff=30
 
