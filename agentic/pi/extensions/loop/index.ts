@@ -1,4 +1,4 @@
-/** `/loop [duration] [--max-runs N] <prompt|file.txt> [--until <condition>]`. */
+/** `/loop` repeats a prompt; `/implement-all-issues` starts its issue workflow. */
 
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -19,6 +19,8 @@ const COMPACTION_INSTRUCTIONS =
 	"Summarize this loop's goal, constraints, work completed, failed attempts, current file state, " +
 	"and the next concrete step. Keep the summary brief but retain information needed by the next iteration.";
 const USAGE = "Usage: /loop [1h2m3s] [--max-runs N] <prompt|file.txt> [--until <condition>] | /loop status | /loop stop";
+const ALL_ISSUES_PROMPT = "Find an unassigned issue for this repo, assign me to it, create a feature branch where you fully implement it, ensure all checks and tests pass as well as an independent review, take screenshots or create a small video demonstrating the feature if it's visual, and create a PR on it where you assign me.";
+const ALL_ISSUES_CONDITION = "No unassigned issues are left";
 
 export interface LoopOptions {
 	intervalMs: number;
@@ -258,9 +260,9 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 		}
 	}
 
-	pi.registerCommand("loop", {
+	const loopCommand = {
 		description: "Repeat a prompt, optionally checking an --until condition after every run",
-		async handler(args, ctx) {
+		async handler(args: string, ctx: ExtensionContext) {
 			if (ctx.mode !== "tui" && ctx.mode !== "rpc") {
 				console.error("/loop requires an interactive Pi (TUI or RPC) session; print/JSON mode exits before scheduled turns.");
 				return;
@@ -306,6 +308,17 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 			active = { ...options, runs: 0, phase: "running", compacted: false, rateLimitRetries: 0, generation: ++generation, ctx };
 			setLoopActive(true, ctx);
 			run(active);
+		},
+	};
+	pi.registerCommand("loop", loopCommand);
+	pi.registerCommand("implement-all-issues", {
+		description: "Implement unassigned repository issues until none are left",
+		async handler(args, ctx) {
+			if (args.trim()) {
+				say("Usage: /implement-all-issues");
+				return;
+			}
+			await loopCommand.handler(`${ALL_ISSUES_PROMPT} --until ${ALL_ISSUES_CONDITION}`, ctx);
 		},
 	});
 

@@ -117,7 +117,7 @@ function harness(
 	let pending = false;
 	let compactions = 0;
 	let finishCompaction: (() => void) | undefined;
-	let handler: ((args: string, ctx: ExtensionContext) => Promise<void>) | undefined;
+	const commands = new Map<string, (args: string, ctx: ExtensionContext) => Promise<void>>();
 	const ctx = {
 		mode: options.mode ?? "tui",
 		cwd: options.cwd ?? process.cwd(),
@@ -140,8 +140,8 @@ function harness(
 		getSettings: () => ({ compaction: { keepRecentTokens: 20_000 } }),
 		on: (name: string, callback: Handler) => { handlers.set(name, callback); },
 		registerCommand: (name: string, options: { handler: (args: string, ctx: ExtensionContext) => Promise<void> }) => {
-			assert.equal(name, "loop");
-			handler = options.handler;
+			assert.ok(name === "loop" || name === "implement-all-issues");
+			commands.set(name, options.handler);
 		},
 		sendUserMessage: (prompt: string) => {
 			rawSent.push(prompt);
@@ -175,7 +175,11 @@ function harness(
 		finishCompaction: () => finishCompaction?.(),
 		setBusy: (value: boolean) => { busy = value; },
 		setPending: (value: boolean) => { pending = value; },
-		command: async (args: string) => { assert.ok(handler); await handler(args, ctx); },
+		command: async (args: string, name = "loop") => {
+			const handler = commands.get(name);
+			assert.ok(handler, name);
+			await handler(args, ctx);
+		},
 		input: async (source: "interactive" | "rpc", text: string) => {
 			await handlers.get("input")?.({ source, text }, ctx);
 		},
@@ -199,6 +203,33 @@ function harness(
 		},
 	};
 }
+
+test("implement-all-issues starts the same loop with its issue prompt and finish condition", async () => {
+	const checks: string[] = [];
+	const h = harness(async (condition) => {
+		checks.push(condition);
+		return { done: true, evidence: "no unassigned issues remain" };
+	});
+	await h.command("", "implement-all-issues");
+	assert.deepEqual(h.sent, [
+		"Find an unassigned issue for this repo, assign me to it, create a feature branch where you fully implement it, ensure all checks and tests pass as well as an independent review, take screenshots or create a small video demonstrating the feature if it's visual, and create a PR on it where you assign me.",
+	]);
+	await h.finish();
+	assert.deepEqual(checks, ["No unassigned issues are left"]);
+	assert.match(h.notices.at(-1) ?? "", /Loop complete after 1 run/);
+});
+
+test("implement-all-issues rejects arguments and cannot replace an active loop", async () => {
+	const h = harness();
+	await h.command("extra", "implement-all-issues");
+	assert.deepEqual(h.sent, []);
+	assert.match(h.notices.at(-1) ?? "", /Usage: \/implement-all-issues/);
+	await h.command("work");
+	await h.command("", "implement-all-issues");
+	assert.deepEqual(h.sent, ["work"]);
+	assert.match(h.notices.at(-1) ?? "", /already active/);
+	await h.command("stop");
+});
 
 test("loop signals its entire lifetime and instructs each iteration not to ask questions", async () => {
 	const transitions: boolean[] = [];
