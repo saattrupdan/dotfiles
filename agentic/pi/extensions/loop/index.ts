@@ -9,7 +9,6 @@ import { NON_INTERACTIVE_BANNER } from "../non-interactive/prompt.ts";
 
 const STATUS_KEY = "loop";
 const MAX_DURATION_MS = 24 * 60 * 60 * 1_000;
-const DEFAULT_UNTIL_CAP = 20;
 const RATE_LIMIT_RETRY_MS = 60_000;
 const MAX_RATE_LIMIT_RETRY_MS = 5 * 60_000;
 
@@ -69,7 +68,7 @@ export function parseLoopArgs(args: string): LoopOptions {
 		rest = rest.slice(cap[0].length).trim();
 	}
 	if (!rest || rest.startsWith("--until") || rest.startsWith("--max-runs")) throw new Error(USAGE);
-	return { intervalMs, prompt: rest, condition, maxRuns: maxRuns ?? (condition ? DEFAULT_UNTIL_CAP : undefined) };
+	return { intervalMs, prompt: rest, condition, maxRuns };
 }
 
 type Checker = (condition: string, output: string, ctx: ExtensionContext, signal: AbortSignal) => Promise<Verdict>;

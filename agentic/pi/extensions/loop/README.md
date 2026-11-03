@@ -56,8 +56,8 @@ consume a run. `/loop stop` cancels the retry. The checker is instructed not to 
 **not a read-only sandbox**. Use explicit, verifiable conditions and review
 its work as you would any other agent action.
 
-`--until` loops default to 20 runs unless `--max-runs N` overrides the cap.
-Plain loops have no default cap. `/loop stop` is the explicit way to stop a
+Loops have no default run cap, whether or not they use `--until`. Set
+`--max-runs N` to cap either kind of loop. `/loop stop` is the explicit way to stop a
 loop: it prevents future runs and cancels an active checker, but does not abort
 an already-running working turn. Sending a user message (interactive or RPC)
 does not stop the loop; the next run waits until Pi is idle and pending messages

@@ -23,9 +23,9 @@ test("parses optional duration, cap and finish condition", () => {
 	assert.deepEqual(parseLoopArgs("1m30s --max-runs 2 fix errors --until tests pass"), {
 		intervalMs: 90_000, prompt: "fix errors", condition: "tests pass", maxRuns: 2,
 	});
-	assert.equal(parseLoopArgs("fix errors --until tests pass").maxRuns, 20);
+	assert.equal(parseLoopArgs("fix errors --until tests pass").maxRuns, undefined);
 	for (const value of ["", "0s fix errors", "1.5m fix errors", "1m", "--max-runs 0 fix", "fix --until ", "fix --until done --until more"]) {
-		assert.throws(() => parseLoopArgs(value), value);
+		assert.throws(() => parseLoopArgs(value), value || "empty arguments");
 	}
 });
 
@@ -297,6 +297,22 @@ test("rate-limit retry shows a countdown and stop cancels it", async () => {
 	await h.command("stop");
 	assert.equal(h.intervals.size, 0);
 	assert.equal(h.statuses.at(-1), undefined);
+});
+
+test("until loops keep running beyond 20 checks without an explicit cap", async () => {
+	let checks = 0;
+	const h = harness(async () => ({ done: ++checks === 21, evidence: "confirmed" }), { contextTokens: 2_000 });
+	await h.command("work --until done");
+	for (let run = 1; run <= 21; run++) {
+		await h.finish();
+		if (run < 21) {
+			h.tick(); // skip compaction for a short session
+			h.tick(); // start the next run
+		}
+	}
+	assert.equal(checks, 21);
+	assert.equal(h.sent.length, 21);
+	assert.match(h.notices.at(-1) ?? "", /Loop complete after 21 run\(s\)/);
 });
 
 test("until checker sees final response and stops only on done", async () => {
