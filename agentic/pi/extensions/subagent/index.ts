@@ -1117,7 +1117,7 @@ export default function (pi: ExtensionAPI) {
 		parameters: SubagentParams,
 
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
-			const agentScope: AgentScope = params.agentScope ?? "user";
+			const agentScope = (params.agentScope as AgentScope | undefined) ?? "user";
 			const discovery = discoverAgents(ctx.cwd, agentScope);
 			const agents = delegatableAgents(discovery.agents);
 			const confirmProjectAgents = params.confirmProjectAgents ?? true;
@@ -1201,7 +1201,7 @@ export default function (pi: ExtensionAPI) {
 		},
 
 		renderCall(args, theme, context) {
-			const scope: AgentScope = args.agentScope ?? "user";
+			const scope = (args.agentScope as AgentScope | undefined) ?? "user";
 			// The ordinal is handed out in execute(), so the first paint omits only
 			// that number; it can still show the concrete task name immediately.
 			const taskName = normalizeSubagentTaskName(args.taskName || "...");
