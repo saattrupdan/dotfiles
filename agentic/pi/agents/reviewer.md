@@ -4,7 +4,7 @@ subagent: true
 description: Reviews recent changes for correctness, style, and scope. Read-only —
   produces a verdict and a list of issues, never edits.
 model:
-  - openai-codex/gpt-6-sol
+  - openai-codex/gpt-6.1-sol
 tools:
   - read
   - search
