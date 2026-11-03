@@ -13,6 +13,7 @@ await jiti.import(path.join(root, "codemode-collapse", "index.test.ts"), { defau
 await jiti.import(path.join(root, "generate-image", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "incognito", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "fast", "index.test.ts"), { default: false });
+await jiti.import(path.join(root, "context-limit", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "_voice-input", "ptt.test.ts"), { default: false });
 await import(path.join(root, "_voice-input", "stream.test.mjs"));
 await jiti.import(path.join(root, "_voice-input", "syv.test.ts"), { default: false });

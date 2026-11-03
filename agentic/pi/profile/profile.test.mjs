@@ -60,11 +60,11 @@ test("loads prompt body rather than YAML and refuses delegatable top-level agent
 	assert.throws(() => buildProfileArgs(profile("main", { skills: undefined }), dir, []), /explicit resource allow-lists/);
 });
 
-test("actual librarian profile exposes exactly six private memory tools", async () => {
+test("actual librarian profile exposes only private memory tools and shared context policy", async () => {
 	const dir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 	const librarian = await loadProfile("librarian", dir, resolvePiPackage());
-	assert.deepEqual(librarian.tools, ["search_concepts", "read_concept", "create_concept", "update_concept", "remove_concept", "lint_concepts"]);
-	assert.deepEqual(librarian.extensions, ["memory", "rate-limit-retry"]);
+	assert.deepEqual(librarian.tools, ["search_concepts", "read_concept", "create_concept", "update_concept", "remove_concept", "repair_malformed", "repair_orphans", "repair_embeddings", "lint_concepts"]);
+	assert.deepEqual(librarian.extensions, ["context-limit", "memory", "rate-limit-retry"]);
 	assert.deepEqual(librarian.skills, []);
 	assert.deepEqual(librarian.model, ["openai-codex/gpt-6-luna"]);
 	const sandbox = root();
@@ -75,7 +75,7 @@ test("actual librarian profile exposes exactly six private memory tools", async 
 	const args = buildProfileArgs(librarian, sandbox, ["--no-session"]);
 	assert.ok(args.includes("--no-mcp"));
 	assert.ok(args.includes("--no-skills"));
-	assert.equal(args.filter((arg) => arg === "--extension").length, 2);
+	assert.equal(args.filter((arg) => arg === "--extension").length, 3);
 	assert.equal(args[args.indexOf("--tools") + 1], librarian.tools.join(","));
 	assert.equal(args[args.indexOf("--model") + 1], "openai-codex/gpt-6-luna");
 });
@@ -84,6 +84,7 @@ test("main exposes MCP through codemode and keeps concept tools private", async 
 	const dir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 	const main = await loadProfile("main", dir, resolvePiPackage());
 	assert.ok(main.extensions.includes("memory-handoff"));
+	assert.ok(main.extensions.includes("context-limit"));
 	assert.ok(main.extensions.includes("mcp"));
 	assert.ok(main.extensions.includes("codemode"));
 	assert.ok(main.tools.includes("codemode"));

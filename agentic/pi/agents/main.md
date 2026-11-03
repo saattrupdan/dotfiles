@@ -77,6 +77,7 @@ extensions:
   - code-tree
   - codemode
   - codemode-collapse
+  - context-limit
   - conversation-name
   - copy-paste
   - edit

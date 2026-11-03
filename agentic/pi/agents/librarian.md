@@ -16,6 +16,7 @@ tools:
   - lint_concepts
 skills: []
 extensions:
+  - context-limit
   - memory
   - rate-limit-retry
 ---
