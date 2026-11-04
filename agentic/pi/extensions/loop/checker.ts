@@ -3,6 +3,7 @@
 import { spawn } from "node:child_process";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getPiInvocation } from "../subagent/pi-invocation.ts";
+import { ISSUE_CONDITION, listUnassignedLeafIssues } from "./issue-candidates.ts";
 
 const TIMEOUT_MS = 120_000;
 const OUTPUT_LIMIT = 64_000;
@@ -35,12 +36,16 @@ export async function checkCondition(
 	ctx: ExtensionContext,
 	signal: AbortSignal,
 ): Promise<Verdict> {
+	// Re-query GitHub independently of the working run. Parent issues are never
+	// mistaken for actionable leaves just because they remain unassigned.
+	const candidates = condition === ISSUE_CONDITION ? await listUnassignedLeafIssues(ctx.cwd, signal) : undefined;
 	const prompt = [
 		"You are an independent completion checker for a periodic Pi task. Inspect the current working directory as needed.",
 		"Use read and, only if verification needs it, bash for NON-MUTATING checks. Do not edit files, commit, delegate, or ask questions.",
 		"Do not trust the working agent's claim of success: independently verify the condition. If evidence is insufficient, return done=false.",
 		"Return ONLY a JSON object: {\"done\": boolean, \"evidence\": \"short concrete reason\"}. No Markdown.",
 		`Completion condition:\n${condition}`,
+		...(candidates === undefined ? [] : [`Fresh independent GitHub check of all open unassigned leaf issues (parents with sub-issues excluded): ${candidates.length ? candidates.map((number) => `#${number}`).join(", ") : "none"}. Inspect the leaf issues and their documented blockers before returning done=true. Do not count an unassigned parent as actionable; do not overlook an unassigned child.`]),
 		`Working agent's most recent final response (context, not proof):\n${iterationOutput.slice(-8_000)}`,
 	].join("\n\n");
 	const args = ["--mode", "text", "-p", "--no-session", "--no-extensions", "--no-skills", "--no-prompt-templates", "--tools", "read,bash"];

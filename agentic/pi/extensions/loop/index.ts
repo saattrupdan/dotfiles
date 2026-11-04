@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { checkCondition, type Verdict } from "./checker.ts";
+import { ISSUE_CONDITION, listUnassignedLeafIssues } from "./issue-candidates.ts";
 import { hasLoopReturnToBase, LOOP_HANDOFF_ENV, returnLoopToBase, setLoopActive, setLoopHandoffProvider, type LoopHandoff } from "../_loop_state/state.ts";
 import { NON_INTERACTIVE_BANNER } from "../non-interactive/prompt.ts";
 
@@ -23,11 +24,11 @@ const ALL_ISSUES_PROMPT = [
 	"Find an unassigned issue for this repo. Before assigning it, decide whether its implementation is clear, no crucial architectural decisions remain unresolved, and it fits in one reasonably scoped PR.",
 	"If a crucial architectural decision must be made first, do not assign or implement that issue. If the issue does not already identify the decision as a blocker, add a comment specifying the decision needed. Apply the repo's existing standard label for issues blocked by a decision; if no such label exists, create a decision-blocked label and apply it. Then move to another unassigned issue.",
 	"If the implementation is unclear for another reason, comment with the specific clarification needed, leave it unassigned, and move to another issue.",
-	"If the issue is too complex, break it into actionable sub-issues linked to the original issue as their parent. Reuse existing sub-issues rather than duplicating them, leave the parent unassigned, and choose only one actionable sub-issue for this run.",
+	"If the issue is too complex, break it into actionable sub-issues linked to the original issue as their parent. Reuse existing sub-issues rather than duplicating them, leave the parent unassigned, and choose only one actionable sub-issue for this run. In later iterations never select or implement an unassigned parent with sub-issues; continue with its unassigned leaf sub-issues instead.",
 	"Once you have one clear, decision-ready, manageable issue, assign me to it, create a feature branch where you fully implement it, ensure all checks and tests pass as well as an independent review, take screenshots or create a small video demonstrating the feature if it's visual, and create a PR on it where you assign me.",
 	"If no actionable unassigned issue remains, report the blockers and do not claim that blocked issues were implemented.",
 ].join(" ");
-const ALL_ISSUES_CONDITION = "No actionable unassigned issues remain: all complex issues have been decomposed into linked sub-issues, and any remaining unassigned issues have documented blockers or missing clarifications; decision-blocked issues also have the repo's standard decision-blocker label or decision-blocked label";
+
 
 export interface LoopOptions {
 	intervalMs: number;
@@ -83,6 +84,7 @@ export function parseLoopArgs(args: string): LoopOptions {
 type Checker = (condition: string, output: string, ctx: ExtensionContext, signal: AbortSignal) => Promise<Verdict>;
 interface Dependencies {
 	check?: Checker;
+	listIssues?: (cwd: string, signal?: AbortSignal) => Promise<number[]>;
 	setTimer?: (callback: () => void, ms: number) => ReturnType<typeof setTimeout>;
 	clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
 	setInterval?: (callback: () => void, ms: number) => ReturnType<typeof setInterval>;
@@ -91,7 +93,7 @@ interface Dependencies {
 }
 interface ActiveLoop extends LoopOptions {
 	runs: number;
-	phase: "running" | "checking" | "waiting" | "complete" | "compacting" | "rate limited";
+	phase: "running" | "selecting" | "checking" | "waiting" | "complete" | "compacting" | "rate limited";
 	compacted: boolean;
 	rateLimitRetries: number;
 	waitUntil?: number;
@@ -104,6 +106,7 @@ interface ActiveLoop extends LoopOptions {
 
 export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 	const check = deps.check ?? checkCondition;
+	const listIssues = deps.listIssues ?? listUnassignedLeafIssues;
 	const setTimer = deps.setTimer ?? setTimeout;
 	const clearTimer = deps.clearTimer ?? clearTimeout;
 	const setCountdownInterval = deps.setInterval ?? setInterval;
@@ -114,6 +117,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 	let countdownTimer: ReturnType<typeof setInterval> | undefined;
 	let startWatchdog: ReturnType<typeof setTimeout> | undefined;
 	let checker: AbortController | undefined;
+	let selecting: AbortController | undefined;
 	let generation = 0;
 	setLoopHandoffProvider(() => {
 		if (!active || (active.phase !== "running" && active.phase !== "waiting" && active.phase !== "complete")) return undefined;
@@ -168,6 +172,8 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 		startWatchdog = undefined;
 		checker?.abort();
 		checker = undefined;
+		selecting?.abort();
+		selecting = undefined;
 		const old = active;
 		active = undefined;
 		if (old) {
@@ -253,29 +259,56 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 				}
 				return;
 			}
-			run(loop);
+			void run(loop);
 		};
 		timer = setTimer(tick, loop.intervalMs);
 	}
-	function run(loop: ActiveLoop) {
+	async function run(loop: ActiveLoop) {
 		if (active !== loop) return;
 		clearCountdown(loop);
 		loop.runs++;
-		loop.phase = "running";
+		const runId = loop.runs;
+		loop.phase = loop.returnToBase ? "selecting" : "running";
 		loop.lastOutput = undefined;
 		loop.failed = false;
 		updateStatus(loop.ctx);
-		// sendUserMessage is void: Pi reports asynchronous submission errors via
-		// its error channel rather than throwing. Fail closed if no turn starts.
-		startWatchdog = setTimer(() => {
-			startWatchdog = undefined;
-			if (active === loop && loop.phase === "running") stop("Loop stopped: the next turn did not start (check Pi errors/authentication).");
-		}, 60_000);
-		try {
-			pi.sendUserMessage(`${NON_INTERACTIVE_BANNER}\n\n${loop.prompt}`);
-		} catch (error) {
-			stop(`Loop stopped: unable to send prompt (${String(error)}).`);
+		let prompt = loop.prompt;
+		if (loop.returnToBase) {
+			const controller = new AbortController();
+			selecting = controller;
+			try {
+				const candidates = await listIssues(loop.ctx.cwd, controller.signal);
+				prompt += `\n\nFresh GitHub issue selection (unassigned issues with no sub-issues): ${candidates.length ? candidates.map((number) => `#${number}`).join(", ") : "none"}. Select only from these issue numbers, except a new leaf sub-issue you create from a listed issue during this run. Parents with sub-issues are excluded even when they remain open and unassigned. Verify the parent/sub-issue relationship before assigning; do not select a parent by browsing around this list.`;
+			} catch (error) {
+				if (active === loop && !controller.signal.aborted) stop(`Loop stopped: issue selection failed (${String(error)}).`);
+				return;
+			} finally {
+				if (selecting === controller) selecting = undefined;
+			}
 		}
+		const submit = () => {
+			timer = undefined;
+			if (active !== loop || loop.runs !== runId ||
+				(loop.phase !== "selecting" && loop.phase !== "running")) return;
+			if (loop.returnToBase && (!loop.ctx.isIdle() || loop.ctx.hasPendingMessages())) {
+				timer = setTimer(submit, 1_000);
+				return;
+			}
+			loop.phase = "running";
+			updateStatus(loop.ctx);
+			// sendUserMessage is void: Pi reports asynchronous submission errors via
+			// its error channel rather than throwing. Fail closed if no turn starts.
+			startWatchdog = setTimer(() => {
+				startWatchdog = undefined;
+				if (active === loop && loop.phase === "running") stop("Loop stopped: the next turn did not start (check Pi errors/authentication).");
+			}, 60_000);
+			try {
+				pi.sendUserMessage(`${NON_INTERACTIVE_BANNER}\n\n${prompt}`);
+			} catch (error) {
+				stop(`Loop stopped: unable to send prompt (${String(error)}).`);
+			}
+		};
+		submit();
 	}
 
 	const loopCommand = {
@@ -325,7 +358,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 			}
 			active = { ...options, runs: 0, phase: "running", compacted: false, rateLimitRetries: 0, generation: ++generation, returnToBase, ctx };
 			setLoopActive(true, ctx);
-			run(active);
+			void run(active);
 		},
 	};
 	pi.registerCommand("loop", loopCommand);
@@ -336,7 +369,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 				say("Usage: /implement-all-issues");
 				return;
 			}
-			await loopCommand.handler(`${ALL_ISSUES_PROMPT} --until ${ALL_ISSUES_CONDITION}`, ctx, true);
+			await loopCommand.handler(`${ALL_ISSUES_PROMPT} --until ${ISSUE_CONDITION}`, ctx, true);
 		},
 	});
 

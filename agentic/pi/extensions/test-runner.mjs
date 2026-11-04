@@ -34,6 +34,7 @@ await jiti.import(path.join(root, "memory-handoff", "index.test.ts"), { default:
 await import(path.join(root, "memory-handoff", "queue.test.mjs"));
 await jiti.import(path.join(root, "rate-limit-retry", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "notify", "index.test.ts"), { default: false });
+await jiti.import(path.join(root, "loop", "issue-candidates.test.ts"), { default: false });
 await jiti.import(path.join(root, "loop", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "caffeinate", "lifecycle.test.ts"), { default: false });
 await jiti.import(path.join(root, "caffeinate", "watcher.test.ts"), { default: false });

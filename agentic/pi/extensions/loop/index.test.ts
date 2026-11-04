@@ -103,7 +103,7 @@ test("checker verdict is strict and needs evidence", () => {
 type Handler = (event: unknown, ctx: ExtensionContext) => unknown;
 function harness(
 	check?: (condition: string, output: string, ctx: ExtensionContext, signal: AbortSignal) => Promise<Verdict>,
-	options: { mode?: "tui" | "rpc" | "print"; autoStart?: boolean; compact?: "complete" | "small" | "fail" | "pending" | "rateOnce"; contextTokens?: number; cwd?: string } = {},
+	options: { mode?: "tui" | "rpc" | "print"; autoStart?: boolean; compact?: "complete" | "small" | "fail" | "pending" | "rateOnce"; contextTokens?: number; cwd?: string; listIssues?: (cwd: string, signal?: AbortSignal) => Promise<number[]> } = {},
 ) {
 	const handlers = new Map<string, Handler>();
 	const sent: string[] = [];
@@ -155,6 +155,7 @@ function harness(
 	} as unknown as ExtensionAPI;
 	loopExtension(pi, {
 		check,
+		listIssues: options.listIssues ?? (async () => [2, 4]),
 		setTimer: (callback, delay) => {
 			const id = ++nextTimer;
 			timers.set(id, { callback, delay });
@@ -216,6 +217,7 @@ test("implement-all-issues starts the same loop with its issue prompt and finish
 	assert.equal(h.sent.length, 1);
 	const prompt = h.sent[0]!;
 	assert.match(prompt, /^Find an unassigned issue for this repo\. Before assigning it/);
+	assert.match(prompt, /Fresh GitHub issue selection.*#2, #4.*Parents with sub-issues are excluded/);
 	assert.match(prompt, /crucial architectural decision.*do not assign or implement.*comment specifying the decision needed/);
 	assert.match(prompt, /existing standard label for issues blocked by a decision.*create a decision-blocked label and apply it/);
 	assert.match(prompt, /break it into actionable sub-issues linked to the original issue as their parent/);
@@ -224,8 +226,81 @@ test("implement-all-issues starts the same loop with its issue prompt and finish
 	await h.finish();
 	assert.equal(checks.length, 1);
 	assert.match(checks[0]!, /^No actionable unassigned issues remain:/);
-	assert.match(checks[0]!, /decision-blocked issues also have the repo's standard decision-blocker label or decision-blocked label/);
+	assert.match(checks[0]!, /GitHub's parent–sub-issue relationship/);
+	assert.match(checks[0]!, /decision-blocked issues also require the repo's standard decision-blocker label or decision-blocked label/);
 	assert.match(h.notices.at(-1) ?? "", /Loop complete after 1 run/);
+});
+
+test("issue selection refreshes for each iteration and never suggests a parent", async () => {
+	let calls = 0;
+	const h = harness(async () => ({ done: false, evidence: "another leaf remains" }), {
+		contextTokens: 2_000,
+		listIssues: async () => ++calls === 1 ? [12] : [14],
+	});
+	await h.command("", "implement-all-issues");
+	assert.match(h.sent[0] ?? "", /Fresh GitHub issue selection.*#12/);
+	await h.finish("PR created");
+	h.tick(); // short context skips compaction
+	h.tick(); // fetch next candidate
+	await Promise.resolve();
+	assert.equal(calls, 2);
+	assert.match(h.sent[1] ?? "", /Fresh GitHub issue selection.*#14/);
+	assert.doesNotMatch(h.sent[1] ?? "", /Fresh GitHub issue selection.*#12/);
+	await h.command("stop");
+});
+
+test("a user turn during issue selection cannot complete or duplicate the issue run", async () => {
+	let resolveSelection: ((issues: number[]) => void) | undefined;
+	let lookups = 0;
+	const h = harness(undefined, {
+		listIssues: async () => {
+			lookups++;
+			return new Promise<number[]>((resolve) => { resolveSelection = resolve; });
+		},
+	});
+	await h.command("", "implement-all-issues");
+	assert.equal(h.sent.length, 0);
+	assert.match(h.statuses.at(-1) ?? "", /selecting/);
+	await h.finish("another user turn finished");
+	assert.equal(h.timers.size, 0, "the unrelated turn must not schedule another issue");
+	h.setBusy(true);
+	resolveSelection?.([7]);
+	await new Promise<void>((resolve) => setImmediate(resolve));
+	assert.equal(h.sent.length, 0);
+	assert.equal(h.timers.size, 1);
+	h.setBusy(false);
+	h.setPending(true);
+	h.tick();
+	assert.equal(h.sent.length, 0);
+	h.setPending(false);
+	h.tick();
+	assert.equal(h.sent.length, 1);
+	assert.match(h.sent[0] ?? "", /Fresh GitHub issue selection.*#7/);
+	assert.equal(lookups, 1);
+	await h.command("stop");
+});
+
+test("GitHub selection errors stop the issue loop without guessing a parent", async () => {
+	const h = harness(undefined, {
+		listIssues: async () => { throw new Error("GitHub sub-issues unavailable"); },
+	});
+	await h.command("", "implement-all-issues");
+	assert.deepEqual(h.sent, []);
+	assert.equal(isLoopActive(), false);
+	assert.match(h.notices.at(-1) ?? "", /issue selection failed.*GitHub sub-issues unavailable/);
+});
+
+test("stopping during GitHub selection cannot send a stale issue prompt", async () => {
+	let resolveSelection: ((issues: number[]) => void) | undefined;
+	const h = harness(undefined, {
+		listIssues: async () => new Promise<number[]>((resolve) => { resolveSelection = resolve; }),
+	});
+	await h.command("", "implement-all-issues");
+	await h.command("stop");
+	resolveSelection?.([9]);
+	await Promise.resolve();
+	assert.deepEqual(h.sent, []);
+	assert.equal(h.timers.size, 0);
 });
 
 test("a branch relaunch resumes the running issue iteration, then checks completion", async () => {
@@ -282,7 +357,8 @@ test("issue loop returns to main after a PR and starts the next issue there", as
 		await main.emit("session_start", { reason: "startup" });
 		assert.equal(main.timers.size, 1);
 		main.tick(); // context is too small to compact
-		main.tick(); // next issue starts back on main
+		main.tick(); // next issue fetches fresh candidates back on main
+		await Promise.resolve();
 		assert.equal(main.sent.length, 1);
 		assert.match(main.sent[0] ?? "", /^Find an unassigned issue for this repo/);
 		await main.command("stop");
