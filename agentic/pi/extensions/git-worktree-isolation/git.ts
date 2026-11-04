@@ -1123,6 +1123,31 @@ export async function reapStaleWorktrees(repoRoot: string, finishedChildPid?: nu
 	return released;
 }
 
+/** Find main without deleting or merging an open-PR feature branch. */
+export async function prepareBranchReturn(manifest: SessionManifest): Promise<string> {
+	const branch = manifest.createdBranch;
+	if (!branch || await currentBranch(manifest.worktreeRoot) !== branch) {
+		throw new Error("Returning to main requires the original isolated feature branch.");
+	}
+	// Keep this worktree for the open PR. Ignored build outputs can remain here;
+	// deletion-readiness checks belong to clean-up-isolated-branch.
+	if (manifest.pendingSync || await hasInProgressOperation(manifest) ||
+		await git(manifest.worktreeRoot, ["status", "--porcelain=v1"])) {
+		throw new Error("The managed worktree is not clean; the feature branch was preserved.");
+	}
+	const main = (await listWorktrees(manifest.repoRoot)).find((worktree) => worktree.branch === "main");
+	if (!main || main.path === manifest.worktreeRoot) throw new Error("A separate main worktree must be available.");
+	const mainRoot = await fs.promises.realpath(main.path);
+	if (await findCommonGitDir(mainRoot) !== manifest.commonGitDir ||
+		await git(mainRoot, ["symbolic-ref", "--quiet", "--short", "HEAD"]) !== "main") {
+		throw new Error("The main checkout changed; the feature branch was preserved.");
+	}
+	if (await git(mainRoot, ["status", "--porcelain=v1"])) {
+		throw new Error("The main checkout has uncommitted changes; the feature branch was preserved.");
+	}
+	return mainRoot;
+}
+
 /** Fetch main, fast-forward its checkout when safe, and prove this branch adds no missing changes. */
 export async function prepareBranchCleanup(manifest: SessionManifest): Promise<{ mainRoot: string; branchSha: string; branchExists: boolean }> {
 	const branch = manifest.createdBranch ?? manifest.targetBranch;

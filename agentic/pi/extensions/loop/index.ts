@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { checkCondition, type Verdict } from "./checker.ts";
-import { setLoopActive } from "../_loop_state/state.ts";
+import { hasLoopReturnToBase, LOOP_HANDOFF_ENV, returnLoopToBase, setLoopActive, setLoopHandoffProvider, type LoopHandoff } from "../_loop_state/state.ts";
 import { NON_INTERACTIVE_BANNER } from "../non-interactive/prompt.ts";
 
 const STATUS_KEY = "loop";
@@ -84,13 +84,14 @@ interface Dependencies {
 }
 interface ActiveLoop extends LoopOptions {
 	runs: number;
-	phase: "running" | "checking" | "waiting" | "compacting" | "rate limited";
+	phase: "running" | "checking" | "waiting" | "complete" | "compacting" | "rate limited";
 	compacted: boolean;
 	rateLimitRetries: number;
 	waitUntil?: number;
 	lastOutput?: string;
 	failed?: boolean;
 	generation: number;
+	returnToBase: boolean;
 	ctx: ExtensionContext;
 }
 
@@ -107,6 +108,16 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 	let startWatchdog: ReturnType<typeof setTimeout> | undefined;
 	let checker: AbortController | undefined;
 	let generation = 0;
+	setLoopHandoffProvider(() => {
+		if (!active || (active.phase !== "running" && active.phase !== "waiting" && active.phase !== "complete")) return undefined;
+		const sessionFile = active.ctx.sessionManager.getSessionFile();
+		if (!sessionFile) return undefined;
+		return {
+			sessionFile, intervalMs: active.intervalMs, prompt: active.prompt,
+			condition: active.condition, maxRuns: active.maxRuns, runs: active.runs,
+			phase: active.phase, returnToBase: active.returnToBase,
+		};
+	}, () => stop());
 
 	function say(message: string) {
 		pi.sendMessage({ customType: "loop:status", content: message, display: true });
@@ -262,7 +273,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 
 	const loopCommand = {
 		description: "Repeat a prompt, optionally checking an --until condition after every run",
-		async handler(args: string, ctx: ExtensionContext) {
+		async handler(args: string, ctx: ExtensionContext, returnToBase = false) {
 			if (ctx.mode !== "tui" && ctx.mode !== "rpc") {
 				console.error("/loop requires an interactive Pi (TUI or RPC) session; print/JSON mode exits before scheduled turns.");
 				return;
@@ -305,7 +316,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 					return;
 				}
 			}
-			active = { ...options, runs: 0, phase: "running", compacted: false, rateLimitRetries: 0, generation: ++generation, ctx };
+			active = { ...options, runs: 0, phase: "running", compacted: false, rateLimitRetries: 0, generation: ++generation, returnToBase, ctx };
 			setLoopActive(true, ctx);
 			run(active);
 		},
@@ -318,7 +329,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 				say("Usage: /implement-all-issues");
 				return;
 			}
-			await loopCommand.handler(`${ALL_ISSUES_PROMPT} --until ${ALL_ISSUES_CONDITION}`, ctx);
+			await loopCommand.handler(`${ALL_ISSUES_PROMPT} --until ${ALL_ISSUES_CONDITION}`, ctx, true);
 		},
 	});
 
@@ -364,8 +375,30 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 		if (active !== loop || controller.signal.aborted) return;
 		loop.rateLimitRetries = 0;
 		if (verdict.done) {
-			stop(`Loop complete after ${loop.runs} run(s): ${verdict.evidence}`);
+			const message = `Loop complete after ${loop.runs} run(s): ${verdict.evidence}`;
+			if (loop.returnToBase && hasLoopReturnToBase()) {
+				loop.phase = "complete";
+				updateStatus(ctx);
+				say(message);
+				try { await returnLoopToBase(ctx); }
+				catch (error) { stop(`Loop complete, but could not return to main (${String(error)}).`); }
+				return;
+			}
+			stop(message);
 			return;
+		}
+		if (loop.returnToBase) {
+			// Leave the completed PR branch intact, but run the next issue from main.
+			loop.phase = "waiting";
+			loop.compacted = false;
+			updateStatus(ctx);
+			try {
+				if (await returnLoopToBase(ctx)) return;
+			} catch (error) {
+				stop(`Loop stopped: could not return to main (${String(error)}).`);
+				return;
+			}
+			if (active !== loop) return;
 		}
 		nextOrStop(loop);
 	}
@@ -395,6 +428,26 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 		setLoopActive(false, ctx);
 	}
 	pi.on("session_shutdown", (_event, ctx) => reset(ctx));
-	pi.on("session_start", (_event, ctx) => reset(ctx));
+	pi.on("session_start", (event, ctx) => {
+		const serialized = process.env[LOOP_HANDOFF_ENV];
+		delete process.env[LOOP_HANDOFF_ENV];
+		reset(ctx);
+		if (event.reason !== "startup" || !serialized || serialized.length > 128_000) return;
+		let handoff: LoopHandoff;
+		try { handoff = JSON.parse(serialized) as LoopHandoff; } catch { return; }
+		if (!handoff || handoff.sessionFile !== ctx.sessionManager.getSessionFile() ||
+			!Number.isSafeInteger(handoff.runs) || handoff.runs < 1 ||
+			!Number.isSafeInteger(handoff.intervalMs) || handoff.intervalMs < 0 ||
+			typeof handoff.prompt !== "string" || !handoff.prompt.trim() ||
+			(handoff.phase !== "running" && handoff.phase !== "waiting" && handoff.phase !== "complete") ||
+			typeof handoff.returnToBase !== "boolean" ||
+			(handoff.condition !== undefined && typeof handoff.condition !== "string") ||
+			(handoff.maxRuns !== undefined && (!Number.isSafeInteger(handoff.maxRuns) || handoff.maxRuns < 1))) return;
+		if (handoff.phase === "complete") return;
+		active = { ...handoff, compacted: false, rateLimitRetries: 0, generation: ++generation, ctx };
+		setLoopActive(true, ctx);
+		if (active.phase === "waiting") schedule(active);
+		else updateStatus(ctx);
+	});
 	pi.on("session_tree", (_event, ctx) => reset(ctx));
 }

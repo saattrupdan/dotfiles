@@ -5,8 +5,9 @@ import { join } from "node:path";
 import { test } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import loopExtension, { parseDuration, parseLoopArgs } from "./index.ts";
+import { loopHandoffEnv } from "../git-worktree-isolation/index.ts";
 import { parseVerdict, type Verdict } from "./checker.ts";
-import { isLoopActive, onLoopChange } from "../_loop_state/state.ts";
+import { getLoopHandoff, isLoopActive, LOOP_HANDOFF_ENV, onLoopChange, setLoopReturnToBase, suspendLoopForHandoff } from "../_loop_state/state.ts";
 import { NON_INTERACTIVE_BANNER } from "../non-interactive/prompt.ts";
 
 test("duration accepts ordered h/m/s components and rejects invalid values", () => {
@@ -121,6 +122,7 @@ function harness(
 	const ctx = {
 		mode: options.mode ?? "tui",
 		cwd: options.cwd ?? process.cwd(),
+		sessionManager: { getSessionFile: () => "/tmp/pi-loop-handoff-session.jsonl" },
 		ui: { setStatus: (_key: string, value?: string) => { statuses.push(value); } },
 		isIdle: () => !busy,
 		hasPendingMessages: () => pending,
@@ -217,6 +219,116 @@ test("implement-all-issues starts the same loop with its issue prompt and finish
 	await h.finish();
 	assert.deepEqual(checks, ["No unassigned issues are left"]);
 	assert.match(h.notices.at(-1) ?? "", /Loop complete after 1 run/);
+});
+
+test("a branch relaunch resumes the running issue iteration, then checks completion", async () => {
+	const original = process.env[LOOP_HANDOFF_ENV];
+	const parent = harness();
+	try {
+		await parent.command("", "implement-all-issues");
+		const snapshot = getLoopHandoff("/tmp/pi-loop-handoff-session.jsonl");
+		assert.equal(snapshot?.phase, "running");
+		const env = loopHandoffEnv("/tmp/pi-loop-handoff-session.jsonl", true);
+		assert.deepEqual(JSON.parse(env[LOOP_HANDOFF_ENV]!), JSON.parse(JSON.stringify(snapshot)));
+		process.env[LOOP_HANDOFF_ENV] = env[LOOP_HANDOFF_ENV];
+		assert.equal(isLoopActive(), false, "the old process must release its loop power hold");
+		assert.equal(parent.timers.size, 0, "the old process must release its watchdog");
+		await parent.emit("session_shutdown");
+		const checked: string[] = [];
+		const child = harness(async (condition) => {
+			checked.push(condition);
+			return { done: true, evidence: "all issues assigned" };
+		});
+		await child.emit("session_start", { reason: "startup" });
+		assert.deepEqual(child.sent, [], "the handoff continues the existing run, not a second issue");
+		await child.finish("PR created");
+		assert.deepEqual(checked, ["No unassigned issues are left"]);
+		assert.match(child.notices.at(-1) ?? "", /Loop complete after 1 run/);
+	} finally {
+		if (original === undefined) delete process.env[LOOP_HANDOFF_ENV];
+		else process.env[LOOP_HANDOFF_ENV] = original;
+		await parent.command("stop");
+	}
+});
+
+test("issue loop returns to main after a PR and starts the next issue there", async () => {
+	const original = process.env[LOOP_HANDOFF_ENV];
+	let returned = false;
+	const branch = harness(async () => ({ done: false, evidence: "more unassigned issues" }), { contextTokens: 2_000 });
+	try {
+		setLoopReturnToBase(async (ctx) => {
+			returned = true;
+			const snapshot = getLoopHandoff(ctx.sessionManager.getSessionFile()!);
+			assert.equal(snapshot?.phase, "waiting");
+			assert.equal(snapshot?.runs, 1);
+			process.env[LOOP_HANDOFF_ENV] = loopHandoffEnv(ctx.sessionManager.getSessionFile()!, true)[LOOP_HANDOFF_ENV];
+			assert.equal(isLoopActive(), false, "the previous process releases its hold");
+		});
+		await branch.command("", "implement-all-issues");
+		await branch.finish("PR created");
+		assert.equal(returned, true);
+		assert.equal(branch.timers.size, 0, "the branch must not start the next issue");
+		await branch.emit("session_shutdown");
+		setLoopReturnToBase(undefined);
+		const main = harness(undefined, { contextTokens: 2_000 });
+		await main.emit("session_start", { reason: "startup" });
+		assert.equal(main.timers.size, 1);
+		main.tick(); // context is too small to compact
+		main.tick(); // next issue starts back on main
+		assert.equal(main.sent.length, 1);
+		assert.match(main.sent[0] ?? "", /^Find an unassigned issue for this repo/);
+		await main.command("stop");
+	} finally {
+		setLoopReturnToBase(undefined);
+		if (original === undefined) delete process.env[LOOP_HANDOFF_ENV];
+		else process.env[LOOP_HANDOFF_ENV] = original;
+		await branch.command("stop");
+	}
+});
+
+test("the final issue returns to main without scheduling another run", async () => {
+	const original = process.env[LOOP_HANDOFF_ENV];
+	const branch = harness(async () => ({ done: true, evidence: "no unassigned issues" }));
+	try {
+		setLoopReturnToBase(async (ctx) => {
+			const snapshot = getLoopHandoff(ctx.sessionManager.getSessionFile()!);
+			assert.equal(snapshot?.phase, "complete");
+			process.env[LOOP_HANDOFF_ENV] = JSON.stringify(snapshot);
+			suspendLoopForHandoff();
+		});
+		await branch.command("", "implement-all-issues");
+		await branch.finish("last PR created");
+		assert.equal(isLoopActive(), false);
+		assert.match(branch.notices.at(-1) ?? "", /Loop complete after 1 run/);
+		const main = harness();
+		await main.emit("session_start", { reason: "startup" });
+		assert.equal(main.timers.size, 0);
+		assert.deepEqual(main.sent, []);
+		assert.equal(isLoopActive(), false);
+	} finally {
+		setLoopReturnToBase(undefined);
+		if (original === undefined) delete process.env[LOOP_HANDOFF_ENV];
+		else process.env[LOOP_HANDOFF_ENV] = original;
+		await branch.command("stop");
+	}
+});
+
+test("unrelated sessions ignore a handoff marker", async () => {
+	const original = process.env[LOOP_HANDOFF_ENV];
+	try {
+		process.env[LOOP_HANDOFF_ENV] = JSON.stringify({
+			sessionFile: "/tmp/other-session.jsonl", prompt: "work", intervalMs: 0,
+			runs: 1, phase: "waiting", returnToBase: true,
+		});
+		const h = harness();
+		await h.emit("session_start", { reason: "startup" });
+		assert.equal(isLoopActive(), false);
+		assert.equal(h.timers.size, 0);
+		assert.equal(process.env[LOOP_HANDOFF_ENV], undefined);
+	} finally {
+		if (original === undefined) delete process.env[LOOP_HANDOFF_ENV];
+		else process.env[LOOP_HANDOFF_ENV] = original;
+	}
 });
 
 test("implement-all-issues rejects arguments and cannot replace an active loop", async () => {

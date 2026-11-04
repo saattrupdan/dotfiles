@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Loader, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { getLoopHandoff, LOOP_HANDOFF_ENV, setLoopReturnToBase, suspendLoopForHandoff } from "../_loop_state/state.ts";
 import {
 	acquireResumeClaim,
 	acquireSessionLease,
@@ -28,6 +29,7 @@ import {
 	reapStaleWorktrees,
 	releaseManagedWorktree,
 	prepareBranchCleanup,
+	prepareBranchReturn,
 	finishBranchCleanup,
 	rewriteSessionCwd,
 	sessionCwd,
@@ -37,6 +39,7 @@ import {
 const CHILD_MANIFEST_ENV = "PI_WORKTREE_SESSION_MANIFEST";
 const BRANCH_CONTINUATION_ENV = "PI_WORKTREE_BRANCH_CONTINUATION";
 const CLEANUP_CONTINUATION_ENV = "PI_WORKTREE_CLEANUP_CONTINUATION";
+const LOOP_RETURN_CONTINUATION_ENV = "PI_WORKTREE_LOOP_RETURN_CONTINUATION";
 const DISABLE_ENV = "PI_WORKTREE_ISOLATION_DISABLE";
 const CUSTOM_TYPE = "git-worktree-isolation:finalize";
 const RATE_LIMIT_RETRY_TYPE = "rate-limit-retry:continue";
@@ -177,9 +180,20 @@ async function extensionCwd(pi: ExtensionAPI): Promise<string> {
 	return path.resolve(result.stdout.trim());
 }
 
-async function relaunch(plan: Awaited<ReturnType<typeof createLaunchPlan>>, ctx: HandoffContext, args = cliArgs()): Promise<never> {
+export function loopHandoffEnv(sessionFile: string, suspend = false): NodeJS.ProcessEnv {
+	const env = { ...process.env };
+	delete env[LOOP_HANDOFF_ENV];
+	const handoff = getLoopHandoff(sessionFile);
+	if (handoff) {
+		env[LOOP_HANDOFF_ENV] = JSON.stringify(handoff);
+		if (suspend) suspendLoopForHandoff();
+	}
+	return env;
+}
+
+async function relaunch(plan: Awaited<ReturnType<typeof createLaunchPlan>>, ctx: HandoffContext, sessionFile: string, args = cliArgs()): Promise<never> {
 	const result = await launchWithProgress(plan.childCwd, [process.argv[1]!, ...args], {
-		...process.env,
+		...loopHandoffEnv(sessionFile, true),
 		[CHILD_MANIFEST_ENV]: plan.manifest.manifestPath,
 		[BRANCH_CONTINUATION_ENV]: "1",
 	}, ctx);
@@ -192,12 +206,14 @@ async function relaunch(plan: Awaited<ReturnType<typeof createLaunchPlan>>, ctx:
 	process.exit(result.status ?? (result.signal === "SIGINT" ? 130 : 1));
 }
 
-async function resumeInManagedWorktree(sessionFile: string, cwd: string, manifestPath?: string, continueCleanup = false, ctx?: HandoffContext): Promise<never> {
-	const env: NodeJS.ProcessEnv = { ...process.env };
+async function resumeInManagedWorktree(sessionFile: string, cwd: string, manifestPath?: string, continueCleanup = false, ctx?: HandoffContext, continueLoop = false): Promise<never> {
+	const env = loopHandoffEnv(sessionFile, Boolean(ctx));
 	if (manifestPath) env[CHILD_MANIFEST_ENV] = manifestPath;
 	else delete env[CHILD_MANIFEST_ENV];
 	if (continueCleanup) env[CLEANUP_CONTINUATION_ENV] = "1";
 	else delete env[CLEANUP_CONTINUATION_ENV];
+	if (continueLoop) env[LOOP_RETURN_CONTINUATION_ENV] = "1";
+	else delete env[LOOP_RETURN_CONTINUATION_ENV];
 	const args = continuationArgs(sessionFile);
 	const result = ctx
 		? await launchWithProgress(cwd, [process.argv[1]!, ...args], env, ctx)
@@ -316,6 +332,18 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 		await release();
 	};
 
+	if (manifest.createdBranch) {
+		setLoopReturnToBase(async (ctx) => {
+			const sessionFile = ctx.sessionManager.getSessionFile();
+			if (!sessionFile) throw new Error("A saved Pi session is required to return to main.");
+			const mainRoot = await prepareBranchReturn(manifest);
+			await rewriteSessionCwd(sessionFile, mainRoot);
+			await releaseTranscript();
+			process.chdir(mainRoot);
+			await resumeInManagedWorktree(sessionFile, mainRoot, undefined, false, ctx, true);
+		});
+	}
+
 	pi.on("before_agent_start", (event) => {
 		event.systemPromptOptions.sections["git-worktree-isolation"] = SYSTEM_INSTRUCTION;
 	});
@@ -366,6 +394,7 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 	});
 
 	pi.on("session_shutdown", async (event, ctx) => {
+		if (manifest.createdBranch) setLoopReturnToBase(undefined);
 		if (event.reason !== "quit" || manifest.createdBranch) {
 			await releaseTranscript();
 			return;
@@ -614,6 +643,10 @@ export default async function (pi: ExtensionAPI) {
 
 	const cwd = await extensionCwd(pi);
 	// Cleanup relaunches on main. Complete the interrupted turn there, once only.
+	if (process.env[LOOP_RETURN_CONTINUATION_ENV] === "1") {
+		delete process.env[LOOP_RETURN_CONTINUATION_ENV];
+		pi.on("session_start", async (_event, _ctx) => { await signalChildReady(); });
+	}
 	if (process.env[CLEANUP_CONTINUATION_ENV] === "1") {
 		delete process.env[CLEANUP_CONTINUATION_ENV];
 		let pendingCleanupMessage = true;
@@ -720,7 +753,7 @@ export default async function (pi: ExtensionAPI) {
 		try {
 			pi.events.emit("thinking-status:override", { label: "Switching to new branch..." });
 			await rewriteSessionCwd(sessionFile, plan.childCwd);
-			await relaunch(plan, ctx, continuationArgs(sessionFile));
+			await relaunch(plan, ctx, sessionFile, continuationArgs(sessionFile));
 		} catch (error) {
 			fatal(`could not enter the new branch; worktree remains at ${plan.childCwd}: ${error instanceof Error ? error.message : String(error)}`);
 		}

@@ -24,6 +24,7 @@ import {
 	hydrateIgnoredPaths,
 	loadResumeRecord,
 	prepareBranchCleanup,
+	prepareBranchReturn,
 	finishBranchCleanup,
 	reapStaleWorktrees,
 	releaseManagedWorktree,
@@ -175,6 +176,25 @@ function createRepo(): { root: string; agentDir: string } {
 
 afterEach(() => {
 	for (const root of temporaryRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("returning to main preserves an unmerged PR branch and refuses dirty checkouts", async () => {
+	const { root, agentDir } = createRepo();
+	fs.writeFileSync(path.join(root, ".gitignore"), "dist/\n");
+	command(root, ["add", ".gitignore"]);
+	command(root, ["commit", "-m", "chore: ignore build output"]);
+	const plan = await createLaunchPlan(root, agentDir, "feat/issue-one");
+	fs.mkdirSync(path.join(plan.manifest.worktreeRoot, "dist"));
+	fs.writeFileSync(path.join(plan.manifest.worktreeRoot, "dist", "bundle.js"), "built");
+	assert.equal(await prepareBranchReturn(plan.manifest), await fs.promises.realpath(root));
+	assert.equal(command(plan.manifest.worktreeRoot, ["branch", "--show-current"]), "feat/issue-one");
+	fs.writeFileSync(path.join(plan.manifest.worktreeRoot, "uncommitted.txt"), "work");
+	await assert.rejects(prepareBranchReturn(plan.manifest), /not clean/);
+	fs.unlinkSync(path.join(plan.manifest.worktreeRoot, "uncommitted.txt"));
+	fs.writeFileSync(path.join(root, "uncommitted.txt"), "work");
+	await assert.rejects(prepareBranchReturn(plan.manifest), /main checkout has uncommitted changes/);
+	fs.unlinkSync(path.join(root, "uncommitted.txt"));
+	assert.equal(command(root, ["show-ref", "--verify", "refs/heads/feat/issue-one"]).split(" ")[1], "refs/heads/feat/issue-one");
 });
 
 test("creates a detached worktree without creating a branch", async () => {
