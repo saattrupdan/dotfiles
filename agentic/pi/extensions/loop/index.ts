@@ -128,7 +128,14 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 			condition: active.condition, maxRuns: active.maxRuns, runs: active.runs,
 			phase: active.phase, returnToBase: active.returnToBase,
 		};
-	}, () => stop());
+	}, () => {
+		const handoff = active;
+		if (!handoff) return;
+		// The old process relinquishes the loop/power hold, but keeps its footer
+		// visible until the relaunched child restores the active loop status.
+		stop(undefined, true);
+		handoff.ctx.ui.setStatus(STATUS_KEY, `↻ ${handoff.runs} switching branches`);
+	});
 
 	function say(message: string) {
 		pi.sendMessage({ customType: "loop:status", content: message, display: true });
@@ -163,7 +170,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 		}
 		updateStatus(loop.ctx);
 	}
-	function stop(reason?: string) {
+	function stop(reason?: string, preserveStatus = false) {
 		generation++;
 		if (active) clearCountdown(active);
 		if (timer !== undefined) clearTimer(timer);
@@ -178,7 +185,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 		active = undefined;
 		if (old) {
 			setLoopActive(false, old.ctx);
-			updateStatus(old.ctx);
+			if (!preserveStatus) updateStatus(old.ctx);
 		}
 		if (reason && old) say(reason);
 	}

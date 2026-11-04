@@ -314,6 +314,7 @@ test("a branch relaunch resumes the running issue iteration, then checks complet
 		assert.deepEqual(JSON.parse(env[LOOP_HANDOFF_ENV]!), JSON.parse(JSON.stringify(snapshot)));
 		process.env[LOOP_HANDOFF_ENV] = env[LOOP_HANDOFF_ENV];
 		assert.equal(isLoopActive(), false, "the old process must release its loop power hold");
+		assert.match(parent.statuses.at(-1) ?? "", /↻ 1 switching branches/, "the parent footer must show the handoff");
 		assert.equal(parent.timers.size, 0, "the old process must release its watchdog");
 		await parent.emit("session_shutdown");
 		const checked: string[] = [];
@@ -322,6 +323,8 @@ test("a branch relaunch resumes the running issue iteration, then checks complet
 			return { done: true, evidence: "all issues assigned" };
 		});
 		await child.emit("session_start", { reason: "startup" });
+		assert.equal(isLoopActive(), true, "the child owns the running loop");
+		assert.match(child.statuses.at(-1) ?? "", /↻ 1 running/, "the child footer restores the live loop");
 		assert.deepEqual(child.sent, [], "the handoff continues the existing run, not a second issue");
 		await child.finish("PR created");
 		assert.equal(checked.length, 1);
