@@ -43,6 +43,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { type Component, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { renderExpandedCall } from "../_tool-display/expanded-call.ts";
 
 import { convertHeicToJpeg, isHeifImage } from "./heic.js";
 
@@ -902,7 +903,8 @@ export default function (pi: ExtensionAPI, overrides: ReadExtensionOverrides = {
 			})(), filePath);
 		},
 
-		renderCall(args, theme) {
+		renderCall(args, theme, context) {
+			if (context?.expanded) return renderExpandedCall("read", args, theme);
 			const rawPath = args?.path;
 			const pathStr = rawPath ? String(rawPath) : "...";
 			const symbol = args?.symbol;

@@ -41,6 +41,18 @@ test("codemode hides code and output until expanded", () => {
 	assert.deepEqual(lines(compact.renderResult!(result, { expanded: true, isPartial: false }, theme, context as never)), ["full result"]);
 });
 
+test("expanded codemode falls back to submitted code when no upstream renderer exists", () => {
+	let resolve: ToolRendererResolver | undefined;
+	codemodeCollapse({ registerToolRenderer: (value: ToolRendererResolver) => { resolve = value; } } as unknown as ExtensionAPI);
+	const compact = resolve!("codemode", () => undefined)!;
+	const code = "const answer = 42;\ntext(answer);";
+	assert.deepEqual(lines(compact.renderCall!({ code }, theme, { expanded: true } as never)),
+		["codemode", "code: const answer = 42;", "text(answer);"]);
+	const result = { content: [{ type: "text" as const, text: "complete\noutput" }] };
+	assert.deepEqual(lines(compact.renderResult!(result, { expanded: true, isPartial: false }, theme, {} as never)),
+		["complete", "output"]);
+});
+
 test("codemode reports running and failure states without leaking output", () => {
 	const compact = renderer();
 	const result = { content: [{ type: "text" as const, text: "private error details" }] };

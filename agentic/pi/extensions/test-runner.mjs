@@ -10,6 +10,7 @@ const jiti = createJiti(import.meta.url, { moduleCache: false });
 await jiti.import(path.join(root, "_outliner", "outliner.test.ts"), { default: false });
 await jiti.import(path.join(root, "conversation-name", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "codemode-collapse", "index.test.ts"), { default: false });
+await jiti.import(path.join(root, "_tool-display", "expanded-call.test.ts"), { default: false });
 await jiti.import(path.join(root, "generate-image", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "incognito", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "fast", "index.test.ts"), { default: false });

@@ -2,6 +2,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
+import { renderExpandedCall } from "../_tool-display/expanded-call.ts";
 
 export default function (pi: ExtensionAPI): void {
 	pi.registerToolRenderer((name, next) => {
@@ -11,7 +12,7 @@ export default function (pi: ExtensionAPI): void {
 			...original,
 			renderCall(args, theme, context) {
 				if (context.expanded) return original?.renderCall?.(args, theme, context)
-					?? new Text(theme.fg("toolTitle", theme.bold("codemode")), 0, 0);
+					?? renderExpandedCall("codemode", args, theme);
 				return new Text(theme.fg("toolTitle", theme.bold("codemode")), 0, 0);
 			},
 			renderResult(result, options, theme, context) {

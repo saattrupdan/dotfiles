@@ -10,6 +10,7 @@
 import type { AgentToolResult, ExtensionAPI, Theme, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { renderExpandedCall } from "../_tool-display/expanded-call.ts";
 
 import { interactiveQueue } from "../_interactive_queue/queue.ts";
 import { parseCommand, safeCommandPreview } from "./command.ts";
@@ -143,7 +144,10 @@ export default function (pi: ExtensionAPI) {
 			}
 		},
 
-		renderCall(args, theme) {
+		renderCall(args, theme, context) {
+			if (context?.expanded) return renderExpandedCall("web_browse", {
+				...args, command: safeCommandPreview(args?.command ?? "", Infinity),
+			}, theme);
 			return new Text(
 				`${theme.fg("toolTitle", theme.bold("web_browse "))}${theme.fg("accent", safeCommandPreview((args?.command as string) || ""))}`,
 				0,

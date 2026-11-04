@@ -54,6 +54,7 @@ function findRipgrep(): string {
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { renderExpandedCall } from "../_tool-display/expanded-call.ts";
 
 // ---------------------------------------------------------------------------
 // Resolve the outliner — use jiti-relative import from the extension dir
@@ -642,7 +643,8 @@ export default async function (pi: ExtensionAPI) {
 			};
 		},
 
-		renderCall(args, theme) {
+		renderCall(args, theme, context) {
+			if (context?.expanded) return renderExpandedCall("search", args, theme);
 			const query = args?.query ?? "...";
 			const kind = args?.kind;
 			return new Text(

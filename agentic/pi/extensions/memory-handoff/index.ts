@@ -34,7 +34,10 @@ export default function (pi: ExtensionAPI): void {
 			"Returns a job ID immediately, NOT confirmation that the memory was stored. " +
 			"Failed requests remain in ~/memory/requests/failed for inspection and retry.",
 		parameters: Params,
-		renderCall(_args, theme) { return new Text(theme.fg("toolTitle", theme.bold("store_memory")), 0, 0); },
+		renderCall(args, theme, context) {
+			const title = theme.fg("toolTitle", theme.bold("store_memory"));
+			return new Text(context.expanded ? `${title}\n${args.text}` : title, 0, 0);
+		},
 		renderResult: renderMemoryResult("store"),
 		async execute(_id, { text }) {
 			const id = enqueue(text);

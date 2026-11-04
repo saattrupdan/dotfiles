@@ -18,6 +18,7 @@ import { StringEnum, type Message } from "@earendil-works/pi-ai";
 import { type ExtensionAPI, getAgentDir, getMarkdownTheme, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { renderExpandedCall } from "../_tool-display/expanded-call.ts";
 import { type AgentConfig, type AgentScope, delegatableAgents, discoverAgents, findNearestProjectAgentsDir } from "./agents.ts";
 import {
 	createWorktree,
@@ -1211,6 +1212,7 @@ export default function (pi: ExtensionAPI) {
 				theme.fg("toolTitle", theme.bold("subagent ")) +
 				theme.fg("accent", agentName) +
 				theme.fg("muted", ` [${scope}]`);
+			if (context.expanded) return renderExpandedCall(`subagent ${agentName} [${scope}]`, args, theme);
 			if (context.isPartial) text += `\n  ${theme.fg("dim", preview)}`;
 			return new Text(text, 0, 0);
 		},

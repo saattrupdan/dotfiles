@@ -17,6 +17,7 @@ import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { renderExpandedCall } from "../_tool-display/expanded-call.ts";
 
 const DEFAULT_DEPTH = 2;
 const MAX_DEPTH = 6;
@@ -220,7 +221,8 @@ export default function (pi: ExtensionAPI) {
 			};
 		},
 
-		renderCall(args, theme) {
+		renderCall(args, theme, context) {
+			if (context?.expanded) return renderExpandedCall("code_tree", args, theme);
 			const p = (args?.path as string | undefined) ?? ".";
 			const d = (args?.depth as number | undefined) ?? DEFAULT_DEPTH;
 			return new Text(

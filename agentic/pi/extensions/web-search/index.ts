@@ -3,6 +3,7 @@
 import type { AgentToolResult, ExtensionAPI, Theme, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { renderExpandedCall } from "../_tool-display/expanded-call.ts";
 
 export const DEFAULT_SEARXNG_URL = "http://127.0.0.1:8888";
 export const DEFAULT_TIMEOUT_MS = 15_000;
@@ -289,7 +290,8 @@ export default function (pi: ExtensionAPI) {
 				},
 			};
 		},
-		renderCall(args, theme) {
+		renderCall(args, theme, context) {
+			if (context?.expanded) return renderExpandedCall("web_search", args, theme);
 			const query = String(args?.query ?? "...");
 			return new Text(`${theme.fg("toolTitle", theme.bold("web_search "))}${theme.fg("accent", query.slice(0, 80))}`, 0, 0);
 		},

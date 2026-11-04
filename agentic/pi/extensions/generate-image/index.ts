@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Loader, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { renderExpandedCall } from "../_tool-display/expanded-call.ts";
 
 class CommandStatusLoader extends Loader {
 	override render(width: number): string[] {
@@ -127,7 +128,8 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 		},
-		renderCall(_args, theme) {
+		renderCall(args, theme, context) {
+			if (context?.expanded) return renderExpandedCall("generate_image", args, theme);
 			return new Text(theme.fg("toolTitle", theme.bold("generate_image")), 0, 0);
 		},
 		renderResult(result, options, theme, context) {

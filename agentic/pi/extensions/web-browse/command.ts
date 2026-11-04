@@ -54,14 +54,14 @@ export function parseCommand(command: string): ParsedCommand {
 }
 
 /** Avoid putting form payloads into Pi's transcript or renderer. */
-export function safeCommandPreview(command: string): string {
+export function safeCommandPreview(command: string, maxLength = 80): string {
 	try {
 		const { name, args } = parseCommand(command);
 		if (name === "fill" || name === "type" || name === "select") {
 			return `${name}${args[0] ? ` ${args[0]}` : ""} [text redacted]`;
 		}
 		const normalized = [name, ...args].join(" ");
-		return normalized.length > 80 ? `${normalized.slice(0, 80)}…` : normalized;
+		return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}…` : normalized;
 	} catch {
 		return "invalid command";
 	}
