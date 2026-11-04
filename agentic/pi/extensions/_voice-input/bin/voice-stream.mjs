@@ -92,6 +92,7 @@ export async function transcribePcm(
 	} else {
 		url = `${config.whisperUrl}/inference`;
 		form.append("suppress_nst", "true");
+		form.append("language", config.language);
 	}
 
 	const response = await fetcher(url, {

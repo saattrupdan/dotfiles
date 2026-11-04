@@ -524,7 +524,7 @@ async function transcribe(): Promise<string> {
 		// ("(dramatic music)" / "[BLANK_AUDIO]") that whisper hallucinates on silence.
 		raw = await run(
 			CONFIG.whisperBin,
-			["-m", CONFIG.whisperModel, "-f", WAV_PATH, "-nt", "-np", "-sns"],
+			["-m", CONFIG.whisperModel, "-f", WAV_PATH, "-l", CONFIG.syv.language, "-nt", "-np", "-sns"],
 			{ timeoutMs: 120_000 },
 		);
 	}

@@ -28,6 +28,7 @@ test("transcribePcm calls whisper-server's batch endpoint", async () => {
 	const config = resolveStreamConfig({
 		PI_PTT_BACKEND: "whisper",
 		PI_PTT_WHISPER_SERVER_URL: "http://localhost:8081/",
+		PI_PTT_LANGUAGE: "en",
 	});
 	const text = await transcribePcm(PCM, config, async (input, init) => {
 		assert.equal(input, "http://localhost:8081/inference");
@@ -36,6 +37,7 @@ test("transcribePcm calls whisper-server's batch endpoint", async () => {
 		assert.ok(init.body instanceof FormData);
 		assert.equal(init.body.get("response_format"), "json");
 		assert.equal(init.body.get("suppress_nst"), "true");
+		assert.equal(init.body.get("language"), "en");
 		assert.ok(init.body.get("file") instanceof Blob);
 		return Response.json({ text: "  hej   fra whisper  " });
 	});
