@@ -213,11 +213,18 @@ test("implement-all-issues starts the same loop with its issue prompt and finish
 		return { done: true, evidence: "no unassigned issues remain" };
 	});
 	await h.command("", "implement-all-issues");
-	assert.deepEqual(h.sent, [
-		"Find an unassigned issue for this repo, assign me to it, create a feature branch where you fully implement it, ensure all checks and tests pass as well as an independent review, take screenshots or create a small video demonstrating the feature if it's visual, and create a PR on it where you assign me.",
-	]);
+	assert.equal(h.sent.length, 1);
+	const prompt = h.sent[0]!;
+	assert.match(prompt, /^Find an unassigned issue for this repo\. Before assigning it/);
+	assert.match(prompt, /crucial architectural decision.*do not assign or implement.*comment specifying the decision needed/);
+	assert.match(prompt, /existing standard label for issues blocked by a decision.*create a decision-blocked label and apply it/);
+	assert.match(prompt, /break it into actionable sub-issues linked to the original issue as their parent/);
+	assert.match(prompt, /choose only one actionable sub-issue for this run/);
+	assert.match(prompt, /assign me to it, create a feature branch.*independent review.*create a PR on it where you assign me/);
 	await h.finish();
-	assert.deepEqual(checks, ["No unassigned issues are left"]);
+	assert.equal(checks.length, 1);
+	assert.match(checks[0]!, /^No actionable unassigned issues remain:/);
+	assert.match(checks[0]!, /decision-blocked issues also have the repo's standard decision-blocker label or decision-blocked label/);
 	assert.match(h.notices.at(-1) ?? "", /Loop complete after 1 run/);
 });
 
@@ -242,7 +249,8 @@ test("a branch relaunch resumes the running issue iteration, then checks complet
 		await child.emit("session_start", { reason: "startup" });
 		assert.deepEqual(child.sent, [], "the handoff continues the existing run, not a second issue");
 		await child.finish("PR created");
-		assert.deepEqual(checked, ["No unassigned issues are left"]);
+		assert.equal(checked.length, 1);
+		assert.match(checked[0]!, /^No actionable unassigned issues remain:/);
 		assert.match(child.notices.at(-1) ?? "", /Loop complete after 1 run/);
 	} finally {
 		if (original === undefined) delete process.env[LOOP_HANDOFF_ENV];
