@@ -8,6 +8,8 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import registerIsolation, { continuationArgs, isPrintMode, launchWithProgress, recoveredFromRateLimit } from "./index.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import registerLoop from "../loop/index.ts";
+import { getLoopHandoff, isLoopActive, LOOP_HANDOFF_ENV } from "../_loop_state/state.ts";
 import {
 	acquirePublishLock,
 	acquireResumeClaim,
@@ -378,6 +380,83 @@ test("cleanup relaunch requests one final completion message on main", async () 
 		else process.env.PI_WORKTREE_CLEANUP_CONTINUATION = previous;
 	}
 });
+
+for (const transition of ["branch", "cleanup"] as const) {
+	for (const loopFirst of [false, true]) {
+		test(`${transition} continuation preserves the current loop iteration (${loopFirst ? "loop" : "Git"} starts first)`, async () => {
+			const { root, agentDir } = createRepo();
+			const plan = transition === "branch" ? await createLaunchPlan(root, agentDir, "feat/loop-continuation") : undefined;
+			const cwd = plan?.childCwd ?? root;
+			const sessionFile = path.join(root, "session.jsonl");
+			fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", cwd })}\n`);
+			const keys = [LOOP_HANDOFF_ENV, "PI_WORKTREE_SESSION_MANIFEST", "PI_WORKTREE_BRANCH_CONTINUATION", "PI_WORKTREE_CLEANUP_CONTINUATION"];
+			const previous = keys.map((key) => process.env[key]);
+			const handlers = new Map<string, Array<(event: unknown, ctx: ExtensionContext) => unknown>>();
+			const ctx = {
+				mode: "rpc", cwd,
+				sessionManager: { getSessionFile: () => sessionFile },
+				ui: { setStatus: () => undefined },
+				isIdle: () => true, hasPendingMessages: () => false,
+			} as unknown as ExtensionContext;
+			const emit = async (name: string, event: unknown) => {
+				for (const handler of [...(handlers.get(name) ?? [])]) await handler(event, ctx);
+			};
+			let checks = 0;
+			let continuations = 0;
+			const pi = {
+				registerFlag: () => undefined, registerCommand: () => undefined, registerTool: () => undefined,
+				getFlag: () => false,
+				exec: async () => ({ code: 0, stdout: `${cwd}\n` }),
+				on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) => {
+					handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+					return () => undefined;
+				},
+				sendUserMessage: () => assert.fail("a handoff must not start a new iteration"),
+				sendMessage: (message: { content: string }, options?: { triggerTurn?: boolean }) => {
+					if (!options?.triggerTurn) return;
+					continuations++;
+					assert.equal(isLoopActive(), true, "restore the loop before starting the continuation");
+					assert.equal(getLoopHandoff(sessionFile)?.runs, 1);
+					assert.equal(checks, 0, "switching checkouts must not evaluate completion");
+					assert.match(message.content, /Continue the previous request/);
+					assert.doesNotMatch(message.content, /Give the user a brief completion message about the finished request/);
+				},
+			} as unknown as ExtensionAPI;
+			const loadLoop = () => registerLoop(pi, { check: async () => {
+				checks++;
+				return { done: true, evidence: "remaining work finished" };
+			} });
+			try {
+				process.env[LOOP_HANDOFF_ENV] = JSON.stringify({
+					sessionFile, prompt: "finish the work", intervalMs: 0, runs: 1, maxRuns: 1,
+					condition: "work finished", phase: "running", returnToBase: false,
+				});
+				if (plan) process.env.PI_WORKTREE_SESSION_MANIFEST = plan.manifest.manifestPath;
+				else delete process.env.PI_WORKTREE_SESSION_MANIFEST;
+				process.env[transition === "branch" ? "PI_WORKTREE_BRANCH_CONTINUATION" : "PI_WORKTREE_CLEANUP_CONTINUATION"] = "1";
+				if (loopFirst) loadLoop();
+				await registerIsolation(pi);
+				if (!loopFirst) loadLoop();
+				await emit("session_start", { reason: "startup" });
+				assert.equal(continuations, 1);
+				assert.equal(isLoopActive(), true, "later startup handlers must not reset the restored loop");
+				assert.equal(getLoopHandoff(sessionFile)?.runs, 1);
+				assert.equal(checks, 0);
+				await emit("agent_start", {});
+				await emit("agent_end", { messages: [{ role: "assistant", stopReason: "stop", content: [{ type: "text", text: "work finished" }] }] });
+				await emit("agent_settled", {});
+				assert.equal(checks, 1, "only the finished request evaluates completion");
+				assert.equal(isLoopActive(), false);
+			} finally {
+				await emit("session_shutdown", { reason: "reload" });
+				keys.forEach((key, index) => {
+					if (previous[index] === undefined) delete process.env[key];
+					else process.env[key] = previous[index];
+				});
+			}
+		});
+	}
+}
 
 test("cleanup tool is discoverable in the exempt dotfiles checkout", async () => {
 	const cwd = command(path.dirname(fileURLToPath(import.meta.url)), ["rev-parse", "--show-toplevel"]);
@@ -1339,7 +1418,7 @@ test("managed feature sessions expose cleanup but do not auto-release on quit", 
 		assert.equal(process.env.PI_WORKTREE_BRANCH_CONTINUATION, undefined);
 		assert.deepEqual(continuations, [{
 			customType: "git-worktree-isolation:continue-branch",
-			content: "Continue the previous request using the branch-creation result above.",
+			content: "Continue the previous request using the branch-creation result above. Creating the branch does not finish the request or the current loop iteration.",
 			display: false,
 			triggerTurn: true,
 		}]);

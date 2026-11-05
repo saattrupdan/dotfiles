@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Loader, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { getLoopHandoff, LOOP_HANDOFF_ENV, setLoopReturnToBase, suspendLoopForHandoff } from "../_loop_state/state.ts";
+import { getLoopHandoff, LOOP_HANDOFF_ENV, restoreLoopForHandoff, setLoopReturnToBase, suspendLoopForHandoff } from "../_loop_state/state.ts";
 import {
 	acquireResumeClaim,
 	acquireSessionLease,
@@ -364,6 +364,8 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 		// The statusline shows the checked-out Git branch instead of a worktree ID.
 		ctx.ui.setStatus("git-worktree-isolation", undefined);
 		if (continueBranch) {
+			// This startup handler can run before the loop extension's own handler.
+			restoreLoopForHandoff(ctx);
 			if (ctx.mode === "tui") {
 				// session_start runs before the TUI subscribes to agent events, so it
 				// can miss turn_start. Restore Pi's own indicator on each agent start;
@@ -386,7 +388,7 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 			}) : undefined;
 			pi.sendMessage({
 				customType: "git-worktree-isolation:continue-branch",
-				content: "Continue the previous request using the branch-creation result above.",
+				content: "Continue the previous request using the branch-creation result above. Creating the branch does not finish the request or the current loop iteration.",
 				display: false,
 			}, { triggerTurn: true });
 			if (settled) await settled;
@@ -650,16 +652,17 @@ export default async function (pi: ExtensionAPI) {
 	if (process.env[CLEANUP_CONTINUATION_ENV] === "1") {
 		delete process.env[CLEANUP_CONTINUATION_ENV];
 		let pendingCleanupMessage = true;
-		pi.on("session_start", async (_event, _ctx) => {
+		pi.on("session_start", async (_event, ctx) => {
 			if (!pendingCleanupMessage) return;
 			pendingCleanupMessage = false;
+			restoreLoopForHandoff(ctx);
 			const settled = isPrintMode() ? new Promise<void>((resolve) => {
 				const unsubscribe = pi.on("agent_settled", () => { unsubscribe(); resolve(); });
 			}) : undefined;
 			await signalChildReady();
 			pi.sendMessage({
 				customType: "git-worktree-isolation:cleanup-complete",
-				content: "The isolated branch cleanup has returned this session to main. Give the user a brief completion message about the finished request and its current state. Do not call clean-up-isolated-branch again.",
+				content: "The isolated branch cleanup has returned this session to main. Continue the previous request and complete any remaining work before giving the user a brief completion message. Cleaning up the branch does not finish the request or the current loop iteration. Do not call clean-up-isolated-branch again.",
 				display: false,
 			}, { triggerTurn: true });
 			if (settled) await settled;

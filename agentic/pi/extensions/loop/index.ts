@@ -119,6 +119,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 	let checker: AbortController | undefined;
 	let selecting: AbortController | undefined;
 	let generation = 0;
+	let handoffRestored = false;
 	setLoopHandoffProvider(() => {
 		if (!active || (active.phase !== "running" && active.phase !== "waiting" && active.phase !== "complete")) return undefined;
 		const sessionFile = active.ctx.sessionManager.getSessionFile();
@@ -135,7 +136,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 		// visible until the relaunched child restores the active loop status.
 		stop(undefined, true);
 		handoff.ctx.ui.setStatus(STATUS_KEY, `↻ ${handoff.runs} switching branches`);
-	});
+	}, restoreHandoff);
 
 	function say(message: string) {
 		pi.sendMessage({ customType: "loop:status", content: message, display: true });
@@ -469,17 +470,18 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 		nextOrStop(loop);
 	});
 	function reset(ctx: ExtensionContext) {
+		handoffRestored = false;
 		stop();
 		// A reload may recreate this extension while the process-wide signal
 		// still belongs to the old instance, which no longer has an active loop.
 		setLoopActive(false, ctx);
 	}
-	pi.on("session_shutdown", (_event, ctx) => reset(ctx));
-	pi.on("session_start", (event, ctx) => {
+	function restoreHandoff(ctx: ExtensionContext) {
 		const serialized = process.env[LOOP_HANDOFF_ENV];
+		if (!serialized) return;
 		delete process.env[LOOP_HANDOFF_ENV];
 		reset(ctx);
-		if (event.reason !== "startup" || !serialized || serialized.length > 128_000) return;
+		if (serialized.length > 128_000) return;
 		let handoff: LoopHandoff;
 		try { handoff = JSON.parse(serialized) as LoopHandoff; } catch { return; }
 		if (!handoff || handoff.sessionFile !== ctx.sessionManager.getSessionFile() ||
@@ -490,11 +492,25 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 			typeof handoff.returnToBase !== "boolean" ||
 			(handoff.condition !== undefined && typeof handoff.condition !== "string") ||
 			(handoff.maxRuns !== undefined && (!Number.isSafeInteger(handoff.maxRuns) || handoff.maxRuns < 1))) return;
+		handoffRestored = true;
 		if (handoff.phase === "complete") return;
 		active = { ...handoff, compacted: false, rateLimitRetries: 0, generation: ++generation, ctx };
 		setLoopActive(true, ctx);
 		if (active.phase === "waiting") schedule(active);
 		else updateStatus(ctx);
+	}
+	pi.on("session_shutdown", (_event, ctx) => reset(ctx));
+	pi.on("session_start", (event, ctx) => {
+		if (event.reason === "startup") {
+			restoreHandoff(ctx);
+			// Git may already have restored the loop before triggering its continuation.
+			if (handoffRestored) {
+				handoffRestored = false;
+				return;
+			}
+		}
+		delete process.env[LOOP_HANDOFF_ENV];
+		reset(ctx);
 	});
 	pi.on("session_tree", (_event, ctx) => reset(ctx));
 }

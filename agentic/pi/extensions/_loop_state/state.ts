@@ -21,6 +21,7 @@ type State = {
 	listeners: Map<string, Listener>;
 	handoff?: () => LoopHandoff | undefined;
 	suspend?: () => void;
+	restore?: (ctx: ExtensionContext) => void;
 	returnToBase?: (ctx: ExtensionContext) => Promise<void>;
 };
 const root = globalThis as typeof globalThis & { __piLoopState?: State };
@@ -40,9 +41,18 @@ export function onLoopChange(key: string, listener: Listener): void {
 	state.listeners.set(key, listener);
 }
 
-export function setLoopHandoffProvider(provider: () => LoopHandoff | undefined, suspend: () => void): void {
+export function setLoopHandoffProvider(
+	provider: () => LoopHandoff | undefined,
+	suspend: () => void,
+	restore: (ctx: ExtensionContext) => void,
+): void {
 	state.handoff = provider;
 	state.suspend = suspend;
+	state.restore = restore;
+}
+
+export function restoreLoopForHandoff(ctx: ExtensionContext): void {
+	state.restore?.(ctx);
 }
 
 export function suspendLoopForHandoff(): void {
