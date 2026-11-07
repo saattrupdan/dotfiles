@@ -19,7 +19,6 @@ skills:
   - vue
   - sqlmodel
   - full-stack
-  - slides
   - agent-browser
 worktree: false
 refuse:

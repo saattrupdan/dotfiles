@@ -61,7 +61,6 @@ skills:
   - recipes
   - retsinformation-dk
   - skat-dk
-  - slides
   - sqlmodel
   - sundhed-dk
   - tmux
