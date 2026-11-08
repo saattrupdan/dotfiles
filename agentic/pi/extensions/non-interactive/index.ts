@@ -81,11 +81,8 @@ export default function (pi: ExtensionAPI) {
 				clearFlag();
 				showStatus(ctx);
 				ctx.ui.notify("Interactive mode enabled; questions are available again.", "info");
-				// Override the earlier banner if this command arrives while the agent
-				// is still working; avoid creating an unnecessary turn when idle.
-				if (!ctx.isIdle()) {
-					pi.sendUserMessage("Interactive mode is enabled again. You may use the question tool when needed.", { deliverAs: "steer" });
-				}
+				// Override the earlier banner immediately, even when the agent is idle.
+				pi.sendUserMessage("Interactive mode is enabled again. You may use the question tool when needed.", { deliverAs: "steer" });
 				return;
 			}
 			if (!trimmed) persistent = true;

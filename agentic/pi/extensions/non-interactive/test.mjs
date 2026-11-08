@@ -186,22 +186,35 @@ test("/non-interactive off restores questions during a running turn", async () =
 	}
 });
 
-test("/non-interactive off at idle does not start a turn", async () => {
+test("/non-interactive off at idle informs the agent that questions are available", async () => {
 	const previous = process.env.PI_NON_INTERACTIVE;
+	const listeners = new Map();
+	const sent = [];
 	let command;
 	let notification;
 	const pi = {
 		registerCommand(_name, definition) { command = definition.handler; },
-		on() {},
+		on(event, listener) { listeners.set(event, listener); },
 		sendMessage() { throw new Error("status must not enter agent context"); },
-		sendUserMessage() { throw new Error("off at idle must not start a turn"); },
+		sendUserMessage(content, options) {
+			sent.push({ content, options });
+			void listeners.get("input")({ source: "extension", text: content }, context);
+		},
 	};
 	try {
 		nonInteractive(pi);
-		process.env.PI_NON_INTERACTIVE = "1";
+		await command("", context);
+		await new Promise(setImmediate);
+		sent.length = 0;
 		await command("off", { ...context, ui: { ...context.ui, notify(message, type) { notification = { message, type }; } } });
 		assert.equal(process.env.PI_NON_INTERACTIVE, undefined);
+		assert.equal(statuses.get("non-interactive"), undefined);
 		assert.deepEqual(notification, { message: "Interactive mode enabled; questions are available again.", type: "info" });
+		assert.deepEqual(sent, [{
+			content: "Interactive mode is enabled again. You may use the question tool when needed.",
+			options: { deliverAs: "steer" },
+		}]);
+		assert.equal(await listeners.get("input")({ source: "interactive", text: "next request" }, context), undefined);
 	} finally {
 		if (previous === undefined) delete process.env.PI_NON_INTERACTIVE;
 		else process.env.PI_NON_INTERACTIVE = previous;
