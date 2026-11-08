@@ -9,6 +9,7 @@ tools:
   - code_tree
   - edit
   - generate_image
+  - generate_video
   - isolated_new_branch
   - question
   - read
@@ -82,6 +83,7 @@ extensions:
   - edit
   - fast
   - generate-image
+  - generate-video
   - git-worktree-isolation
   - incognito
   - loop

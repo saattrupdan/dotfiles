@@ -44,6 +44,7 @@ const TOOL_LABELS: Record<string, string> = {
 	search: "Searching...",
 	code_tree: "Mapping...",
 	generate_image: "Generating image...",
+	generate_video: "Generating video...",
 	skill: "Upskilling...",
 	question: "Questioning...",
 	web_browse: "Browsing...",

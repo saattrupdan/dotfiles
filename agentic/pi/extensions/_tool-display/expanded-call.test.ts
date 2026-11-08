@@ -5,6 +5,7 @@ import { type ExtensionAPI, initTheme } from "@earendil-works/pi-coding-agent";
 
 import registerCodeTree from "../code-tree/index.ts";
 import registerGenerateImage from "../generate-image/index.ts";
+import registerGenerateVideo from "../generate-video/index.ts";
 import registerMemory from "../memory-handoff/index.ts";
 import registerQuestion from "../question/index.ts";
 import registerRead from "../read/index.ts";
@@ -44,13 +45,14 @@ test("registered custom tools expose submitted arguments and full results when e
 	const previous = process.env.PI_SUBAGENT_CHILD;
 	delete process.env.PI_SUBAGENT_CHILD;
 	try {
-		for (const register of [registerCodeTree, registerGenerateImage, registerMemory, registerQuestion,
+		for (const register of [registerCodeTree, registerGenerateImage, registerGenerateVideo, registerMemory, registerQuestion,
 			registerRead, registerSearch, registerSkill, registerSubagent, registerWebBrowse, registerWebSearch]) {
 			await register(pi as never);
 		}
 		const fixtures: Record<string, Record<string, unknown>> = {
 			code_tree: { path: "src", depth: 3, include_files: false },
 			generate_image: { prompt: longText, size: "1024x768", num: 2 },
+			generate_video: { prompt: longText, seconds: 5, aspect_ratio: "16:9", steps: 2, seed: 0 },
 			store_memory: { text: longText },
 			recall_memory: { text: longText },
 			question: { question: longText, options: ["Keep", "Replace"], multiSelect: true },
