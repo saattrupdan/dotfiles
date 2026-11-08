@@ -1,3 +1,4 @@
+import { registerRemoteCommand } from "../_remote_bridge/commands.ts";
 /** Toggle Codex Fast mode for the active Pi session. */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
@@ -20,9 +21,9 @@ export default function (pi: ExtensionAPI) {
 		pi.appendEntry(ENTRY_TYPE, { enabled: false });
 	};
 
-	pi.registerCommand("fast", {
+	const remoteCommand = {
 		description: "Toggle Codex Fast mode; use /fast off to return to Standard speed.",
-		async handler(args, ctx) {
+		async handler(args:string, ctx:ExtensionContext) {
 			const option = args.trim();
 			if (option !== "" && option !== "off") {
 				ctx.ui.notify("Usage: /fast [off]", "error");
@@ -40,7 +41,9 @@ export default function (pi: ExtensionAPI) {
 			updateStatus(ctx);
 			ctx.ui.notify(enabled ? "Codex Fast mode on (uses subscription allowance 2.5× faster)." : "Codex Fast mode off.", "info");
 		},
-	});
+	};
+	pi.registerCommand("fast",remoteCommand);
+	registerRemoteCommand("fast",remoteCommand.handler);
 
 	pi.on("model_select", (_event, ctx) => {
 		disableForOtherModel(ctx);

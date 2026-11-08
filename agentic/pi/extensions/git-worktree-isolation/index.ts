@@ -1,3 +1,4 @@
+import { markGuard } from "../_remote_bridge/guards.ts";
 /**
  * Enter a managed Git worktree only when an agent explicitly creates a branch.
  * Previously managed sessions remain resumable and retain their finalization policy.
@@ -66,7 +67,7 @@ export async function signalChildReady(): Promise<void> {
 	});
 }
 
-type HandoffContext = Pick<ExtensionContext, "mode" | "ui">;
+type HandoffContext = Pick<ExtensionContext, "mode" | "ui"> & Partial<Pick<ExtensionContext, "shutdown">>;
 
 /** Let the parent spinner animate until the child is ready to own the terminal. */
 export async function launchWithProgress(
@@ -191,7 +192,28 @@ export function loopHandoffEnv(sessionFile: string, suspend = false): NodeJS.Pro
 	return env;
 }
 
-async function relaunch(plan: Awaited<ReturnType<typeof createLaunchPlan>>, ctx: HandoffContext, sessionFile: string, args = cliArgs()): Promise<never> {
+/** The outer launcher starts the successor only after this Pi actually exits. */
+function onTransitionBoundary(pi: ExtensionAPI, handler: (event: unknown, ctx: ExtensionContext) => Promise<void>): void {
+ if (process.env.PI_SESSION_OWNER) pi.on("agent_settled", handler);
+ else pi.on("turn_end", handler);
+}
+
+function requestOwnedContinuation(cwd: string, args: string[], env: NodeJS.ProcessEnv, ctx?: HandoffContext): void {
+ if (!process.send || !ctx?.shutdown) throw new Error("Protected continuation requires the supervised launcher and live shutdown context");
+ const changes = Object.fromEntries(Object.entries(env).filter(([key]) => key.startsWith("PI_WORKTREE_") || key === "PI_LOOP_HANDOFF"));
+ process.send({ type: "pi-owned-continuation", cwd, args, changes });
+ ctx.shutdown();
+}
+
+async function relaunch(plan: Awaited<ReturnType<typeof createLaunchPlan>>, ctx: HandoffContext, sessionFile: string, args = cliArgs()): Promise<void> {
+ if (process.env.PI_SESSION_OWNER) {
+  requestOwnedContinuation(plan.childCwd, args, {
+   ...loopHandoffEnv(sessionFile, true),
+   [CHILD_MANIFEST_ENV]: plan.manifest.manifestPath,
+   [BRANCH_CONTINUATION_ENV]: "1",
+  }, ctx);
+  return;
+ }
 	const result = await launchWithProgress(plan.childCwd, [process.argv[1]!, ...args], {
 		...loopHandoffEnv(sessionFile, true),
 		[CHILD_MANIFEST_ENV]: plan.manifest.manifestPath,
@@ -206,7 +228,7 @@ async function relaunch(plan: Awaited<ReturnType<typeof createLaunchPlan>>, ctx:
 	process.exit(result.status ?? (result.signal === "SIGINT" ? 130 : 1));
 }
 
-async function resumeInManagedWorktree(sessionFile: string, cwd: string, manifestPath?: string, continueCleanup = false, ctx?: HandoffContext, continueLoop = false): Promise<never> {
+async function resumeInManagedWorktree(sessionFile: string, cwd: string, manifestPath?: string, continueCleanup = false, ctx?: HandoffContext, continueLoop = false): Promise<void> {
 	const env = loopHandoffEnv(sessionFile, Boolean(ctx));
 	if (manifestPath) env[CHILD_MANIFEST_ENV] = manifestPath;
 	else delete env[CHILD_MANIFEST_ENV];
@@ -215,6 +237,7 @@ async function resumeInManagedWorktree(sessionFile: string, cwd: string, manifes
 	if (continueLoop) env[LOOP_RETURN_CONTINUATION_ENV] = "1";
 	else delete env[LOOP_RETURN_CONTINUATION_ENV];
 	const args = continuationArgs(sessionFile);
+ if (process.env.PI_SESSION_OWNER) { requestOwnedContinuation(cwd, args, env, ctx); return; }
 	const result = ctx
 		? await launchWithProgress(cwd, [process.argv[1]!, ...args], env, ctx)
 		: spawnSync(process.execPath, [process.argv[1]!, ...args], { cwd, stdio: "inherit", env });
@@ -257,7 +280,7 @@ function registerReleasedSessionStartup(pi: ExtensionAPI): void {
 			await reapStaleWorktrees(plan.manifest.repoRoot).catch((error) => {
 				process.stderr.write(`Pi worktree isolation: recovery failed: ${error instanceof Error ? error.message : String(error)}\n`);
 			});
-			await resumeInManagedWorktree(sessionFile, plan.childCwd, plan.manifest.manifestPath);
+			await resumeInManagedWorktree(sessionFile, plan.childCwd, plan.manifest.manifestPath, false, ctx);
 		} catch (error) {
 			fatal(error instanceof Error ? error.message : String(error));
 		}
@@ -475,7 +498,7 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 
 	const finishCleanup = async (
 		sessionFile: string, mainRoot: string, branchSha: string, branchExists: boolean, ctx: ExtensionContext,
-	): Promise<never> => {
+	): Promise<void> => {
 		// Do not leave Pi's process cwd pointing into a worktree we remove.
 		process.chdir(mainRoot);
 		const mainCwd = await finishBranchCleanup(manifest, sessionFile, mainRoot, branchSha, branchExists);
@@ -550,7 +573,7 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 	pi.on("tool_call", () => pendingCleanup
 		? { block: true, reason: "Branch cleanup is already in progress.", terminate: true }
 		: undefined);
-	pi.on("turn_end", async (_event, ctx) => {
+	onTransitionBoundary(pi, async (_event, ctx) => {
 		if (!pendingCleanup) return;
 		const { sessionFile, mainRoot, branchSha, branchExists } = pendingCleanup;
 		pendingCleanup = null;
@@ -616,7 +639,8 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 			process.chdir(manifest.repoRoot);
 			if (!manifest.createdBranch) await releaseManagedWorktree(manifest);
 			await releaseTranscript();
-			await resumeInManagedWorktree(event.targetSessionFile, resumedCwd, targetManifest?.manifestPath);
+			await resumeInManagedWorktree(event.targetSessionFile, resumedCwd, targetManifest?.manifestPath, false, ctx);
+   if (process.env.PI_SESSION_OWNER) return { cancel: true };
 		} catch (error) {
 			ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
 			return { cancel: true };
@@ -630,6 +654,7 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 }
 
 export default async function (pi: ExtensionAPI) {
+ markGuard("git-worktree-isolation");
 	pi.registerFlag("no-worktree-isolation", {
 		description: "Disable managed Git worktree sessions",
 		type: "boolean",
@@ -715,7 +740,8 @@ export default async function (pi: ExtensionAPI) {
 		if (!record || record.commonGitDir !== await findCommonGitDir(cwd)) return;
 		try {
 			const plan = await activateReleasedSession(event.targetSessionFile, record.commonGitDir);
-			await resumeInManagedWorktree(event.targetSessionFile, plan.childCwd, plan.manifest.manifestPath);
+			await resumeInManagedWorktree(event.targetSessionFile, plan.childCwd, plan.manifest.manifestPath, false, ctx);
+   if (process.env.PI_SESSION_OWNER) return { cancel: true };
 		} catch (error) {
 			ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
 			return { cancel: true };
@@ -749,7 +775,7 @@ export default async function (pi: ExtensionAPI) {
 	pi.on("tool_call", () => pending
 		? { block: true, reason: "Branch transition is already in progress.", terminate: true }
 		: undefined);
-	pi.on("turn_end", async (_event, ctx) => {
+	onTransitionBoundary(pi, async (_event, ctx) => {
 		if (!pending) return;
 		const { plan, sessionFile } = pending;
 		pending = null;
@@ -761,4 +787,6 @@ export default async function (pi: ExtensionAPI) {
 			fatal(`could not enter the new branch; worktree remains at ${plan.childCwd}: ${error instanceof Error ? error.message : String(error)}`);
 		}
 	});
+
+	markGuard("git-worktree-isolation");
 }

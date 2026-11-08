@@ -1,3 +1,4 @@
+import { registerRemoteCommand } from "../_remote_bridge/commands.ts";
 /** Cap model context windows globally, with a persistent per-session opt-out. */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
@@ -57,9 +58,9 @@ export default function (pi: ExtensionAPI) {
 		type: "boolean",
 		default: false,
 	});
-	pi.registerCommand("allow-long-context", {
+	const remoteCommand = {
 		description: "Use full model context for this session; /allow-long-context off restores the 256k cap.",
-		async handler(args, ctx) {
+		async handler(args:string, ctx:ExtensionContext) {
 			const option = args.trim();
 			if (option !== "" && option !== "off") {
 				ctx.ui.notify("Usage: /allow-long-context [off]", "error");
@@ -70,7 +71,9 @@ export default function (pi: ExtensionAPI) {
 			applyLimit(ctx);
 			ctx.ui.notify(allowLongContext ? "Long context enabled: using full provider/model limits." : "Context capped at 256k tokens (or the model's smaller limit).", "info");
 		},
-	});
+	};
+	pi.registerCommand("allow-long-context",remoteCommand);
+	registerRemoteCommand("allow-long-context",remoteCommand.handler);
 
 	pi.on("session_start", restoreSession);
 	pi.on("session_tree", restoreSession);

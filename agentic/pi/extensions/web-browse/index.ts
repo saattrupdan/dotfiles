@@ -1,3 +1,5 @@
+import { remotePromptsEnabled } from "../_remote_bridge/prompts.ts";
+import { dispatchAsk } from "../question/index.ts";
 /**
  * Firefox-backed `web_browse` tool.
  *
@@ -119,7 +121,11 @@ export default function (pi: ExtensionAPI) {
 			try {
 				const command = parseCommand(params.command);
 				const handoff: HandoffHandler = async ({ title, message }, handoffSignal) => {
-					if (!ctx.hasUI) return false;
+					if(remotePromptsEnabled()){
+      const result=await dispatchAsk(ctx,[{question:`${title}\n${message}\nComplete the requested action on the Mac, then select Done.`,options:["Done","Cancel"]}],handoffSignal);
+      if(result.error)throw new Error(result.error);return result.answers?.[0]==="Done";
+     }
+     if (!ctx.hasUI) return false;
 					return await interactiveQueue.run(
 						(interactionSignal) => ctx.ui.confirm(title, message, { signal: interactionSignal }),
 						handoffSignal,

@@ -1,3 +1,4 @@
+import { remotePromptsEnabled } from "../_remote_bridge/prompts.ts";
 /**
  * Subagent Tool - Delegate tasks to specialized agents
  *
@@ -1135,12 +1136,14 @@ export default function (pi: ExtensionAPI) {
 			// be wrapped here.
 			const fulfillQuestion: QuestionFulfiller = (questions, sig) => dispatchAsk(ctx, questions, sig);
 
-			if ((agentScope === "project" || agentScope === "both") && confirmProjectAgents && ctx.hasUI) {
+			if ((agentScope === "project" || agentScope === "both") && confirmProjectAgents && (ctx.hasUI||remotePromptsEnabled())) {
 				const projectAgent = agents.find((a) => a.name === params.agent && a.source === "project");
 				if (projectAgent) {
 					const dir = discovery.projectAgentsDir ?? "(unknown)";
-					const ok = await interactiveQueue.run(
-						(interactionSignal) =>
+					const remoteApproval=remotePromptsEnabled()?await dispatchAsk(ctx,[{question:`Run project-local agent ${projectAgent.name}? Source: ${dir}. Continue only for trusted repositories.`,options:["Approve","Cancel"]}],signal):undefined;
+     if(remoteApproval?.error)throw new Error(remoteApproval.error);
+     const ok = remoteApproval ? remoteApproval.answers?.[0]==="Approve" : await interactiveQueue.run(
+      (interactionSignal) =>
 							ctx.ui.confirm(
 								"Run project-local agents?",
 								`Agents: ${projectAgent.name}\nSource: ${dir}\n\nProject agents are repo-controlled. Only continue for trusted repositories.`,

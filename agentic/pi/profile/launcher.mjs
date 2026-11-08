@@ -6,7 +6,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { resolvePiPackage } from "./pi-runtime.mjs";
+export { resolvePiPackage } from "./pi-runtime.mjs";
 import { parseAgentProfile } from "./definition.mjs";
+import { prepareOwnedLaunch } from "./session-selection.mjs";
+import { lockRoot } from "../extensions/_session_ownership/ownership.mjs";
 
 const NAME = /^[a-z][a-z0-9-]*$/;
 const PROFILE_DIR = "profile-sessions";
@@ -36,14 +40,6 @@ export function selectProfile(argv) {
 	return { agent, args: rest };
 }
 
-export function resolvePiPackage(env = process.env) {
-	if (env.PI_CLI_PACKAGE) return path.resolve(env.PI_CLI_PACKAGE);
-	const npm = path.join(path.dirname(process.execPath), "npm");
-	const root = execFileSync(fs.existsSync(npm) ? npm : "npm", ["root", "-g"], {
-		encoding: "utf8", env: { ...env, PATH: `${path.dirname(process.execPath)}${path.delimiter}${env.PATH ?? ""}` },
-	}).trim();
-	return path.join(root, "@earendil-works", "pi-coding-agent");
-}
 
 export function piCli(pkg) {
 	const manifest = JSON.parse(fs.readFileSync(path.join(pkg, "package.json"), "utf8"));
@@ -179,20 +175,45 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
 	}
 	const agentDir = env.PI_CODING_AGENT_DIR ?? path.join(os.homedir(), ".pi", "agent");
 	const profile = await loadProfile(agent, agentDir, pkg);
-	return runCli(cli, buildProfileArgs(profile, agentDir, args, process.cwd(), env.PI_CODING_AGENT_SESSION_DIR), env);
+	const protectedMode = agent === "main" && (env.PI_REMOTE_OWNERSHIP === "1" || fs.existsSync(path.join(lockRoot(env), "enabled")));
+	const launch = protectedMode
+		? await prepareOwnedLaunch(args, pkg, { ...env, PI_CODING_AGENT_DIR: agentDir })
+		: { args, env };
+	return runCli(cli, buildProfileArgs(profile, agentDir, launch.args, process.cwd(), env.PI_CODING_AGENT_SESSION_DIR), launch.env, Boolean(launch.env.PI_SESSION_OWNER));
 }
 
-function runCli(cli, args, env) {
+function runCli(cli, args, env, owned = false) {
 	return new Promise((resolve, reject) => {
-		const child = spawn(process.execPath, [cli, ...args], { stdio: "inherit", env });
+		const entry = owned ? [fileURLToPath(new URL("./owned-cli.mjs", import.meta.url)), cli] : [cli];
+		const child = spawn(process.execPath, [...entry, ...args], { stdio: owned ? ["inherit", "inherit", "inherit", "ipc"] : "inherit", env });
+  let continuation;
+  if (owned) child.on("message", (message) => {
+   if (message?.type !== "pi-owned-continuation" || !Array.isArray(message.args) || !message.args.every(a => typeof a === "string") || typeof message.cwd !== "string") return;
+   if (continuation) return;
+   continuation = message;
+  });
 		const forward = (signal) => child.kill(signal);
 		process.on("SIGINT", forward);
 		process.on("SIGTERM", forward);
 		child.on("error", reject);
-		child.on("close", (code, signal) => {
+		child.on("close", async (code, signal) => {
 			process.off("SIGINT", forward);
 			process.off("SIGTERM", forward);
-			resolve(signal ? 128 + (os.constants.signals[signal] ?? 0) : (code ?? 1));
+			if (continuation && !signal) {
+    try {
+     const cwd = fs.realpathSync(continuation.cwd);
+     const previousCwd = process.cwd();
+     const nextEnv = { ...env };
+     delete nextEnv.PI_SESSION_OWNER;
+     for (const key of Object.keys(nextEnv)) if (key.startsWith("PI_WORKTREE_") || key === "PI_LOOP_HANDOFF") delete nextEnv[key];
+     for (const [key,value] of Object.entries(continuation.changes ?? {})) if ((key.startsWith("PI_WORKTREE_") || key === "PI_LOOP_HANDOFF") && typeof value === "string") nextEnv[key] = value;
+     const pkg = resolvePiPackage(nextEnv);
+     const launch = await prepareOwnedLaunch(continuation.args, pkg, nextEnv, cwd);
+     process.chdir(cwd);
+     try { resolve(await runCli(cli, launch.args, launch.env, true)); }
+     finally { process.chdir(previousCwd); }
+    } catch (error) { reject(error); }
+   } else resolve(signal ? 128 + (os.constants.signals[signal] ?? 0) : (code ?? 1));
 		});
 	});
 }

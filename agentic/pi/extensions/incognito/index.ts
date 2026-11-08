@@ -1,3 +1,5 @@
+import { withOwnedTransition } from "../_session_ownership/transition.ts";
+import { markGuard } from "../_remote_bridge/guards.ts";
 /** /incognito switches between fresh in-memory and saved sessions. */
 import path from "node:path";
 import { SessionManager, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -58,7 +60,7 @@ export default function (pi: ExtensionAPI) {
 			// into a persisted session or append private turns to an old file.
 			setIncognito(!turningOff, sessionDir);
 			try {
-				const result = await ctx.newSession({
+				const result = await withOwnedTransition(()=>ctx.newSession({
 					setup: async (manager) => { setPersistence(manager, turningOff, sessionDir); },
 					withSession: async (next) => {
 						syncIncognito("new", next.sessionManager);
@@ -66,7 +68,7 @@ export default function (pi: ExtensionAPI) {
 						next.ui.notify(turningOff ? "Incognito off. Started a new saved session." : "Incognito on. This session is not saved.", "info");
 						if (!turningOff && prompt) await next.sendUserMessage(prompt);
 					},
-				});
+				}));
 				if (result.cancelled) setIncognito(wasActive, sessionDir);
 			} catch (error) {
 				setIncognito(wasActive, sessionDir);
@@ -90,4 +92,6 @@ export default function (pi: ExtensionAPI) {
 			return { block: true, reason: `${event.toolName} is disabled in incognito mode.` };
 		}
 	});
+
+	markGuard("incognito");
 }

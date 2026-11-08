@@ -1,0 +1,151 @@
+@import url("/fonts.css");
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #e9f0ed;
+  background: #101b22;
+  --bg: #101b22;
+  --panel: #19272f;
+  --line: #2c3c43;
+  --accent: #a8e8cb;
+  --muted: #94a9aa;
+  color-scheme: dark;
+  font-synthesis: none;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+}
+a {
+  color: inherit;
+}
+main {
+  padding: 28px 0;
+}
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+button {
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--panel);
+  color: inherit;
+  padding: 12px 17px;
+  cursor: pointer;
+  min-height: 44px;
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.primary {
+  background: var(--accent);
+  color: var(--bg);
+  font-weight: 700;
+  border: 0;
+}
+.quiet,
+.muted {
+  color: var(--muted);
+}
+.error {
+  color: #ffb5a8;
+}
+.eyebrow {
+  color: var(--accent);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+h1,
+h2,
+h3,
+p {
+  overflow-wrap: anywhere;
+}
+h1 {
+  font-size: 32px;
+  letter-spacing: -0.035em;
+  margin: 8px 0 22px;
+}
+label {
+  display: block;
+  font-size: 13px;
+  color: var(--muted);
+  margin: 15px 0;
+}
+input,
+textarea,
+select {
+  display: block;
+  width: 100%;
+  background: var(--bg);
+  color: inherit;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
+  margin-top: 6px;
+}
+textarea {
+  resize: vertical;
+  min-height: 90px;
+}
+code,
+pre {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+}
+pre {
+  overflow: auto;
+  padding: 12px;
+  background: #0b1419;
+  border-radius: 10px;
+}
+img {
+  max-width: 100%;
+  border-radius: 12px;
+}
+hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+button.danger {
+  color: #ffb5a8;
+}
+.row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 18px;
+}
+.small {
+  font-size: 12px;
+}
+summary {
+  cursor: pointer;
+  min-height: 32px;
+}
+table {
+  max-width: 100%;
+  border-collapse: collapse;
+}
+td,
+th {
+  padding: 6px;
+  border: 1px solid var(--line);
+}

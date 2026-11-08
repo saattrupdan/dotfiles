@@ -1,3 +1,4 @@
+import { acquire, inspect, ownedRecord, release } from "../_session_ownership/ownership.mjs";
 /** Git primitives for isolated top-level Pi sessions. */
 
 import { execFile } from "node:child_process";
@@ -549,6 +550,10 @@ export async function sessionCwd(sessionFile: string): Promise<string | null> {
 }
 
 export async function rewriteSessionCwd(sessionFile: string, cwd: string): Promise<void> {
+ const ownership = ownedRecord();
+ const alreadyOwned = ownership && inspect(sessionFile, ownership.root)?.instanceId === ownership.owner.instanceId;
+ if (ownership) acquire(sessionFile, ownership.owner, ownership.root);
+ try {
 	const content = await fs.promises.readFile(sessionFile, "utf8");
 	const newline = content.indexOf("\n");
 	if (newline < 0) throw new Error(`Session has no header line: ${sessionFile}`);
@@ -558,6 +563,7 @@ export async function rewriteSessionCwd(sessionFile: string, cwd: string): Promi
 	const temporary = `${sessionFile}.${process.pid}.tmp`;
 	await fs.promises.writeFile(temporary, `${JSON.stringify(header)}\n${content.slice(newline + 1)}`, "utf8");
 	await fs.promises.rename(temporary, sessionFile);
+ } finally { if (ownership && !alreadyOwned) release(sessionFile, ownership.owner, ownership.root); }
 }
 
 export async function checkpointSession(

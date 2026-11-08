@@ -1,0 +1,55 @@
+{
+  "name": "pi-remote",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "tsc --noEmit && vite build --config packages/web/vite.config.ts && node scripts/build.mjs",
+    "check": "tsc --noEmit && vue-tsc --noEmit -p packages/web/tsconfig.json && eslint .",
+    "test": "tsx --test packages/*/tests/*.test.ts",
+    "start": "tsx packages/broker/src/main.ts",
+    "cli": "tsx packages/cli/src/index.ts",
+    "verify": "tsx scripts/verify.ts"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.0.0",
+    "@fastify/multipart": "^9.0.0",
+    "@fastify/static": "^10.1.10",
+    "@fastify/websocket": "^11.0.0",
+    "@simplewebauthn/browser": "^13.0.0",
+    "@simplewebauthn/server": "^13.0.0",
+    "fastify": "^5.0.0",
+    "qrcode-terminal": "^0.12.0",
+    "sharp": "^0.35.5",
+    "web-push": "^3.6.0",
+    "ws": "^8.0.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.0",
+    "@types/node": "^24.0.0",
+    "@types/qrcode-terminal": "^0.12.0",
+    "@types/web-push": "^3.6.0",
+    "@types/ws": "^8.0.0",
+    "@vitejs/plugin-vue": "^6.0.0",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.0.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-vue": "^10.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.0.0",
+    "vite": "^7.0.0",
+    "vue-eslint-parser": "^10.0.0",
+    "vue-tsc": "^3.0.0"
+  },
+  "overrides": {
+    "minimatch": "^11.0.5"
+  }
+}

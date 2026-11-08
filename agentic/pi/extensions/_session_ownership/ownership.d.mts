@@ -1,0 +1,24 @@
+export interface Owner {
+	instanceId: string;
+	pid: number;
+	birth: string;
+	kind: string;
+	file?: string;
+	acquiredAt?: number;
+}
+export const OWNERSHIP_ENV: string;
+export const ROOT_ENV: string;
+export function processIdentity(pid?: number): string | undefined;
+export function lockRoot(env?: NodeJS.ProcessEnv): string;
+export function canonicalFile(file: string): string;
+export function newOwner(kind?: string, pid?: number): Owner;
+export function isAlive(owner?: Owner): boolean;
+export function acquire(file: string, owner: Owner, root?: string, expectedId?: string): Owner;
+export function reserveNamespace(owner: Owner, root?: string): void;
+export function releaseNamespace(owner: Owner, root?: string): void;
+export function inspect(file: string, root?: string): Owner | undefined;
+export function release(file: string, owner: Owner, root?: string): void;
+export function adopt(previous: Owner, next: Owner, root?: string): void;
+export function ownedRecord(root?: string): { owner: Owner; root: string } | undefined;
+export function reserveId(id: string, owner: Owner, root?: string): void;
+export const SUPPORTED_PI_VERSION: string;

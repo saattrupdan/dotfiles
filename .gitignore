@@ -37,3 +37,9 @@ agentic/pi/auth.json
 
 # Pi agent
 .pi/
+
+# Pi Remote build/test outputs (runtime state stays outside the checkout).
+agentic/pi/remote/dist/
+agentic/pi/remote/packages/web/dist/
+agentic/pi/remote/test-results/
+agentic/pi/remote/playwright-report/

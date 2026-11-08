@@ -1,3 +1,4 @@
+import { markGuard } from "../_remote_bridge/guards.ts";
 /**
  * `question` tool.
  */
@@ -11,6 +12,7 @@ import { Type } from "typebox";
 import { renderExpandedCall } from "../_tool-display/expanded-call.ts";
 
 import { isLidClosed } from "../_lid_state/lid.ts";
+import { askRemote, remotePromptsEnabled } from "../_remote_bridge/prompts.ts";
 import { interactiveQueue } from "../_interactive_queue/queue.ts";
 
 import {
@@ -272,6 +274,21 @@ export async function dispatchAsk(
 	if (process.env.PI_NON_INTERACTIVE === "1") {
 		return { error: "Non-interactive mode active — questions disabled." };
 	}
+	if (remotePromptsEnabled()) {
+		const answers: string[] = [];
+		for (const item of questions) {
+			const outcome = await interactiveQueue.run((interactionSignal) => askRemote(
+				item,
+				ctx.hasUI && !isLidClosed()
+					? (localSignal) => askOneLocally(ctx.ui, item, item.question, localSignal)
+					: undefined,
+				interactionSignal,
+			), signal);
+			if (outcome.error) return { error: outcome.error };
+			answers.push(outcome.answer!);
+		}
+		return { answers };
+	}
 	if (isLidClosed()) {
 		return { error: "Lid closed — interactive questions unavailable." };
 	}
@@ -333,11 +350,15 @@ export default function (pi: ExtensionAPI) {
 			return new Text(theme.fg("toolTitle", theme.bold("question")) + " " + theme.fg("accent", preview), 0, 0);
 		},
 	});
+
+	markGuard("question");
 }
 
 function buildResult(item: QuestionItem, out: { answers?: string[]; error?: string }): AgentToolResult<unknown> {
 	if (out.error) {
-		return { content: [{ type: "text", text: out.error + " Proceed with a reasonable default." }], details: undefined };
+		return { content: [{ type: "text", text: out.error === "answer needed"
+			? "Answer needed: the question expired without an answer. The run has been stopped."
+			: out.error + " Proceed with a reasonable default." }], details: undefined };
 	}
 	const answer = out.answers?.[0] ?? "";
 	return { content: [{ type: "text", text: answer }], details: undefined };

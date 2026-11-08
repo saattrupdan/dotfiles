@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+root=$(CDPATH= cd -- "$(dirname -- "$0")/../remote" && pwd)
+node=${PI_REMOTE_NODE:-$(command -v node)}
+test -f "$root/dist/cli.mjs" || { printf '%s\n' 'Build Pi Remote first: npm run build --prefix agentic/pi/remote' >&2; exit 1; }
+exec "$node" "$root/dist/cli.mjs" "$@"

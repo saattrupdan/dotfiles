@@ -1,3 +1,4 @@
+import { markGuard } from "../_remote_bridge/guards.ts";
 /**
  * Conversation name generator.
  *
@@ -157,6 +158,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	// No tools to register - this extension works via hooks only
+	markGuard("conversation-name");
 	return {};
 }
 

@@ -1,3 +1,4 @@
+import { markGuard } from "../_remote_bridge/guards.ts";
 /**
  * File Protection Extension for Pi
  *
@@ -424,4 +425,6 @@ export default function (pi: ExtensionAPI) {
 			}
 		},
 	});
+
+	markGuard("vm-isolation");
 }

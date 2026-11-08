@@ -1,3 +1,4 @@
+import { registerRemoteCommand } from "../_remote_bridge/commands.ts";
 /** `/loop` repeats a prompt; `/implement-all-issues` starts its issue workflow. */
 
 import { readFile } from "node:fs/promises";
@@ -370,6 +371,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 		},
 	};
 	pi.registerCommand("loop", loopCommand);
+	registerRemoteCommand("loop",async(args,ctx)=>{if(!["stop","status"].includes(args.trim()))parseLoopArgs(args);await loopCommand.handler(args,ctx);});
 	pi.registerCommand("implement-all-issues", {
 		description: "Implement unassigned repository issues until none are left",
 		async handler(args, ctx) {
@@ -380,6 +382,8 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 			await loopCommand.handler(`${ALL_ISSUES_PROMPT} --until ${ISSUE_CONDITION}`, ctx, true);
 		},
 	});
+
+	registerRemoteCommand("implement-all-issues",async(args,ctx)=>{if(args.trim())throw new Error("invalid_command_arguments");await loopCommand.handler(`${ALL_ISSUES_PROMPT} --until ${ISSUE_CONDITION}`,ctx,true);});
 
 	pi.on("agent_start", () => {
 		if (startWatchdog !== undefined) clearTimer(startWatchdog);

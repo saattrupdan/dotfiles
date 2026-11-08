@@ -1,3 +1,5 @@
+import { registerRemoteCommand } from "../_remote_bridge/commands.ts";
+import { markGuard } from "../_remote_bridge/guards.ts";
 /**
  * Keep the Mac awake while an agent run or a /loop is active — even with the
  * lid closed. Release the hold when the run or loop finishes.
@@ -297,9 +299,9 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	// Manual session-level control + introspection.
-	pi.registerCommand("caffeinate", {
+	const remoteCommand = {
 		description: "Keep-awake-while-running control: on | off | status.",
-		async handler(args, ctx) {
+		async handler(args:string, ctx:ExtensionContext) {
 			const arg = args.trim().toLowerCase();
 			if (arg === "off") {
 				sessionEnabled = false;
@@ -337,5 +339,9 @@ export default function (pi: ExtensionAPI) {
 				display: true,
 			});
 		},
-	});
+	};
+	pi.registerCommand("caffeinate",remoteCommand);
+	registerRemoteCommand("caffeinate",remoteCommand.handler);
+
+	markGuard("caffeinate");
 }
