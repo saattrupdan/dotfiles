@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, truncate, writeFile } from "node:fs/promises";
+import os from "node:os";
+import { pathToFileURL } from "node:url";
 import path from "node:path";
 import { test } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -21,7 +23,7 @@ function setup() {
 	return { tool, ctx, working };
 }
 
-test("submits multipart H3 settings, polls and downloads one local MP4", async () => {
+test("submits multipart LTX settings, polls and downloads one local MP4", async () => {
 	const requests: string[] = [];
 	const phases: string[] = [];
 	const replies = [job("queued"), job("in_progress", { progress: 42 }), job("completed"), new Response(mp4)];
@@ -32,9 +34,8 @@ test("submits multipart H3 settings, polls and downloads one local MP4", async (
 			if (init?.method === "POST") {
 				assert.ok(init.body instanceof FormData);
 				assert.deepEqual(Object.fromEntries(init.body.entries()), {
-					model: "MiniMaxAI/MiniMax-H3", prompt: "A cat meows", seed: "0", seconds: "5",
-					size: "1024x576", aspect_ratio: "16:9", fps: "24", num_inference_steps: "50", flow_shift: "12",
-					extra_params: JSON.stringify({ task: "t2va", duration: 5, audio_flow_shift: 3 }),
+					model: "ChrisColeTech/LTX-2.5-uncensored-v1.1-FP8", prompt: "A cat meows", seed: "0", seconds: "5",
+					size: "1024x576", aspect_ratio: "16:9", fps: "24", num_inference_steps: "8",
 				});
 			}
 			return replies.shift()!;
@@ -51,7 +52,7 @@ test("submits multipart H3 settings, polls and downloads one local MP4", async (
 	}
 });
 
-test("portrait and square settings use bounded sizes and omit an unspecified seed", async () => {
+test("portrait and square settings use bounded sizes and generate a seed", async () => {
 	for (const [aspect_ratio, size] of [["9:16", "576x1024"], ["1:1", "768x768"]] as const) {
 		const output = await generateVideo({ prompt: "Ocean waves", aspect_ratio, seconds: 10, steps: 2 }, {
 			fetch: async (_url, init) => {
@@ -61,8 +62,10 @@ test("portrait and square settings use bounded sizes and omit an unspecified see
 					assert.equal(form.get("aspect_ratio"), aspect_ratio);
 					assert.equal(form.get("seconds"), "10");
 					assert.equal(form.get("num_inference_steps"), "2");
-					assert.equal(form.has("seed"), false);
-					assert.equal(JSON.parse(form.get("extra_params") as string).duration, 10);
+					const seed = Number(form.get("seed"));
+					assert.ok(Number.isInteger(seed) && seed >= 0 && seed < 2 ** 32);
+					assert.equal(form.has("extra_params"), false);
+					assert.equal(form.has("flow_shift"), false);
 					return job("completed");
 				}
 				return new Response(mp4);
@@ -75,7 +78,7 @@ test("portrait and square settings use bounded sizes and omit an unspecified see
 test("rejects invalid inputs before making a request", async () => {
 	const invalid = [
 		{ prompt: " " }, ...[0, 11, 1.5, NaN].map((seconds) => ({ seconds })),
-		...[0, 51, 2.5].map((steps) => ({ steps })),
+		...[0, 17, 51, 2.5].map((steps) => ({ steps })),
 		...[-1, 2 ** 32, 1.5].map((seed) => ({ seed })), { aspect_ratio: "4:3" },
 	];
 	for (const input of invalid) {
@@ -238,6 +241,79 @@ test("tool renderer has concise progress, success and failure states", () => {
 	assert.equal(render(false, false), "[success]✓ Generated video");
 	assert.equal(render(false, false, true), "[error]✗ video generation failed");
 	assert.equal(render(true, false, true), "Full video result");
+});
+
+test("uploads a local image or file URL as a neutral multipart reference", async () => {
+	const directory = await mkdtemp(path.join(os.tmpdir(), "pi-video-image-test-"));
+	const source = path.join(directory, "private filename.png");
+	const bytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3]);
+	await writeFile(source, bytes);
+	try {
+		for (const image of [source, pathToFileURL(source).href]) {
+			const output = await generateVideo({ prompt: "Waves roll ashore", image }, {
+				fetch: async (_url, init) => {
+					if (init?.method !== "POST") return new Response(mp4);
+					const reference = (init.body as FormData).get("image");
+					assert.ok(reference instanceof Blob);
+					assert.equal(reference.type, "image/png");
+					assert.equal((reference as File).name, "reference.png");
+					assert.deepEqual(Buffer.from(await reference.arrayBuffer()), bytes);
+					return job("completed");
+				},
+			});
+			await rm(path.dirname(output.path), { recursive: true, force: true });
+		}
+	} finally {
+		await rm(directory, { recursive: true, force: true });
+	}
+});
+
+test("rejects remote, invalid, missing and oversized image inputs before submission", async () => {
+	const directory = await mkdtemp(path.join(os.tmpdir(), "pi-video-image-test-"));
+	const invalid = path.join(directory, "invalid.png");
+	const large = path.join(directory, "large.png");
+	await writeFile(invalid, "not an image");
+	await writeFile(large, "x");
+	await truncate(large, 20 * 1024 * 1024 + 1);
+	try {
+		for (const image of ["", "https://example.com/image.png", invalid, large, directory, path.join(directory, "missing.png")]) {
+			await assert.rejects(generateVideo({ prompt: "Waves", image }, {
+				fetch: async () => { assert.fail("must not upload an invalid image"); },
+			}));
+		}
+	} finally {
+		await rm(directory, { recursive: true, force: true });
+	}
+});
+
+test("preserves native server failure strings", async () => {
+	await assert.rejects(generateVideo({ prompt: "Waves" }, {
+		fetch: async () => job("failed", { error: "Critical or unavailable host telemetry" }),
+	}), /Critical or unavailable host telemetry.*video_test/);
+});
+
+test("generic endpoint configuration takes precedence over the legacy override", async () => {
+	const generic = process.env.VIDEO_GENERATION_URL;
+	const legacy = process.env.MINIMAX_VIDEO_URL;
+	try {
+		process.env.MINIMAX_VIDEO_URL = "http://legacy";
+		for (const endpoint of ["http://native", undefined]) {
+			if (endpoint) process.env.VIDEO_GENERATION_URL = endpoint;
+			else delete process.env.VIDEO_GENERATION_URL;
+			const output = await generateVideo({ prompt: "Waves" }, {
+				fetch: async (url, init) => {
+					assert.ok(String(url).startsWith(endpoint ?? "http://legacy"));
+					return init?.method === "POST" ? job("completed") : new Response(mp4);
+				},
+			});
+			await rm(path.dirname(output.path), { recursive: true, force: true });
+		}
+	} finally {
+		if (generic === undefined) delete process.env.VIDEO_GENERATION_URL;
+		else process.env.VIDEO_GENERATION_URL = generic;
+		if (legacy === undefined) delete process.env.MINIMAX_VIDEO_URL;
+		else process.env.MINIMAX_VIDEO_URL = legacy;
+	}
 });
 
 test("working indicator recognises generate_video", () => {

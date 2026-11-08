@@ -1,4 +1,4 @@
-/** Generate an MP4 with native audio through MiniMax-H3 on Sparkie's model router. */
+/** Generate an MP4 with native audio through LTX-2.5 on Sparkie's model router. */
 import { pathToFileURL } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
@@ -7,10 +7,11 @@ import { renderExpandedCall } from "../_tool-display/expanded-call.ts";
 import { generateVideo } from "./video.ts";
 
 const Params = Type.Object({
-	prompt: Type.String({ description: "Complete video prompt describing subjects, action over time, camera movement, style, and desired dialogue, ambience or music. Sent directly to MiniMax-H3 without prompt enhancement." }),
-	seconds: Type.Optional(Type.Integer({ description: "Requested clip length in seconds (1–10); default 5. H3 rounds to its supported frame count.", minimum: 1, maximum: 10 })),
+	prompt: Type.String({ description: "Complete video prompt describing subjects, action over time, camera movement, style, and desired dialogue, ambience or music. With an image, describe how the starting scene should move. Sent directly to LTX-2.5 without prompt enhancement." }),
+	image: Type.Optional(Type.String({ description: "Optional starting-frame image: local path or file:/// URL to a JPEG, PNG, or WebP, up to 20 MiB. The image is uploaded with the prompt." })),
+	seconds: Type.Optional(Type.Integer({ description: "Requested clip length in seconds (1–10); default 5.", minimum: 1, maximum: 10 })),
 	aspect_ratio: Type.Optional(Type.Union([Type.Literal("16:9"), Type.Literal("9:16"), Type.Literal("1:1")], { description: "Default 16:9 (1024x576). Portrait 9:16 uses 576x1024; square 1:1 uses 768x768." })),
-	steps: Type.Optional(Type.Integer({ description: "Denoising steps (1–50); default 50 for quality. Lower step counts also reduce audio quality. Full-quality clips can take tens of minutes.", minimum: 1, maximum: 50 })),
+	steps: Type.Optional(Type.Integer({ description: "Denoising steps (1–16); default 8 for this distilled checkpoint. More steps do not automatically improve quality.", minimum: 1, maximum: 16 })),
 	seed: Type.Optional(Type.Integer({ description: "Optional reproducible random seed; omitted for a fresh random seed.", minimum: 0, maximum: 4294967295 })),
 });
 
@@ -19,7 +20,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "generate_video",
 		label: "generate video",
-		description: "Generate one video with native audio using MiniMaxAI/MiniMax-H3 on Sparkie's model router. Provide a complete prompt; no prompt-enhancement model is called. Returns a local MP4 file URL under /tmp. Default: 5 seconds, 16:9, 24 fps, 50 steps. Polls for up to one hour and cancels the remote job on abort or timeout. The router is shared and unauthenticated: do not submit private briefs or sensitive input.",
+		description: "Generate one video with native stereo audio using ChrisColeTech/LTX-2.5-uncensored-v1.1-FP8 on Sparkie's native LTX model server. Provide a complete prompt and optionally a local starting-frame image; no prompt-enhancement model is called. Returns a local MP4 file URL under /tmp. Default: 5 seconds, 16:9, 24 fps, 8 steps. Polls for up to one hour and cancels the remote job on abort or timeout. The router is shared and unauthenticated: do not submit private images, briefs or sensitive input.",
 		parameters: Params,
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			if (running) return { content: [{ type: "text", text: "A video is already being generated." }], isError: true, details: undefined };
