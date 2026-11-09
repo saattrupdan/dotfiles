@@ -50,17 +50,31 @@ Quote text containing spaces when exact argument boundaries matter.
 | `check @eN` / `uncheck @eN` | Change checkbox/radio state |
 | `back` / `forward` / `reload` | Navigate and return a fresh snapshot |
 | `wait <milliseconds>` | Wait, then return a fresh snapshot |
-| `handoff` | Pause headed automation for manual login/autofill |
+| `handoff [<url>]` | Open normal Firefox for sign-in, then resume the same profile |
 
-## Bitwarden login flow
+## Normal Firefox sign-in
 
-1. Start headed Firefox with `start --headed`.
-2. On first use, manually install Bitwarden in that dedicated Firefox profile and sign
-   in from the Firefox window. Never give Pi the master password, PIN, or recovery key.
-3. Navigate to the login page.
-4. Run `handoff`. While Pi waits, unlock Bitwarden and trigger autofill in Firefox.
-5. Confirm the handoff in Pi, then run `snapshot` and continue with a submit button or
-   another non-secret action.
+1. Open the destination with `open <url>`; existing logins use the saved profile.
+2. When sign-in is needed, run `handoff <url>`, using the destination app's URL rather
+   than an expired Google error or callback URL. Automation closes and normal Firefox
+   opens with the same profile, without a WebDriver connection. Handoff defaults to a
+   ten-minute timeout and works from headed or headless automation.
+3. Sign in manually, including submitting the form and completing verification. Unlock
+   Bitwarden and trigger autofill in that window. On first use, install Bitwarden there
+   manually. Never give Pi the master password, PIN, recovery key, or sign-in password.
+4. Quit that Firefox instance (**Cmd+Q** on Mac, not just closing its window), then
+   confirm the handoff in Pi. Automation resumes in its original mode with the saved
+   login and returns to the destination URL.
+5. Run `snapshot` to continue.
+
+Google rejects sign-in in automated Firefox even when the window is visible. Use the
+normal-browser handoff rather than retrying in `start --headed`.
+
+The profile stays reserved during handoff. Canceling or timing out leaves the normal
+window untouched; quit it and run `handoff` again to resume, or `close` to stop. Pi does
+not terminate a normal sign-in window. If Pi shuts down or reloads, Firefox's native
+lock protects that window until you quit it. Concurrent Pi sessions use their own
+profile clones; a login in a clone does not update the primary profile.
 
 The tool deliberately refuses to fill credential fields and does not expose password
 values, cookies, browser storage, arbitrary JavaScript, network bodies, or screenshots.
@@ -72,8 +86,8 @@ exfiltrate a filled credential.
 
 Headless mode is the default for both `start` and `open`. The same persistent profile
 is used, so authenticated cookies and an unlocked Bitwarden vault can remain available.
-Use `start --headed` when human interaction or Bitwarden unlock is needed. Close Firefox
-before switching modes.
+Use `start --headed` for visible automation and `handoff` for human sign-in in normal
+Firefox. Close automation before switching between headed and headless modes.
 
 ## Profile and environment
 

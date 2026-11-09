@@ -1,7 +1,7 @@
 /* Profile isolation and conservative recovery for Firefox sessions. */
 import { execFile, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { cp, lstat, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, readFile, readlink, rename, rm, stat, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { basename, dirname, join } from "node:path";
 
@@ -52,6 +52,21 @@ async function firefoxIdentity(pid: number): Promise<FirefoxIdentity | null> {
 	} catch {
 		return null;
 	}
+}
+
+/** Reuse the exact executable of the verified automated browser for manual sign-in. */
+export async function firefoxExecutable(owner: FirefoxIdentity): Promise<string> {
+	const current = await firefoxIdentity(owner.pid);
+	if (!current || current.started !== owner.started || current.command !== owner.command) {
+		throw new Error("Firefox process identity changed before handoff");
+	}
+	const executable = process.platform === "linux"
+		? await readlink(`/proc/${owner.pid}/exe`)
+		: (await run("ps", ["-p", String(owner.pid), "-o", "comm="], { timeout: 5_000 })).stdout.trim();
+	if (!/^firefox(?:-bin|-esr)?$/i.test(basename(executable))) {
+		throw new Error("Cannot identify the Firefox executable for manual sign-in");
+	}
+	return executable;
 }
 
 function ownerPath(profile: string): string {

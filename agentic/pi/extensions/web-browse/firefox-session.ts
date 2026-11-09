@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, chmod, mkdir, open, readFile, unlink } from "node:fs/promises";
+import { access, chmod, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
@@ -12,7 +12,7 @@ import * as firefox from "selenium-webdriver/firefox";
 
 import type { ParsedCommand } from "./command.ts";
 import { formatSnapshot, type SnapshotElement, takeSnapshot } from "./snapshot.ts";
-import { clearFirefoxOwner, invalidateSeed, nativeLockHolder, newSecondaryProfile, recordFirefoxOwner, recoverOrphanedFirefox, refreshSeed, removeSecondaryProfile, seedPath, terminateOwnedFirefox, terminateOwnedFirefoxOnExit, type FirefoxIdentity } from "./profile.ts";
+import { clearFirefoxOwner, firefoxExecutable, invalidateSeed, nativeLockHolder, newSecondaryProfile, recordFirefoxOwner, recoverOrphanedFirefox, refreshSeed, removeSecondaryProfile, seedPath, terminateOwnedFirefox, terminateOwnedFirefoxOnExit, type FirefoxIdentity } from "./profile.ts";
 
 export type BrowserMode = "headed" | "headless";
 
@@ -24,6 +24,7 @@ interface LockOwner {
 	pid: number;
 	token: string;
 	startedAt: string;
+	handoffPid?: number;
 }
 
 interface ProfileLock {
@@ -106,8 +107,9 @@ export async function acquireProfileLock(profilePath: string): Promise<ProfileLo
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
 			const existing = await readLockOwner(lockPath, "Firefox profile lock");
-			if (typeof existing.pid === "number" && processIsAlive(existing.pid)) {
-				throw new ProfileBusyError(`Firefox profile is already controlled by Pi process ${existing.pid}. Close that session first.`, {
+			if ((typeof existing.pid === "number" && processIsAlive(existing.pid)) ||
+				(typeof existing.handoffPid === "number" && existing.handoffPid > 0 && processIsAlive(existing.handoffPid))) {
+				throw new ProfileBusyError(`Firefox profile is already controlled by Pi process ${existing.pid} or its normal sign-in browser. Close that session first.`, {
 					cause: error,
 				});
 			}
@@ -127,6 +129,34 @@ export async function releaseProfileLock(lock: ProfileLock | null): Promise<void
 		await unlink(lock.path);
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+	}
+}
+
+async function pinHandoffBrowser(lock: ProfileLock, pid?: number): Promise<void> {
+	const existing = await readLockOwner(lock.path, "Firefox profile lock");
+	if (existing.pid !== lock.owner.pid || existing.token !== lock.owner.token) {
+		throw new Error("Firefox profile reservation changed during handoff");
+	}
+	const owner = { ...lock.owner, handoffPid: pid };
+	const staged = `${lock.path}.${randomUUID()}.tmp`;
+	await createLockFile(staged, owner);
+	try { await rename(staged, lock.path); }
+	finally { await unlink(staged).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; }); }
+	lock.owner = owner;
+}
+
+/** Survives extension reload; release only once Firefox takes over or actually exits. */
+export async function guardHandoffProfile(lock: ProfileLock, profile: string, browserExited: () => boolean): Promise<void> {
+	for (;;) {
+		try {
+			if (browserExited() || await nativeLockHolder(profile) !== null) {
+				await releaseProfileLock(lock);
+				return;
+			}
+		} catch {
+			// Keep the lease on uncertain native-lock or filesystem observations.
+		}
+		await new Promise<void>((resolve) => { setTimeout(resolve, 100).unref(); });
 	}
 }
 
@@ -283,6 +313,13 @@ async function pause(milliseconds: number): Promise<void> {
 	await new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 }
 
+interface NormalHandoff {
+	url: string;
+	mode: BrowserMode;
+	exited: boolean;
+	launched: boolean;
+}
+
 export class FirefoxSession {
 	profilePath: string;
 	private readonly primaryProfilePath: string;
@@ -294,6 +331,9 @@ export class FirefoxSession {
 	private startupController: AbortController | null = null;
 	private closing: Promise<string> | null = null;
 	private owner: FirefoxIdentity | null = null;
+	private normalHandoff: NormalHandoff | null = null;
+	private handoffWork: Promise<string> | null = null;
+	private handoffController: AbortController | null = null;
 	private refs = new Map<string, SnapshotElement>();
 
 	constructor(profilePath = defaultProfilePath()) {
@@ -355,6 +395,7 @@ export class FirefoxSession {
 
 	async start(mode: BrowserMode, signal?: AbortSignal): Promise<string> {
 		if (this.closing) throw new Error("Firefox is closing; retry after shutdown completes.");
+		if (this.normalHandoff || this.handoffWork) throw new Error("Finish manual sign-in with `handoff` before starting automation.");
 		if (this.owner && !this.driver) throw new Error("Firefox shutdown is incomplete. Use close to retry.");
 		if (this.driver) {
 			if (this.mode !== mode) throw new Error(`Firefox is already running ${this.mode}; close it before changing mode.`);
@@ -426,9 +467,7 @@ export class FirefoxSession {
 			return [
 				`Firefox started in ${mode} mode.`,
 				`Profile: ${this.profilePath}`,
-				mode === "headed"
-					? "Use `handoff` when you need to unlock Bitwarden or trigger its autofill UI."
-					: "Bitwarden cannot be interactively unlocked in headless mode; existing browser sessions may still work.",
+				"Use `handoff` for manual sign-in in normal Firefox; the same profile is retained.",
 			].join("\n");
 		} finally {
 			signal?.removeEventListener("abort", onAbort);
@@ -438,6 +477,7 @@ export class FirefoxSession {
 	}
 
 	status(): string {
+		if (this.normalHandoff) return `Manual sign-in in normal Firefox. Quit that Firefox instance, then run handoff to resume automation.\nProfile: ${this.profilePath}`;
 		if (!this.driver && this.owner) return `Firefox shutdown is incomplete. Use close to retry.\nProfile: ${this.profilePath}`;
 		if (!this.driver) return `Firefox is stopped.\nProfile: ${this.profilePath}`;
 		return `Firefox is running in ${this.mode} mode.\nProfile: ${this.profilePath}`;
@@ -451,37 +491,44 @@ export class FirefoxSession {
 		return closing;
 	}
 
-	private async closeInternal(): Promise<string> {
-		this.startupController?.abort(abortError());
-		await this.startup?.catch(() => undefined);
+	private async stopAutomation(): Promise<void> {
 		const driver = this.driver;
-		const lock = this.lock;
-		const hadOwner = this.owner !== null;
 		this.driver = null;
 		this.mode = null;
 		this.refs.clear();
+		try {
+			if (driver) await Promise.race([driver.quit(), pause(3_000)]);
+		} catch {
+			// A manually closed browser still requires a native-lock check.
+		}
+		if (this.owner) await terminateOwnedFirefox(this.profilePath, this.owner);
+		if (this.lock && await nativeLockHolder(this.profilePath) !== null) {
+			throw new Error("Firefox still holds its profile after shutdown; refusing to report it closed");
+		}
+		this.owner = null;
+		if (this.lock) await clearFirefoxOwner(this.profilePath);
+	}
+
+	private async closeInternal(): Promise<string> {
+		this.startupController?.abort(abortError());
+		this.handoffController?.abort(abortError());
+		await this.startup?.catch(() => undefined);
+		await this.handoffWork?.catch(() => undefined);
+		if (this.normalHandoff) {
+			await this.requireManualExit();
+			this.normalHandoff = null;
+		}
+		const lock = this.lock;
+		const hadOwner = this.owner !== null;
+		await this.stopAutomation();
 		let seedWarning = "";
 		try {
-			try {
-				if (driver) await Promise.race([driver.quit(), pause(3_000)]);
-			} catch {
-				// Firefox may already have been closed manually; verify its lock below.
-			}
-			if (this.owner) await terminateOwnedFirefox(this.profilePath, this.owner);
-			if (lock && await nativeLockHolder(this.profilePath) !== null) {
-				throw new Error("Firefox still holds its profile after shutdown; refusing to report it closed");
-			}
-			this.owner = null;
-			if (lock || hadOwner) {
-				await clearFirefoxOwner(this.profilePath);
-				if (!this.secondaryProfilePath) {
-					try {
-						// Include logins established during this session in future secondary profiles.
-						await refreshSeed(this.profilePath);
-					} catch (error) {
-						await invalidateSeed(this.profilePath);
-						seedWarning = ` Login seed refresh failed: ${error instanceof Error ? error.message : String(error)}. Concurrent browsers cannot inherit logins until a successful refresh.`;
-					}
+			if ((lock || hadOwner) && !this.secondaryProfilePath) {
+				try {
+					await refreshSeed(this.profilePath);
+				} catch (error) {
+					await invalidateSeed(this.profilePath);
+					seedWarning = ` Login seed refresh failed: ${error instanceof Error ? error.message : String(error)}. Concurrent browsers cannot inherit logins until a successful refresh.`;
 				}
 			}
 		} finally {
@@ -491,11 +538,103 @@ export class FirefoxSession {
 		return `Firefox closed.${seedWarning}`;
 	}
 
+	private async requireManualExit(): Promise<void> {
+		if (!this.normalHandoff?.exited || await nativeLockHolder(this.profilePath) !== null) {
+			throw new Error("Quit normal Firefox first (Cmd+Q on Mac), then run handoff or close again. The profile remains reserved; no browser was terminated.");
+		}
+	}
+
+	private async performHandoff(handoff: HandoffHandler, signal: AbortSignal, target?: string): Promise<string> {
+		throwIfAborted(signal);
+		if (!this.normalHandoff) {
+			const driver = this.requireDriver();
+			if (!this.owner || !this.lock || !this.mode) throw new Error("Firefox ownership is unavailable for handoff");
+			const url = target ?? parseOpenUrl(await driver.getCurrentUrl());
+			const binary = await firefoxExecutable(this.owner);
+			const mode = this.mode;
+			await this.stopAutomation();
+			throwIfAborted(signal);
+			const manual: NormalHandoff = { url, mode, exited: false, launched: false };
+			this.normalHandoff = manual;
+			const env = { ...process.env };
+			delete env.MOZ_MARIONETTE;
+			delete env.MOZ_HEADLESS;
+			const child = spawn(binary, ["--profile", this.profilePath, "--no-remote", url], {
+				env, detached: true, stdio: "ignore",
+			});
+			child.once("exit", () => { manual.exited = true; });
+			await new Promise<void>((resolve, reject) => {
+				child.once("spawn", () => { manual.launched = true; resolve(); });
+				child.once("error", (error) => { manual.exited = true; reject(error); });
+			});
+			child.unref();
+			await pinHandoffBrowser(this.lock, child.pid);
+		} else if (target && target !== this.normalHandoff.url) {
+			throw new Error("Finish the current handoff before changing its destination");
+		}
+		const manual = this.normalHandoff;
+		if (!manual.launched) throw new Error("Normal Firefox did not start. Use close, then open and handoff again.");
+		throwIfAborted(signal);
+		const accepted = await handoff({
+			title: "Normal Firefox sign-in",
+			message: "Sign in using normal Firefox, including submitting the form. Passwords stay in Firefox. Then quit that Firefox instance (Cmd+Q on Mac, not just closing its window), return here and confirm. Automation will resume with the same profile.",
+		}, signal);
+		throwIfAborted(signal);
+		if (!accepted) return "Handoff canceled. Normal Firefox remains yours to finish or quit. Run handoff again to resume, or quit Firefox and use close.";
+		await this.requireManualExit();
+		throwIfAborted(signal);
+		if (!this.lock) throw new Error("Firefox profile reservation was lost during handoff");
+		await pinHandoffBrowser(this.lock);
+		if (!this.secondaryProfilePath) {
+			try { await refreshSeed(this.profilePath); }
+			catch (error) { await invalidateSeed(this.profilePath); throw error; }
+		}
+		throwIfAborted(signal);
+		if (!this.lock) throw new Error("Firefox profile reservation was lost during handoff");
+		this.normalHandoff = null;
+		await this.startDriver(manual.mode, this.lock, signal);
+		throwIfAborted(signal);
+		await this.requireDriver().get(manual.url);
+		throwIfAborted(signal);
+		return "Handoff complete. Automation resumed with the same Firefox profile. Run snapshot to continue.";
+	}
+
+	private async handoffBrowser(handoff: HandoffHandler, signal?: AbortSignal, target?: string): Promise<string> {
+		if (this.closing || this.handoffWork) throw new Error("Firefox is already changing ownership; retry after it completes");
+		const controller = new AbortController();
+		const onAbort = () => controller.abort(signal?.reason);
+		if (signal?.aborted) onAbort();
+		else signal?.addEventListener("abort", onAbort, { once: true });
+		this.handoffController = controller;
+		const work = this.performHandoff(handoff, controller.signal, target);
+		this.handoffWork = work;
+		try { return await work; }
+		finally {
+			signal?.removeEventListener("abort", onAbort);
+			if (this.handoffWork === work) this.handoffWork = null;
+			if (this.handoffController === controller) this.handoffController = null;
+		}
+	}
+
 	terminateOnExit(): void {
 		if (this.owner) terminateOwnedFirefoxOnExit(this.profilePath, this.owner);
 	}
 
 	async shutdown(): Promise<void> {
+		this.handoffController?.abort(abortError());
+		await this.handoffWork?.catch(() => undefined);
+		if (this.normalHandoff && !this.normalHandoff.exited) {
+			// A timer-rooted guardian outlives this extension instance. The on-disk
+			// child PID also preserves the reservation if Pi exits during startup.
+			const lock = this.lock;
+			const manual = this.normalHandoff;
+			this.lock = null;
+			if (lock) {
+				const guardian = guardHandoffProfile(lock, this.profilePath, () => manual.exited);
+				await Promise.race([guardian, pause(100)]);
+			}
+			return;
+		}
 		await this.close();
 		if (this.secondaryProfilePath && await nativeLockHolder(this.secondaryProfilePath) === null) {
 			await removeSecondaryProfile(this.primaryProfilePath, this.secondaryProfilePath);
@@ -503,6 +642,7 @@ export class FirefoxSession {
 	}
 
 	private requireDriver(): WebDriver {
+		if (this.normalHandoff) throw new Error("Manual sign-in is in progress. Quit normal Firefox, then use handoff to resume automation.");
 		if (!this.driver) throw new Error("Firefox is not running. Use `start`, `start --headed`, or `open <url>` first.");
 		return this.driver;
 	}
@@ -540,7 +680,8 @@ export class FirefoxSession {
 				"  start [--headed|--headless] | status | close",
 				"  open <https-url> | snapshot | back | forward | reload | wait <ms>",
 				"  click @eN | fill @eN <text> | type @eN <text> | press [@eN] <key>",
-				"  select @eN <option> | check @eN | uncheck @eN | handoff",
+				"  select @eN <option> | check @eN | uncheck @eN | handoff [<https-url>]",
+				"handoff opens normal Firefox for manual sign-in; quit it before confirming to resume automation.",
 				"Password fields, cookies, storage, arbitrary JavaScript, network bodies, and screenshots are not exposed.",
 			].join("\n");
 		}
@@ -618,19 +759,8 @@ export class FirefoxSession {
 			return `${name === "check" ? "Checked" : "Unchecked"} ${entry.ref}.`;
 		}
 		if (name === "handoff") {
-			if (args.length !== 0) throw new Error("usage: handoff");
-			this.requireDriver();
-			if (this.mode !== "headed") throw new Error("Bitwarden handoff requires headed Firefox.");
-			const accepted = await handoff(
-				{
-					title: "Firefox handoff",
-					message:
-						"Use the Firefox window now. Unlock Bitwarden and trigger autofill there; never paste a password into Pi. Return here and confirm only when the page is ready for automation.",
-				},
-				signal,
-			);
-			this.refs.clear();
-			return accepted ? "Handoff complete. Run snapshot to continue." : "Handoff canceled.";
+			if (args.length > 1) throw new Error("usage: handoff [<https-url>]");
+			return await this.handoffBrowser(handoff, signal, args[0] ? parseOpenUrl(args[0]) : undefined);
 		}
 		throw new Error(`unknown command: ${name}. Use \`help\` for the Firefox command list.`);
 	}

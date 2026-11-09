@@ -19,20 +19,20 @@ import { parseCommand, safeCommandPreview } from "./command.ts";
 import { FirefoxSession, type HandoffHandler } from "./firefox-session.ts";
 
 const DEFAULT_TIMEOUT_MS = 60_000;
+const HANDOFF_TIMEOUT_MS = 600_000;
 
 const Params = Type.Object({
 	command: Type.String({
 		description:
 			"Firefox browser command. Start with `help`. Common commands: `open <url>`, `snapshot`, `click @e1`, " +
-			"`fill @e2 <text>`, `start --headed`, `handoff`, and `close`. Headless is the default; session state persists between calls.",
+			"`fill @e2 <text>`, `handoff [<url>]`, and `close`. Handoff opens normal Firefox for manual sign-in and resumes the same profile after you quit it. Headless is the default for automation.",
 	}),
 	timeout_ms: Type.Optional(
 		Type.Integer({
-			description: `Hard timeout in milliseconds (default ${DEFAULT_TIMEOUT_MS}).`,
+			description: `Hard timeout in milliseconds (default ${DEFAULT_TIMEOUT_MS}, or ${HANDOFF_TIMEOUT_MS} for handoff).`,
 			minimum: 1000,
 			maximum: 600_000,
-			default: DEFAULT_TIMEOUT_MS,
-		}),
+					}),
 	),
 });
 
@@ -111,7 +111,7 @@ export default function (pi: ExtensionAPI) {
 		label: "web browse",
 		description:
 			"Drive native Firefox through a constrained, persistent automation session. Use `help` to list commands. " +
-			"Headless mode is the default; use `start --headed` for human Bitwarden unlock/autofill handoff without sending passwords through Pi. " +
+			"Headless mode is the default for automation. Use `handoff [<url>]` for manual sign-in in normal Firefox, then quit that window to resume the same profile without sending passwords through Pi. " +
 			"Use for interactive flows and JS-rendered pages; prefer `read` for static pages.",
 		parameters: Params,
 		executionMode: "sequential",
@@ -133,7 +133,7 @@ export default function (pi: ExtensionAPI) {
 				};
 				const text = await withDeadline(
 					(operationSignal) => session.execute(command, handoff, operationSignal),
-					params.timeout_ms ?? DEFAULT_TIMEOUT_MS,
+					params.timeout_ms ?? (command.name === "handoff" ? HANDOFF_TIMEOUT_MS : DEFAULT_TIMEOUT_MS),
 					signal,
 					() => session.close(),
 				);

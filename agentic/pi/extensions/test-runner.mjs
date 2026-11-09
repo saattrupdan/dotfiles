@@ -49,3 +49,4 @@ await jiti.import(path.join(root, "subagent", "compact-result.test.ts"), { defau
 await jiti.import(path.join(root, "statusline", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "web-search", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "web-browse", "index.test.ts"), { default: false });
+await jiti.import(path.join(root, "web-browse", "handoff.test.ts"), { default: false });

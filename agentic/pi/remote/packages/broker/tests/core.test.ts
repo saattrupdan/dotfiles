@@ -94,6 +94,26 @@ test("release gates expire when source changes", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+test("release gates cover imported Firefox handoff and profile helpers", () => {
+  const dir = fixture();
+  try {
+    const browser = path.join(dir, "extensions", "web-browse");
+    fs.mkdirSync(browser, { recursive: true });
+    const evidence = path.join(dir, "evidence.json");
+    fs.writeFileSync(evidence, "{}");
+    const config = { agentDir: dir, dataDir: path.join(dir, "data") };
+    for (const name of ["firefox-session.ts", "profile.ts", "snapshot.ts"]) {
+      const source = path.join(browser, name);
+      fs.writeFileSync(source, "first");
+      attest(config, "automated", evidence);
+      assert(!gates(config).missing.includes("automated"));
+      fs.writeFileSync(source, "second");
+      assert(gates(config).missing.includes("automated"), name);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 test("HTTP authentication, origin, lock, CSRF, grace and revocation", async () => {
   const dir = fixture();
   const config = ConfigSchema.parse({ origin, dataDir: dir, home: dir });

@@ -56,7 +56,7 @@ export function sourceDigest(root: string) {
     "extensions/fast",
     "extensions/context-limit",
     "extensions/subagent/index.ts",
-    "extensions/web-browse/index.ts",
+    "extensions/web-browse",
     "extensions/splash/index.ts",
   ])
     add(path.join(root, name));
