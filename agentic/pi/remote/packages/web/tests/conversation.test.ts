@@ -103,10 +103,9 @@ test(
               {
                 role: "user",
                 content: [
-                  { type: "text", text: "Describe the attached image." },
                   {
                     type: "text",
-                    text: "[Image: original 3024x4032, displayed at 1500x2000. Multiply coordinates by 2.02 to map to original image.]",
+                    text: "Describe the attached image.\n[Image: original 3024x4032, displayed at 1500x2000. Multiply coordinates by 2.02 to map to original image.]",
                   },
                   {
                     type: "image",

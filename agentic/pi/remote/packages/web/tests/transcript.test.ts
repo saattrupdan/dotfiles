@@ -50,6 +50,16 @@ test("transcript hides internal sizing annotations next to images, not the image
   }
 });
 
+test("transcript removes an SDK note appended to the prompt text", () => {
+  const text =
+    "Describe the attached image.\n<!-- pi-remote-command:c2d90aba-4820-494b-978d-1991e3e820cf -->";
+  const original = { type: "text", text: `${text}\n${annotation}` };
+  const result = parts({ role: "user", content: [original, image] });
+  assert.equal(result[0]?.text, text);
+  assert.equal(result[1], image);
+  assert.equal(original.text, `${text}\n${annotation}`);
+});
+
 test("transcript preserves ordinary text, even when it discusses image annotations", () => {
   for (const text of [
     annotation,

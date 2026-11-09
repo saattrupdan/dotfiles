@@ -20,17 +20,22 @@ const parts = (m: Message) => {
       ? [{ type: "text", text: m.content }]
       : (m.content ?? []);
   const sizing = new RegExp(
-    "^\\[Image: original \\d+x\\d+, displayed at \\d+x\\d+\\. " +
+    "(^|\\r?\\n)\\[Image: original \\d+x\\d+, displayed at \\d+x\\d+\\. " +
       "Multiply coordinates by \\d+(?:\\.\\d+)? to map to original image\\.\\]$",
   );
-  return content.filter(
-    (part, index) =>
+  return content.flatMap((part, index) => {
+    if (
       part.type !== "text" ||
-      !sizing.test(part.text?.trim() ?? "") ||
       ![content[index - 1], content[index + 1]].some(
         (neighbor) => neighbor?.type === "image",
-      ),
-  );
+      )
+    )
+      return [part];
+    let text = part.text ?? "";
+    while (sizing.test(text)) text = text.replace(sizing, "");
+    if (text === part.text) return [part];
+    return text.trim() ? [{ ...part, text }] : [];
+  });
 };
 </script>
 <template>
