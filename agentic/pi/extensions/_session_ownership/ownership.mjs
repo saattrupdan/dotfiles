@@ -11,14 +11,16 @@ import path from "node:path";
 
 export const OWNERSHIP_ENV = "PI_SESSION_OWNER";
 export const ROOT_ENV = "PI_SESSION_LOCK_ROOT";
+const BIRTH_PREFIX = "ps:C:";
 
 export function processIdentity(pid = process.pid) {
 	try {
 		process.kill(pid, 0);
-		return (
-			execFileSync("ps", ["-p", String(pid), "-o", "lstart="], { encoding: "utf8" }).trim() ||
-			undefined
-		);
+		const birth = execFileSync("ps", ["-p", String(pid), "-o", "lstart="], {
+			encoding: "utf8",
+			env: { ...process.env, LC_ALL: "C" },
+		}).trim();
+		return birth ? BIRTH_PREFIX + birth : undefined;
 	} catch {
 		return undefined;
 	}
@@ -68,7 +70,7 @@ export function isAlive(owner) {
 		return error.code !== "ESRCH";
 	}
 	const birth = processIdentity(owner.pid);
-	return birth === undefined || birth === owner.birth;
+	return birth === undefined || birth === owner.birth || birth === BIRTH_PREFIX + owner.birth;
 }
 
 function transaction(root, fn) {
@@ -125,7 +127,10 @@ function sessionId(file) {
 }
 
 function check(record, owner) {
-	if (record && record.instanceId !== owner.instanceId && isAlive(record)) {
+	// Old localized stamps cannot prove PID reuse. Keep their live PID locked
+	// until it exits; only versioned canonical stamps can safely be reclaimed.
+	const legacyLivePid = record && !record.birth.startsWith(BIRTH_PREFIX) && processIdentity(record.pid) !== undefined;
+	if (record && record.instanceId !== owner.instanceId && (isAlive(record) || legacyLivePid)) {
 		const error = new Error(`Session owned by ${record.kind} Pi process ${record.pid}`);
 		error.code = "NOT_OWNER";
 		error.owner = record;

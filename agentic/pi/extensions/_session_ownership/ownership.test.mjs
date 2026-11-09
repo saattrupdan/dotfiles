@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { once } from "node:events";
 import {
 	acquire,
@@ -16,6 +16,7 @@ import {
 	releaseNamespace,
 	adopt,
 	historyInScope,
+	isAlive,
 } from "./ownership.mjs";
 const fixture = () => fs.mkdtempSync(path.join(os.tmpdir(), "pi-owner-test-"));
 test("exclusive ownership, owner-only release and namespace exclusion", () => {
@@ -108,6 +109,39 @@ test("multiple processes race for exactly one native-file lock", async () => {
 		fs.rmSync(root, { recursive: true, force: true });
 	}
 });
+test("broker ownership admission recognizes a live terminal owner across locales", async () => {
+	const root = fixture(), module = new URL("./ownership.mjs", import.meta.url).href;
+	const file = path.join(root, "fresh-native.jsonl");
+	const producer = `import {acquire,newOwner} from ${JSON.stringify(module)}; const owner=newOwner();acquire(process.argv[1],owner,process.argv[2]);console.log(JSON.stringify(owner));setInterval(()=>{},1000);`;
+	const child = spawn(process.execPath, ["--input-type=module", "-e", producer, file, root], {
+		env: { ...process.env, LC_ALL: "da_DK.UTF-8" }, stdio: ["ignore", "pipe", "pipe"],
+	});
+	try {
+		const [data] = await once(child.stdout, "data");
+		const owner = JSON.parse(data.toString());
+		const consumer = `import {inspect} from ${JSON.stringify(module)};import assert from 'node:assert/strict';assert.equal(inspect(process.argv[1],process.argv[2])?.instanceId,process.argv[3],'Locale-independent live owner admission');`;
+		const result = spawnSync(process.execPath, ["--input-type=module", "-e", consumer, file, root, owner.instanceId], { env: { ...process.env, LC_ALL: "C" }, encoding: "utf8" });
+		assert.equal(result.status, 0, result.stderr);
+	} finally {
+		child.kill(); await once(child, "exit");
+		fs.rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("live legacy identities remain protected and canonical PID reuse can be reclaimed", () => {
+	const root = fixture();
+	try {
+		const owner = newOwner(), file = path.join(root, "legacy.jsonl");
+		const birth = execFileSync("ps", ["-p", String(process.pid), "-o", "lstart="], { env: { ...process.env, LC_ALL: "da_DK.UTF-8" }, encoding: "utf8" }).trim();
+		acquire(file, { ...owner, birth }, root);
+		assert.throws(() => acquire(file, newOwner(), root), /owned/);
+		const stale = { ...newOwner(), birth: owner.birth.replace(/\d{4}$/, "1900") };
+		const other = path.join(root, "reused.jsonl"); acquire(other, stale, root);
+		assert.equal(isAlive(stale), false);
+		acquire(other, newOwner(), root);
+	} finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test("pilot scope blocks legacy acquisition and bootstrap adoption before mutation", () => {
 	const root = fixture(), previous = process.env.PI_SESSION_HISTORY_SCOPE;
 	try {
