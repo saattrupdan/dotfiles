@@ -5,6 +5,11 @@ const auth = useAuth();
 const devices = ref<{ id: string; name: string; created: number }[]>([]);
 const error = ref("");
 const note = ref("");
+const notificationsSupported =
+  typeof Notification !== "undefined" &&
+  typeof PushManager !== "undefined" &&
+  typeof navigator !== "undefined" &&
+  "serviceWorker" in navigator;
 async function refresh() {
   devices.value = await auth.request("/devices");
 }
@@ -18,6 +23,14 @@ async function revoke(id: string) {
   }
 }
 async function notifications() {
+  error.value = "";
+  note.value = "";
+  if (!notificationsSupported) {
+    error.value =
+      "Notifications are unavailable here. On iPhone, open Pi Remote " +
+      "from its Home Screen icon.";
+    return;
+  }
   try {
     const permission = await Notification.requestPermission();
     if (permission !== "granted")
@@ -50,9 +63,17 @@ async function notifications() {
         Two-minute background unlock grace. Transcripts, images and drafts are not saved
         on this phone.
       </p>
-      <button @click="notifications">Enable notifications</button>
+      <button
+        :disabled="!notificationsSupported"
+        @click="notifications"
+      >
+        Enable notifications
+      </button>
       <p class="small muted">
-        Install this app on your Home Screen before enabling iPhone notifications.
+        <span v-if="!notificationsSupported">
+          Notifications are unavailable in this browser.
+        </span>
+        On iPhone, open Pi Remote from its Home Screen icon to enable notifications.
       </p>
       <p v-if="note">{{ note }}</p>
       <p
