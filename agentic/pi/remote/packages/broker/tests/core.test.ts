@@ -114,97 +114,103 @@ test("release gates cover imported Firefox handoff and profile helpers", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
-test("HTTP authentication, origin, lock, CSRF, grace and revocation", async () => {
-  const dir = fixture();
-  const config = ConfigSchema.parse({ origin, dataDir: dir, home: dir });
-  const broker = await createBroker(config, { ipc: false, history: false });
-  const host = new URL(origin).host;
-  const request = (
-    method: "GET" | "POST",
-    url: string,
-    extra: Record<string, string> = {},
-    payload?: Record<string, unknown>,
-  ) =>
-    broker.app.inject({
-      method,
-      url,
-      headers: { host, ...(method === "POST" ? { origin } : {}), ...extra },
-      payload,
+for (const deploymentPolicy of ["release", "pilot"] as const)
+  test(`HTTP authentication, origin, lock, CSRF, grace and revocation (${deploymentPolicy})`, async () => {
+    const dir = fixture();
+    const config = ConfigSchema.parse({
+      origin,
+      dataDir: dir,
+      home: dir,
+      deploymentPolicy,
     });
-  try {
-    assert.equal((await request("GET", "/api/v1/sessions")).statusCode, 401);
-    assert.equal(
-      (
-        await request(
-          "POST",
-          "/api/v1/auth/options",
-          { origin: "https://evil.example" },
-          {},
-        )
-      ).statusCode,
-      403,
-    );
-    assert.equal(
-      (await request("GET", "/api/v1/me", { host: "evil.example" })).statusCode,
-      403,
-    );
-    const id = randomUUID(),
-      raw = "cookie-secret",
-      csrf = "csrf-secret",
-      now = Date.now();
-    broker.store.db
-      .prepare("INSERT INTO devices VALUES (?,?,?,0,?)")
-      .run(id, "Phone", "{}", now);
-    broker.store.db
-      .prepare("INSERT INTO auth VALUES (?,?,?,?,?,?,?,?)")
-      .run(digest(raw), id, csrf, now, now, null, now + 86400000, 1);
-    const headers = { cookie: `__Host-pi-remote=${raw}`, "x-pi-csrf": csrf };
-    const response = await request("GET", "/api/v1/sessions", headers);
-    assert.equal(response.statusCode, 200);
-    assert.equal(response.headers["cache-control"], "no-store");
-    assert.equal(
-      (await request("POST", "/api/v1/auth/lock", { cookie: headers.cookie }, {}))
-        .statusCode,
-      403,
-    );
-    assert.equal(
-      (await request("POST", "/api/v1/auth/presence", headers, { foreground: false }))
-        .statusCode,
-      200,
-    );
-    assert.equal((await request("GET", "/api/v1/sessions", headers)).statusCode, 423);
-    assert.equal(
-      (await request("POST", "/api/v1/auth/presence", headers, { foreground: true }))
-        .statusCode,
-      200,
-    );
-    broker.store.db
-      .prepare("UPDATE auth SET background=?,seen=?")
-      .run(now - 121000, now - 121000);
-    assert.equal(
-      (await request("POST", "/api/v1/auth/presence", headers, { foreground: true }))
-        .statusCode,
-      423,
-    );
-    broker.store.db
-      .prepare("UPDATE auth SET unlocked=1,background=NULL,seen=?")
-      .run(Date.now());
-    broker.store.db
-      .prepare("UPDATE auth SET verified=?,seen=?,unlocked=1,background=NULL")
-      .run(Date.now() - 901000, Date.now());
-    assert.equal((await request("GET", "/api/v1/sessions", headers)).statusCode, 423);
-    assert.equal(
-      (await request("POST", "/api/v1/auth/presence", headers, { foreground: true }))
-        .statusCode,
-      423,
-    );
-    broker.auth.revoke(id);
-    assert.equal((await request("GET", "/api/v1/sessions", headers)).statusCode, 401);
-  } finally {
-    await broker.app.close();
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
+    const broker = await createBroker(config, { ipc: false, history: false });
+    const host = new URL(origin).host;
+    const request = (
+      method: "GET" | "POST",
+      url: string,
+      extra: Record<string, string> = {},
+      payload?: Record<string, unknown>,
+    ) =>
+      broker.app.inject({
+        method,
+        url,
+        headers: { host, ...(method === "POST" ? { origin } : {}), ...extra },
+        payload,
+      });
+    try {
+      assert.equal((await request("GET", "/api/v1/sessions")).statusCode, 401);
+      assert.equal(
+        (
+          await request(
+            "POST",
+            "/api/v1/auth/options",
+            { origin: "https://evil.example" },
+            {},
+          )
+        ).statusCode,
+        403,
+      );
+      assert.equal(
+        (await request("GET", "/api/v1/me", { host: "evil.example" })).statusCode,
+        403,
+      );
+      const id = randomUUID(),
+        raw = "cookie-secret",
+        csrf = "csrf-secret",
+        now = Date.now();
+      broker.store.db
+        .prepare("INSERT INTO devices VALUES (?,?,?,0,?)")
+        .run(id, "Phone", "{}", now);
+      broker.store.db
+        .prepare("INSERT INTO auth VALUES (?,?,?,?,?,?,?,?)")
+        .run(digest(raw), id, csrf, now, now, null, now + 86400000, 1);
+      const headers = { cookie: `__Host-pi-remote=${raw}`, "x-pi-csrf": csrf };
+      const response = await request("GET", "/api/v1/sessions", headers);
+      assert.equal(response.statusCode, 200);
+      assert.equal(response.headers["cache-control"], "no-store");
+      assert.equal(
+        (await request("POST", "/api/v1/auth/lock", { cookie: headers.cookie }, {}))
+          .statusCode,
+        403,
+      );
+      assert.equal(
+        (await request("POST", "/api/v1/auth/presence", headers, { foreground: false }))
+          .statusCode,
+        200,
+      );
+      assert.equal((await request("GET", "/api/v1/sessions", headers)).statusCode, 423);
+      assert.equal(
+        (await request("POST", "/api/v1/auth/presence", headers, { foreground: true }))
+          .statusCode,
+        200,
+      );
+      broker.store.db
+        .prepare("UPDATE auth SET background=?,seen=?")
+        .run(now - 121000, now - 121000);
+      assert.equal(
+        (await request("POST", "/api/v1/auth/presence", headers, { foreground: true }))
+          .statusCode,
+        423,
+      );
+      broker.store.db
+        .prepare("UPDATE auth SET unlocked=1,background=NULL,seen=?")
+        .run(Date.now());
+      broker.store.db
+        .prepare("UPDATE auth SET verified=?,seen=?,unlocked=1,background=NULL")
+        .run(Date.now() - 901000, Date.now());
+      assert.equal((await request("GET", "/api/v1/sessions", headers)).statusCode, 423);
+      assert.equal(
+        (await request("POST", "/api/v1/auth/presence", headers, { foreground: true }))
+          .statusCode,
+        423,
+      );
+      broker.auth.revoke(id);
+      assert.equal((await request("GET", "/api/v1/sessions", headers)).statusCode, 401);
+    } finally {
+      await broker.app.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 test("pairing challenges expire and are consumed atomically", () => {
   const dir = fixture();
   const store = new Store(dir);

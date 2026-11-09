@@ -23,6 +23,7 @@ import { History } from "./history.ts";
 import { Processes } from "./processes.ts";
 import { browse, imageBlocks, uploadImage } from "./files.ts";
 import { prepare, type Config } from "./config.ts";
+import { inDeploymentScope } from "./deployment-scope.ts";
 import { inspect } from "../../../../extensions/_session_ownership/ownership.mjs";
 
 export async function createBroker(
@@ -148,14 +149,18 @@ export async function createBroker(
       .parse((req.params as { id: string }).id);
   const find = async (id: string) => {
     const live = store.session(id);
-    if (live) return { id: live.sessionId, path: live.sessionFile, cwd: live.cwd };
+    if (live && inDeploymentScope(config, live))
+      return { id: live.sessionId, path: live.sessionFile, cwd: live.cwd };
+    if (config.deploymentPolicy === "pilot")
+      throw new RemoteError("session_not_found", 404);
     const native = await catalog?.byId(id);
     if (!native) throw new RemoteError("session_not_found", 404);
     return { id: native.id, path: native.path, cwd: native.cwd };
   };
   const send = (envelope: Envelope, device: string, local = false) => {
     const session = store.session(envelope.sessionId);
-    if (!session) throw new RemoteError("not_owner", 409);
+    if (!session || !inDeploymentScope(config, session))
+      throw new RemoteError("not_owner", 409);
     if (session.epoch !== envelope.epoch) throw new RemoteError("stale_epoch", 409);
     if (envelope.command.action === "handoff" && !local)
       throw new RemoteError("local_only", 403);
@@ -237,8 +242,11 @@ export async function createBroker(
   };
   app.get("/api/v1/sessions", async (req) => {
     read(req);
-    const native = (await catalog?.catalog()) ?? [];
-    const live = store.sessions();
+    const native =
+      config.deploymentPolicy === "pilot" ? [] : ((await catalog?.catalog()) ?? []);
+    const live = store
+      .sessions()
+      .filter((session) => inDeploymentScope(config, session));
     return [
       ...live,
       ...native
@@ -257,7 +265,8 @@ export async function createBroker(
   app.get("/api/v1/sessions/:id", async (req) => {
     read(req);
     const id = sessionId(req);
-    return store.session(id) ?? (await find(id));
+    const live = store.session(id);
+    return live && inDeploymentScope(config, live) ? live : await find(id);
   });
   app.get("/api/v1/sessions/:id/history", async (req) => {
     read(req);
@@ -341,9 +350,11 @@ export async function createBroker(
   app.get("/api/v1/attachments/:id", async (req, reply) => {
     read(req);
     const row = store.db
-      .prepare("SELECT file,mime FROM uploads WHERE id=?")
-      .get(sessionId(req)) as { file: string; mime: string } | undefined;
+      .prepare("SELECT file,mime,session FROM uploads WHERE id=?")
+      .get(sessionId(req)) as
+      { file: string; mime: string; session: string } | undefined;
     if (!row) throw new RemoteError("attachment_not_found", 404);
+    if (config.deploymentPolicy === "pilot") await find(row.session);
     return reply
       .header("Content-Disposition", "inline")
       .type(row.mime)
@@ -463,7 +474,7 @@ export async function createBroker(
           client.subscriptions = new Set(b.subscriptions.map((s) => s.sessionId));
           for (const sub of b.subscriptions) {
             const session = store.session(sub.sessionId);
-            if (!session) continue;
+            if (!session || !inDeploymentScope(config, session)) continue;
             const rows = store.db
               .prepare(
                 "SELECT sequence,type,data FROM events WHERE session=? AND sequence>? ORDER BY sequence",
@@ -518,6 +529,7 @@ export async function createBroker(
     }
     for (const session of store.sessions())
       if (
+        inDeploymentScope(config, session) &&
         session.managed &&
         session.idle &&
         !session.loop &&

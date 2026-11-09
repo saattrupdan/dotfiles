@@ -17,6 +17,7 @@ import {
 	releaseNamespace,
 	reserveNamespace,
 	inspect,
+	historyInScope,
 } from "../_session_ownership/ownership.mjs";
 import { withOwnedTransition, type OwnershipState } from "../_session_ownership/transition.ts";
 import { OwnedEditor } from "../_session_ownership/editor.ts";
@@ -142,13 +143,17 @@ async function resume(query: string, ctx: ExtensionCommandContext, state: State)
 			return;
 		}
 		await ctx.waitForIdle();
-		const discovered = await Promise.all([
-			SessionManager.listAll(),
-			SessionManager.listAll(ctx.sessionManager.getSessionDir()),
-		]);
+		const scope = process.env.PI_SESSION_HISTORY_SCOPE;
+		const discovered = scope
+			? [await SessionManager.listAll(fs.realpathSync(scope))]
+			: await Promise.all([
+				SessionManager.listAll(),
+				SessionManager.listAll(ctx.sessionManager.getSessionDir()),
+			]);
 		const sessions = [...new Map(discovered.flat().map((session) => [session.path, session])).values()]
 			.filter(
 				(s) =>
+					historyInScope(s.path) &&
 					s.path !== state.current &&
 					(!query || `${s.name} ${s.cwd} ${s.id}`.toLowerCase().includes(query.toLowerCase())),
 			)

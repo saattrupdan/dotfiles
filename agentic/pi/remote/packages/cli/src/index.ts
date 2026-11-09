@@ -11,7 +11,13 @@ import {
   type Config,
 } from "../../broker/src/config.ts";
 import { localRequest } from "../../broker/src/ipc.ts";
-import { assertRelease, attest, gates } from "../../broker/src/gates.ts";
+import {
+  assertDeployment,
+  approvePilot,
+  attest,
+  deployment,
+  gates,
+} from "../../broker/src/gates.ts";
 
 const args = process.argv.slice(2);
 const command = args.shift() ?? "status";
@@ -148,6 +154,17 @@ async function main() {
     return;
   }
   const config = loadConfig(configFile);
+  if (proof && config.deploymentPolicy === "pilot")
+    throw new Error("Pilot cannot use proof mode");
+  if (command === "approve-pilot") {
+    const evidence = flag("--evidence");
+    if (!evidence) throw new Error("Usage: approve-pilot --evidence FILE");
+    approvePilot(config, evidence);
+    console.log(
+      "Pilot approved for current sources and fresh managed conversations; full-release gates unchanged.",
+    );
+    return;
+  }
   if (command === "attest") {
     const name = args.shift();
     const evidence = flag("--evidence");
@@ -158,24 +175,36 @@ async function main() {
   }
   if (command === "doctor") {
     const report = gates(config);
+    const readiness = deployment(config);
     const old = untracked(config);
     const checks = {
       node: process.version,
       wrapper: fs.existsSync(path.join(config.agentDir, "bin", "pi")),
       tmux: fs.existsSync(config.tmux),
       build: fs.existsSync(path.join(config.agentDir, "remote", "dist", "broker.mjs")),
+      deploymentPolicy: config.deploymentPolicy,
+      deploymentMissing: readiness.missing,
       missingGates: report.missing,
       untrackedPiProcesses: old,
       origin: config.origin,
     };
     console.log(JSON.stringify(checks, null, 2));
-    if (report.missing.length || old.length) process.exitCode = 1;
+    if (
+      readiness.missing.length ||
+      (config.deploymentPolicy === "release" && old.length)
+    )
+      process.exitCode = 1;
     return;
   }
   if (command === "install" || command === "update") {
-    assertRelease(config);
+    assertDeployment(config);
     const old = untracked(config);
-    if (command === "install" && old.length)
+    if (
+      config.deploymentPolicy === "pilot" &&
+      fs.existsSync(path.join(config.dataDir, "ownership", "enabled"))
+    )
+      throw new Error("Pilot cannot replace globally enabled ownership");
+    if (command === "install" && old.length && config.deploymentPolicy === "release")
       throw new Error(
         `Restart/exit unprotected Pi processes before enabling ownership: ${old.join(", ")}`,
       );
@@ -194,9 +223,10 @@ async function main() {
       recursive: true,
       mode: 0o700,
     });
-    fs.writeFileSync(path.join(config.dataDir, "ownership", "enabled"), "1", {
-      mode: 0o600,
-    });
+    if (config.deploymentPolicy === "release")
+      fs.writeFileSync(path.join(config.dataDir, "ownership", "enabled"), "1", {
+        mode: 0o600,
+      });
     start(config, release);
     console.log(
       `Installed ${release}. Pi owners were preserved. Configure private Tailscale Serve only after the ACL/HTTPS gate passes.`,
@@ -204,7 +234,7 @@ async function main() {
     return;
   }
   if (command === "rollback") {
-    assertRelease(config);
+    assertDeployment(config);
     const previous = fs
       .readFileSync(path.join(config.dataDir, "previous"), "utf8")
       .trim();
@@ -256,7 +286,7 @@ async function main() {
     return;
   }
   throw new Error(
-    "Commands: init, doctor, install, uninstall, status, pair, devices, revoke, update, rollback, attest",
+    "Commands: init, doctor, install, uninstall, status, pair, devices, revoke, update, rollback, attest, approve-pilot",
   );
 }
 main().catch((error) => {

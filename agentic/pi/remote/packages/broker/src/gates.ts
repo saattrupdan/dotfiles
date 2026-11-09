@@ -2,6 +2,8 @@ import { resolvePiPackage } from "../../../../profile/pi-runtime.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { z } from "zod";
+import type { Config } from "./config.ts";
 export const REQUIRED = [
   "automated",
   "ownership-tui",
@@ -95,6 +97,95 @@ export function attest(
     { mode: 0o600 },
   );
 }
+const PilotApproval = z
+  .object({
+    version: z.literal(1),
+    digest: z.string().regex(/^[a-f0-9]{64}$/),
+    origin: z.string().url(),
+    dataDir: z.string(),
+    scope: z.literal("fresh-managed-only"),
+    at: z.number().int().positive(),
+    evidence: z.string(),
+    evidenceHash: z.string().regex(/^[a-f0-9]{64}$/),
+    deferred: z.array(z.string()),
+  })
+  .strict();
+
+export function approvePilot(config: Config, evidenceFile: string) {
+  if (config.deploymentPolicy !== "pilot") throw new Error("Pilot policy required");
+  const evidence = fs.realpathSync(evidenceFile);
+  if (!fs.statSync(evidence).isFile()) throw new Error("Evidence file required");
+  const report = gates(config);
+  const approval = PilotApproval.parse({
+    version: 1,
+    digest: report.digest,
+    origin: config.origin,
+    dataDir: fs.realpathSync(config.dataDir),
+    scope: "fresh-managed-only",
+    at: Date.now(),
+    evidence,
+    evidenceHash: createHash("sha256").update(fs.readFileSync(evidence)).digest("hex"),
+    deferred: ["native-exit-investigation", "sleep-wake", "reboot"],
+  });
+  fs.writeFileSync(
+    path.join(config.dataDir, "pilot-approval.json"),
+    JSON.stringify(approval, null, 2),
+    { mode: 0o600 },
+  );
+}
+
+export function deployment(
+  config: Config,
+  proof = false,
+): Omit<ReturnType<typeof gates>, "missing"> & {
+  policy: Config["deploymentPolicy"];
+  missing: string[];
+} {
+  const report = gates(config);
+  if (config.deploymentPolicy !== "pilot")
+    return {
+      ...report,
+      policy: "release" as const,
+      missing: report.missing.filter((name) => !proof || name === "automated"),
+    };
+  let approved = false;
+  try {
+    const approval = PilotApproval.parse(
+      JSON.parse(
+        fs.readFileSync(path.join(config.dataDir, "pilot-approval.json"), "utf8"),
+      ),
+    );
+    approved =
+      approval.digest === report.digest &&
+      approval.origin === config.origin &&
+      approval.dataDir === fs.realpathSync(config.dataDir) &&
+      approval.evidenceHash ===
+        createHash("sha256").update(fs.readFileSync(approval.evidence)).digest("hex");
+  } catch {}
+  return {
+    ...report,
+    policy: "pilot" as const,
+    missing: [
+      ...report.missing.filter(
+        (name) => name === "automated" || name === "ownership-tui",
+      ),
+      ...(!approved ? ["pilot-approval"] : []),
+      ...(proof ? ["pilot-proof-conflict"] : []),
+      ...(fs.existsSync(path.join(config.dataDir, "ownership", "enabled"))
+        ? ["pilot-global-ownership-conflict"]
+        : []),
+    ],
+  };
+}
+
+export function assertDeployment(config: Config, proof = false) {
+  const report = deployment(config, proof);
+  if (report.missing.length)
+    throw new Error(
+      `Deployment blocked; missing current evidence: ${report.missing.join(", ")}`,
+    );
+}
+
 export function assertRelease(
   config: { dataDir: string; agentDir: string },
   proof = false,

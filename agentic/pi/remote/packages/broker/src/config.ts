@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
 export const ConfigSchema = z.object({
+  deploymentPolicy: z.enum(["release", "pilot"]).default("release"),
   port: z.number().int().min(1024).max(65535).default(8787),
   origin: z
     .string()

@@ -9,6 +9,7 @@ import {
   type StreamEvent,
 } from "../../protocol/src/index.ts";
 import type { Config } from "./config.ts";
+import { inDeploymentScope } from "./deployment-scope.ts";
 import { Store, token } from "./store.ts";
 import {
   inspect,
@@ -129,6 +130,8 @@ export class Owners {
           if (value.type === "register") {
             if (!this.allowRegistration) throw new Error("proof_mode");
             const registration = Registration.parse(value.data);
+            if (!inDeploymentScope(this.config, registration))
+              throw new Error("pilot_history_scope");
             const owner = inspect(
               registration.sessionFile,
               path.join(this.config.dataDir, "ownership"),

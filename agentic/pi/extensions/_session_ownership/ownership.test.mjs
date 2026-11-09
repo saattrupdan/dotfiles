@@ -15,6 +15,7 @@ import {
 	reserveNamespace,
 	releaseNamespace,
 	adopt,
+	historyInScope,
 } from "./ownership.mjs";
 const fixture = () => fs.mkdtempSync(path.join(os.tmpdir(), "pi-owner-test-"));
 test("exclusive ownership, owner-only release and namespace exclusion", () => {
@@ -104,6 +105,32 @@ test("multiple processes race for exactly one native-file lock", async () => {
 		);
 		assert.equal(output.filter((s) => s.includes("winner")).length, 1);
 	} finally {
+		fs.rmSync(root, { recursive: true, force: true });
+	}
+});
+test("pilot scope blocks legacy acquisition and bootstrap adoption before mutation", () => {
+	const root = fixture(), previous = process.env.PI_SESSION_HISTORY_SCOPE;
+	try {
+		const scope = path.join(root, "pilot"); fs.mkdirSync(scope);
+		const legacy = path.join(root, "legacy.jsonl"), owner = newOwner();
+		fs.writeFileSync(legacy, JSON.stringify({ type: "session", id: owner.instanceId }));
+		acquire(legacy, owner, root);
+		process.env.PI_SESSION_HISTORY_SCOPE = scope;
+		assert(historyInScope(path.join(scope, "new.jsonl")));
+		assert(!historyInScope(legacy));
+		assert.throws(() => acquire(legacy, newOwner(), root), /outside pilot scope/);
+		assert.throws(() => adopt(owner, newOwner(), root), /outside pilot scope/);
+		assert.equal(inspect(legacy, root).instanceId, owner.instanceId);
+		const link = path.join(scope, "alias.jsonl"); fs.symlinkSync(legacy, link);
+		assert(!historyInScope(link));
+		assert.throws(() => acquire(link, owner, root), /outside pilot scope/);
+		const dangling = path.join(scope, "dangling.jsonl"); fs.symlinkSync(path.join(root, "future.jsonl"), dangling);
+		assert(!historyInScope(dangling));
+		assert.throws(() => acquire(dangling, owner, root), /outside pilot scope/);
+		acquire(path.join(scope, "new.jsonl"), owner, root);
+	} finally {
+		if (previous === undefined) delete process.env.PI_SESSION_HISTORY_SCOPE;
+		else process.env.PI_SESSION_HISTORY_SCOPE = previous;
 		fs.rmSync(root, { recursive: true, force: true });
 	}
 });

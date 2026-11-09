@@ -41,6 +41,19 @@ export function canonicalFile(file) {
 	);
 }
 
+export function historyInScope(file, scope = process.env.PI_SESSION_HISTORY_SCOPE) {
+	if (!scope) return true;
+	try {
+		const target = fs.lstatSync(file, { throwIfNoEntry: false })
+			? fs.realpathSync(file)
+			: path.join(fs.realpathSync(path.dirname(path.resolve(file))), path.basename(file));
+		const relative = path.relative(fs.realpathSync(scope), target);
+		return !!relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+	} catch {
+		return false;
+	}
+}
+
 export function newOwner(kind = "local", pid = process.pid) {
 	const birth = processIdentity(pid);
 	if (!birth) throw new Error("Cannot establish process identity");
@@ -121,6 +134,7 @@ function check(record, owner) {
 }
 
 export function acquire(file, owner, root = lockRoot(), expectedId) {
+	if (!historyInScope(file)) throw new Error("Native history outside pilot scope");
 	return transaction(root, (db) => {
 		check(read(db, "namespace"), owner);
 		const target = canonicalFile(file);
@@ -178,6 +192,7 @@ export function adopt(previous, next, root = lockRoot()) {
 		for (const row of db.prepare("SELECT key,record FROM locks").all()) {
 			const record = JSON.parse(row.record);
 			if (record.instanceId === previous.instanceId) {
+				if (record.file && !historyInScope(record.file)) throw new Error("Native history outside pilot scope");
 				if (record.pid !== previous.pid || record.birth !== previous.birth)
 					throw new Error("Ownership bootstrap identity mismatch");
 				write(db, row.key, { ...record, ...next, instanceId: previous.instanceId });

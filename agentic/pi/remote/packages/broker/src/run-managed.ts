@@ -24,11 +24,19 @@ const cwd = homeDirectory(launch.cwd, config.home);
 const args = launch.sessionFile
   ? ["--session", launch.sessionFile]
   : ["--session-id", launch.id];
+const sessionDir =
+  config.deploymentPolicy === "pilot"
+    ? path.join(config.dataDir, "native-sessions")
+    : undefined;
+if (sessionDir) fs.mkdirSync(sessionDir, { recursive: true, mode: 0o700 });
 const child = spawn(path.join(config.agentDir, "bin", "pi"), args, {
   cwd,
   stdio: "inherit",
   env: {
     ...process.env,
+    PI_CODING_AGENT_DIR: config.agentDir,
+    PI_SESSION_HISTORY_SCOPE: sessionDir,
+    ...(sessionDir ? { PI_CODING_AGENT_SESSION_DIR: sessionDir } : {}),
     PI_REMOTE_MANAGED: launch.tmux,
     PI_REMOTE_DATA_DIR: config.dataDir,
     PI_SESSION_LOCK_ROOT: path.join(config.dataDir, "ownership"),

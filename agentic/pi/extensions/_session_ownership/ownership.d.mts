@@ -11,6 +11,7 @@ export const ROOT_ENV: string;
 export function processIdentity(pid?: number): string | undefined;
 export function lockRoot(env?: NodeJS.ProcessEnv): string;
 export function canonicalFile(file: string): string;
+export function historyInScope(file: string, scope?: string): boolean;
 export function newOwner(kind?: string, pid?: number): Owner;
 export function isAlive(owner?: Owner): boolean;
 export function acquire(file: string, owner: Owner, root?: string, expectedId?: string): Owner;
