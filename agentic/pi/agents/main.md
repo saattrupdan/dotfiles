@@ -43,6 +43,7 @@ skills:
   - firefox-addon
   - full-stack
   - github
+  - grill-with-docs
   - gws-calendar
   - gws-gmail
   - gws-shared
