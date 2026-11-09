@@ -94,11 +94,29 @@ test(
         if (url.pathname === "/api/v1/sessions") body = [session()];
         else if (url.pathname.endsWith("/history"))
           body = {
-            messages: Array.from({ length: 35 }, (_, index) => ({
-              role: index % 2 ? "assistant" : "user",
-              content: `Transcript message ${index}. `.repeat(12),
-              timestamp: index,
-            })),
+            messages: [
+              ...Array.from({ length: 35 }, (_, index) => ({
+                role: index % 2 ? "assistant" : "user",
+                content: `Transcript message ${index}. `.repeat(12),
+                timestamp: index,
+              })),
+              {
+                role: "user",
+                content: [
+                  { type: "text", text: "Describe the attached image." },
+                  {
+                    type: "text",
+                    text: "[Image: original 3024x4032, displayed at 1500x2000. Multiply coordinates by 2.02 to map to original image.]",
+                  },
+                  {
+                    type: "image",
+                    mimeType: "image/png",
+                    data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=",
+                  },
+                ],
+                timestamp: 36,
+              },
+            ],
             next: null,
           };
         else if (url.pathname.endsWith("/actions")) {
@@ -111,6 +129,16 @@ test(
       await page.goto(`http://127.0.0.1:${address.port}/`);
       await expect(page.getByRole("heading", { name: session().name })).toBeVisible();
       await expect.poll(() => Boolean(socket)).toBe(true);
+      await t.test(
+        "image and message render without internal sizing text",
+        async () => {
+          await expect(page.getByAltText("Conversation image")).toHaveCount(1);
+          await expect(
+            page.getByText("Describe the attached image.", { exact: true }),
+          ).toBeVisible();
+          await expect(page.getByText(/\[Image: original 3024x4032/)).toHaveCount(0);
+        },
+      );
       const publish = async (next: typeof prompt) => {
         prompt = next;
         socket!.send(

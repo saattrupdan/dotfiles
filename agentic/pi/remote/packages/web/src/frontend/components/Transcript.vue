@@ -14,10 +14,24 @@ const clean = (s: string) =>
       FORBID_ATTR: ["style"],
     },
   );
-const parts = (m: Message) =>
-  typeof m.content === "string"
-    ? [{ type: "text", text: m.content }]
-    : (m.content ?? []);
+const parts = (m: Message) => {
+  const content =
+    typeof m.content === "string"
+      ? [{ type: "text", text: m.content }]
+      : (m.content ?? []);
+  const sizing = new RegExp(
+    "^\\[Image: original \\d+x\\d+, displayed at \\d+x\\d+\\. " +
+      "Multiply coordinates by \\d+(?:\\.\\d+)? to map to original image\\.\\]$",
+  );
+  return content.filter(
+    (part, index) =>
+      part.type !== "text" ||
+      !sizing.test(part.text?.trim() ?? "") ||
+      ![content[index - 1], content[index + 1]].some(
+        (neighbor) => neighbor?.type === "image",
+      ),
+  );
+};
 </script>
 <template>
   <!-- eslint-disable vue/no-v-html -->
