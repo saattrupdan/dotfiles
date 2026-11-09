@@ -44,6 +44,7 @@ test("submits multipart LTX settings, polls and downloads one local MP4", async 
 	try {
 		assert.equal(output.jobId, "video_test");
 		assert.equal(path.basename(output.path), "video.mp4");
+		assert.equal(path.dirname(path.dirname(output.path)), "/tmp/media");
 		assert.deepEqual(await readFile(output.path), mp4);
 		assert.deepEqual(requests, ["POST http://router/v1/videos", "GET http://router/v1/videos/video_test", "GET http://router/v1/videos/video_test", "GET http://router/v1/videos/video_test/content"]);
 		assert.deepEqual(phases, ["Submitting video to Sparkie...", "Video queued on Sparkie...", "Generating video (42%)...", "Downloading video..."]);
@@ -204,7 +205,7 @@ test("tool emits a partial result and returns a file URL without a message", asy
 		const result = await state.tool.execute("v1", { prompt: "A cat", steps: 2 }, undefined, (update) => updates.push(update), state.ctx);
 		assert.equal(result.isError, undefined);
 		assert.deepEqual(updates, [{ content: [], details: undefined }]);
-		assert.match(JSON.stringify(result.content), /file:\/\/\/.*pi-video-.*video.mp4/);
+		assert.match(JSON.stringify(result.content), /file:\/\/\/tmp\/media\/pi-video-.*\/video\.mp4/);
 		assert.deepEqual(state.working, ["Submitting video to Sparkie...", "Downloading video..."]);
 		await rm(path.dirname((result.details as { path: string }).path), { recursive: true, force: true });
 	} finally {

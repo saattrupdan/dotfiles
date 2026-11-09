@@ -1,6 +1,6 @@
 /** LTX-2.5 job lifecycle: submit, poll, cancel and download behind one interface. */
 import { randomInt } from "node:crypto";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -118,7 +118,8 @@ export async function generateVideo(input: VideoInput, options: VideoOptions = {
 		const bytes = Buffer.from(await response.arrayBuffer());
 		if (bytes.length < 12 || bytes.toString("ascii", 4, 8) !== "ftyp") throw new Error("Router did not return an MP4 video.");
 		signal.throwIfAborted();
-		directory = await mkdtemp(path.join(os.tmpdir(), "pi-video-"));
+		await mkdir("/tmp/media", { recursive: true });
+		directory = await mkdtemp("/tmp/media/pi-video-");
 		const output = path.join(directory, "video.mp4");
 		await writeFile(output, bytes, { signal });
 		return { path: output, jobId };

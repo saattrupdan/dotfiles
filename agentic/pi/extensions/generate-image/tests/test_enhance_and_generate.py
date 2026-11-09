@@ -90,7 +90,7 @@ class EnhanceAndGenerateTests(unittest.TestCase):
             self.assertEqual(len(outputs), 1)
             self.assertEqual(outputs[0].read_bytes(), b"PNG")
             self.assertEqual(compiled_prompt, "A red ceramic teapot.")
-            self.assertEqual(outputs[0].parent.parent, Path("/tmp"))
+            self.assertEqual(outputs[0].parent.parent, Path("/tmp/media"))
         finally:
             outputs[0].unlink()
             self.assertFalse(outputs[0].parent.joinpath("draft.json").exists())

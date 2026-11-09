@@ -65,7 +65,7 @@ def generate_image(
     *, prompt: str, size: str = "512x512", num: int = 1,
     phase_file: Path | None = None, enhance: bool = True,
 ) -> tuple[list[Path], str]:
-    """Save PNGs in one directory under /tmp, optionally enhancing the brief.
+    """Save PNGs in one directory under /tmp/media, optionally enhancing the brief.
 
     Args:
         prompt:
@@ -98,7 +98,9 @@ def generate_image(
     )
     if phase_file is not None:
         phase_file.write_text("generating", encoding="utf-8")
-    directory = Path(tempfile.mkdtemp(prefix="moss-image-", dir="/tmp"))
+    media = Path("/tmp/media")
+    media.mkdir(parents=True, exist_ok=True)
+    directory = Path(tempfile.mkdtemp(prefix="moss-image-", dir=media))
     try:
         draft_path = directory / "draft.json"
         draft_path.write_text(json.dumps(draft, ensure_ascii=False), encoding="utf-8")

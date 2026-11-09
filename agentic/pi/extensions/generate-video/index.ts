@@ -20,7 +20,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "generate_video",
 		label: "generate video",
-		description: "Generate one video with native stereo audio using ChrisColeTech/LTX-2.5-uncensored-v1.1-FP8 on Sparkie's native LTX model server. Provide a complete prompt and optionally a local starting-frame image; no prompt-enhancement model is called. Returns a local MP4 file URL under /tmp. Default: 5 seconds, 16:9, 24 fps, 8 steps. Polls for up to one hour and cancels the remote job on abort or timeout. The router is shared and unauthenticated: do not submit private images, briefs or sensitive input.",
+		description: "Generate one video with native stereo audio using ChrisColeTech/LTX-2.5-uncensored-v1.1-FP8 on Sparkie's native LTX model server. Provide a complete prompt and optionally a local starting-frame image; no prompt-enhancement model is called. Returns a local MP4 file URL in a unique directory under /tmp/media. Default: 5 seconds, 16:9, 24 fps, 8 steps. Polls for up to one hour and cancels the remote job on abort or timeout. The router is shared and unauthenticated: do not submit private images, briefs or sensitive input.",
 		parameters: Params,
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			if (running) return { content: [{ type: "text", text: "A video is already being generated." }], isError: true, details: undefined };
