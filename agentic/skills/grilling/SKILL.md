@@ -3,28 +3,52 @@ name: grilling
 description: Grill the user relentlessly about a plan, decision, or idea. Use when the user wants to stress-test their thinking, or uses any 'grill' trigger phrases.
 ---
 
-Interview the user relentlessly until you reach a shared understanding. Map this as a **design tree**: every decision branches into the decisions that hang off it.
+Interview the user relentlessly until you reach a shared understanding. Map this as a
+**design tree**: every decision branches into the decisions that hang off it.
 
-Work the tree in **rounds**. The **frontier** is every decision whose prerequisites are already settled: the questions you can ask _now_ without guessing at answers you haven't heard yet. Ask the whole frontier in one round: number each question and give your recommended answer. Then wait for the user's answers before the next round.
+The **frontier** is every decision whose prerequisites are already settled: the
+questions you can ask _now_ without guessing at answers you haven't heard yet. Pick
+one decision from the frontier at a time, prioritising the one that most affects the
+user's goals or unblocks the most downstream decisions.
 
-Format a round like so:
+## Ask one question at a time
 
+- Use the `question` tool for every question, not a question written in chat.
+- Each call must ask about exactly one decision. Do not bundle multiple questions
+  into the prompt, queue several calls, or call the tool in parallel.
+- Wait for the user's answer before choosing and asking the next question.
+- Make the prompt self-contained: explain the decision and its practical consequences.
+- Include multiple choices with `options` whenever there are meaningful alternatives.
+  Prefer 2–4 concise, distinct choices. Put your recommendation first and label it
+  `(Recommended)`; briefly explain why in the prompt.
+- Do not add an "Other" option yourself: the tool already lets the user give a custom
+  answer. Omit `options` when the decision genuinely needs a free-text answer.
+- Use `multiSelect: true` only when several choices can apply to this one decision.
+
+For example, call `question` with:
+
+```json
+{
+  "question": "Who should release one serve? Internal users keep feedback focused.",
+  "options": [
+    "Internal users only (Recommended)",
+    "Invited external users",
+    "Anyone who signs up"
+  ]
+}
 ```
-❓ **Q1** - **<question title>**: <question body, might be multiple paragraphs, including multiple choices>
 
-➡️ <your recommended answer>
+Each answer reshapes the tree: settled decisions push the frontier outward and
+unblock questions that depended on them. Recompute the frontier after every answer.
+A question whose answer depends on an unsettled decision must wait.
 
----
+Finding _facts_ is your job, never the user's. Look up facts from the environment
+(filesystem, tools, etc.) yourself; use a sub-agent when substantial exploration
+would help. A running exploration is an unsettled prerequisite: questions downstream
+of it must wait, but you can ask one independent frontier question meanwhile. Ask
+only decisions that genuinely depend on the user's intent, goals, or constraints;
+resolve routine implementation choices yourself.
 
-❓ **Q2** - **<question title>**: <question body, might be multiple paragraphs, including multiple choices>
-
-➡️ <your recommended answer>
-```
-
-Word each question so "yes" accepts your recommended answer.
-
-Each round the user answers reshapes the tree: settled decisions push the frontier outward and unblock questions that depended on them. Recompute the frontier and ask the next round. A question whose answer depends on another question still open in this round belongs to a _later_ round, not this one.
-
-Finding _facts_ is your job, never the user's. When a frontier question needs a fact from the environment (filesystem, tools, etc.), dispatch a sub-agent with a fresh context window to find it; don't ask the user for anything you could look up yourself. Don't block on it: a running exploration is an unsettled prerequisite, so only the questions downstream of it wait for the sub-agent to report; ask the rest of the frontier now. The _decisions_ are the user's: put each to them and wait.
-
-The session is done when the frontier is empty: every branch of the design tree visited, nothing left silently assumed. Do not act on it until the user confirms you have reached a shared understanding.
+The session is done when the frontier is empty: every relevant branch of the design
+tree is settled, with assumptions made explicit. Summarise the shared understanding
+and use `question` to ask for confirmation before acting on it.
