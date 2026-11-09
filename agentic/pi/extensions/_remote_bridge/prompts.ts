@@ -92,7 +92,7 @@ export function askRemote(
 		if (local)
 			void local(controller.signal)
 				.then((out) => {
-					if (out.answer) finish(out);
+					if (out.answer || out.error === "dismissed") finish(out);
 					else if (out.error === "aborted" && signal?.aborted) abort();
 				})
 				.catch(() => {});

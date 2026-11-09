@@ -51,3 +51,20 @@ test("multi-select validates allowed choices and caller abort settles", async ()
   abort.abort();
   assert.equal((await promise).error, "aborted");
 });
+
+test("local dismissal releases the prompt and does not guess an answer", async () => {
+  let expired = 0;
+  configurePrompts({ publish: () => {}, expire: () => expired++ });
+  const dismissed = askRemote(
+    { question: "Resume conversation?", options: ["Fixture"] },
+    async () => ({ error: "dismissed" }),
+    undefined,
+    60,
+  );
+  assert.deepEqual(await dismissed, { error: "dismissed" });
+  assert.equal(currentPrompt(), undefined);
+  assert.equal(expired, 0);
+  const next = askRemote({ question: "Next?", options: ["Continue"] }, undefined);
+  respondPrompt(currentPrompt()!.id, "Continue");
+  assert.deepEqual(await next, { answer: "Continue" });
+});

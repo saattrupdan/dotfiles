@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -1828,3 +1828,42 @@ test("serializes released-session activation and active transcript ownership", a
 	await assert.rejects(acquireSessionLease(sessionFile), /already active/);
 	await releaseLease();
 });
+
+
+test(
+	"protected child retains supervisor IPC after the readiness handshake",
+	{ timeout: 15000 },
+	async () => {
+		const extension = path.join(path.dirname(fileURLToPath(import.meta.url)), "index.ts");
+		const loader = path.join(
+			path.dirname(fileURLToPath(import.meta.url)),
+			"..",
+			"_outliner",
+			"package.json",
+		);
+		const script = `const {createRequire}=await import('node:module');const require=createRequire(${JSON.stringify(loader)});const {createJiti}=require('jiti');const {signalChildReady}=await createJiti(import.meta.url).import(${JSON.stringify(extension)},{default:false});await signalChildReady();if(!process.connected)throw new Error('Supervisor channel was closed');process.send('followup-ready',()=>process.disconnect());`;
+		const child = spawn(process.execPath, ["--input-type=module", "-e", script], {
+			env: { ...process.env, PI_SESSION_OWNER: "proof" },
+			stdio: ["ignore", "pipe", "pipe", "ipc"],
+		});
+		let followup = false;
+		let errors = "";
+		child.stderr!.on("data", (data) => {
+			errors += data;
+		});
+		child.on("message", (message) => {
+			if (message === "pi-worktree-session-ready") child.send("pi-worktree-parent-yielded");
+			if (message === "followup-ready") followup = true;
+		});
+		try {
+			const code = await new Promise((resolve, reject) => {
+				child.on("error", reject);
+				child.on("close", resolve);
+			});
+			assert.equal(code, 0, errors);
+			assert(followup);
+		} finally {
+			if (child.exitCode === null) child.kill();
+		}
+	},
+);

@@ -188,6 +188,10 @@ function runCli(cli, args, env, owned = false) {
 		const child = spawn(process.execPath, [...entry, ...args], { stdio: owned ? ["inherit", "inherit", "inherit", "ipc"] : "inherit", env });
   let continuation;
   if (owned) child.on("message", (message) => {
+   if (message === "pi-worktree-session-ready") {
+    if (child.connected) child.send("pi-worktree-parent-yielded");
+    return;
+   }
    if (message?.type !== "pi-owned-continuation" || !Array.isArray(message.args) || !message.args.every(a => typeof a === "string") || typeof message.cwd !== "string") return;
    if (continuation) return;
    continuation = message;
@@ -202,16 +206,16 @@ function runCli(cli, args, env, owned = false) {
 			if (continuation && !signal) {
     try {
      const cwd = fs.realpathSync(continuation.cwd);
-     const previousCwd = process.cwd();
+     // Cleanup may have removed the previous worktree, including our cwd.
+     // Enter the verified successor before npm or any other cwd-dependent call.
+     process.chdir(cwd);
      const nextEnv = { ...env };
      delete nextEnv.PI_SESSION_OWNER;
      for (const key of Object.keys(nextEnv)) if (key.startsWith("PI_WORKTREE_") || key === "PI_LOOP_HANDOFF") delete nextEnv[key];
      for (const [key,value] of Object.entries(continuation.changes ?? {})) if ((key.startsWith("PI_WORKTREE_") || key === "PI_LOOP_HANDOFF") && typeof value === "string") nextEnv[key] = value;
      const pkg = resolvePiPackage(nextEnv);
      const launch = await prepareOwnedLaunch(continuation.args, pkg, nextEnv, cwd);
-     process.chdir(cwd);
-     try { resolve(await runCli(cli, launch.args, launch.env, true)); }
-     finally { process.chdir(previousCwd); }
+     resolve(await runCli(cli, launch.args, launch.env, true));
     } catch (error) { reject(error); }
    } else resolve(signal ? 128 + (os.constants.signals[signal] ?? 0) : (code ?? 1));
 		});

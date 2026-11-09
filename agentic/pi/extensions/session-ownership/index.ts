@@ -142,7 +142,11 @@ async function resume(query: string, ctx: ExtensionCommandContext, state: State)
 			return;
 		}
 		await ctx.waitForIdle();
-		const sessions = (await SessionManager.listAll())
+		const discovered = await Promise.all([
+			SessionManager.listAll(),
+			SessionManager.listAll(ctx.sessionManager.getSessionDir()),
+		]);
+		const sessions = [...new Map(discovered.flat().map((session) => [session.path, session])).values()]
 			.filter(
 				(s) =>
 					s.path !== state.current &&
@@ -222,6 +226,7 @@ async function choose(
 	if (!remotePromptsEnabled())
 		return interactiveQueue.run((signal) => ctx.ui.select(title, options, { signal }));
 	const outcome = await dispatchAsk(ctx, [{ question: title, options }], undefined);
+	if (outcome.error === "dismissed") return undefined;
 	if (outcome.error) throw new Error(outcome.error);
 	const answer = outcome.answers?.[0];
 	return options.includes(answer || "") ? answer : undefined;

@@ -55,7 +55,8 @@ export async function signalChildReady(): Promise<void> {
 		const done = () => {
 			process.off("message", onMessage);
 			process.off("disconnect", done);
-			if (process.connected) process.disconnect();
+			// Protected successors need this channel for later supervised continuations.
+			if (process.connected && !process.env.PI_SESSION_OWNER && !process.env.PI_PROFILE_RELOAD_TOKEN) process.disconnect();
 			resolve();
 		};
 		const onMessage = (message: unknown) => {
@@ -199,15 +200,15 @@ function onTransitionBoundary(pi: ExtensionAPI, handler: (event: unknown, ctx: E
 }
 
 function requestOwnedContinuation(cwd: string, args: string[], env: NodeJS.ProcessEnv, ctx?: HandoffContext): void {
- if (!process.send || !ctx?.shutdown) throw new Error("Protected continuation requires the supervised launcher and live shutdown context");
+ if (!process.send || !process.connected || !ctx?.shutdown) throw new Error("Protected continuation requires the supervised launcher and live shutdown context");
  const changes = Object.fromEntries(Object.entries(env).filter(([key]) => key.startsWith("PI_WORKTREE_") || key === "PI_LOOP_HANDOFF"));
  process.send({ type: "pi-owned-continuation", cwd, args, changes });
  ctx.shutdown();
 }
 
 async function relaunch(plan: Awaited<ReturnType<typeof createLaunchPlan>>, ctx: HandoffContext, sessionFile: string, args = cliArgs()): Promise<void> {
- if (process.env.PI_SESSION_OWNER) {
-  requestOwnedContinuation(plan.childCwd, args, {
+ if (process.env.PI_SESSION_OWNER || (process.env.PI_PROFILE_RELOAD_TOKEN && process.connected && ctx?.shutdown)) {
+   requestOwnedContinuation(plan.childCwd, args, {
    ...loopHandoffEnv(sessionFile, true),
    [CHILD_MANIFEST_ENV]: plan.manifest.manifestPath,
    [BRANCH_CONTINUATION_ENV]: "1",
@@ -237,7 +238,7 @@ async function resumeInManagedWorktree(sessionFile: string, cwd: string, manifes
 	if (continueLoop) env[LOOP_RETURN_CONTINUATION_ENV] = "1";
 	else delete env[LOOP_RETURN_CONTINUATION_ENV];
 	const args = continuationArgs(sessionFile);
- if (process.env.PI_SESSION_OWNER) { requestOwnedContinuation(cwd, args, env, ctx); return; }
+ if (process.env.PI_SESSION_OWNER || (process.env.PI_PROFILE_RELOAD_TOKEN && process.connected && ctx?.shutdown)) { requestOwnedContinuation(cwd, args, env, ctx); return; }
 	const result = ctx
 		? await launchWithProgress(cwd, [process.argv[1]!, ...args], env, ctx)
 		: spawnSync(process.execPath, [process.argv[1]!, ...args], { cwd, stdio: "inherit", env });
