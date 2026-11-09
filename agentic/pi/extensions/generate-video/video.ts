@@ -1,4 +1,4 @@
-/** LTX-2.5 job lifecycle: submit, poll, cancel and download behind one interface. */
+/** MiniMax-H3 job lifecycle: submit, poll, cancel and download behind one interface. */
 import { randomInt } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 export interface VideoInput {
 	prompt: string;
 	image?: string;
-	seconds?: number;
+	seconds: number;
 	aspect_ratio?: "16:9" | "9:16" | "1:1";
 	steps?: number;
 	seed?: number;
@@ -31,8 +31,8 @@ interface VideoOptions {
 	timeoutMs?: number;
 }
 
-const SIZES = { "16:9": "1024x576", "9:16": "576x1024", "1:1": "768x768" };
-const MODEL = "ChrisColeTech/LTX-2.5-uncensored-v1.1-FP8";
+const SIZES = { "16:9": "960x544", "9:16": "544x960", "1:1": "544x544" };
+const MODEL = "MiniMaxAI/MiniMax-H3";
 
 function parseJob(value: unknown): VideoJob {
 	const job = value as Partial<VideoJob> | null;
@@ -52,12 +52,12 @@ async function checked(response: Response): Promise<Response> {
 }
 
 export async function generateVideo(input: VideoInput, options: VideoOptions = {}): Promise<{ path: string; jobId: string }> {
-	const seconds = input.seconds ?? 5;
-	const steps = input.steps ?? 8;
+	const seconds = input.seconds;
+	const steps = input.steps ?? 50;
 	const aspect = input.aspect_ratio ?? "16:9";
 	if (!input.prompt.trim()) throw new Error("Video prompt must not be empty.");
-	if (!Number.isInteger(seconds) || seconds < 1 || seconds > 10) throw new Error("seconds must be an integer from 1 to 10.");
-	if (!Number.isInteger(steps) || steps < 1 || steps > 16) throw new Error("steps must be an integer from 1 to 16.");
+	if (!Number.isInteger(seconds) || seconds < 4 || seconds > 15) throw new Error("seconds is required and must be an integer from 4 to 15.");
+	if (!Number.isInteger(steps) || steps < 1 || steps > 200) throw new Error("steps must be an integer from 1 to 200.");
 	if (!Object.hasOwn(SIZES, aspect)) throw new Error("aspect_ratio must be 16:9, 9:16 or 1:1.");
 	if (input.seed !== undefined && (!Number.isSafeInteger(input.seed) || input.seed < 0 || input.seed > 2 ** 32 - 1)) {
 		throw new Error("seed must be an integer from 0 to 4294967295.");
@@ -89,7 +89,7 @@ export async function generateVideo(input: VideoInput, options: VideoOptions = {
 				: bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255 ? "jpeg"
 					: bytes.toString("ascii", 0, 4) === "RIFF" && bytes.toString("ascii", 8, 12) === "WEBP" ? "webp" : undefined;
 			if (!kind) throw new Error("image must be JPEG, PNG, or WebP.");
-			form.set("image", new Blob([new Uint8Array(bytes)], { type: `image/${kind}` }), `reference.${kind}`);
+			form.set("input_reference", new Blob([new Uint8Array(bytes)], { type: `image/${kind}` }), `reference.${kind}`);
 		}
 		options.onProgress?.("Submitting video to Sparkie...");
 		// Recover the ID even if the caller aborts after the router accepts the POST.
