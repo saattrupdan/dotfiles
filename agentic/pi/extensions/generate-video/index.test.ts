@@ -36,6 +36,7 @@ test("submits multipart MiniMax-H3 settings, polls and downloads one local MP4",
 				assert.deepEqual(Object.fromEntries(init.body.entries()), {
 					model: "MiniMaxAI/MiniMax-H3", prompt: "A cat meows", seed: "0", seconds: "5",
 					size: "960x544", aspect_ratio: "16:9", fps: "24", num_inference_steps: "50",
+					lora: JSON.stringify({ name: "model_download", path: "/opt/h3-lora", scale: 1.0 }),
 				});
 			}
 			return replies.shift()!;
@@ -63,6 +64,7 @@ test("portrait and square settings use bounded sizes and generate a seed", async
 					assert.equal(form.get("aspect_ratio"), aspect_ratio);
 					assert.equal(form.get("seconds"), "15");
 					assert.equal(form.get("num_inference_steps"), "200");
+					assert.deepEqual(JSON.parse(String(form.get("lora"))), { name: "model_download", path: "/opt/h3-lora", scale: 1.0 });
 					const seed = Number(form.get("seed"));
 					assert.ok(Number.isInteger(seed) && seed >= 0 && seed < 2 ** 32);
 					assert.equal(form.has("extra_params"), false);

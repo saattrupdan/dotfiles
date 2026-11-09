@@ -71,6 +71,7 @@ export async function generateVideo(input: VideoInput, options: VideoOptions = {
 		model: MODEL, prompt: input.prompt, seconds, size: SIZES[aspect], aspect_ratio: aspect,
 		fps: 24, num_inference_steps: steps, seed: input.seed ?? randomInt(0, 2 ** 32),
 	})) form.set(key, String(value));
+	form.set("lora", JSON.stringify({ name: "model_download", path: "/opt/h3-lora", scale: 1.0 }));
 
 	let jobId: string | undefined;
 	let directory: string | undefined;
