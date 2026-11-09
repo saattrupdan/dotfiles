@@ -1,7 +1,7 @@
 /* Select a top-level agent profile before Pi loads its prompt or extensions. */
 
 import { execFileSync, spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -10,15 +10,38 @@ import { resolvePiPackage } from "./pi-runtime.mjs";
 export { resolvePiPackage } from "./pi-runtime.mjs";
 import { parseAgentProfile } from "./definition.mjs";
 import { prepareOwnedLaunch } from "./session-selection.mjs";
-import { lockRoot } from "../extensions/_session_ownership/ownership.mjs";
+import {
+	adopt,
+	lockRoot,
+	newOwner,
+	OWNERSHIP_ENV,
+} from "../extensions/_session_ownership/ownership.mjs";
+import { prepareProfileReload, profileReloadEnabled, profileReloadEnvironment } from "./reload.mjs";
 
 const NAME = /^[a-z][a-z0-9-]*$/;
 const PROFILE_DIR = "profile-sessions";
 const RESOURCE_FLAGS = new Set([
-	"--system-prompt", "--append-system-prompt", "--tools", "-t", "--exclude-tools", "-xt",
-	"--no-tools", "-nt", "--no-builtin-tools", "-nbt", "--extension", "-e",
-	"--no-extensions", "-ne", "--no-mcp", "--skill", "--no-skills", "-ns",
-	"--model", "--provider", "--session-dir",
+	"--system-prompt",
+	"--append-system-prompt",
+	"--tools",
+	"-t",
+	"--exclude-tools",
+	"-xt",
+	"--no-tools",
+	"-nt",
+	"--no-builtin-tools",
+	"-nbt",
+	"--extension",
+	"-e",
+	"--no-extensions",
+	"-ne",
+	"--no-mcp",
+	"--skill",
+	"--no-skills",
+	"-ns",
+	"--model",
+	"--provider",
+	"--session-dir",
 ]);
 
 export function selectProfile(argv) {
@@ -40,7 +63,6 @@ export function selectProfile(argv) {
 	return { agent, args: rest };
 }
 
-
 export function piCli(pkg) {
 	const manifest = JSON.parse(fs.readFileSync(path.join(pkg, "package.json"), "utf8"));
 	const entry = typeof manifest.bin === "string" ? manifest.bin : manifest.bin?.pi;
@@ -51,21 +73,34 @@ export function piCli(pkg) {
 export async function loadProfile(agent, agentDir, piPackage) {
 	const filePath = path.join(agentDir, "agents", `${agent}.md`);
 	const content = fs.readFileSync(filePath, "utf8");
-	const parser = await import(pathToFileURL(path.join(piPackage, "dist", "utils", "frontmatter.js")).href);
+	const parser = await import(
+		pathToFileURL(path.join(piPackage, "dist", "utils", "frontmatter.js")).href
+	);
 	const { frontmatter, body } = parser.parseFrontmatter(content);
 	const profile = parseAgentProfile(frontmatter, body, filePath);
 	if (profile.name !== agent || profile.subagent) {
-		throw new Error(`${filePath}: top-level profile must match its filename and set subagent: false`);
+		throw new Error(
+			`${filePath}: top-level profile must match its filename and set subagent: false`,
+		);
 	}
-	if (profile.extensions === undefined || profile.tools === undefined || profile.skills === undefined) {
-		throw new Error(`${filePath}: top-level profile needs tools, skills and extensions allow-lists`);
+	if (
+		profile.extensions === undefined ||
+		profile.tools === undefined ||
+		profile.skills === undefined
+	) {
+		throw new Error(
+			`${filePath}: top-level profile needs tools, skills and extensions allow-lists`,
+		);
 	}
 	return profile;
 }
 
 function within(target, root) {
 	const relative = path.relative(root, target);
-	return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+	return (
+		relative === "" ||
+		(relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+	);
 }
 
 function canonical(target) {
@@ -83,7 +118,9 @@ export function checkSessionPaths(args, agent, agentDir, cwd = process.cwd(), se
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i];
 		if (arg === "--") break;
-		const [flag, inline] = arg.includes("=") ? [arg.slice(0, arg.indexOf("=")), arg.slice(arg.indexOf("=") + 1)] : [arg, undefined];
+		const [flag, inline] = arg.includes("=")
+			? [arg.slice(0, arg.indexOf("=")), arg.slice(arg.indexOf("=") + 1)]
+			: [arg, undefined];
 		if (flag !== "--session" && flag !== "--fork" && flag !== "--session-dir") continue;
 		const value = inline ?? args[++i];
 		if (!value) throw new Error(`${flag} needs a value`);
@@ -115,32 +152,43 @@ function promptFile(profile, agentDir) {
 }
 
 export function buildProfileArgs(profile, agentDir, args, cwd = process.cwd(), sessionEnv) {
-	if (profile.subagent || profile.tools === undefined || profile.skills === undefined || profile.extensions === undefined) {
-		throw new Error(`${profile.name}: top-level profile requires subagent: false and explicit resource allow-lists`);
+	if (
+		profile.subagent ||
+		profile.tools === undefined ||
+		profile.skills === undefined ||
+		profile.extensions === undefined
+	) {
+		throw new Error(
+			`${profile.name}: top-level profile requires subagent: false and explicit resource allow-lists`,
+		);
 	}
 	checkSessionPaths(args, profile.name, agentDir, cwd, sessionEnv);
 	if (profile.name !== "main") {
 		for (const arg of args) {
 			if (arg === "--") break;
 			const flag = arg.split("=", 1)[0];
-			if (RESOURCE_FLAGS.has(flag)) throw new Error(`${flag} cannot override the ${profile.name} profile`);
+			if (RESOURCE_FLAGS.has(flag))
+				throw new Error(`${flag} cannot override the ${profile.name} profile`);
 		}
 	}
 	const flags = ["--system-prompt", promptFile(profile, agentDir), "--no-extensions"];
-	// Preserve explicit main-session opt-outs used by lightweight helper processes.
-	if (profile.name !== "main" || !args.includes("--no-extensions")) {
+	// The bootstrap is infrastructure, not an extra agent capability.
+	if (profile.name !== "main" || profileReloadEnabled(args)) {
+		flags.push("--extension", fileURLToPath(new URL("./reload-extension.mjs", import.meta.url)));
 		for (const name of profile.extensions) {
 			if (name === "mcp" || name === "codemode") {
 				flags.push("--extension", `builtin:${name}`);
 				continue;
 			}
 			const extension = path.join(agentDir, "extensions", name);
-			if (!fs.existsSync(path.join(extension, "index.ts"))) throw new Error(`Missing profile extension: ${name}`);
+			if (!fs.existsSync(path.join(extension, "index.ts")))
+				throw new Error(`Missing profile extension: ${name}`);
 			flags.push("--extension", extension);
 		}
 	}
 	if (profile.name !== "main") {
-		if (profile.extensions.includes("mcp-collapse")) throw new Error("Private profiles cannot load the general MCP gateway");
+		if (profile.extensions.includes("mcp-collapse"))
+			throw new Error("Private profiles cannot load the general MCP gateway");
 		flags.push("--no-mcp", "--session-dir", path.join(agentDir, PROFILE_DIR, profile.name));
 	}
 	if (profile.skills !== undefined) {
@@ -159,7 +207,11 @@ export function buildProfileArgs(profile, agentDir, args, cwd = process.cwd(), s
 			flags.push("--skill", skillDir);
 		}
 	}
-	if (profile.tools !== undefined) flags.push(profile.tools.length ? "--tools" : "--no-tools", ...(profile.tools.length ? [profile.tools.join(",")] : []));
+	if (profile.tools !== undefined)
+		flags.push(
+			profile.tools.length ? "--tools" : "--no-tools",
+			...(profile.tools.length ? [profile.tools.join(",")] : []),
+		);
 	if (profile.model?.length) flags.push("--model", profile.model[0]);
 	return [...flags, ...args];
 }
@@ -169,62 +221,216 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
 	const cli = piCli(pkg);
 	const { agent, args } = selectProfile(argv);
 	// Administrative commands do not create agent sessions.
-	if (agent === "main" && (args[0]?.startsWith("-") && ["--help", "-h", "--version", "-v"].includes(args[0]) ||
-		["install", "remove", "uninstall", "update", "list", "config", "auth", "mcp"].includes(args[0]))) {
+	if (
+		agent === "main" &&
+		((args[0]?.startsWith("-") && ["--help", "-h", "--version", "-v"].includes(args[0])) ||
+			["install", "remove", "uninstall", "update", "list", "config", "auth", "mcp"].includes(
+				args[0],
+			))
+	) {
 		return runCli(cli, args, env);
 	}
 	const agentDir = env.PI_CODING_AGENT_DIR ?? path.join(os.homedir(), ".pi", "agent");
 	const profile = await loadProfile(agent, agentDir, pkg);
-	const protectedMode = agent === "main" && (env.PI_REMOTE_OWNERSHIP === "1" || fs.existsSync(path.join(lockRoot(env), "enabled")));
+	const protectedMode =
+		agent === "main" &&
+		(env.PI_REMOTE_OWNERSHIP === "1" || fs.existsSync(path.join(lockRoot(env), "enabled")));
 	const launch = protectedMode
 		? await prepareOwnedLaunch(args, pkg, { ...env, PI_CODING_AGENT_DIR: agentDir })
 		: { args, env };
-	return runCli(cli, buildProfileArgs(profile, agentDir, launch.args, process.cwd(), env.PI_CODING_AGENT_SESSION_DIR), launch.env, Boolean(launch.env.PI_SESSION_OWNER));
+	return runCli(
+		cli,
+		buildProfileArgs(
+			profile,
+			agentDir,
+			launch.args,
+			process.cwd(),
+			env.PI_CODING_AGENT_SESSION_DIR,
+		),
+		launch.env,
+		Boolean(launch.env.PI_SESSION_OWNER),
+		{
+			profile,
+			agentDir,
+			pkg,
+			userArgs: args,
+			cwd: process.cwd(),
+		},
+	);
 }
 
-function runCli(cli, args, env, owned = false) {
+function runCli(cli, args, env, owned = false, identity) {
 	return new Promise((resolve, reject) => {
-		const entry = owned ? [fileURLToPath(new URL("./owned-cli.mjs", import.meta.url)), cli] : [cli];
-		const child = spawn(process.execPath, [...entry, ...args], { stdio: owned ? ["inherit", "inherit", "inherit", "ipc"] : "inherit", env });
-  let continuation;
-  if (owned) child.on("message", (message) => {
-   if (message === "pi-worktree-session-ready") {
-    if (child.connected) child.send("pi-worktree-parent-yielded");
-    return;
-   }
-   if (message?.type !== "pi-owned-continuation" || !Array.isArray(message.args) || !message.args.every(a => typeof a === "string") || typeof message.cwd !== "string") return;
-   if (continuation) return;
-   continuation = message;
-  });
-		const forward = (signal) => child.kill(signal);
+		const supervised = owned || (identity && profileReloadEnabled(identity.userArgs));
+		const token = supervised ? randomUUID() : undefined;
+		const childEnv = { ...env };
+		if (token) childEnv.PI_PROFILE_RELOAD_TOKEN = token;
+		else delete childEnv.PI_PROFILE_RELOAD_TOKEN;
+		const entry = supervised
+			? [fileURLToPath(new URL("./owned-cli.mjs", import.meta.url)), cli]
+			: [cli];
+		const child = spawn(process.execPath, [...entry, ...args], {
+			stdio: supervised ? ["inherit", "inherit", "inherit", "ipc"] : "inherit",
+			env: childEnv,
+		});
+		let continuation,
+			reloadPlan,
+			preparing = false;
+		const cancelled = new Set();
+		const rollback = () => {
+			const plan = reloadPlan;
+			reloadPlan = undefined;
+			try {
+				plan?.rollback?.();
+			} catch (error) {
+				console.error(`Profile ownership rollback failed: ${error.message}`);
+				child.kill("SIGTERM");
+			}
+		};
+		const reply = (id, result) => {
+			if (!child.connected) return false;
+			try {
+				child.send({ type: "pi-profile-reload-result", id, token, ...result }, (error) => {
+					if (error) rollback();
+				});
+				return true;
+			} catch {
+				rollback();
+				return false;
+			}
+		};
+		child.on("message", async (message) => {
+			if (message === "pi-worktree-session-ready") {
+				if (child.connected) child.send("pi-worktree-parent-yielded");
+				return;
+			}
+			if (
+				(owned || identity?.profile.name === "main") &&
+				message?.type === "pi-owned-continuation" &&
+				Array.isArray(message.args) &&
+				message.args.every((a) => typeof a === "string") &&
+				typeof message.cwd === "string"
+			) {
+				if (!continuation && !reloadPlan && !preparing) continuation = message;
+				return;
+			}
+			if (!identity || message?.token !== token || typeof message.id !== "string") return;
+			if (message.type === "pi-profile-reload-cancel") {
+				cancelled.add(message.id);
+				if (reloadPlan?.id === message.id) rollback();
+				return;
+			}
+			if (message.type !== "pi-profile-reload-request") return;
+			if (preparing || continuation || reloadPlan) {
+				reply(message.id, {
+					status: "rejected",
+					error: "Another session handoff is already pending",
+				});
+				return;
+			}
+			preparing = true;
+			try {
+				const profile = await loadProfile(identity.profile.name, identity.agentDir, identity.pkg);
+				const plan = prepareProfileReload(
+					{ ...identity, env },
+					profile,
+					message.state,
+					buildProfileArgs,
+				);
+				if (cancelled.has(message.id) || !child.connected || child.exitCode !== null) return;
+				if (!plan) {
+					reply(message.id, { status: "unchanged" });
+					return;
+				}
+				const nextEnv = profileReloadEnvironment(env);
+				let undo;
+				if (env[OWNERSHIP_ENV] || message.state.owner) {
+					const previous = JSON.parse(message.state.owner || "null");
+					if (
+						!previous ||
+						previous.pid !== child.pid ||
+						(env[OWNERSHIP_ENV] &&
+							previous.instanceId !== JSON.parse(env[OWNERSHIP_ENV]).instanceId)
+					)
+						throw new Error("Profile reload ownership identity mismatch");
+					const parentOwner = { ...newOwner(previous.kind), instanceId: previous.instanceId };
+					adopt(previous, parentOwner, lockRoot(env));
+					undo = () => adopt(parentOwner, previous, lockRoot(env));
+					nextEnv[OWNERSHIP_ENV] = JSON.stringify(parentOwner);
+				}
+				reloadPlan = { ...plan, id: message.id, env: nextEnv, rollback: undo };
+				if (!reply(message.id, { status: "restart" })) rollback();
+			} catch (error) {
+				rollback();
+				reply(message.id, { status: "rejected", error: error.message });
+			} finally {
+				preparing = false;
+				cancelled.delete(message.id);
+			}
+		});
+		let interrupted;
+		const forward = (signal) => {
+			interrupted = signal;
+			child.kill(signal);
+		};
 		process.on("SIGINT", forward);
 		process.on("SIGTERM", forward);
 		child.on("error", reject);
 		child.on("close", async (code, signal) => {
 			process.off("SIGINT", forward);
 			process.off("SIGTERM", forward);
-			if (continuation && !signal) {
-    try {
-     const cwd = fs.realpathSync(continuation.cwd);
-     // Cleanup may have removed the previous worktree, including our cwd.
-     // Enter the verified successor before npm or any other cwd-dependent call.
-     process.chdir(cwd);
-     const nextEnv = { ...env };
-     delete nextEnv.PI_SESSION_OWNER;
-     for (const key of Object.keys(nextEnv)) if (key.startsWith("PI_WORKTREE_") || key === "PI_LOOP_HANDOFF") delete nextEnv[key];
-     for (const [key,value] of Object.entries(continuation.changes ?? {})) if ((key.startsWith("PI_WORKTREE_") || key === "PI_LOOP_HANDOFF") && typeof value === "string") nextEnv[key] = value;
-     const pkg = resolvePiPackage(nextEnv);
-     const launch = await prepareOwnedLaunch(continuation.args, pkg, nextEnv, cwd);
-     resolve(await runCli(cli, launch.args, launch.env, true));
-    } catch (error) { reject(error); }
-   } else resolve(signal ? 128 + (os.constants.signals[signal] ?? 0) : (code ?? 1));
+			try {
+				if (reloadPlan && !signal && !interrupted && code === 0) {
+					process.chdir(reloadPlan.cwd);
+					resolve(
+						await runCli(
+							cli,
+							reloadPlan.built,
+							reloadPlan.env,
+							Boolean(reloadPlan.env[OWNERSHIP_ENV]),
+							{ ...identity, profile: reloadPlan.profile },
+						),
+					);
+				} else if (continuation && !signal && !interrupted) {
+					const cwd = fs.realpathSync(continuation.cwd),
+						nextEnv = { ...env };
+					// Cleanup may have removed our previous cwd. Enter the verified successor first.
+					process.chdir(cwd);
+					delete nextEnv.PI_SESSION_OWNER;
+					for (const key of Object.keys(nextEnv))
+						if (key.startsWith("PI_WORKTREE_") || key === "PI_LOOP_HANDOFF") delete nextEnv[key];
+					for (const [key, value] of Object.entries(continuation.changes ?? {}))
+						if (
+							(key.startsWith("PI_WORKTREE_") || key === "PI_LOOP_HANDOFF") &&
+							typeof value === "string"
+						)
+							nextEnv[key] = value;
+					const pkg = resolvePiPackage(nextEnv);
+					const launch = owned
+						? await prepareOwnedLaunch(continuation.args, pkg, nextEnv, cwd)
+						: { args: continuation.args, env: nextEnv };
+					resolve(await runCli(cli, launch.args, launch.env, owned, identity));
+				} else
+					resolve(
+						signal || interrupted
+							? 128 + (os.constants.signals[signal || interrupted] ?? 0)
+							: (code ?? 1),
+					);
+			} catch (error) {
+				reject(error);
+			}
 		});
 	});
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-	main().then((code) => { process.exitCode = code; }, (error) => {
-		console.error(`pi profile: ${error.message}`);
-		process.exitCode = 1;
-	});
+	main().then(
+		(code) => {
+			process.exitCode = code;
+		},
+		(error) => {
+			console.error(`pi profile: ${error.message}`);
+			process.exitCode = 1;
+		},
+	);
 }

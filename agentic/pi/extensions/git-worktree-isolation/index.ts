@@ -195,7 +195,7 @@ export function loopHandoffEnv(sessionFile: string, suspend = false): NodeJS.Pro
 
 /** The outer launcher starts the successor only after this Pi actually exits. */
 function onTransitionBoundary(pi: ExtensionAPI, handler: (event: unknown, ctx: ExtensionContext) => Promise<void>): void {
- if (process.env.PI_SESSION_OWNER) pi.on("agent_settled", handler);
+ if (process.env.PI_SESSION_OWNER || process.env.PI_PROFILE_RELOAD_TOKEN) pi.on("agent_settled", handler);
  else pi.on("turn_end", handler);
 }
 
@@ -421,7 +421,7 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 
 	pi.on("session_shutdown", async (event, ctx) => {
 		if (manifest.createdBranch) setLoopReturnToBase(undefined);
-		if (event.reason !== "quit" || manifest.createdBranch) {
+		if (event.reason !== "quit" || manifest.createdBranch || process.env.PI_PROFILE_RELOAD_REPLACING === "1") {
 			await releaseTranscript();
 			return;
 		}
@@ -641,7 +641,7 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 			if (!manifest.createdBranch) await releaseManagedWorktree(manifest);
 			await releaseTranscript();
 			await resumeInManagedWorktree(event.targetSessionFile, resumedCwd, targetManifest?.manifestPath, false, ctx);
-   if (process.env.PI_SESSION_OWNER) return { cancel: true };
+   if (process.env.PI_SESSION_OWNER || process.env.PI_PROFILE_RELOAD_TOKEN) return { cancel: true };
 		} catch (error) {
 			ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
 			return { cancel: true };
@@ -742,7 +742,7 @@ export default async function (pi: ExtensionAPI) {
 		try {
 			const plan = await activateReleasedSession(event.targetSessionFile, record.commonGitDir);
 			await resumeInManagedWorktree(event.targetSessionFile, plan.childCwd, plan.manifest.manifestPath, false, ctx);
-   if (process.env.PI_SESSION_OWNER) return { cancel: true };
+   if (process.env.PI_SESSION_OWNER || process.env.PI_PROFILE_RELOAD_TOKEN) return { cancel: true };
 		} catch (error) {
 			ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
 			return { cancel: true };
