@@ -60,7 +60,14 @@ export class History {
   }
   async entries(file: string) {
     const api = await this.module;
-    const content = fs.readFileSync(file, "utf8");
+    let content: string;
+    try {
+      content = fs.readFileSync(file, "utf8");
+    } catch (error) {
+      // Native Pi allocates a fresh path before its first persistence flush.
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
     return api.parseSessionEntries(content);
   }
   async messages(file: string, offset = 0, limit = 100) {

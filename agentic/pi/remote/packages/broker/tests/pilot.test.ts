@@ -6,7 +6,7 @@ import os from "node:os";
 import net from "node:net";
 import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { ConfigSchema } from "../src/config.ts";
 import {
   approvePilot,
@@ -190,6 +190,70 @@ test("pilot does not expose or recover existing native histories", async () => {
       });
       assert.equal(response.statusCode, 404);
     }
+  } finally {
+    await broker.app.close();
+    f.close();
+  }
+});
+
+test("fresh unflushed native history opens as an empty conversation", async () => {
+  const f = fixture();
+  const directory = path.join(f.config.dataDir, "native-sessions");
+  fs.mkdirSync(directory);
+  const { SessionManager } = await import(
+    pathToFileURL(path.join(resolvePiPackage(), "dist/core/session-manager.js")).href
+  );
+  const native = SessionManager.create(f.root, directory);
+  const broker = await createBroker(f.config, { ipc: false });
+  try {
+    const device = randomUUID(),
+      raw = randomUUID(),
+      csrf = randomUUID(),
+      now = Date.now();
+    broker.store.db
+      .prepare("INSERT INTO devices VALUES (?,?,?,0,?)")
+      .run(device, "Fixture", "{}", now);
+    broker.store.db
+      .prepare("INSERT INTO auth VALUES (?,?,?,?,?,?,?,?)")
+      .run(digest(raw), device, csrf, now, now, null, now + 86400000, 1);
+    const id = native.getSessionId(),
+      file = native.getSessionFile()!;
+    assert.equal(fs.existsSync(file), false);
+    broker.store.save({
+      version: 1,
+      ...newOwner(),
+      sessionId: id,
+      sessionFile: file,
+      cwd: f.root,
+      name: "New",
+      managed: true,
+      tmux: "pi-remote-fixture",
+      model: "fixture/model",
+      thinking: "off",
+      capabilities: [],
+      idle: true,
+      loop: false,
+      epoch: 1,
+      sequence: 0,
+      state: "idle",
+      lastActivity: now,
+    });
+    const headers = {
+      host: new URL(f.config.origin).host,
+      cookie: `__Host-pi-remote=${raw}`,
+    };
+    const response = await broker.app.inject({
+      url: `/api/v1/sessions/${id}/history`,
+      headers,
+    });
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json(), {
+      messages: [],
+      offset: 0,
+      next: null,
+      total: 0,
+    });
+    assert.equal(fs.existsSync(file), false);
   } finally {
     await broker.app.close();
     f.close();
