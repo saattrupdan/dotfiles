@@ -27,6 +27,13 @@ const draft = computed({
   get: () => store.drafts[id.value] ?? "",
   set: (value) => (store.drafts[id.value] = value),
 });
+watch(
+  () => question.value?.id,
+  () => {
+    answer.value = "";
+    multi.value = [];
+  },
+);
 const time = setInterval(() => (now.value = Date.now()), 1000);
 async function load() {
   try {
@@ -191,62 +198,6 @@ async function recover() {
     >
       {{ error }}
     </p>
-    <div
-      v-if="question?.state === 'pending'"
-      class="question card"
-    >
-      <p class="eyebrow">Pi needs your answer</p>
-      <h3>{{ question.title }}</h3>
-      <p class="muted small">
-        {{ Math.max(0, Math.ceil((question.deadline - now) / 60000)) }} minutes
-        remaining
-      </p>
-      <template v-if="question.multiSelect">
-        <label
-          v-for="option in question.options"
-          :key="option"
-          ><input
-            v-model="multi"
-            type="checkbox"
-            :value="option"
-          />{{ option }}</label
-        ><button
-          class="primary"
-          @click="action({ action: 'answer', promptId: question.id, answer: multi })"
-        >
-          Submit selections
-        </button> </template
-      ><template v-else>
-        <div class="choices">
-          <button
-            v-for="option in question.options"
-            :key="option"
-            @click="action({ action: 'answer', promptId: question.id, answer: option })"
-          >
-            {{ option }}
-          </button>
-        </div>
-        <input
-          v-model="answer"
-          placeholder="Type an answer"
-        /><button
-          class="primary"
-          @click="action({ action: 'answer', promptId: question.id, answer })"
-        >
-          Answer
-        </button>
-      </template>
-    </div>
-    <div
-      v-else-if="question?.state === 'expired'"
-      class="card"
-    >
-      <h3>Answer needed</h3>
-      <p>{{ question.title }}</p>
-      <p class="muted">
-        The run stopped after 30 minutes. Send your answer as a new message to continue.
-      </p>
-    </div>
     <Transcript
       :messages="store.messages[id] || []"
       :streaming="store.streaming[id]"
@@ -291,44 +242,122 @@ async function recover() {
         >
       </p>
     </div>
-    <form
-      class="composer"
-      @submit.prevent="send"
-    >
-      <div class="previews">
-        <img
-          v-for="preview in previews"
-          :key="preview"
-          :src="preview"
-          alt="Image to attach"
+    <div class="composer">
+      <form
+        v-if="question?.state === 'pending'"
+        class="question card"
+        aria-labelledby="active-question"
+        @submit.prevent="
+          action({
+            action: 'answer',
+            promptId: question.id,
+            answer: question.multiSelect ? multi : answer,
+          })
+        "
+      >
+        <p class="eyebrow">Pi needs your answer</p>
+        <h3 id="active-question">{{ question.title }}</h3>
+        <p class="muted small">
+          {{ Math.max(0, Math.ceil((question.deadline - now) / 60000)) }} minutes
+          remaining
+        </p>
+        <template v-if="question.multiSelect">
+          <label
+            v-for="option in question.options"
+            :key="option"
+            ><input
+              v-model="multi"
+              type="checkbox"
+              :value="option"
+            />{{ option }}</label
+          ><button
+            class="primary"
+            type="submit"
+            :disabled="!multi.length"
+          >
+            Submit selections
+          </button> </template
+        ><template v-else>
+          <div class="choices">
+            <button
+              v-for="option in question.options"
+              :key="option"
+              type="button"
+              @click="
+                action({ action: 'answer', promptId: question.id, answer: option })
+              "
+            >
+              {{ option }}
+            </button>
+          </div>
+          <input
+            v-model="answer"
+            placeholder="Type an answer"
+            aria-label="Answer Pi"
+          /><button
+            class="primary"
+            type="submit"
+            :disabled="!answer.trim()"
+          >
+            Answer
+          </button>
+        </template>
+      </form>
+      <div
+        v-else-if="question?.state === 'expired'"
+        class="question card"
+      >
+        <h3>Answer needed</h3>
+        <p>{{ question.title }}</p>
+        <p class="muted">
+          The run stopped after 30 minutes. Send your answer as a new message to
+          continue.
+        </p>
+      </div>
+      <form
+        v-if="question?.state !== 'pending'"
+        class="message-form"
+        @submit.prevent="send"
+      >
+        <div class="previews">
+          <img
+            v-for="preview in previews"
+            :key="preview"
+            :src="preview"
+            alt="Image to attach"
+          />
+        </div>
+        <textarea
+          v-model="draft"
+          placeholder="Message Pi..."
+          aria-label="Message Pi"
         />
-      </div>
-      <textarea
-        v-model="draft"
-        placeholder="Message Pi..."
-        aria-label="Message Pi"
-      />
-      <div class="row">
-        <label class="image-button"
-          >+ Image<input
-            type="file"
-            accept="image/png,image/jpeg,image/webp,image/heic,image/heif"
-            multiple
-            @change="upload" /></label
-        ><button
-          class="primary"
-          :disabled="sending || !session?.epoch"
-          type="submit"
-        >
-          {{
-            sending ? "Sending..." : session?.state === "running" ? "Steer Pi" : "Send"
-          }}
-        </button>
-      </div>
-      <p class="small muted">
-        Drafts stay in memory and disappear when the app closes or locks.
-      </p>
-    </form>
+        <div class="row">
+          <label class="image-button"
+            >+ Image<input
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/heic,image/heif"
+              multiple
+              @change="upload" /></label
+          ><button
+            class="primary"
+            :disabled="sending || !session?.epoch"
+            type="submit"
+          >
+            {{
+              sending
+                ? "Sending..."
+                : session?.state === "running"
+                  ? "Steer Pi"
+                  : "Send"
+            }}
+          </button>
+        </div>
+        <p class="small muted">
+          Drafts stay in memory and disappear when the app closes or locks.
+        </p>
+      </form>
+    </div>
   </section>
 </template>
 <style scoped>
@@ -339,6 +368,9 @@ h1 {
 .composer {
   position: sticky;
   bottom: 0;
+  max-height: calc(100dvh - env(safe-area-inset-top) - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--bg);
   border-top: 1px solid var(--line);
   padding: 14px 0 max(8px, env(safe-area-inset-bottom));
@@ -372,7 +404,7 @@ h1 {
   margin-bottom: 12px;
 }
 .question {
-  margin-top: 20px;
+  margin: 0;
   border-color: var(--accent);
 }
 .question input[type="checkbox"] {
