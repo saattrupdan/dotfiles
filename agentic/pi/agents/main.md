@@ -44,6 +44,7 @@ skills:
   - full-stack
   - github
   - grill-with-docs
+  - grilling
   - gws-calendar
   - gws-gmail
   - gws-shared
