@@ -31,33 +31,36 @@ const filtered = computed(() =>
   <section>
     <div class="row heading">
       <div>
-        <p class="eyebrow">Your workspace, within reach</p>
         <h1>Conversations</h1>
       </div>
       <RouterLink
         to="/new"
-        class="new"
-        >+ New</RouterLink
+        class="new icon-button"
+        aria-label="New conversation"
+        title="New conversation"
+        >+</RouterLink
       >
     </div>
-    <input
-      v-model="search"
-      type="search"
-      aria-label="Search conversations"
-      placeholder="Search by name or project"
-    /><select
-      v-model="filter"
-      aria-label="Filter state"
-    >
-      <option value="all">All conversations</option>
-      <option
-        v-for="state in ['running', 'idle', 'waiting', 'stopped', 'interrupted']"
-        :key="state"
-        :value="state"
+    <div class="filters">
+      <input
+        v-model="search"
+        type="search"
+        aria-label="Search conversations"
+        placeholder="Search"
+      /><select
+        v-model="filter"
+        aria-label="Filter state"
       >
-        {{ state }}
-      </option>
-    </select>
+        <option value="all">All</option>
+        <option
+          v-for="state in ['running', 'idle', 'waiting', 'stopped', 'interrupted']"
+          :key="state"
+          :value="state"
+        >
+          {{ state }}
+        </option>
+      </select>
+    </div>
     <p
       v-if="error"
       class="error"
@@ -85,8 +88,9 @@ const filtered = computed(() =>
         v-if="!filtered.length"
         class="empty card"
       >
-        <h2>Room for a new idea.</h2>
-        <p class="muted">Start a conversation here or open Pi on your Mac.</p>
+        <p class="muted">
+          {{ search || filter !== "all" ? "No matches" : "No conversations yet" }}
+        </p>
       </div>
     </div>
   </section>
@@ -94,34 +98,46 @@ const filtered = computed(() =>
 <style scoped>
 .heading {
   justify-content: space-between;
+  margin-bottom: 22px;
+}
+.heading h1 {
+  margin: 0;
+}
+.filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+.filters input,
+.filters select {
+  margin: 0;
+}
+.filters select {
+  max-width: 130px;
 }
 .new {
   background: var(--accent);
   color: var(--bg);
-  padding: 12px 18px;
-  border-radius: 14px;
-  text-decoration: none;
-  font-weight: 700;
+  font-size: 25px;
+  font-weight: 400;
 }
 .list {
   display: grid;
-  gap: 12px;
-  margin-top: 22px;
+  gap: 0;
+  margin-top: 16px;
 }
 .session {
   display: block;
   text-decoration: none;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  padding: 20px;
+  border-bottom: 1px solid var(--line);
+  padding: 22px 0;
 }
 .session:hover {
   border-color: var(--accent);
 }
 h2 {
-  font-size: 19px;
-  margin: 14px 0 8px;
+  font-size: 18px;
+  margin: 10px 0 6px;
 }
 .path {
   font-family: ui-monospace, monospace;
@@ -148,7 +164,7 @@ h2 {
 }
 .dot.running {
   background: var(--accent);
-  box-shadow: 0 0 10px #a8e8cb55;
+  box-shadow: 0 0 0 3px #b4e4cc0c;
 }
 .dot.waiting {
   background: #f0cf84;

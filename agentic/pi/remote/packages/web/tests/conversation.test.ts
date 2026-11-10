@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
+import fs from "node:fs";
+import path from "node:path";
 import { createServer } from "vite";
 import vue from "@vitejs/plugin-vue";
 import { expect, webkit, type WebSocketRoute } from "@playwright/test";
@@ -13,6 +15,9 @@ import { createPinia } from 'pinia';
 import { createRouter, createMemoryHistory } from 'vue-router';
 import App from '/src/frontend/App.vue';
 import Conversation from '/src/frontend/views/Conversation.vue';
+import Sessions from '/src/frontend/views/Sessions.vue';
+import Settings from '/src/frontend/views/Settings.vue';
+import NewSession from '/src/frontend/views/NewSession.vue';
 import { useAuth } from '/src/frontend/stores/auth.ts';
 import '/src/frontend/assets/main.css';
 const pinia = createPinia();
@@ -22,8 +27,9 @@ auth.unlocked = true;
 auth.visible = true;
 const router = createRouter({ history: createMemoryHistory(), routes: [
   { path: '/session/:id', component: Conversation },
-  { path: '/', component: { template: '<p>Fixture home</p>' } },
-  { path: '/settings', component: { template: '<p>Fixture settings</p>' } },
+  { path: '/', component: Sessions },
+  { path: '/settings', component: Settings },
+  { path: '/new', component: NewSession },
 ] });
 await router.push('/session/${id}');
 await router.isReady();
@@ -82,6 +88,7 @@ test(
         cwd: "/fixture",
         epoch: 1,
         sequence: 0,
+        updatedAt: 1000,
         state: prompt ? "waiting" : "idle",
         prompt,
       });
@@ -92,6 +99,17 @@ test(
         const url = new URL(route.request().url());
         let body: unknown = {};
         if (url.pathname === "/api/v1/sessions") body = [session()];
+        else if (
+          url.pathname === "/api/v1/devices" ||
+          url.pathname === "/api/v1/favorites"
+        )
+          body = [];
+        else if (url.pathname === "/api/v1/directories")
+          body = {
+            path: "/Users/you",
+            parent: "/Users",
+            directories: [{ name: "Projects", path: "/Users/you/Projects" }],
+          };
         else if (url.pathname.endsWith("/history"))
           body = {
             messages: [
@@ -256,6 +274,107 @@ test(
           assert.equal(
             submissions.some((command) => command.action === "message"),
             false,
+          );
+        },
+      );
+      await t.test(
+        "collapsing receipts never hides existing or subsequent delivery failures",
+        async () => {
+          const receipts = page.getByText("Delivery", { exact: true });
+          await receipts.click();
+          socket!.send(
+            JSON.stringify({
+              version: 1,
+              sessionId: id,
+              sequence: 2,
+              type: "command.status",
+              data: { id: "fixture-rejected", status: "rejected" },
+            }),
+          );
+          await expect(
+            page.getByRole("status").filter({ hasText: "rejected" }),
+          ).toBeVisible();
+          await receipts.click();
+          socket!.send(
+            JSON.stringify({
+              version: 1,
+              sessionId: id,
+              sequence: 3,
+              type: "command.status",
+              data: { id: "fixture-unknown", status: "delivery_unknown" },
+            }),
+          );
+          await expect(
+            page.getByRole("status").filter({ hasText: "rejected" }),
+          ).toBeVisible();
+          await expect(page.getByText(/retrying may duplicate work/)).toBeVisible();
+          await expect(page.locator(".delivery details")).not.toHaveAttribute(
+            "open",
+            "",
+          );
+          assert.equal(submissions.length, 3);
+        },
+      );
+      await t.test(
+        "minimal navigation keeps the cog accessible and mobile screens usable",
+        async () => {
+          await page.setViewportSize({ width: 402, height: 874 });
+          await page.evaluate(() => window.scrollTo(0, 0));
+          const settings = page.getByRole("link", { name: "Settings", exact: true });
+          await expect(settings.locator("svg")).toHaveCount(1);
+          await expect(settings).toHaveText("");
+          const bounds = await settings.boundingBox();
+          assert(bounds && bounds.width >= 44 && bounds.height >= 44);
+          const screenshots = process.env.PI_REMOTE_VISUAL_PROOF_DIR;
+          if (screenshots) fs.mkdirSync(screenshots, { recursive: true });
+          await settings.click();
+          await expect(
+            page.getByRole("heading", { name: "Settings", exact: true }),
+          ).toBeVisible();
+          if (screenshots)
+            await page.screenshot({
+              path: path.join(screenshots, "settings.png"),
+              fullPage: true,
+            });
+          await page.getByRole("link", { name: "Pi Remote", exact: true }).click();
+          await expect(
+            page.getByRole("heading", { name: "Conversations", exact: true }),
+          ).toBeVisible();
+          if (screenshots)
+            await page.screenshot({
+              path: path.join(screenshots, "conversations.png"),
+              fullPage: true,
+            });
+          await page
+            .getByRole("link", { name: "New conversation", exact: true })
+            .click();
+          await expect(
+            page.getByRole("heading", { name: "Choose a folder", exact: true }),
+          ).toBeVisible();
+          await expect(
+            page.getByRole("button", { name: "Start here", exact: true }),
+          ).toBeEnabled();
+          if (screenshots)
+            await page.screenshot({
+              path: path.join(screenshots, "folder.png"),
+              fullPage: true,
+            });
+          await settings.click();
+          await page.getByRole("button", { name: "Lock", exact: true }).click();
+          await expect(
+            page.getByRole("button", { name: "Unlock with passkey", exact: true }),
+          ).toBeVisible();
+          await expect(settings).toHaveCount(0);
+          if (screenshots)
+            await page.screenshot({
+              path: path.join(screenshots, "unlock.png"),
+              fullPage: true,
+            });
+          assert.equal(
+            await page.evaluate(
+              () => document.documentElement.scrollWidth <= window.innerWidth,
+            ),
+            true,
           );
         },
       );

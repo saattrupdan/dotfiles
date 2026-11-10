@@ -54,9 +54,7 @@ async function create() {
 </script>
 <template>
   <section>
-    <p class="eyebrow">A fresh start</p>
-    <h1>Choose a project</h1>
-    <p class="muted">Pi runs on your Mac in the directory you choose.</p>
+    <h1>Choose a folder</h1>
     <p
       v-if="error"
       class="error"
@@ -64,7 +62,7 @@ async function create() {
       {{ error }}
     </p>
     <details>
-      <summary>Favorites and recent projects</summary>
+      <summary>Recent &amp; saved</summary>
       <button
         v-for="cwd in [
           ...new Set([...favorites, ...sessions.sessions.map((s) => s.cwd)]),
@@ -84,19 +82,21 @@ async function create() {
       <button
         v-if="directory.parent"
         class="directory"
+        aria-label="Parent directory"
         @click="browse(directory.parent!)"
       >
-        .. Parent directory</button
+        ..</button
       ><button
         v-for="child in directory.directories"
         :key="child.path"
         class="directory"
         @click="browse(child.path)"
       >
-        {{ child.name }} /
+        {{ child.name }}
       </button>
       <div class="row">
-        <button @click="favorite">Favorite</button
+        <button @click="favorite">
+          {{ favorites.includes(directory.path) ? "Saved" : "Save folder" }}</button
         ><button
           class="primary"
           :disabled="busy"
@@ -110,19 +110,27 @@ async function create() {
 </template>
 <style scoped>
 .browser {
-  margin-top: 20px;
+  margin-top: 16px;
+  background: none;
+  border: 0;
+  padding: 0;
 }
 .directory {
   display: block;
   text-align: left;
   width: 100%;
-  margin: 7px 0;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 14px 0;
   overflow-wrap: anywhere;
 }
 .path {
   font-family: ui-monospace, monospace;
   font-size: 12px;
-  color: var(--accent);
+  color: var(--muted);
+  margin: 0 0 12px;
 }
 .browser .row {
   justify-content: space-between;

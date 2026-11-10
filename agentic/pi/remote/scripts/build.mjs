@@ -30,11 +30,13 @@ const assets = fs
   .map((name) => `/assets/${name}`);
 const worker = path.join(web, "sw.js");
 const source = fs.readFileSync(worker, "utf8");
-const version = createHash("sha256")
-  .update(source)
-  .update(JSON.stringify(assets))
-  .digest("hex")
-  .slice(0, 16);
+const fingerprint = createHash("sha256").update(source).update(JSON.stringify(assets));
+for (const name of fs.readdirSync(web, { recursive: true }).sort()) {
+  const file = path.join(web, name);
+  if (fs.statSync(file).isFile())
+    fingerprint.update(name).update(fs.readFileSync(file));
+}
+const version = fingerprint.digest("hex").slice(0, 16);
 fs.writeFileSync(
   worker,
   source

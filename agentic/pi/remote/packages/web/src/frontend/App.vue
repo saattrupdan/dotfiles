@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from "vue";
-import { RouterLink, RouterView } from "vue-router";
+import { RouterLink } from "vue-router";
 import { useAuth } from "./stores/auth.ts";
 import { useSessions } from "./stores/sessions.ts";
 const auth = useAuth();
@@ -23,19 +23,49 @@ watch(
       <RouterLink
         to="/"
         class="brand"
-        ><span class="mark">pi</span> Remote</RouterLink
-      ><RouterLink
+        aria-label="Pi Remote"
+      >
+        <img
+          src="/icons/pi.svg"
+          alt=""
+          width="44"
+          height="44"
+        />
+        <span>Pi</span>
+      </RouterLink>
+      <RouterLink
         v-if="auth.unlocked && auth.visible"
         to="/settings"
-        class="quiet"
-        >Settings</RouterLink
+        class="icon-button settings-link"
+        aria-label="Settings"
+        title="Settings"
       >
+        <svg
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path
+            d="m9.6 3-.6 2.2-1.5.9-2.2-.6-2.4 4.1 1.6 1.6v1.6l-1.6 1.6 2.4 4.1 2.2-.6 1.5.9.6 2.2h4.8l.6-2.2 1.5-.9 2.2.6 2.4-4.1-1.6-1.6v-1.6l1.6-1.6-2.4-4.1-2.2.6-1.5-.9-.6-2.2z"
+          />
+          <circle
+            cx="12"
+            cy="12"
+            r="3"
+          />
+        </svg>
+      </RouterLink>
     </header>
     <div
       v-if="!auth.online"
       class="offline"
+      role="status"
     >
-      Mac unreachable. Check Tailscale and whether the Mac is awake.
+      Mac offline. Check Tailscale.
     </div>
     <main
       v-if="auth.unlocked"
@@ -47,43 +77,44 @@ watch(
       v-if="!auth.unlocked || !auth.visible"
       class="unlock"
     >
-      <div class="hero-mark">pi</div>
-      <p class="eyebrow">YOUR MAC. YOUR CONVERSATIONS.</p>
-      <h1>
-        {{ auth.visible ? "Pick up where you left off." : "See you in a moment." }}
-      </h1>
-      <p class="muted">
-        Private access over Tailscale. Conversations stay on your Mac.
-      </p>
+      <img
+        class="hero-mark"
+        src="/icons/pi.svg"
+        alt="Pi"
+        width="160"
+        height="160"
+      />
+      <h1>{{ auth.visible ? "Pi Remote" : "Locked" }}</h1>
       <template v-if="auth.visible">
         <template v-if="pairing">
           <label
             >Device name<input
               v-model="deviceName"
-              maxlength="80" /></label
-          ><button
+              maxlength="80"
+          /></label>
+          <button
             class="primary"
             @click="auth.pair(pairing, deviceName)"
           >
-            Pair this iPhone
-          </button> </template
-        ><button
+            Pair iPhone
+          </button>
+        </template>
+        <button
           v-else
           class="primary"
+          aria-label="Unlock with passkey"
           @click="auth.unlock"
         >
-          Unlock with passkey
+          Unlock
         </button>
         <details v-if="!auth.paired">
-          <summary>Pair a new device</summary>
-          <p>
-            Run <code>pi-remote pair</code> on your Mac, then scan the QR code or paste
-            its pairing code here.
-          </p>
+          <summary>Pair a device</summary>
+          <p class="muted small">Run <code>pi-remote pair</code> on your Mac.</p>
           <input
             v-model="pairing"
             autocomplete="off"
-            placeholder="One-time pairing code"
+            aria-label="Pairing code"
+            placeholder="Pairing code"
           />
         </details>
         <p
@@ -95,12 +126,11 @@ watch(
         </p>
       </template>
     </main>
-    <footer>Private by connection. Present while unlocked.</footer>
   </div>
 </template>
 <style scoped>
 .shell {
-  max-width: 820px;
+  max-width: 800px;
   margin: auto;
   min-height: 100dvh;
   padding: 0 22px;
@@ -109,62 +139,53 @@ header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 24px 0;
+  min-height: 76px;
   border-bottom: 1px solid var(--line);
 }
 .brand {
-  font-weight: 700;
-  text-decoration: none;
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 2px;
+  margin-left: -11px;
+  text-decoration: none;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.04em;
 }
-.mark {
-  background: var(--accent);
-  color: var(--bg);
-  border-radius: 10px;
-  padding: 5px 9px;
-  font-family: Georgia, serif;
-  font-size: 24px;
+.brand img,
+.hero-mark {
+  border-radius: 0;
+}
+.settings-link {
+  color: var(--muted);
+  margin-right: -10px;
 }
 .unlock {
-  max-width: 470px;
-  margin: 12vh auto 80px;
+  max-width: 320px;
+  margin: 8dvh auto 0;
+  text-align: center;
 }
 .hero-mark {
-  font-family: Georgia, serif;
-  color: var(--accent);
-  font-size: 78px;
-  line-height: 1;
+  display: block;
+  margin: 0 auto;
 }
-.eyebrow {
-  font-size: 10px;
-  letter-spacing: 0.2em;
-  margin-top: 30px;
-}
-h1 {
-  font-size: clamp(32px, 8vw, 46px);
-  line-height: 1.1;
-  letter-spacing: -0.04em;
+.unlock h1 {
+  font-size: 24px;
+  margin: 0 0 32px;
 }
 .unlock .primary {
   width: 100%;
-  margin-top: 20px;
 }
-footer {
-  color: var(--muted);
-  font-size: 11px;
-  padding: 30px 0;
+.unlock label,
+.unlock details {
+  text-align: left;
+}
+.unlock details {
+  margin-top: 24px;
 }
 .offline {
   margin-top: 16px;
-  background: #554221;
-  padding: 12px;
-  border-radius: 12px;
-  font-size: 13px;
-}
-details {
-  margin-top: 24px;
+  color: var(--muted);
   font-size: 13px;
 }
 </style>

@@ -11,6 +11,16 @@ const store = useSessions();
 const id = computed(() => String(route.params.id));
 const session = computed(() => store.sessions.find((s) => s.sessionId === id.value));
 const question = computed(() => store.prompt[id.value] ?? session.value?.prompt);
+const delivery = computed(() => {
+  const warnings: [string, string][] = [];
+  const details: [string, string][] = [];
+  for (const entry of Object.entries(store.statuses)) {
+    (["delivery_unknown", "rejected"].includes(entry[1]) ? warnings : details).push(
+      entry,
+    );
+  }
+  return { warnings, details };
+});
 const error = ref("");
 const sending = ref(false);
 const images = ref<string[]>([]);
@@ -111,7 +121,7 @@ async function recover() {
 </script>
 <template>
   <section>
-    <p class="eyebrow">{{ session?.state || "Saved conversation" }}</p>
+    <p class="small muted session-state">{{ session?.state || "Saved" }}</p>
     <h1>{{ session?.name || "Conversation" }}</h1>
     <p class="muted small">{{ session?.cwd }}</p>
     <div class="row">
@@ -231,16 +241,27 @@ async function recover() {
     </div>
     <div class="delivery">
       <p
-        v-for="(status, commandId) in store.statuses"
+        v-for="[commandId, status] in delivery.warnings"
         :key="commandId"
-        class="small muted"
+        class="small error"
+        role="status"
       >
-        {{ String(commandId).slice(0, 8) }}: {{ status.replaceAll("_", " ")
+        {{ commandId.slice(0, 8) }}: {{ status.replaceAll("_", " ")
         }}<span v-if="status === 'delivery_unknown'"
           >. Check the conversation before explicitly retrying; retrying may duplicate
           work.</span
         >
       </p>
+      <details v-if="delivery.details.length">
+        <summary class="small muted">Delivery</summary>
+        <p
+          v-for="[commandId, status] in delivery.details"
+          :key="commandId"
+          class="small muted"
+        >
+          {{ commandId.slice(0, 8) }}: {{ status.replaceAll("_", " ") }}
+        </p>
+      </details>
     </div>
     <div class="composer">
       <form
@@ -255,11 +276,9 @@ async function recover() {
           })
         "
       >
-        <p class="eyebrow">Pi needs your answer</p>
         <h3 id="active-question">{{ question.title }}</h3>
         <p class="muted small">
-          {{ Math.max(0, Math.ceil((question.deadline - now) / 60000)) }} minutes
-          remaining
+          {{ Math.max(0, Math.ceil((question.deadline - now) / 60000)) }}m left
         </p>
         <template v-if="question.multiSelect">
           <label
@@ -353,17 +372,14 @@ async function recover() {
             }}
           </button>
         </div>
-        <p class="small muted">
-          Drafts stay in memory and disappear when the app closes or locks.
-        </p>
       </form>
     </div>
   </section>
 </template>
 <style scoped>
 h1 {
-  font-size: 27px;
-  margin-bottom: 10px;
+  font-size: 25px;
+  margin-bottom: 8px;
 }
 .composer {
   position: sticky;
@@ -373,14 +389,14 @@ h1 {
   overscroll-behavior: contain;
   background: var(--bg);
   border-top: 1px solid var(--line);
-  padding: 14px 0 max(8px, env(safe-area-inset-bottom));
+  padding: 12px 0 max(8px, env(safe-area-inset-bottom));
 }
 .composer .row {
   justify-content: space-between;
 }
 .image-button {
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 10px;
   padding: 10px;
   color: var(--accent);
   cursor: pointer;
@@ -413,6 +429,22 @@ h1 {
   margin-right: 10px;
 }
 .delivery {
-  border-top: 1px solid var(--line);
+  margin-top: 12px;
+}
+.session-state {
+  margin: 0 0 8px;
+}
+.composer textarea {
+  border: 0;
+  padding: 10px 0;
+  background: none;
+}
+.image-button {
+  min-height: 44px;
+  margin: 10px 0;
+}
+.question h3 {
+  margin: 0;
+  font-size: 17px;
 }
 </style>

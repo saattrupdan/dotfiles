@@ -55,24 +55,27 @@ async function notifications() {
 </script>
 <template>
   <section>
-    <p class="eyebrow">Private access</p>
     <h1>Settings</h1>
     <div class="card">
       <h2>{{ auth.name }}</h2>
-      <p class="muted">
-        Two-minute background unlock grace. Transcripts, images and drafts are not saved
-        on this phone.
-      </p>
+      <details class="privacy">
+        <summary>Privacy</summary>
+        <p class="muted small">
+          Messages, images and drafts stay in memory. Locking or closing clears them.
+          Background grace: 2 minutes.
+        </p>
+      </details>
       <button
         :disabled="!notificationsSupported"
         @click="notifications"
       >
         Enable notifications
       </button>
-      <p class="small muted">
-        <span v-if="!notificationsSupported">
-          Notifications are unavailable in this browser.
-        </span>
+      <p
+        v-if="!notificationsSupported"
+        class="small muted"
+      >
+        <span> Notifications are unavailable in this browser. </span>
         On iPhone, open Pi Remote from its Home Screen icon to enable notifications.
       </p>
       <p v-if="note">{{ note }}</p>
@@ -83,7 +86,7 @@ async function notifications() {
         {{ error }}
       </p>
     </div>
-    <h2>Paired devices</h2>
+    <h2>Devices</h2>
     <div
       v-for="device in devices"
       :key="device.id"
@@ -102,22 +105,23 @@ async function notifications() {
         Revoke
       </button>
     </div>
-    <p class="muted small">
-      Revocation ends access immediately. A new pairing is required to return.
-    </p>
+    <p class="muted small">Revoke removes access immediately. Pair again to return.</p>
     <button
       @click="
         auth.clear();
         auth.request('/auth/lock', { method: 'POST' }).catch(() => {});
       "
     >
-      Lock now
+      Lock
     </button>
   </section>
 </template>
 <style scoped>
 h2 {
-  font-size: 20px;
+  font-size: 17px;
+}
+.privacy {
+  margin: 10px 0 20px;
 }
 .device {
   justify-content: space-between;
@@ -126,5 +130,8 @@ h2 {
 }
 .card {
   margin-bottom: 28px;
+  background: none;
+  padding: 0;
+  border: 0;
 }
 </style>
