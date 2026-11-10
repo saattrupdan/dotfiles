@@ -1,3 +1,4 @@
+import { Id } from "../../protocol/src/index.ts";
 import { ToolDisplay } from "./tool-display.ts";
 import Fastify from "fastify";
 import cookie from "@fastify/cookie";
@@ -203,6 +204,13 @@ export async function createBroker(
       ...session,
       lastActivity: lastActivity(session),
       state: connected ? session.state : "stopped",
+      controlBlockedReason: session.nativeSessionId
+        ? !connected
+          ? "Resume this session on the Mac to reconnect phone control."
+          : session.nativeSessionEnvelope !== 1
+            ? "Phone control needs /reload in this session on the Mac."
+            : undefined
+        : undefined,
     };
   };
   const nativeSummary = (n: NonNullable<Awaited<ReturnType<History["byId"]>>>) => ({
@@ -214,6 +222,10 @@ export async function createBroker(
     sequence: 0,
     epoch: 0,
     recoveryBlockedReason: n.ambiguous ? "ambiguous_session_id" : undefined,
+    controlBlockedReason:
+      !n.ambiguous && !Id.safeParse(n.nativeId).success
+        ? "Resume this session on the Mac to reconnect phone control."
+        : undefined,
   });
   const find = async (id: string) => {
     const live = store.session(id);
@@ -222,7 +234,7 @@ export async function createBroker(
       return {
         ...liveSummary(live),
         name: named?.name || live.name,
-        id: live.sessionId,
+        id: live.nativeSessionId ?? live.sessionId,
         path: live.sessionFile,
       };
     }
@@ -240,6 +252,8 @@ export async function createBroker(
     const session = store.session(envelope.sessionId);
     if (!session || !inDeploymentScope(config, session) || !recent(session))
       throw new RemoteError("not_owner", 409);
+    if (session.nativeSessionId && session.nativeSessionEnvelope !== 1)
+      throw new RemoteError("native_session_reload_required", 409);
     if (session.epoch !== envelope.epoch) throw new RemoteError("stale_epoch", 409);
     const existing = store.command(envelope.commandId);
     let row;
@@ -345,7 +359,7 @@ export async function createBroker(
         name:
           native.find(
             (row) =>
-              row.nativeId === session.sessionId &&
+              row.nativeId === (session.nativeSessionId ?? session.sessionId) &&
               row.path === canonicalPath(session.sessionFile),
           )?.name || session.name,
       })),
@@ -354,7 +368,8 @@ export async function createBroker(
           (n) =>
             !allLive.some(
               (s) =>
-                s.sessionId === n.nativeId && canonicalPath(s.sessionFile) === n.path,
+                (s.nativeSessionId ?? s.sessionId) === n.nativeId &&
+                canonicalPath(s.sessionFile) === n.path,
             ),
         )
         .map(nativeSummary),
@@ -395,12 +410,14 @@ export async function createBroker(
     const id = sessionId(req);
     const active = store.session(id);
     if (active && inDeploymentScope(config, active) && connections.isConnected(active))
-      return active;
+      return liveSummary(active);
     const ongoing = recovering.get(id);
     if (ongoing) return ongoing;
     const native = await find(id);
     if ("ambiguous" in native && native.ambiguous)
       throw new RemoteError("ambiguous_session_id", 409);
+    if (!Id.safeParse(native.id).success)
+      throw new RemoteError("native_session_resume_required", 409);
     const claimed = recovering.get(id);
     if (claimed) return claimed;
     const pending = processes.launch(native.cwd, native);

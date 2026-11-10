@@ -1,3 +1,4 @@
+import { sessionReference } from "./session-reference.ts";
 import net from "node:net";
 import fs from "node:fs";
 import path from "node:path";
@@ -129,7 +130,11 @@ export class Connections {
               throw new Error("pilot_history_scope");
             registration.sessionFile = canonicalPath(registration.sessionFile);
             instance = registration.instanceId;
-            const old = this.store.session(registration.sessionId);
+            const publicId = sessionReference(
+              registration.sessionFile,
+              registration.sessionId,
+            );
+            const old = this.store.session(publicId);
             const epoch = old
               ? old.instanceId === instance && old.state !== "stopped"
                 ? old.epoch
@@ -137,6 +142,11 @@ export class Connections {
               : 1;
             const session: Session = {
               ...registration,
+              sessionId: publicId,
+              nativeSessionId:
+                publicId === registration.sessionId
+                  ? undefined
+                  : registration.sessionId,
               epoch,
               sequence: old?.sequence ?? 0,
               prompt:
@@ -155,7 +165,7 @@ export class Connections {
             const existing = this.sockets.get(instance);
             if (existing && existing !== socket) existing.destroy();
             this.store.save(session);
-            current = registration.sessionId;
+            current = publicId;
             this.activeSessions.set(instance, current);
             this.sockets.set(instance, socket);
             this.lastSeen.set(instance, Date.now());
@@ -340,7 +350,13 @@ export class Connections {
       Date.now() - (this.lastSeen.get(session.instanceId) ?? 0) > 35000
     )
       throw new Error("owner_unreachable");
-    const line = JSON.stringify({ type: "command", envelope, images }) + "\n";
+    if (session.nativeSessionId && session.nativeSessionEnvelope !== 1)
+      throw new Error("native_session_reload_required");
+    const nativeEnvelope = session.nativeSessionId
+      ? { ...envelope, sessionId: session.nativeSessionId }
+      : envelope;
+    const line =
+      JSON.stringify({ type: "command", envelope: nativeEnvelope, images }) + "\n";
     if (Buffer.byteLength(line) > 16 * 1024 * 1024)
       throw new Error("image_payload_too_large");
     this.store.status(envelope.commandId, "forwarded");

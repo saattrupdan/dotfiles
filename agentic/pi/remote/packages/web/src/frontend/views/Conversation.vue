@@ -21,7 +21,8 @@ const session = computed(() => store.sessions.find((s) => s.sessionId === id.val
 const question = computed(() => store.prompt[id.value] ?? session.value?.prompt);
 const recoveryReason = computed(
   () =>
-    ({
+    session.value?.controlBlockedReason ??
+    {
       laptop_restart_required:
         "Exit all pre-update Pi sessions on your laptop, then reopen Pi once.",
       laptop_activation_required: "Enable laptop phone control on your Mac to connect.",
@@ -29,7 +30,7 @@ const recoveryReason = computed(
         "Pi is still open on your laptop. Waiting for it to reconnect.",
       ambiguous_session_id:
         "This history has a duplicate session ID. Resolve it on your laptop.",
-    })[session.value?.recoveryBlockedReason ?? ""],
+    }[session.value?.recoveryBlockedReason ?? ""],
 );
 const outgoing = computed(() =>
   Object.entries(store.outgoing).filter(
@@ -474,7 +475,7 @@ async function upload(event: Event) {
           ><button
             class="primary"
             type="submit"
-            :disabled="!multi.length"
+            :disabled="Boolean(recoveryReason) || !multi.length"
           >
             Submit selections
           </button> </template
@@ -498,7 +499,7 @@ async function upload(event: Event) {
           /><button
             class="primary"
             type="submit"
-            :disabled="!answer.trim()"
+            :disabled="Boolean(recoveryReason) || !answer.trim()"
           >
             Answer
           </button>

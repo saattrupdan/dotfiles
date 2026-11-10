@@ -339,6 +339,7 @@ export const useSessions = defineStore("sessions", () => {
       session = sessions.value.find((s) => s.sessionId === id);
     }
     if (!session) throw new Error("Conversation not found.");
+    if (session.controlBlockedReason) throw new Error(session.controlBlockedReason);
     if (session.recoveryBlockedReason)
       throw new Error(
         "This conversation cannot connect yet. Check the connection message above.",
@@ -365,6 +366,7 @@ export const useSessions = defineStore("sessions", () => {
     if (command.action === "message") await ensureOwner(id);
     if (expected !== generation || !auth.unlocked) throw new Error("Session locked.");
     const session = sessions.value.find((s) => s.sessionId === id);
+    if (session?.controlBlockedReason) throw new Error(session.controlBlockedReason);
     if (!session?.epoch)
       throw new Error("Resume this conversation on your Mac before sending commands.");
     const commandId = crypto.randomUUID();

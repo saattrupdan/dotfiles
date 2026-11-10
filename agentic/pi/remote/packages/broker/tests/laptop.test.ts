@@ -3,6 +3,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import net from "node:net";
+import { createInterface } from "node:readline";
+import { Id } from "../../protocol/src/index.ts";
+import { sessionReference } from "../src/session-reference.ts";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import WebSocket from "ws";
@@ -27,7 +31,7 @@ function fixture() {
   });
   fs.mkdirSync(path.join(config.agentDir, "sessions/project"), { recursive: true });
   fs.mkdirSync(config.dataDir);
-  const seed = (directory: string, id = randomUUID(), name?: string) => {
+  const seed = (directory: string, id: string = randomUUID(), name?: string) => {
     fs.mkdirSync(directory, { recursive: true });
     const file = path.join(directory, `${randomUUID()}.jsonl`);
     fs.writeFileSync(
@@ -386,19 +390,30 @@ test("phone resume does not require activation or wait for a previously register
   row.state = "disconnected";
   broker.store.save(row);
   let launches = 0;
-  t.mock.method(Processes.prototype, "launch", async (cwd: string, native: { id: string; path: string }) => {
-    assert.equal(cwd, f.root);
-    assert.equal(native.id, saved.id);
-    assert.equal(native.path, saved.file);
-    launches++;
-    return row;
-  });
+  t.mock.method(
+    Processes.prototype,
+    "launch",
+    async (cwd: string, native: { id: string; path: string }) => {
+      assert.equal(cwd, f.root);
+      assert.equal(native.id, saved.id);
+      assert.equal(native.path, saved.file);
+      launches++;
+      return row;
+    },
+  );
   try {
     const headers = authentication(broker, f.config.origin);
-    const detail = await broker.app.inject({ url: `/api/v1/sessions/${saved.id}`, headers });
+    const detail = await broker.app.inject({
+      url: `/api/v1/sessions/${saved.id}`,
+      headers,
+    });
     assert.equal(detail.json().state, "stopped");
     assert.equal(detail.json().recoveryBlockedReason, undefined);
-    const resumed = await broker.app.inject({ method: "POST", url: `/api/v1/sessions/${saved.id}/recover`, headers });
+    const resumed = await broker.app.inject({
+      method: "POST",
+      url: `/api/v1/sessions/${saved.id}/recover`,
+      headers,
+    });
     assert.equal(resumed.statusCode, 200);
     assert.equal(launches, 1);
     assert.equal(fs.existsSync(path.join(f.config.dataDir, "ownership")), false);
@@ -415,9 +430,15 @@ test("phone resume reuses an already-connected session", async (t) => {
   const row = liveSession(saved, f.root);
   broker.store.save(row);
   t.mock.method(broker.connections, "isConnected", () => true);
-  t.mock.method(Processes.prototype, "launch", () => assert.fail("connected session must be reused"));
+  t.mock.method(Processes.prototype, "launch", () =>
+    assert.fail("connected session must be reused"),
+  );
   try {
-    const response = await broker.app.inject({ method: "POST", url: `/api/v1/sessions/${saved.id}/recover`, headers: authentication(broker, f.config.origin) });
+    const response = await broker.app.inject({
+      method: "POST",
+      url: `/api/v1/sessions/${saved.id}/recover`,
+      headers: authentication(broker, f.config.origin),
+    });
     assert.equal(response.statusCode, 200);
     assert.equal(response.json().instanceId, row.instanceId);
   } finally {
@@ -542,7 +563,6 @@ test("rejected subscriptions and later-expired sessions never receive live priva
   }
 });
 
-
 function liveSession(
   saved: { id: string; file: string },
   cwd: string,
@@ -568,3 +588,99 @@ function liveSession(
     lastActivity,
   };
 }
+
+test("native Neovim IDs share one public reference for live metadata and archived history", async () => {
+  const f = fixture();
+  const saved = f.seed(
+    path.join(f.config.agentDir, "sessions/project"),
+    "nvim-native-fixture",
+    "Native Neovim conversation",
+  );
+  const original = fs.readFileSync(saved.file);
+  const publicId = sessionReference(saved.file, saved.id);
+  assert(Id.safeParse(publicId).success);
+  const broker = await createBroker(f.config);
+  const headers = authentication(broker, f.config.origin);
+  const socket = net.connect(path.join(f.config.dataDir, "broker.sock"));
+  const lines = createInterface({ input: socket });
+  const reader = lines[Symbol.asyncIterator]();
+  socket.setTimeout(5000, () => socket.destroy());
+  const line = async () => {
+    const next = await reader.next();
+    assert(!next.done, "Native registration socket closed");
+    return JSON.parse(next.value);
+  };
+  const send = (value: unknown) => socket.write(JSON.stringify(value) + "\n");
+  try {
+    send({ secret: broker.connections.secret });
+    assert.equal((await line()).type, "ready");
+    const registration = {
+      version: 1,
+      instanceId: randomUUID(),
+      pid: process.pid,
+      sessionId: saved.id,
+      sessionFile: saved.file,
+      cwd: f.root,
+      name: "Native fixture",
+      managed: false,
+      model: "fixture/model",
+      thinking: "off",
+      capabilities: [],
+      idle: false,
+      loop: false,
+    };
+    send({ type: "register", data: registration });
+    assert.equal((await line()).type, "registered");
+    const request = (url: string, method: "GET" | "POST" = "GET", payload?: object) =>
+      broker.app.inject({ method, url, headers, ...(payload ? { payload } : {}) });
+    const listing = (await request("/api/v1/sessions")).json();
+    assert.equal(listing.length, 1);
+    assert.equal(listing[0].sessionId, publicId);
+    assert.equal(listing[0].state, "running");
+    assert.match(listing[0].controlBlockedReason, /\/reload/);
+    const folder = (
+      await request(`/api/v1/sessions?folder=${encodeURIComponent(f.root)}`)
+    ).json();
+    assert.equal(folder.length, 1);
+    assert.equal(folder[0].name, "Native Neovim conversation");
+    assert.equal(folder[0].sessionId, publicId);
+    const history = (await request(`/api/v1/sessions/${publicId}/history`)).json();
+    assert.equal(history.messages[0].content, "PRIVATE_FIRST_MESSAGE");
+    const commandId = randomUUID();
+    const blocked = await request(`/api/v1/sessions/${publicId}/actions`, "POST", {
+      version: 1,
+      commandId,
+      sessionId: publicId,
+      epoch: 1,
+      command: { action: "message", text: "Must not dispatch", images: [] },
+    });
+    assert.equal(blocked.statusCode, 409);
+    assert.equal(blocked.json().error, "native_session_reload_required");
+    assert.equal(broker.store.command(commandId), undefined);
+    send({ type: "register", data: { ...registration, nativeSessionEnvelope: 1 } });
+    assert.equal((await line()).type, "registered");
+    assert.equal(
+      (await request(`/api/v1/sessions/${publicId}`)).json().controlBlockedReason,
+      undefined,
+    );
+    send({ type: "unregister" });
+    for (
+      let i = 0;
+      i < 100 && broker.connections.isConnected(broker.store.session(publicId)!);
+      i++
+    )
+      await new Promise((r) => setTimeout(r, 10));
+    const stopped = await request(`/api/v1/sessions/${publicId}/recover`, "POST", {});
+    assert.equal(stopped.statusCode, 409);
+    assert.equal(stopped.json().error, "native_session_resume_required");
+    assert.deepEqual(fs.readFileSync(saved.file), original);
+    const archived = (await new History(f.config).byId(publicId))!;
+    assert.equal(archived.nativeId, saved.id);
+    assert.equal(archived.path, saved.file);
+  } finally {
+    lines.close();
+    socket.destroy();
+    await broker.app.close();
+    f.close();
+  }
+});

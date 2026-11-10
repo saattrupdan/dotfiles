@@ -1,6 +1,7 @@
 import { z } from "zod";
 export const VERSION = 1;
 export const Id = z.string().uuid();
+export const NativeSessionId = z.string().min(1).max(4096);
 export const Command = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("message"),
@@ -43,6 +44,7 @@ export const Envelope = z.object({
   command: Command,
   retryOf: Id.optional(),
 });
+export const NativeEnvelope = Envelope.extend({ sessionId: NativeSessionId });
 export type Envelope = z.infer<typeof Envelope>;
 export type Command = z.infer<typeof Command>;
 export const CommandStatus = z.enum([
@@ -66,7 +68,8 @@ export type Prompt = z.infer<typeof Prompt>;
 export const Registration = z.object({
   version: z.literal(VERSION),
   instanceId: Id,
-  sessionId: Id,
+  sessionId: NativeSessionId,
+  nativeSessionEnvelope: z.literal(1).optional(),
   sessionFile: z.string(),
   cwd: z.string(),
   name: z.string().max(1000),
@@ -88,6 +91,8 @@ export const Registration = z.object({
 });
 export type Registration = z.infer<typeof Registration>;
 export interface Session extends Registration {
+  nativeSessionId?: string;
+  controlBlockedReason?: string;
   recoveryBlockedReason?: string;
   epoch: number;
   sequence: number;

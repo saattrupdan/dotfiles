@@ -12,7 +12,7 @@ import { createBroker } from "../src/server.ts";
 import { Envelope } from "../../protocol/src/index.ts";
 const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 test(
-  "live laptop Pi auto-connects, persists and steers in its original process, then exits gracefully",
+  "live Neovim-ID Pi connects, persists and steers in its original process, then exits gracefully",
   { skip: process.env.PI_REMOTE_LIVE_PROOF !== "1", timeout: 150000 },
   async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-live-proof-"));
@@ -35,6 +35,7 @@ test(
     await broker.app.ready();
     const name = `pi-remote-proof-${randomUUID()}`;
     const marker = randomUUID();
+    const nativeId = `nvim-${randomUUID()}`;
     let target = "";
     const tmux = (...args: string[]) =>
       execFileSync(config.tmux, args, { encoding: "utf8", timeout: 10000 });
@@ -79,6 +80,8 @@ test(
         quote(path.join(agentDir, "bin", "pi")),
         "--thinking off --session-dir",
         quote(sessions),
+        "--session-id",
+        quote(nativeId),
       ].join(" ");
       tmux("send-keys", "-t", `${target}:0.0`, "-l", line);
       tmux("send-keys", "-t", `${target}:0.0`, "Enter");
@@ -87,6 +90,9 @@ test(
         broker.store.sessions().find((s) => broker.connections.isConnected(s)),
       );
       assert.equal(session.cwd, fs.realpathSync(root));
+      assert.equal(session.nativeSessionId, nativeId);
+      assert.notEqual(session.sessionId, nativeId);
+      assert.equal(session.nativeSessionEnvelope, 1);
       assert.equal(session.managed, false);
       const originalPid = session.pid;
       const message = Envelope.parse({
@@ -191,10 +197,7 @@ test(
       broker.store.journal(handoff, "live-proof");
       broker.connections.send(session, handoff);
       await wait(
-        () =>
-          !broker.connections.isConnected(session)
-            ? true
-            : undefined,
+        () => (!broker.connections.isConnected(session) ? true : undefined),
         30000,
       );
       const finalNative = fs.readFileSync(session.sessionFile, "utf8");

@@ -1,10 +1,14 @@
+import { pathReference, sessionReference } from "./session-reference.ts";
 import { ToolDisplay } from "./tool-display.ts";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { createHash } from "node:crypto";
 import { resolvePiPackage } from "../../../../profile/pi-runtime.mjs";
-import { Id, RemoteError, type SessionFolder } from "../../protocol/src/index.ts";
+import {
+  NativeSessionId,
+  RemoteError,
+  type SessionFolder,
+} from "../../protocol/src/index.ts";
 import {
   mainHistory,
   sessionRoots,
@@ -36,13 +40,6 @@ interface NativeModule {
     entries: NativeEntry[],
     leaf?: string | null,
   ) => { messages: unknown[] };
-}
-function reference(file: string) {
-  const bytes = createHash("sha256").update(file).digest().subarray(0, 16);
-  bytes[6] = (bytes[6]! & 15) | 0x50;
-  bytes[8] = (bytes[8]! & 63) | 0x80;
-  const hex = bytes.toString("hex");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 function stamp(stats: fs.Stats) {
   return `${stats.dev}:${stats.ino}:${stats.mtimeMs}:${stats.ctimeMs}:${stats.size}`;
@@ -125,7 +122,7 @@ export class History {
           );
           if (
             header.type !== "session" ||
-            !Id.safeParse(header.id).success ||
+            !NativeSessionId.safeParse(header.id).success ||
             typeof header.cwd !== "string" ||
             !visibleWorkingDirectory(this.config, header.cwd)
           )
@@ -134,7 +131,7 @@ export class History {
             continue;
           const row = {
             path: file,
-            id: header.id,
+            id: sessionReference(file, header.id),
             nativeId: header.id,
             cwd: header.cwd,
             modified: stats.mtime,
@@ -160,7 +157,7 @@ export class History {
     return rows
       .map((row) =>
         counts.get(row.nativeId)! > 1
-          ? { ...row, id: reference(row.path), ambiguous: true }
+          ? { ...row, id: pathReference(row.path), ambiguous: true }
           : row,
       )
       .sort((a, b) => +b.modified - +a.modified);

@@ -1,12 +1,16 @@
 import { expandCommandInput, isInputCommand } from "../_remote_bridge/command-input.ts";
-import { hasRemoteCommand, invokeRemoteCommand, clearRemoteCommands } from "../_remote_bridge/commands.ts";
+import {
+	hasRemoteCommand,
+	invokeRemoteCommand,
+	clearRemoteCommands,
+} from "../_remote_bridge/commands.ts";
 /** Control the existing main-profile process over authenticated local IPC. */
 import net from "node:net";
 import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Envelope, type CommandStatus } from "../../remote/packages/protocol/src/index.ts";
+import { NativeEnvelope, type CommandStatus } from "../../remote/packages/protocol/src/index.ts";
 import { dataDirectory } from "../_remote_bridge/local.ts";
 import { currentPrompt, configurePrompts, respondPrompt } from "../_remote_bridge/prompts.ts";
 import { missingGuards, clearGuards } from "../_remote_bridge/guards.ts";
@@ -15,16 +19,15 @@ import { isLoopActive, suspendLoopForHandoff } from "../_loop_state/state.ts";
 
 const MARKER = /<!-- pi-remote-command:([0-9a-f-]{36}) -->/;
 
-const required = [
-	"vm-isolation",
-	"caffeinate",
-	"question",
-	"conversation-name",
-	"incognito",
-];
+const required = ["vm-isolation", "caffeinate", "question", "conversation-name", "incognito"];
 type Journal = Record<string, { fingerprint: string; status: CommandStatus }>;
 export default function (pi: ExtensionAPI) {
-	if (process.env.PI_SUBAGENT_CHILD === "1" || process.argv.includes("-p") || process.argv.includes("--print")) return;
+	if (
+		process.env.PI_SUBAGENT_CHILD === "1" ||
+		process.argv.includes("-p") ||
+		process.argv.includes("--print")
+	)
+		return;
 	const processState = globalThis as typeof globalThis & { __piRemoteInstance?: string };
 	const instanceId = (processState.__piRemoteInstance ??= randomUUID());
 	let ctx: ExtensionContext;
@@ -98,18 +101,16 @@ export default function (pi: ExtensionAPI) {
 		send({ type: "ack", commandId: id, status, error });
 	};
 	const capabilities = () => {
-		const result = pi
-			.getCommands()
-			.map((c) => ({
-				name: c.name,
-				supported: hasRemoteCommand(c.name) || isInputCommand(c),
-				reason:
-					hasRemoteCommand(c.name) || isInputCommand(c)
-						? undefined
-						: c.name === "incognito"
-							? "Incognito sessions are local-only"
-							: "No remote adapter; use the local terminal",
-			}));
+		const result = pi.getCommands().map((c) => ({
+			name: c.name,
+			supported: hasRemoteCommand(c.name) || isInputCommand(c),
+			reason:
+				hasRemoteCommand(c.name) || isInputCommand(c)
+					? undefined
+					: c.name === "incognito"
+						? "Incognito sessions are local-only"
+						: "No remote adapter; use the local terminal",
+		}));
 		for (const name of [
 			"resume",
 			"new",
@@ -153,6 +154,7 @@ export default function (pi: ExtensionAPI) {
 				version: 1,
 				instanceId: instanceId,
 				sessionId: ctx.sessionManager.getSessionId(),
+				nativeSessionEnvelope: 1,
 				sessionFile: ctx.sessionManager.getSessionFile(),
 				cwd: ctx.cwd,
 				name: pi.getSessionName() ?? "Untitled",
@@ -237,7 +239,7 @@ export default function (pi: ExtensionAPI) {
 		});
 	};
 	const dispatch = async (raw: unknown, images: unknown) => {
-		const envelope = Envelope.parse(raw);
+		const envelope = NativeEnvelope.parse(raw);
 		const id = envelope.commandId;
 		if (!visible() || envelope.sessionId !== ctx.sessionManager.getSessionId()) {
 			send({ type: "ack", commandId: id, status: "rejected", error: "not_owner" });

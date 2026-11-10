@@ -625,6 +625,7 @@ test(
       );
       await t.test("home separates active sessions from folder history", async () => {
         await page.setViewportSize({ width: 402, height: 874 });
+        await publish(undefined);
         extraSessions = [
           "running",
           "idle",
@@ -695,6 +696,16 @@ test(
         await expect(live).toHaveCount(1);
         await live.click();
         await expect(page.getByRole("textbox", { name: "Message Pi" })).toBeVisible();
+        await page.getByRole("button", { name: "Go back", exact: true }).click();
+        await expect(
+          page.getByRole("region", { name: "Active sessions", exact: true }),
+        ).toBeVisible();
+        await expect(
+          page.getByRole("region", { name: "Folders", exact: true }),
+        ).toBeVisible();
+        await expect(
+          page.getByRole("button", { name: "Back to folders", exact: true }),
+        ).toHaveCount(0);
         assert.equal(folderRequests.length, 0);
       });
       await t.test(
@@ -789,7 +800,10 @@ test(
             .toBe(1);
           await page.getByRole("button", { name: "Go back", exact: true }).click();
           await expect(
-            page.getByRole("button", { name: "Back to folders" }),
+            page.getByRole("heading", { name: "Active sessions" }),
+          ).toBeVisible();
+          await expect(
+            page.getByRole("heading", { name: "Folders", exact: true }),
           ).toBeVisible();
           await page.getByRole("link", { name: "New conversation" }).click();
           createError = true;

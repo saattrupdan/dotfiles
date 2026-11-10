@@ -153,3 +153,46 @@ test("home loads folders and live summaries; newer snapshots win and lock purges
     mock.timers.reset();
   }
 });
+
+test("read-only native sessions preserve drafts and never recover or submit commands", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
+  Object.assign(globalThis, {
+    document: { visibilityState: "visible", addEventListener() {} },
+    window: { addEventListener() {} },
+  });
+  setActivePinia(createPinia());
+  const auth = useAuth();
+  const store = useSessions();
+  auth.unlocked = true;
+  const reason = "Phone control needs /reload in this session on the Mac.";
+  const id = "c2d90aba-4820-494b-978d-1991e3e820cf";
+  store.sessions = [
+    {
+      sessionId: id,
+      epoch: 1,
+      state: "running",
+      controlBlockedReason: reason,
+    } as Session,
+  ];
+  store.drafts[id] = "Keep this draft";
+  const requests: string[] = [];
+  auth.request = (async (url: string) => {
+    requests.push(url);
+    throw new Error("Unexpected request");
+  }) as typeof auth.request;
+  for (const command of [
+    { action: "message", text: "Must stay unsent", images: [] },
+    { action: "stop_session" },
+  ] as const)
+    await assert.rejects(
+      store.command(id, {
+        ...command,
+        ...(command.action === "message" ? { images: [] } : {}),
+      }),
+      /needs \/reload/,
+    );
+  assert.deepEqual(requests, []);
+  assert.equal(store.drafts[id], "Keep this draft");
+  assert.deepEqual(store.pending, {});
+  assert.deepEqual(store.statuses, {});
+});

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
-import { isUsersDirectory } from "./lib/session-paths.ts";
 import Icon from "./components/Icon.vue";
 import { useAuth } from "./stores/auth.ts";
 import { useSessions } from "./stores/sessions.ts";
@@ -18,9 +17,7 @@ const headerTitle = computed(() =>
   route.path.startsWith("/session/") ? current.value?.name : "",
 );
 function back() {
-  const cwd = current.value?.cwd;
-  sessions.folder =
-    route.path.startsWith("/session/") && isUsersDirectory(cwd) ? cwd : undefined;
+  sessions.folder = undefined;
   void router.push("/");
 }
 const preventZoom = (event: Event) => event.preventDefault();
