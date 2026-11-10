@@ -54,7 +54,8 @@ const TOOL_LABELS: Record<string, string> = {
 	recall_memory: "Recalling from memory…",
 	read_concept: "Reading concept…",
 	isolated_new_branch: "Creating branch...",
-	"clean-up-isolated-branch": "Cleaning up branch...",
+	discard_isolated_branch: "Discarding branch...",
+	clean_up_isolated_branch: "Cleaning up branch...",
 };
 
 export default function (pi: ExtensionAPI) {

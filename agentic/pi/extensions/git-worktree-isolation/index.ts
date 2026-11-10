@@ -30,8 +30,10 @@ import {
 	reapStaleWorktrees,
 	releaseManagedWorktree,
 	prepareBranchCleanup,
+	prepareBranchDiscard,
 	prepareBranchReturn,
 	finishBranchCleanup,
+	finishBranchDiscard,
 	rewriteSessionCwd,
 	sessionCwd,
 	type SessionManifest,
@@ -106,7 +108,8 @@ export function recoveredFromRateLimit(ctx: ExtensionContext): boolean {
 
 const SYSTEM_INSTRUCTION = `You are running in an isolated Git worktree managed by Pi.
 Before concluding any turn that changes files, commit all intended changes and leave the worktree clean.
-The feature branch is not merged automatically. Once its changes are on main, call clean-up-isolated-branch to return to main and remove the worktree and branch. If a PR or direct merge is needed, ask the user before merging; then retry the tool. Ignored outputs stay here; remove or save them before cleanup.
+The feature branch is not merged automatically. Once its changes are on main, call clean_up_isolated_branch to return to main and remove the worktree and branch. If a PR or direct merge is needed, ask the user before merging; then retry the tool. Ignored outputs stay here; remove or save them before cleanup.
+To intentionally abandon this isolated branch instead, call discard_isolated_branch. It deletes unmerged commits and all tracked, untracked, and ignored files in this worktree, then returns to main. Linked files in the original checkout are preserved.
 Older resumed sessions may be detached; Pi will publish those commits to the remembered branch.
 Never bypass, remove, or alter the Pi worktree metadata.`;
 
@@ -303,12 +306,26 @@ function renderBranchResult(
 }
 
 function registerUnavailableCleanupTool(pi: ExtensionAPI): void {
-	pi.registerCommand("clean-up-isolated-branch", {
+	pi.registerTool({
+		name: "discard_isolated_branch",
+		label: "Discard isolated branch",
+		description: "Permanently discard the current Pi-created isolated branch, including unmerged commits and all local files, and remove its worktree. Returns the saved session to main. Requires the original managed branch; never merges or deletes remote branches.",
+		parameters: Type.Object({}),
+		executionMode: "sequential",
+		async execute() { throw new Error(CLEANUP_UNAVAILABLE); },
+		renderCall(_args, theme) {
+			return new Text(theme.fg("toolTitle", theme.bold("discard_isolated_branch")), 0, 0);
+		},
+		renderResult(result, options, theme, context) {
+			return renderBranchResult(result, options, theme, context.isError, "discarded branch and worktree", "discarding branch");
+		},
+	});
+	pi.registerCommand("clean_up_isolated_branch", {
 		description: "Clean up the current isolated feature branch after its changes reach main",
 		async handler(_args, ctx) { ctx.ui.notify(CLEANUP_UNAVAILABLE, "warning"); },
 	});
 	pi.registerTool({
-		name: "clean-up-isolated-branch",
+		name: "clean_up_isolated_branch",
 		label: "Clean up isolated branch",
 		description: "Clean up an explicitly created isolated feature branch after its changes are on main. Requires running inside that managed branch; never merges a PR or branch automatically.",
 		parameters: Type.Object({}),
@@ -317,7 +334,7 @@ function registerUnavailableCleanupTool(pi: ExtensionAPI): void {
 			throw new Error(CLEANUP_UNAVAILABLE);
 		},
 		renderCall(_args, theme) {
-			return new Text(theme.fg("toolTitle", theme.bold("clean-up-isolated-branch")), 0, 0);
+			return new Text(theme.fg("toolTitle", theme.bold("clean_up_isolated_branch")), 0, 0);
 		},
 		renderResult(result, options, theme, context) {
 			return renderBranchResult(result, options, theme, context.isError, "cleaned up branch and worktree", "cleaning up branch");
@@ -346,7 +363,7 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 	});
 	let repairTurns = 0;
 	let enforcementRunning = false;
-	let pendingCleanup: { sessionFile: string; mainRoot: string; branchSha: string; branchExists: boolean } | null = null;
+	let pendingCleanup: { sessionFile: string; mainRoot: string; branchSha: string; branchExists: boolean; discard?: boolean } | null = null;
 	let releaseSessionLease: (() => Promise<void>) | null = null;
 
 	const releaseTranscript = async (): Promise<void> => {
@@ -498,20 +515,22 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 	});
 
 	const finishCleanup = async (
-		sessionFile: string, mainRoot: string, branchSha: string, branchExists: boolean, ctx: ExtensionContext,
+		sessionFile: string, mainRoot: string, branchSha: string, branchExists: boolean, ctx: ExtensionContext, discard = false,
 	): Promise<void> => {
 		// Do not leave Pi's process cwd pointing into a worktree we remove.
 		process.chdir(mainRoot);
-		const mainCwd = await finishBranchCleanup(manifest, sessionFile, mainRoot, branchSha, branchExists);
+		const mainCwd = discard
+			? await finishBranchDiscard(manifest, sessionFile, mainRoot, branchSha)
+			: await finishBranchCleanup(manifest, sessionFile, mainRoot, branchSha, branchExists);
 		ctx.ui.setStatus("git-worktree-isolation", undefined);
 		await releaseTranscript();
 		return resumeInManagedWorktree(sessionFile, mainCwd, undefined, true, ctx);
 	};
-	pi.registerCommand("clean-up-isolated-branch", {
+	pi.registerCommand("clean_up_isolated_branch", {
 		description: "Return to main after verifying the isolated work is integrated",
 		async handler(args, ctx) {
 			if (args.trim()) {
-				ctx.ui.notify("/clean-up-isolated-branch takes no arguments.", "warning");
+				ctx.ui.notify("/clean_up_isolated_branch takes no arguments.", "warning");
 				return;
 			}
 			if (!ctx.isIdle()) await ctx.waitForIdle();
@@ -549,7 +568,7 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 		},
 	});
 	pi.registerTool({
-		name: "clean-up-isolated-branch",
+		name: "clean_up_isolated_branch",
 		label: "Clean up isolated branch",
 		description: "Return to main and remove this managed worktree after its changes are already on main. Deletes only a feature branch created by isolated_new_branch if it still exists. Fetches and safely fast-forwards main. Never merges a branch or PR automatically.",
 		parameters: Type.Object({}),
@@ -563,10 +582,31 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 			return { content: [{ type: "text", text: `Verified this worktree's HEAD is on main. Cleaning up the isolated worktree and returning to main.` }], details: undefined };
 		},
 		renderCall(_args, theme) {
-			return new Text(theme.fg("toolTitle", theme.bold("clean-up-isolated-branch")), 0, 0);
+			return new Text(theme.fg("toolTitle", theme.bold("clean_up_isolated_branch")), 0, 0);
 		},
 		renderResult(result, options, theme, context) {
 			return renderBranchResult(result, options, theme, context.isError, "cleaned up branch and worktree", "cleaning up branch");
+		},
+	});
+	pi.registerTool({
+		name: "discard_isolated_branch",
+		label: "Discard isolated branch",
+		description: "Permanently abandon this Pi-created isolated branch: delete unmerged commits, tracked edits, untracked and ignored files, and its worktree, then return the saved sessions to main. Preserves linked targets in the original checkout. Requires the original managed branch. Never merges, changes main, or deletes remote branches. Use only when the work should be abandoned.",
+		parameters: Type.Object({}),
+		executionMode: "sequential",
+		async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+			if (pendingCleanup) throw new Error("Cleanup is already in progress.");
+			const sessionFile = ctx.sessionManager.getSessionFile();
+			if (!sessionFile) throw new Error("A saved Pi session is required to discard this branch.");
+			const prepared = await prepareBranchDiscard(manifest);
+			pendingCleanup = { sessionFile, ...prepared, discard: true };
+			return { content: [{ type: "text", text: "Discarding this isolated branch, its unmerged commits, and all local files. Removing the worktree and returning saved sessions to main." }], details: undefined };
+		},
+		renderCall(_args, theme) {
+			return new Text(theme.fg("toolTitle", theme.bold("discard_isolated_branch")), 0, 0);
+		},
+		renderResult(result, options, theme, context) {
+			return renderBranchResult(result, options, theme, context.isError, "discarded branch and worktree", "discarding branch");
 		},
 	});
 	// The tool result is persisted before turn_end; aborting inside execute instead
@@ -576,11 +616,10 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 		: undefined);
 	onTransitionBoundary(pi, async (_event, ctx) => {
 		if (!pendingCleanup) return;
-		const { sessionFile, mainRoot, branchSha, branchExists } = pendingCleanup;
-		pendingCleanup = null;
+		const { sessionFile, mainRoot, branchSha, branchExists, discard } = pendingCleanup;
 		try {
-			pi.events.emit("thinking-status:override", { label: "Cleaning up branch..." });
-			await finishCleanup(sessionFile, mainRoot, branchSha, branchExists, ctx);
+			pi.events.emit("thinking-status:override", { label: discard ? "Discarding branch..." : "Cleaning up branch..." });
+			await finishCleanup(sessionFile, mainRoot, branchSha, branchExists, ctx, discard);
 		} catch (error) {
 			fatal(`isolated branch cleanup stopped: ${error instanceof Error ? error.message : String(error)}`);
 		}
@@ -688,7 +727,7 @@ export default async function (pi: ExtensionAPI) {
 			await signalChildReady();
 			pi.sendMessage({
 				customType: "git-worktree-isolation:cleanup-complete",
-				content: "The isolated branch cleanup has returned this session to main. Continue the previous request and complete any remaining work before giving the user a brief completion message. Cleaning up the branch does not finish the request or the current loop iteration. Do not call clean-up-isolated-branch again.",
+				content: "The isolated branch cleanup has returned this session to main. Continue the previous request and complete any remaining work before giving the user a brief completion message. Cleaning up the branch does not finish the request or the current loop iteration. Do not call clean_up_isolated_branch or discard_isolated_branch again. If the work was discarded, do not recreate the abandoned changes.",
 				display: false,
 			}, { triggerTurn: true });
 			if (settled) await settled;

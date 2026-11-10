@@ -26,8 +26,10 @@ import {
 	hydrateIgnoredPaths,
 	loadResumeRecord,
 	prepareBranchCleanup,
+	prepareBranchDiscard,
 	prepareBranchReturn,
 	finishBranchCleanup,
+	finishBranchDiscard,
 	reapStaleWorktrees,
 	releaseManagedWorktree,
 	rewriteSessionCwd,
@@ -246,16 +248,18 @@ test("registers an opt-in branch tool without isolating ordinary sessions", asyn
 		}
 		assert.deepEqual(statuses, [["git-worktree-isolation", undefined]]);
 		assert.ok(tools.has("isolated_new_branch"));
-		assert.ok(tools.has("clean-up-isolated-branch"));
-		assert.ok(commands.includes("clean-up-isolated-branch"));
-		await assert.rejects(tools.get("clean-up-isolated-branch")!.execute(), /No eligible isolated feature branch/);
+		assert.ok(tools.has("discard_isolated_branch"));
+		await assert.rejects(tools.get("discard_isolated_branch")!.execute(), /No eligible isolated feature branch/);
+		assert.ok(tools.has("clean_up_isolated_branch"));
+		assert.ok(commands.includes("clean_up_isolated_branch"));
+		await assert.rejects(tools.get("clean_up_isolated_branch")!.execute(), /No eligible isolated feature branch/);
 		tools.clear();
 		const originalArgv = process.argv;
 		try {
 			process.argv = ["node", "pi", "--session", path.join(agentDir, "session.jsonl")];
 			await registerIsolation(pi);
 			assert.ok(tools.has("isolated_new_branch"), "resuming an ordinary session must retain the branch tool");
-			assert.ok(tools.has("clean-up-isolated-branch"));
+			assert.ok(tools.has("clean_up_isolated_branch"));
 		} finally {
 			process.argv = originalArgv;
 		}
@@ -471,11 +475,12 @@ test("cleanup tool is discoverable in the exempt dotfiles checkout", async () =>
 		on: () => undefined,
 	} as unknown as ExtensionAPI;
 	await registerIsolation(pi);
-	assert.deepEqual(tools.map((tool) => tool.name), ["clean-up-isolated-branch"]);
-	assert.deepEqual(commands, ["clean-up-isolated-branch"]);
+	assert.deepEqual(tools.map((tool) => tool.name), ["discard_isolated_branch", "clean_up_isolated_branch"]);
+	assert.deepEqual(commands, ["clean_up_isolated_branch"]);
 	const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text };
-	assert.equal(tools[0]!.renderCall({}, theme).render(100).join("").trimEnd(), "clean-up-isolated-branch");
-	assert.equal(tools[0]!.renderResult({ content: [] }, { expanded: false, isPartial: true }, theme, { isError: false }).render(100).join("").trimEnd(), "⋯ cleaning up branch");
+	assert.equal(tools[0]!.renderCall({}, theme).render(100).join("").trimEnd(), "discard_isolated_branch");
+	assert.equal(tools[1]!.renderCall({}, theme).render(100).join("").trimEnd(), "clean_up_isolated_branch");
+	assert.equal(tools[1]!.renderResult({ content: [] }, { expanded: false, isPartial: true }, theme, { isError: false }).render(100).join("").trimEnd(), "⋯ cleaning up branch");
 });
 
 test("ordinary startup reaps a clean abandoned managed worktree", async () => {
@@ -1392,8 +1397,8 @@ test("managed feature sessions expose cleanup but do not auto-release on quit", 
 		},
 	} as unknown as ExtensionAPI;
 	await registerIsolation(pi);
-	assert.ok(tools.has("clean-up-isolated-branch"));
-	assert.ok(commands.has("clean-up-isolated-branch"));
+	assert.ok(tools.has("clean_up_isolated_branch"));
+	assert.ok(commands.has("clean_up_isolated_branch"));
 	const branchTool = tools.get("isolated_new_branch")!;
 	const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text };
 	const savedResult = { content: [{ type: "text" as const, text: `Created feat/keep at ${plan.childCwd}. Continuing this session there now.` }] };
@@ -1428,14 +1433,14 @@ test("managed feature sessions expose cleanup but do not auto-release on quit", 
 		else process.env.PI_WORKTREE_BRANCH_CONTINUATION = previousContinuation;
 	}
 	let aborted = false;
-	await assert.rejects(tools.get("clean-up-isolated-branch")!.execute("call", {}, undefined, undefined, {
+	await assert.rejects(tools.get("clean_up_isolated_branch")!.execute("call", {}, undefined, undefined, {
 		sessionManager: { getSessionFile: () => sessionFile },
 		abort: () => { aborted = true; },
 	}), /ask the user before merging/);
 	assert.equal(aborted, false);
 	const notifications: string[] = [];
 	const widgets: Array<string | undefined> = [];
-	await commands.get("clean-up-isolated-branch")!.handler("", {
+	await commands.get("clean_up_isolated_branch")!.handler("", {
 		isIdle: () => true,
 		sessionManager: { getSessionFile: () => sessionFile },
 		hasUI: true,
@@ -1452,6 +1457,177 @@ test("managed feature sessions expose cleanup but do not auto-release on quit", 
 	}
 	assert.equal(fs.existsSync(plan.childCwd), true);
 	assert.equal(await sessionCwd(sessionFile), plan.childCwd);
+});
+
+test("discard removes unmerged commits and dirty files while preserving main and linked targets", async () => {
+	const { root, agentDir } = createRepo();
+	fs.writeFileSync(path.join(root, ".gitignore"), "shared/\n.env\nresults/\n");
+	command(root, ["add", ".gitignore"]);
+	command(root, ["commit", "-m", "chore: ignore local files"]);
+	fs.mkdirSync(path.join(root, "shared"));
+	fs.writeFileSync(path.join(root, "shared", "keep"), "original\n");
+	fs.writeFileSync(path.join(root, ".env"), "keep\n");
+	const plan = await createLaunchPlan(root, agentDir, "feat/abandoned");
+	fs.writeFileSync(path.join(plan.childCwd, "feature.txt"), "abandoned\n");
+	command(plan.childCwd, ["add", "feature.txt"]);
+	command(plan.childCwd, ["commit", "-m", "feat: abandoned work"]);
+	const dir = sessionDirectoryForCwd(plan.childCwd, agentDir);
+	const current = path.join(dir, "current.jsonl");
+	const older = path.join(dir, "older.jsonl");
+	const nested = path.join(plan.childCwd, "only-on-branch");
+	fs.mkdirSync(nested);
+	fs.writeFileSync(current, `${JSON.stringify({ type: "session", cwd: plan.childCwd })}\n`);
+	fs.writeFileSync(older, `${JSON.stringify({ type: "session", cwd: nested })}\n`);
+	const checkpoint = await checkpointSession(plan.manifest, older);
+	// Replaced ignored links and arbitrary ignored output are discarded too.
+	fs.unlinkSync(path.join(plan.childCwd, ".env"));
+	fs.writeFileSync(path.join(plan.childCwd, ".env"), "local replacement\n");
+	fs.mkdirSync(path.join(plan.childCwd, "results"));
+	fs.writeFileSync(path.join(plan.childCwd, "results", "output"), "local\n");
+	fs.writeFileSync(path.join(plan.childCwd, "base.txt"), "staged\n");
+	command(plan.childCwd, ["add", "base.txt"]);
+	fs.writeFileSync(path.join(plan.childCwd, "base.txt"), "unstaged\n");
+	fs.writeFileSync(path.join(plan.childCwd, "untracked.txt"), "local\n");
+	const mainSha = command(root, ["rev-parse", "HEAD"]);
+	fs.writeFileSync(path.join(root, "main-untracked.txt"), "keep\n");
+	await assert.rejects(prepareBranchCleanup(plan.manifest), /not clean/);
+	const { mainRoot, branchSha } = await prepareBranchDiscard(plan.manifest);
+	assert.equal(await finishBranchDiscard(plan.manifest, current, mainRoot, branchSha), fs.realpathSync(root));
+	assert.equal(fs.existsSync(plan.childCwd), false);
+	assert.equal(fs.existsSync(plan.manifest.manifestPath), false);
+	assert.equal(command(root, ["branch", "--list", "feat/abandoned"]), "");
+	assert.equal(command(root, ["rev-parse", "HEAD"]), mainSha);
+	assert.equal(fs.readFileSync(path.join(root, "base.txt"), "utf8"), "base\n");
+	assert.equal(fs.readFileSync(path.join(root, "main-untracked.txt"), "utf8"), "keep\n");
+	assert.equal(fs.readFileSync(path.join(root, ".env"), "utf8"), "keep\n");
+	assert.equal(fs.readFileSync(path.join(root, "shared", "keep"), "utf8"), "original\n");
+	assert.equal(fs.existsSync(path.join(root, "feature.txt")), false);
+	for (const file of [current, older]) {
+		assert.equal(await sessionCwd(file), fs.realpathSync(root));
+		assert.equal(await loadResumeRecord(file), null);
+	}
+	assert.equal(command(root, ["for-each-ref", "--format=%(refname)", checkpoint.resumeRef]), "");
+});
+
+test("discard rejects legacy, switched, detached, and main branches", async () => {
+	const { root, agentDir } = createRepo();
+	const legacy = await createLaunchPlan(root, agentDir);
+	await assert.rejects(prepareBranchDiscard(legacy.manifest), /original isolated feature branch/);
+	const plan = await createLaunchPlan(root, agentDir, "feat/owned");
+	command(plan.childCwd, ["switch", "-c", "feat/not-owned"]);
+	await assert.rejects(prepareBranchDiscard(plan.manifest), /original isolated feature branch/);
+	command(plan.childCwd, ["switch", "--detach"]);
+	await assert.rejects(prepareBranchDiscard(plan.manifest), /original isolated feature branch/);
+	await assert.rejects(prepareBranchDiscard({ ...plan.manifest, createdBranch: "main" }), /original isolated feature branch/);
+	assert.equal(fs.existsSync(plan.childCwd), true);
+});
+
+test("discard rechecks feature HEAD and main before removing anything", async () => {
+	const { root, agentDir } = createRepo();
+	const plan = await createLaunchPlan(root, agentDir, "feat/moved");
+	const current = path.join(sessionDirectoryForCwd(plan.childCwd, agentDir), "current.jsonl");
+	fs.writeFileSync(current, `${JSON.stringify({ type: "session", cwd: plan.childCwd })}\n`);
+	const prepared = await prepareBranchDiscard(plan.manifest);
+	fs.writeFileSync(path.join(plan.childCwd, "new.txt"), "new\n");
+	command(plan.childCwd, ["add", "new.txt"]);
+	command(plan.childCwd, ["commit", "-m", "feat: moved"]);
+	await assert.rejects(finishBranchDiscard(plan.manifest, current, prepared.mainRoot, prepared.branchSha), /moved during discard/);
+	assert.equal(await sessionCwd(current), plan.childCwd);
+	const retry = await prepareBranchDiscard(plan.manifest);
+	command(root, ["switch", "-c", "other-main"]);
+	await assert.rejects(finishBranchDiscard(plan.manifest, current, retry.mainRoot, retry.branchSha), /separate main worktree/);
+	assert.equal(fs.existsSync(plan.childCwd), true);
+});
+
+test("discard locks checkout state throughout transcript migration and releases locks on failure", async () => {
+	const { root, agentDir } = createRepo();
+	const plan = await createLaunchPlan(root, agentDir, "feat/locked-discard");
+	command(root, ["branch", "feat/unrelated"]);
+	const current = path.join(sessionDirectoryForCwd(plan.childCwd, agentDir), "current.jsonl");
+	fs.writeFileSync(current, `${JSON.stringify({ type: "session", cwd: plan.childCwd })}\n`);
+	const { mainRoot, branchSha } = await prepareBranchDiscard(plan.manifest);
+	const rename = fs.promises.rename;
+	let attemptedSwitch = false;
+	fs.promises.rename = async (from, to) => {
+		if (String(to) === `${fs.realpathSync(current)}.pi-worktree.json`) {
+			attemptedSwitch = true;
+			assert.throws(() => command(plan.childCwd, ["switch", "feat/unrelated"]), /index.lock/);
+			assert.throws(() => command(plan.childCwd, ["symbolic-ref", "HEAD", "refs/heads/feat/unrelated"]), /HEAD.lock/);
+		}
+		return rename(from, to);
+	};
+	try {
+		await finishBranchDiscard(plan.manifest, current, mainRoot, branchSha);
+	} finally {
+		fs.promises.rename = rename;
+	}
+	assert.equal(attemptedSwitch, true);
+	assert.equal(command(root, ["branch", "--list", "feat/unrelated"]), "feat/unrelated");
+	const failed = await createLaunchPlan(root, agentDir, "feat/failed-discard");
+	const prepared = await prepareBranchDiscard(failed.manifest);
+	const indexLock = command(failed.childCwd, ["rev-parse", "--git-path", "index.lock"]);
+	const headLock = command(failed.childCwd, ["rev-parse", "--git-path", "HEAD.lock"]);
+	fs.writeFileSync(headLock, "another Git process\n");
+	await assert.rejects(finishBranchDiscard(failed.manifest, current, prepared.mainRoot, prepared.branchSha), /EEXIST/);
+	assert.equal(fs.existsSync(indexLock), false);
+	assert.equal(fs.readFileSync(headLock, "utf8"), "another Git process\n");
+});
+
+test("discard refuses pending synchronization and in-progress Git operations", async () => {
+	const { root, agentDir } = createRepo();
+	const plan = await createLaunchPlan(root, agentDir, "feat/busy");
+	await assert.rejects(prepareBranchDiscard({ ...plan.manifest, pendingSync: {} as NonNullable<typeof plan.manifest.pendingSync> }), /still in progress/);
+	const mergeHead = command(plan.childCwd, ["rev-parse", "--git-path", "MERGE_HEAD"]);
+	fs.writeFileSync(mergeHead, `${command(root, ["rev-parse", "HEAD"])}\n`);
+	await assert.rejects(prepareBranchDiscard(plan.manifest), /still in progress/);
+	assert.equal(fs.existsSync(plan.childCwd), true);
+});
+
+test("discard preserves worktree and transcripts when another saved session is active", async () => {
+	const { root, agentDir } = createRepo();
+	const plan = await createLaunchPlan(root, agentDir, "feat/active");
+	const dir = sessionDirectoryForCwd(plan.childCwd, agentDir);
+	const current = path.join(dir, "current.jsonl");
+	const other = path.join(dir, "other.jsonl");
+	for (const file of [current, other]) fs.writeFileSync(file, `${JSON.stringify({ type: "session", cwd: plan.childCwd })}\n`);
+	const release = await acquireSessionLease(other);
+	try {
+		const { mainRoot, branchSha } = await prepareBranchDiscard(plan.manifest);
+		await assert.rejects(finishBranchDiscard(plan.manifest, current, mainRoot, branchSha), /already active/);
+		assert.equal(fs.existsSync(plan.childCwd), true);
+		assert.equal(await sessionCwd(current), plan.childCwd);
+		assert.equal(await sessionCwd(other), plan.childCwd);
+	} finally {
+		await release();
+	}
+});
+
+test("discard tool queues removal after its result and blocks later tool calls and finalization", async () => {
+	const { root, agentDir } = createRepo();
+	const plan = await createLaunchPlan(root, agentDir, "feat/discard-tool");
+	const current = path.join(sessionDirectoryForCwd(plan.childCwd, agentDir), "current.jsonl");
+	fs.writeFileSync(current, `${JSON.stringify({ type: "session", cwd: plan.childCwd })}\n`);
+	fs.writeFileSync(path.join(plan.childCwd, "dirty.txt"), "abandon\n");
+	const tools = new Map<string, { execute: (...args: unknown[]) => Promise<unknown> }>();
+	const handlers = new Map<string, Array<(...args: unknown[]) => unknown>>();
+	await registerIsolation({
+		registerFlag: () => undefined, registerCommand: () => undefined,
+		getFlag: () => false,
+		exec: async () => ({ code: 0, stdout: `${plan.childCwd}\n` }),
+		registerTool: (tool: { name: string; execute: (...args: unknown[]) => Promise<unknown> }) => { tools.set(tool.name, tool); },
+		on: (name: string, handler: (...args: unknown[]) => unknown) => {
+			handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+		},
+		sendMessage: () => assert.fail("pending discard must not trigger a commit-repair turn"),
+	} as unknown as ExtensionAPI);
+	const ctx = { sessionManager: { getSessionFile: () => current } };
+	await tools.get("discard_isolated_branch")!.execute("call", {}, undefined, undefined, ctx);
+	assert.equal(fs.existsSync(plan.childCwd), true, "deletion waits until the tool result is persisted");
+	assert.deepEqual(await handlers.get("tool_call")![0]!(), {
+		block: true, reason: "Branch cleanup is already in progress.", terminate: true,
+	});
+	for (const handler of handlers.get("agent_end") ?? []) await handler({}, ctx);
+	await assert.rejects(tools.get("discard_isolated_branch")!.execute("again", {}, undefined, undefined, ctx), /already in progress/);
 });
 
 test("cleanup refuses an unmerged feature branch and preserves its worktree", async () => {
@@ -1546,11 +1722,11 @@ test("cleanup retires a legacy managed worktree whose target branch was deleted"
 	const cleanupGuard = handlers.get("tool_call")?.at(-1);
 	assert.equal(cleanupGuard?.(), undefined);
 	let aborted = false;
-	const result = await tools.get("clean-up-isolated-branch")!.execute("call", {}, undefined, undefined, {
+	const result = await tools.get("clean_up_isolated_branch")!.execute("call", {}, undefined, undefined, {
 		sessionManager: { getSessionFile: () => sessionFile },
 		abort: () => { aborted = true; },
 	});
-	const render = tools.get("clean-up-isolated-branch")!.renderResult;
+	const render = tools.get("clean_up_isolated_branch")!.renderResult;
 	const theme = { fg: (_color: string, text: string) => text };
 	const output = result as { content: Array<{ type: "text"; text: string }> };
 	assert.equal(render(output, { expanded: false, isPartial: true }, theme, { isError: false }).render(100).join("").trimEnd(), "⋯ cleaning up branch");

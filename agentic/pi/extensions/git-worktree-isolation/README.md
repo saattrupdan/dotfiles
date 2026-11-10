@@ -33,8 +33,8 @@ before the run ends. An automatic follow-up turn asks the agent to finish that w
 Branches created with `isolated_new_branch` and their worktrees remain in place on
 quit, session switch, or crash recovery. They are never merged automatically.
 
-`clean-up-isolated-branch` is a Pi tool and is also available as the interactive
-`/clean-up-isolated-branch` command. Both use the same checks. They appear in
+`clean_up_isolated_branch` is a Pi tool and is also available as the interactive
+`/clean_up_isolated_branch` command. Both use the same checks. They appear in
 ordinary sessions too. Cleanup requires a managed worktree. A branch that Pi did
 not create may still be checked out when cleanup runs, but is preserved. In
 unmanaged sessions the tool explains why cleanup is unavailable. Restart Pi to
@@ -47,7 +47,16 @@ stops without deleting anything. If there is a PR, the agent must ask the user
 before merging it; without a PR, it must ask before merging the branch directly.
 After an approved merge, call the cleanup tool again. It does not perform merges.
 
-After verification, the tool moves saved sessions to the main checkout, removes
+To abandon work instead of landing it, call `discard_isolated_branch`. It removes
+unmerged commits, staged and unstaged edits, untracked and ignored files, the local
+branch, and its worktree. It requires the original branch created by
+`isolated_new_branch`; legacy, detached, and agent-selected branches are rejected.
+Saved sessions return to `main`. Linked targets in the original checkout and remote
+branches are preserved. Discard does not fetch, merge, or change `main`. Active saved
+sessions, pending synchronization, and in-progress Git operations block discard.
+Git checkout state stays locked throughout transcript migration and removal.
+
+After verification, the cleanup tool moves saved sessions to the main checkout, removes
 the worktree, deletes the originally created local branch if it still exists, and
 relaunches Pi in `main`. A detached managed session with a deleted target branch
 can be cleaned up without deleting any branch. A managed worktree on an

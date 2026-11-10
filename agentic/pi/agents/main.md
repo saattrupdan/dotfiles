@@ -4,7 +4,8 @@ description: Primary Pi coding agent.
 subagent: false
 tools:
   - bash
-  - clean-up-isolated-branch
+  - clean_up_isolated_branch
+  - discard_isolated_branch
   - codemode
   - code_tree
   - edit

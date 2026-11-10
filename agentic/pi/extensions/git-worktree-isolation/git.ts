@@ -1136,7 +1136,7 @@ export async function prepareBranchReturn(manifest: SessionManifest): Promise<st
 		throw new Error("Returning to main requires the original isolated feature branch.");
 	}
 	// Keep this worktree for the open PR. Ignored build outputs can remain here;
-	// deletion-readiness checks belong to clean-up-isolated-branch.
+	// deletion-readiness checks belong to clean_up_isolated_branch.
 	if (manifest.pendingSync || await hasInProgressOperation(manifest) ||
 		await git(manifest.worktreeRoot, ["status", "--porcelain=v1"])) {
 		throw new Error("The managed worktree is not clean; the feature branch was preserved.");
@@ -1206,9 +1206,68 @@ export async function prepareBranchCleanup(manifest: SessionManifest): Promise<{
 	return { mainRoot, branchSha, branchExists };
 }
 
+/** Prepare to abandon only the branch explicitly created for this managed worktree. */
+export async function prepareBranchDiscard(manifest: SessionManifest): Promise<{ mainRoot: string; branchSha: string; branchExists: boolean }> {
+	const branch = manifest.createdBranch;
+	if (!branch || branch === "main" || await currentBranch(manifest.worktreeRoot) !== branch) {
+		throw new Error("Discard requires the original isolated feature branch created by isolated_new_branch.");
+	}
+	if (manifest.pendingSync || await hasInProgressOperation(manifest)) {
+		throw new Error("Checkout synchronization or a Git operation is still in progress; discard was cancelled.");
+	}
+	const worktrees = await listWorktrees(manifest.repoRoot);
+	if (worktrees.some((entry) => entry.branch === branch && path.resolve(entry.path) !== path.resolve(manifest.worktreeRoot))) {
+		throw new Error("The isolated branch is checked out elsewhere; discard was cancelled.");
+	}
+	const main = worktrees.find((entry) => entry.branch === "main");
+	if (!main || main.path === manifest.worktreeRoot) throw new Error("A separate main worktree must be available for discard.");
+	const mainRoot = await fs.promises.realpath(main.path);
+	if (await findCommonGitDir(mainRoot) !== manifest.commonGitDir || await currentBranch(mainRoot) !== "main") {
+		throw new Error("The main worktree changed; discard was cancelled.");
+	}
+	const branchSha = await git(manifest.worktreeRoot, ["rev-parse", "HEAD"]);
+	if (branchSha !== await git(manifest.repoRoot, ["rev-parse", `refs/heads/${branch}`])) {
+		throw new Error("The isolated branch moved unexpectedly; discard was cancelled.");
+	}
+	return { mainRoot, branchSha, branchExists: true };
+}
+
 /** Remove the verified worktree and branch, migrating all its saved sessions to main. */
 export async function finishBranchCleanup(
 	manifest: SessionManifest, sessionFile: string, mainRoot: string, expectedSha: string, branchExists = true,
+): Promise<string> {
+	return finishBranchRemoval(manifest, sessionFile, mainRoot, expectedSha, branchExists, false);
+}
+
+/** Abandon unmerged commits and all local files without changing main or linked targets. */
+export async function finishBranchDiscard(
+	manifest: SessionManifest, sessionFile: string, mainRoot: string, expectedSha: string,
+): Promise<string> {
+	// Git checkout/reset/commit take index.lock; HEAD.lock also blocks direct
+	// symbolic-ref changes. Hold both through migration and forced removal.
+	const locks: Array<{ file: string; handle: fs.promises.FileHandle }> = [];
+	try {
+		for (const name of ["index", "HEAD"]) {
+			const file = resolveGitPath(manifest.worktreeRoot, await git(manifest.worktreeRoot, ["rev-parse", "--git-path", `${name}.lock`]));
+			locks.push({ file, handle: await fs.promises.open(file, "wx") });
+		}
+		const prepared = await prepareBranchDiscard(manifest);
+		if (prepared.branchSha !== expectedSha || prepared.mainRoot !== mainRoot) {
+			throw new Error("The feature branch or main worktree moved during discard; nothing was removed.");
+		}
+		return await finishBranchRemoval(manifest, sessionFile, mainRoot, expectedSha, true, true);
+	} finally {
+		for (const { file, handle } of locks.reverse()) {
+			const owned = await handle.stat();
+			await handle.close();
+			const remaining = await fs.promises.lstat(file).catch(() => null);
+			if (remaining?.ino === owned.ino && remaining.dev === owned.dev) await fs.promises.unlink(file);
+		}
+	}
+}
+
+async function finishBranchRemoval(
+	manifest: SessionManifest, sessionFile: string, mainRoot: string, expectedSha: string, branchExists: boolean, discard: boolean,
 ): Promise<string> {
 	const branch = manifest.createdBranch ?? manifest.targetBranch;
 	const ref = branch ? `refs/heads/${branch}` : "";
@@ -1225,16 +1284,16 @@ export async function finishBranchCleanup(
 		await git(mainRoot, ["symbolic-ref", "--quiet", "--short", "HEAD"]) !== "main") {
 		throw new Error("The main worktree changed branches during cleanup.");
 	}
-	// Recheck main after the agent turn. No merge or branch deletion is allowed
-	// when main no longer proves the branch is integrated.
+	// Cleanup rechecks inclusion after the agent turn. Discard intentionally
+	// abandons unmerged work without requiring inclusion in main.
 	const mainSha = await git(mainRoot, ["rev-parse", "HEAD"]);
-	if ((await run(mainRoot, ["merge-base", "--is-ancestor", expectedSha, mainSha])).code !== 0) {
+	if (!discard && (await run(mainRoot, ["merge-base", "--is-ancestor", expectedSha, mainSha])).code !== 0) {
 		const merged = await run(mainRoot, ["merge-tree", "--write-tree", mainSha, expectedSha]);
 		if (merged.code !== 0 || merged.stdout.split("\n", 1)[0] !== await git(mainRoot, ["rev-parse", `${mainSha}^{tree}`])) {
 			throw new Error("main changed and no longer proves inclusion of the feature branch; cleanup was cancelled.");
 		}
 	}
-	await assertWorktreeReleasable(manifest);
+	if (!discard) await assertWorktreeReleasable(manifest);
 	const dir = sessionDirectoryForCwd(manifest.sessionHubCwd ?? manifest.repoRoot, inferredAgentDir(manifest));
 	const files = (await fs.promises.readdir(dir).catch(() => [] as string[]))
 		.filter((name) => name.endsWith(".jsonl")).map((name) => path.join(dir, name));
@@ -1243,6 +1302,7 @@ export async function finishBranchCleanup(
 	const migrated: SessionResumeRecord[] = [];
 	const releases: Array<() => Promise<void>> = [];
 	const locked = new Set<string>();
+	const worktreeFiles = new Set([current]);
 	const leaseOtherSession = async (file: string): Promise<void> => {
 		const canonical = await canonicalSessionFilePath(file);
 		if (canonical === current || locked.has(canonical)) return;
@@ -1253,7 +1313,7 @@ export async function finishBranchCleanup(
 		for (const file of manifest.createdBranch ? files : []) {
 			const record = await loadResumeRecord(file);
 			if (record?.targetRef !== `refs/heads/${branch}` || record.commonGitDir !== manifest.commonGitDir) continue;
-			if ((await run(mainRoot, ["merge-base", "--is-ancestor", record.resumeSha, expectedSha])).code !== 0) {
+			if (!discard && (await run(mainRoot, ["merge-base", "--is-ancestor", record.resumeSha, expectedSha])).code !== 0) {
 				throw new Error(`Saved session ${file} is not part of the feature branch; cleanup was cancelled.`);
 			}
 			await leaseOtherSession(file);
@@ -1262,11 +1322,19 @@ export async function finishBranchCleanup(
 		for (const file of files) {
 			const cwd = await sessionCwd(file);
 			if (!cwd || (cwd !== manifest.worktreeRoot && !cwd.startsWith(`${manifest.worktreeRoot}${path.sep}`))) continue;
+			worktreeFiles.add(file);
 			await leaseOtherSession(file);
 		}
 		// Protected resume refs make a partial failure recoverable until all
 		// transcripts have been moved. An owned branch remains until then.
-		const checkpointed = await checkpointWorktreeSessions(manifest, sessionFile);
+		const checkpointed: SessionResumeRecord[] = [];
+		if (discard) {
+			// Discard intentionally accepts dirty files. Protect the committed HEAD
+			// while migrating transcripts, without committing the abandoned files.
+			for (const file of worktreeFiles) checkpointed.push(await writeResumeCheckpoint(manifest, file, expectedSha));
+		} else {
+			checkpointed.push(...await checkpointWorktreeSessions(manifest, sessionFile));
+		}
 		const records = new Map([...migrated, ...checkpointed].map((record) => [record.sessionFile, record]));
 		// Older checkpoints on an unowned branch (especially main) could belong
 		// to another worktree; only migrate sessions still in this worktree.
@@ -1292,7 +1360,13 @@ export async function finishBranchCleanup(
 		const intendedDestination = path.join(mainRoot, manifest.launchCwdRelative);
 		const destination = (await fs.promises.stat(intendedDestination).catch(() => null))?.isDirectory()
 			? intendedDestination : mainRoot;
-		await releaseManagedWorktree(manifest);
+		if (discard) {
+			const prepared = await prepareBranchDiscard(manifest);
+			if (prepared.branchSha !== expectedSha || prepared.mainRoot !== mainRoot) {
+				throw new Error("The feature branch or main worktree moved during discard; nothing was removed.");
+			}
+		}
+		await removeManagedWorktree(manifest, discard);
 		if (branchExists && manifest.createdBranch) {
 			if ((await listWorktrees(manifest.repoRoot)).some((entry) => entry.branch === branch)) {
 				throw new Error(`The feature branch ${branch} is still checked out elsewhere; the worktree was released but the branch was preserved.`);
@@ -1306,8 +1380,15 @@ export async function finishBranchCleanup(
 }
 
 export async function releaseManagedWorktree(manifest: SessionManifest): Promise<void> {
-	await assertWorktreeReleasable(manifest);
-	await cleanLinkedIgnoredPaths(manifest);
+	await removeManagedWorktree(manifest, false);
+}
+
+async function removeManagedWorktree(manifest: SessionManifest, discard: boolean): Promise<void> {
+	if (!discard) {
+		await assertWorktreeReleasable(manifest);
+		await cleanLinkedIgnoredPaths(manifest);
+	}
+	// Git removes symlinks themselves, never their targets in the original checkout.
 	await git(manifest.repoRoot, ["worktree", "unlock", manifest.worktreeRoot]);
 	try {
 		await git(manifest.repoRoot, ["worktree", "remove", "--force", manifest.worktreeRoot]);

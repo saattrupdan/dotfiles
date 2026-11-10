@@ -487,7 +487,7 @@ for (const mode of ["terminal", "neovim"] as const) {
           60000,
         );
         const returnOffset = fixture.events(pane!.label).length;
-        fixture.command(pane, "/clean-up-isolated-branch");
+        fixture.command(pane, "/clean_up_isolated_branch");
         const returned = await fixture.start(pane, returnOffset);
         assert.equal(returned.id, original.id);
         assert.equal(returned.cwd, repo);

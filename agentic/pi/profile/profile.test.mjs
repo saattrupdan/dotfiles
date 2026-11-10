@@ -58,8 +58,8 @@ test("validates role, resource lists, and empty allow-lists", () => {
 		assert.throws(() => profile("librarian", { tools }), /literal tool names/);
 	}
 	assert.deepEqual(
-		profile("main", { tools: ["clean-up-isolated-branch", "mcp__example__ExampleTool"] }).tools,
-		["clean-up-isolated-branch", "mcp__example__ExampleTool"],
+		profile("main", { tools: ["clean_up_isolated_branch", "mcp__example__ExampleTool"] }).tools,
+		["clean_up_isolated_branch", "mcp__example__ExampleTool"],
 	);
 	assert.throws(
 		() => profile("librarian", { refuse: [{ pattern: "[", message: "bad" }] }),
