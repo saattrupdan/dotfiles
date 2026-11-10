@@ -6,7 +6,6 @@ import { markGuard, clearGuards } from "../_remote_bridge/guards.ts";
 import path from "node:path";
 import fs from "node:fs";
 import {
-	SessionManager,
 	type ExtensionAPI,
 	type ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
@@ -22,6 +21,7 @@ import {
 import { withOwnedTransition, type OwnershipState } from "../_session_ownership/transition.ts";
 import { OwnedEditor } from "../_session_ownership/editor.ts";
 import { interactiveQueue } from "../_interactive_queue/queue.ts";
+import { listSavedSessions } from "../../profile/saved-sessions.mjs";
 import { localAction } from "../_remote_bridge/local.ts";
 import { isLoopActive } from "../_loop_state/state.ts";
 type State = OwnershipState;
@@ -143,19 +143,16 @@ async function resume(query: string, ctx: ExtensionCommandContext, state: State)
 			return;
 		}
 		await ctx.waitForIdle();
-		const scope = process.env.PI_SESSION_HISTORY_SCOPE;
-		const discovered = scope
-			? [await SessionManager.listAll(fs.realpathSync(scope))]
-			: await Promise.all([
-				SessionManager.listAll(),
-				SessionManager.listAll(ctx.sessionManager.getSessionDir()),
-			]);
-		const sessions = [...new Map(discovered.flat().map((session) => [session.path, session])).values()]
+		const sessions = listSavedSessions({
+			agentDir: process.env.PI_CODING_AGENT_DIR,
+			sessionDir: ctx.sessionManager.getSessionDir(),
+			scope: process.env.PI_SESSION_HISTORY_SCOPE,
+		})
 			.filter(
 				(s) =>
 					historyInScope(s.path) &&
 					s.path !== state.current &&
-					(!query || `${s.name} ${s.cwd} ${s.id}`.toLowerCase().includes(query.toLowerCase())),
+					(!query || `${s.name ?? ""} ${s.firstMessage} ${s.cwd} ${s.id}`.toLowerCase().includes(query.toLowerCase())),
 			)
 			.sort((a, b) => +b.modified - +a.modified);
 		if (!sessions.length) {

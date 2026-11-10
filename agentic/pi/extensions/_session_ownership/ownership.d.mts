@@ -28,4 +28,3 @@ export function release(file: string, owner: Owner, root?: string): void;
 export function adopt(previous: Owner, next: Owner, root?: string): void;
 export function ownedRecord(root?: string): { owner: Owner; root: string } | undefined;
 export function reserveId(id: string, owner: Owner, root?: string): void;
-export const SUPPORTED_PI_VERSION: string;

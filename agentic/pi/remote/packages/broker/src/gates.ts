@@ -1,4 +1,3 @@
-import { resolvePiPackage } from "../../../../profile/pi-runtime.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
@@ -62,8 +61,6 @@ export function sourceDigest(root: string) {
     "extensions/splash/index.ts",
   ])
     add(path.join(root, name));
-  hash.update("installed-pi-runtime");
-  hash.update(fs.readFileSync(path.join(resolvePiPackage(), "package.json")));
   return hash.digest("hex");
 }
 export function gates(config: { dataDir: string; agentDir: string }) {

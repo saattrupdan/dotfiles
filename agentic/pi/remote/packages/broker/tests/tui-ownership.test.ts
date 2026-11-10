@@ -151,6 +151,50 @@ test(
   },
 );
 
+test(
+  "real terminal: saved sessions appear without scanning multi-GB transcripts",
+  { skip: process.env.PI_REMOTE_TUI_PROOF !== "1", timeout: 60000 },
+  async () => {
+    const fixture = new TuiFixture(true);
+    let pane: Pane | undefined;
+    try {
+      const seed = await fixture.seed("large-history");
+      const fd = fs.openSync(seed.file, "r+");
+      try {
+        const end = 4 * 1024 ** 3;
+        fs.ftruncateSync(fd, end);
+        fs.writeSync(fd, '\n{"type":"session_info","name":"Large saved conversation"}\n', end);
+      } finally {
+        fs.closeSync(fd);
+      }
+      pane = await fixture.launch("large-history");
+      const initial = await fixture.start(pane);
+      const start = Date.now();
+      fixture.command(pane, `/resume ${seed.id}`);
+      await fixture.screenHas(pane, "Large saved conversation");
+      assert(Date.now() - start < 5000, "picker must not wait for transcript loading");
+      fixture.keys(pane, "Escape");
+      await waitFor(
+        () => !fixture.screen(pane!).includes("Resume conversation"),
+        "large-history picker cancellation",
+      );
+      fixture.command(pane, "/ownership-proof-ready");
+      await waitFor(
+        () => fixture.events(pane!.label).some((event) => event.kind === "ready"),
+        "editor ready after picker cancellation",
+      );
+      assert.equal(fixture.latest(pane)!.id, initial.id);
+      fixture.owned(initial);
+      assert.equal(inspect(seed.file, fixture.locks), undefined);
+    } catch (error) {
+      if (pane) console.error(fixture.screen(pane));
+      throw error;
+    } finally {
+      await fixture.close();
+    }
+  },
+);
+
 for (const destinationMode of ["terminal", "neovim"] as const) {
   test(
     `real ${destinationMode}: competing owner, transfer cancellation, broker outage and confirmed exit`,

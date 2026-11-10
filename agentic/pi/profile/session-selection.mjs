@@ -3,7 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { ownershipRuntime } from "./pi-runtime.mjs";
+import { listSavedSessions } from "./saved-sessions.mjs";
 import { createInterface } from "node:readline/promises";
 import {
 	acquire,
@@ -12,7 +13,6 @@ import {
 	newOwner,
 	lockRoot,
 	OWNERSHIP_ENV,
-	SUPPORTED_PI_VERSION,
 } from "../extensions/_session_ownership/ownership.mjs";
 const SELECTORS = new Set([
 	"--session",
@@ -38,16 +38,7 @@ export function stripSelectors(args) {
 	return rest;
 }
 export async function prepareOwnedLaunch(args, pkg, env = process.env, cwd = process.cwd()) {
-	const version = JSON.parse(fs.readFileSync(path.join(pkg, "package.json"), "utf8")).version;
-	if (version !== SUPPORTED_PI_VERSION)
-		throw new Error(
-			`Ownership requires tested Pi ${SUPPORTED_PI_VERSION}; installed ${version}. Rerun compatibility proofs before updating the pin.`,
-		);
-
-	const { parseArgs } = await import(pathToFileURL(path.join(pkg, "dist", "cli", "args.js")).href);
-	const { SessionManager, findMostRecentSession } = await import(
-		pathToFileURL(path.join(pkg, "dist", "core", "session-manager.js")).href
-	);
+	const { parseArgs, SessionManager, findMostRecentSession } = await ownershipRuntime(pkg);
 	const parsed = parseArgs(args);
 	const selectors = [parsed.session, parsed.fork, parsed.resume, parsed.continue].filter(
 		Boolean,
@@ -71,7 +62,11 @@ export async function prepareOwnedLaunch(args, pkg, env = process.env, cwd = pro
 		throw new Error(
 			"Saved main sessions require ownership guards; helper opt-outs must use --no-session",
 		);
-	const all = async () => SessionManager.listAll(sessionDir);
+	const all = () => listSavedSessions({
+		agentDir: env.PI_CODING_AGENT_DIR,
+		sessionDir,
+		scope: env.PI_SESSION_HISTORY_SCOPE,
+	});
 	let target;
 	const explicit = parsed.session || parsed.fork;
 	if (explicit) {
@@ -79,7 +74,7 @@ export async function prepareOwnedLaunch(args, pkg, env = process.env, cwd = pro
 			target = path.resolve(cwd, explicit);
 			if (!fs.existsSync(target)) throw new Error("Session file not found");
 		} else {
-			const rows = (await all()).filter((s) => s.id.startsWith(explicit));
+			const rows = all().filter((s) => s.id.startsWith(explicit));
 			if (rows.length !== 1) throw new Error("Session ID missing or ambiguous");
 			target = rows[0].path;
 		}
@@ -93,7 +88,7 @@ export async function prepareOwnedLaunch(args, pkg, env = process.env, cwd = pro
 	else if (parsed.resume) {
 		if (!process.stdin.isTTY)
 			throw new Error("Startup --resume picker requires a terminal; use --session PATH");
-		const rows = await all();
+		const rows = all();
 		if (!rows.length) throw new Error("No saved sessions");
 		rows.sort((a, b) => +b.modified - +a.modified);
 		rows.forEach((s, i) => console.log(`${i + 1}. ${s.name || s.firstMessage || s.id} [${s.cwd}]`));

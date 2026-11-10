@@ -1,4 +1,3 @@
-export const SUPPORTED_PI_VERSION = "1.5.0";
 /** Broker-independent process locks; SQLite's OS locks serialize acquisition/reaping. */
 import process from "node:process";
 import { Buffer } from "node:buffer";

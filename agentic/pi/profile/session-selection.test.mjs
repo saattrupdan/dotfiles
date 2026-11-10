@@ -20,7 +20,7 @@ function fixture() {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-selection-"));
 	const sessions = path.join(root, "sessions");
 	fs.mkdirSync(sessions);
-	const env = { ...process.env, PI_SESSION_LOCK_ROOT: path.join(root, "ownership") };
+	const env = { ...process.env, PI_CODING_AGENT_DIR: root, PI_SESSION_LOCK_ROOT: path.join(root, "ownership") };
 	return { root, sessions, env, close: () => fs.rmSync(root, { recursive: true, force: true }) };
 }
 test("in-memory interactive owners retain runtime switching protection; print helpers opt out", async () => {
@@ -115,19 +115,19 @@ test("contradictory selectors and saved-session extension opt-outs fail closed",
 	}
 });
 
-test("fresh and exact-path startup never scans transcript bodies", async (t) => {
+test("startup selectors never scan transcript bodies", async (t) => {
 	const { SessionManager } = await import(pathToFileURL(path.join(pkg, "dist/core/session-manager.js")).href);
 	t.mock.method(SessionManager, "list", () => { throw new Error("Transcript scan forbidden"); });
 	t.mock.method(SessionManager, "listAll", () => { throw new Error("Transcript scan forbidden"); });
-	for (const selector of ["fresh", "id", "path", "continue"]) {
+	for (const selector of ["fresh", "id", "path", "continue", "prefix"])  {
 		const f = fixture();
 		try {
 			const id = randomUUID(), file = path.join(f.sessions, `saved_${id}.jsonl`);
 			fs.writeFileSync(file, JSON.stringify({ type: "session", version: 3, id, cwd: f.root, timestamp: new Date().toISOString() }) + "\n");
-			const args = selector === "id" ? ["--session-id", id] : selector === "path" ? ["--session", file] : selector === "continue" ? ["--continue"] : [];
+			const args = selector === "id" ? ["--session-id", id] : selector === "path" ? ["--session", file] : selector === "continue" ? ["--continue"] : selector === "prefix" ? ["--session", id.slice(0, 8)] : [];
 			const result = await prepareOwnedLaunch([...args, "--session-dir", f.sessions], pkg, f.env, f.root);
 			assert(result.env.PI_SESSION_OWNER);
-			if (selector !== "fresh") assert(result.args.includes(file));
+			if (selector !== "fresh") assert(result.args.some((arg) => arg.endsWith(".jsonl") && fs.realpathSync(arg) === fs.realpathSync(file)));
 		} finally { f.close(); }
 	}
 });
@@ -143,7 +143,39 @@ test("SDK discovery survives npm-run project prefixes", () => {
 	}
 });
 
-test("unsupported Pi runtimes fail before native session imports", async () => {
+test("compatible locally updated Pi runtimes are accepted regardless of version", async () => {
+	const f = fixture();
+	try {
+		const updated = path.join(f.root, "runtime");
+		fs.mkdirSync(updated);
+		fs.writeFileSync(path.join(updated, "package.json"), JSON.stringify({ version: "1.6.0", type: "module" }));
+		fs.symlinkSync(path.join(pkg, "dist"), path.join(updated, "dist"));
+		const result = await prepareOwnedLaunch(["--session-dir", f.sessions], updated, f.env, f.root);
+		assert(result.env.PI_SESSION_OWNER);
+	} finally {
+		f.close();
+	}
+});
+
+test("changed runtime contracts fail before ownership reservations", async () => {
+	for (const changed of ["selectors", "format", "lookup"]) {
+		const f = fixture();
+		try {
+			const runtime = path.join(f.root, "runtime");
+			fs.mkdirSync(path.join(runtime, "dist/cli"), { recursive: true });
+			fs.mkdirSync(path.join(runtime, "dist/core"));
+			fs.writeFileSync(path.join(runtime, "package.json"), JSON.stringify({ version: "1.7.0", type: "module" }));
+			const argsUrl = JSON.stringify(pathToFileURL(path.join(pkg, "dist/cli/args.js")).href);
+			const sessionUrl = JSON.stringify(pathToFileURL(path.join(pkg, "dist/core/session-manager.js")).href);
+			fs.writeFileSync(path.join(runtime, "dist/cli/args.js"), changed === "selectors" ? 'export const parseArgs = () => ({});' : `export * from ${argsUrl};`);
+			fs.writeFileSync(path.join(runtime, "dist/core/session-manager.js"), `export * from ${sessionUrl};\n` + (changed === "format" ? 'export const CURRENT_SESSION_VERSION = 4;' : changed === "lookup" ? 'export const findMostRecentSession = () => undefined;' : ''));
+			await assert.rejects(prepareOwnedLaunch([], runtime, f.env, f.root), /Pi 1\.7\.0.*ownership capabilities/);
+			assert.equal(fs.existsSync(f.env.PI_SESSION_LOCK_ROOT), false);
+		} finally { f.close(); }
+	}
+});
+
+test("unsupported Pi runtimes fail with a capability error before native history access", async () => {
 	const f = fixture();
 	try {
 		const unsupported = path.join(f.root, "runtime");
@@ -151,7 +183,7 @@ test("unsupported Pi runtimes fail before native session imports", async () => {
 		fs.writeFileSync(path.join(unsupported, "package.json"), JSON.stringify({ version: "99.0.0" }));
 		await assert.rejects(
 			prepareOwnedLaunch([], unsupported, f.env, f.root),
-			/requires tested Pi 1.5.0/,
+			/Pi 99\.0\.0.*ownership.*capabilit/i,
 		);
 	} finally {
 		f.close();

@@ -86,6 +86,26 @@ test("pilot approval is separate from full release and still requires automated 
   }
 });
 
+test("local Pi upgrades do not invalidate unchanged Remote source evidence", () => {
+  const f = fixture();
+  const previous = process.env.PI_CLI_PACKAGE;
+  try {
+    const runtime = path.join(f.root, "runtime");
+    fs.mkdirSync(runtime);
+    process.env.PI_CLI_PACKAGE = runtime;
+    const manifest = path.join(runtime, "package.json");
+    fs.writeFileSync(manifest, JSON.stringify({ version: "1.5.0" }));
+    for (const name of ["automated", "ownership-tui"]) attest(f.config, name, f.evidence);
+    approvePilot(f.config, f.evidence);
+    fs.writeFileSync(manifest, JSON.stringify({ version: "1.6.0" }));
+    assertDeployment(f.config);
+  } finally {
+    if (previous === undefined) delete process.env.PI_CLI_PACKAGE;
+    else process.env.PI_CLI_PACKAGE = previous;
+    f.close();
+  }
+});
+
 test("pilot approval fails closed on missing, malformed, changed source, origin, destination or evidence", () => {
   const f = fixture();
   try {

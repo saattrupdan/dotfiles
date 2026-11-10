@@ -45,11 +45,9 @@ test("pilot native resume neither discovers nor publishes global legacy historie
         fs,
         path,
         historyInScope: ownership.historyInScope,
-        SessionManager: {
-          listAll: async (dir?: string) => {
-            calls.push(dir);
-            return [legacy, own];
-          },
+        listSavedSessions: (options: { scope?: string }) => {
+          calls.push(options.scope);
+          return [legacy, own];
         },
         isLoopActive: () => false,
         choose: async (_ctx: unknown, _title: string, options: string[]) => {
@@ -68,7 +66,7 @@ test("pilot native resume neither discovers nor publishes global legacy historie
     );
     assert.equal(labels.length, 1);
     assert(!labels.some((label) => label.includes("LEGACY_PRIVATE_METADATA")));
-    assert.deepEqual(calls, [fs.realpathSync(scope)]);
+    assert.deepEqual(calls, [scope]);
   } finally {
     if (previous === undefined) delete process.env.PI_SESSION_HISTORY_SCOPE;
     else process.env.PI_SESSION_HISTORY_SCOPE = previous;
