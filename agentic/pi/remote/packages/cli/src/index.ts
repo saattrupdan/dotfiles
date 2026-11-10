@@ -272,9 +272,7 @@ async function main() {
     };
     qr.generate(result.url, { small: true });
     console.log(result.url);
-    console.log(
-      "One use; expires in two minutes. Install the PWA from Safari's Share menu.",
-    );
+    console.log("One use; expires in 10 minutes.");
     return;
   }
   if (command === "devices" || command === "status") {

@@ -270,6 +270,66 @@ for (const deploymentPolicy of ["release", "pilot"] as const)
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+test("pair links last ten minutes and remain single-use; passkey ceremonies stay short", async (t) => {
+  const dir = fixture();
+  let now = Date.now();
+  t.mock.method(Date, "now", () => now);
+  const broker = await createBroker(
+    ConfigSchema.parse({ origin, dataDir: dir, home: dir }),
+    { ipc: false, history: false },
+  );
+  const pair = async () =>
+    (await broker.owners.onAdmin!("pair", {})) as { url: string; expiresAt: number };
+  const request = (url: string, payload: Record<string, string>) =>
+    broker.app.inject({
+      method: "POST",
+      url,
+      headers: { host: new URL(origin).host, origin },
+      payload,
+    });
+  try {
+    const link = await pair();
+    assert.equal(link.expiresAt - now, 10 * 60 * 1000);
+    const secret = new URL(link.url).hash.slice(1);
+    const saved = broker.store.db
+      .prepare("SELECT expires FROM challenges WHERE id=? AND purpose='pair'")
+      .get(digest(secret)) as { expires: number };
+    assert.equal(saved.expires, link.expiresAt);
+    now += 10 * 60 * 1000 - 1;
+    const options = await request("/api/v1/pairing/options", {
+      token: secret,
+      name: "Phone",
+    });
+    assert.equal(options.statusCode, 200);
+    const ceremony = options.json().ceremony as string;
+    const registration = broker.store.db
+      .prepare("SELECT expires FROM challenges WHERE id=? AND purpose='registration'")
+      .get(ceremony) as { expires: number };
+    assert.equal(registration.expires - now, 120000);
+    assert.equal(
+      (await request("/api/v1/pairing/options", { token: secret, name: "Phone" }))
+        .statusCode,
+      401,
+    );
+    const expired = await pair();
+    now = expired.expiresAt;
+    const rejected = await request("/api/v1/pairing/options", {
+      token: new URL(expired.url).hash.slice(1),
+      name: "Phone",
+    });
+    assert.equal(rejected.statusCode, 401);
+    assert.equal(rejected.json().error, "pairing_expired");
+    const assertion = await request("/api/v1/auth/options", {});
+    assert.equal(assertion.statusCode, 200);
+    const assertionExpiry = broker.store.db
+      .prepare("SELECT expires FROM challenges WHERE id=? AND purpose='assert'")
+      .get(assertion.json().ceremony) as { expires: number };
+    assert.equal(assertionExpiry.expires - now, 120000);
+  } finally {
+    await broker.app.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 test("pairing challenges expire and are consumed atomically", () => {
   const dir = fixture();
   const store = new Store(dir);

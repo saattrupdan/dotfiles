@@ -15,6 +15,7 @@ import { z } from "zod";
 import { DeviceName, RemoteError } from "../../protocol/src/index.ts";
 import { Store, digest, token, type AuthSession } from "./store.ts";
 import type { Config } from "./config.ts";
+export const PAIRING_LINK_TTL_MS = 10 * 60 * 1000;
 const COOKIE = "__Host-pi-remote";
 const GRACE = 120000;
 const LEASE = 45000;

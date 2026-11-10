@@ -17,7 +17,7 @@ import {
   type StreamEvent,
 } from "../../protocol/src/index.ts";
 import { Store, token, digest } from "./store.ts";
-import { Auth } from "./auth.ts";
+import { Auth, PAIRING_LINK_TTL_MS } from "./auth.ts";
 import { Owners } from "./ipc.ts";
 import { History } from "./history.ts";
 import { Processes } from "./processes.ts";
@@ -199,8 +199,11 @@ export async function createBroker(
   owners.onAdmin = async (action, data) => {
     if (action === "pair") {
       const secret = token();
-      store.challenge("pair", "", "", digest(secret));
-      return { url: `${config.origin}/pair#${secret}`, expiresAt: Date.now() + 120000 };
+      store.challenge("pair", "", "", digest(secret), PAIRING_LINK_TTL_MS);
+      return {
+        url: `${config.origin}/pair#${secret}`,
+        expiresAt: Date.now() + PAIRING_LINK_TTL_MS,
+      };
     }
     if (action === "devices")
       return store.db.prepare("SELECT id,name,created,revoked FROM devices").all();
