@@ -279,7 +279,7 @@ test("pair links last ten minutes and remain single-use; passkey ceremonies stay
     { ipc: false, history: false },
   );
   const pair = async () =>
-    (await broker.owners.onAdmin!("pair", {})) as { url: string; expiresAt: number };
+    (await broker.connections.onAdmin!("pair", {})) as { url: string; expiresAt: number };
   const request = (url: string, payload: Record<string, string>) =>
     broker.app.inject({
       method: "POST",

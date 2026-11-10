@@ -20,11 +20,7 @@ import {
 import { inDeploymentScope } from "../src/deployment-scope.ts";
 import { createBroker } from "../src/server.ts";
 import { Store, digest } from "../src/store.ts";
-import { Owners } from "../src/ipc.ts";
-import {
-  acquire,
-  newOwner,
-} from "../../../../extensions/_session_ownership/ownership.mjs";
+import { Connections } from "../src/ipc.ts";
 import { resolvePiPackage } from "../../../../profile/pi-runtime.mjs";
 
 function fixture() {
@@ -53,7 +49,7 @@ function fixture() {
   };
 }
 
-test("pilot approval is separate from full release and still requires automated ownership proofs", () => {
+test("pilot approval is separate from full release and still requires automated session-control proofs", () => {
   const f = fixture();
   try {
     assert.equal(
@@ -64,13 +60,13 @@ test("pilot approval is separate from full release and still requires automated 
       approvePilot({ ...f.config, deploymentPolicy: "release" }, f.evidence),
     );
     approvePilot(f.config, f.evidence);
-    assert.throws(() => assertDeployment(f.config), /automated.*ownership-tui/);
-    for (const name of ["automated", "ownership-tui"])
+    assert.throws(() => assertDeployment(f.config), /automated.*session-controls-tui/);
+    for (const name of ["automated", "session-controls-tui"])
       attest(f.config, name, f.evidence);
     assertDeployment(f.config);
     assert.deepEqual(
       gates(f.config).missing,
-      REQUIRED.filter((n) => n !== "automated" && n !== "ownership-tui"),
+      REQUIRED.filter((n) => n !== "automated" && n !== "session-controls-tui"),
     );
     assert.throws(() => assertRelease(f.config), /iphone-webauthn/);
     assert.throws(
@@ -78,9 +74,6 @@ test("pilot approval is separate from full release and still requires automated 
       /iphone-webauthn/,
     );
     assert.throws(() => assertDeployment(f.config, true), /pilot-proof-conflict/);
-    fs.mkdirSync(path.join(f.config.dataDir, "ownership"));
-    fs.writeFileSync(path.join(f.config.dataDir, "ownership/enabled"), "1");
-    assert.throws(() => assertDeployment(f.config), /pilot-global-ownership-conflict/);
   } finally {
     f.close();
   }
@@ -95,7 +88,7 @@ test("local Pi upgrades do not invalidate unchanged Remote source evidence", () 
     process.env.PI_CLI_PACKAGE = runtime;
     const manifest = path.join(runtime, "package.json");
     fs.writeFileSync(manifest, JSON.stringify({ version: "1.5.0" }));
-    for (const name of ["automated", "ownership-tui"]) attest(f.config, name, f.evidence);
+    for (const name of ["automated", "session-controls-tui"]) attest(f.config, name, f.evidence);
     approvePilot(f.config, f.evidence);
     fs.writeFileSync(manifest, JSON.stringify({ version: "1.6.0" }));
     assertDeployment(f.config);
@@ -241,7 +234,8 @@ test("fresh unflushed native history opens as an empty conversation", async () =
     assert.equal(fs.existsSync(file), false);
     broker.store.save({
       version: 1,
-      ...newOwner(),
+      instanceId: randomUUID(),
+      pid: process.pid,
       sessionId: id,
       sessionFile: file,
       cwd: f.root,
@@ -280,20 +274,19 @@ test("fresh unflushed native history opens as an empty conversation", async () =
   }
 });
 
-test("pilot IPC rejects unmanaged and out-of-scope owners but accepts verified new managed histories", async () => {
+test("pilot IPC rejects unmanaged and out-of-scope connections but accepts authenticated new managed histories", async () => {
   const f = fixture();
   fs.mkdirSync(path.join(f.config.dataDir, "native-sessions"));
   const store = new Store(f.config.dataDir),
-    owners = new Owners(f.config, store, () => {}),
-    owner = newOwner();
+    connections = new Connections(f.config, store, () => {}),
+    connection = { instanceId: randomUUID(), pid: process.pid };
   const file = path.join(f.config.dataDir, "native-sessions/session.jsonl");
   const id = randomUUID();
   fs.writeFileSync(file, JSON.stringify({ type: "session", id }));
-  acquire(file, owner, path.join(f.config.dataDir, "ownership"));
-  await owners.listen();
+  await connections.listen();
   const base = {
     version: 1,
-    ...owner,
+    ...connection,
     sessionId: id,
     sessionFile: file,
     cwd: f.root,
@@ -331,7 +324,7 @@ test("pilot IPC rejects unmanaged and out-of-scope owners but accepts verified n
         throw new Error("IPC timeout");
       };
       try {
-        socket.write(JSON.stringify({ secret: owners.secret }) + "\n");
+        socket.write(JSON.stringify({ secret: connections.secret }) + "\n");
         await wait(() => received.includes("ready"));
         socket.write(JSON.stringify({ type: "register", data: registration }) + "\n");
         if (registration === base) {
@@ -346,14 +339,14 @@ test("pilot IPC rejects unmanaged and out-of-scope owners but accepts verified n
       }
     }
   } finally {
-    await owners.close();
+    await connections.close();
     store.close();
     f.close();
   }
 });
 
 for (const deploymentPolicy of ["pilot", "release"] as const)
-  test(`CLI ${deploymentPolicy} install preserves global ownership enablement policy`, () => {
+  test(`CLI ${deploymentPolicy} install does not create session locks`, () => {
     const f = fixture();
     try {
       f.config.deploymentPolicy = deploymentPolicy;
@@ -378,7 +371,7 @@ for (const deploymentPolicy of ["pilot", "release"] as const)
       const configFile = path.join(f.config.dataDir, "config.json");
       fs.writeFileSync(configFile, JSON.stringify(f.config));
       for (const name of deploymentPolicy === "pilot"
-        ? ["automated", "ownership-tui"]
+        ? ["automated", "session-controls-tui"]
         : REQUIRED)
         attest(f.config, name, f.evidence);
       if (deploymentPolicy === "pilot") approvePilot(f.config, f.evidence);
@@ -405,7 +398,7 @@ for (const deploymentPolicy of ["pilot", "release"] as const)
       assert.equal(result.status, 0, result.stderr);
       assert.equal(
         fs.existsSync(path.join(f.config.dataDir, "ownership/enabled")),
-        deploymentPolicy === "release",
+        false,
       );
     } finally {
       f.close();

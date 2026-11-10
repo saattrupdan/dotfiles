@@ -158,7 +158,7 @@ test("resource-only reload preserves live model and thinking without replaying i
 	}
 });
 
-test("in-memory, unpersisted messages, old branches and dropped ownership fail before building", () => {
+test("in-memory, unpersisted messages, old branches fail before building", () => {
 	const fail = () => assert.fail("must reject before constructing launch flags");
 	assert.throws(
 		() => prepareProfileReload(identity, changed, { ...state, mode: "rpc" }, fail),
@@ -181,10 +181,6 @@ test("in-memory, unpersisted messages, old branches and dropped ownership fail b
 	assert.throws(
 		() => prepareProfileReload(identity, changed, { ...state, leafId: "earlier" }, fail),
 		/earlier branch/,
-	);
-	assert.throws(
-		() => prepareProfileReload(identity, changed, { ...state, empty: true, owner: "owned" }, fail),
-		/session-ownership/,
 	);
 });
 

@@ -24,9 +24,9 @@ const commands = [
     args: [
       "--test",
       "profile/profile.test.mjs",
-      "profile/session-selection.test.mjs",
+      "profile/reload-policy.test.mjs",
+      "profile/reload.test.mjs",
       "profile/saved-sessions.test.mjs",
-      "extensions/_session_ownership/ownership.test.mjs",
     ],
   },
 ];

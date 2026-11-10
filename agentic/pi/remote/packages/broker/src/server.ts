@@ -4,7 +4,6 @@ import multipart from "@fastify/multipart";
 import websocket from "@fastify/websocket";
 import staticFiles from "@fastify/static";
 import fs from "node:fs";
-import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import webpush from "web-push";
@@ -20,7 +19,7 @@ import {
 } from "../../protocol/src/index.ts";
 import { Store, token, digest } from "./store.ts";
 import { Auth, PAIRING_LINK_TTL_MS } from "./auth.ts";
-import { Owners } from "./ipc.ts";
+import { Connections } from "./ipc.ts";
 import { History, RECENT_SESSION_MS } from "./history.ts";
 import { Processes } from "./processes.ts";
 import { browse, imageBlocks, uploadImage } from "./files.ts";
@@ -28,14 +27,8 @@ import { prepare, type Config } from "./config.ts";
 import {
   inDeploymentScope,
   visibleWorkingDirectory,
-  assertControlReady,
-  controlBlockReason,
+  canonicalPath,
 } from "./deployment-scope.ts";
-import {
-  canonicalFile,
-  inspect,
-  isAlive,
-} from "../../../../extensions/_session_ownership/ownership.mjs";
 
 export async function createBroker(
   config: Config,
@@ -97,10 +90,10 @@ export async function createBroker(
           suspended ? "background" : "locked_or_revoked",
         );
   });
-  const owners = new Owners(config, store, emit);
+  const connections = new Connections(config, store, emit);
   const catalog = history && !proof ? new History(config) : undefined;
-  owners.allowRegistration = !proof;
-  const processes = new Processes(config, owners);
+  connections.allowRegistration = !proof;
+  const processes = new Processes(config, connections);
   await app.register(cookie);
   await app.register(multipart, {
     limits: { fileSize: config.uploadBytes, files: 1, fields: 1, parts: 2 },
@@ -165,7 +158,6 @@ export async function createBroker(
       .parse((req.params as { id: string }).id);
   const discoverLaptop =
     config.deploymentPolicy !== "pilot" || config.pilotScope === "laptop-main";
-  const migrationReason = () => controlBlockReason(config);
   const lastActivity = (session: Session) => {
     let modified = 0;
     try {
@@ -181,25 +173,12 @@ export async function createBroker(
     store
       .sessions()
       .filter((session) => inDeploymentScope(config, session) && recent(session));
-  const ownerPresent = (file: string) =>
-    inspect(file, path.join(config.dataDir, "ownership")) ||
-    store
-      .sessions()
-      .some(
-        (session) =>
-          canonicalFile(session.sessionFile) === canonicalFile(file) &&
-          !owners.released(session) &&
-          isAlive({ ...session, kind: session.managed ? "tmux" : "local" }),
-      );
   const liveSummary = (session: Session) => {
-    const connected = owners.isConnected(session);
-    const alive = !connected && ownerPresent(session.sessionFile);
+    const connected = connections.isConnected(session);
     return {
       ...session,
       lastActivity: lastActivity(session),
-      state: connected ? session.state : alive ? "disconnected" : "stopped",
-      recoveryBlockedReason:
-        migrationReason() || (!connected && alive ? "owner_not_connected" : undefined),
+      state: connected ? session.state : "stopped",
     };
   };
   const nativeSummary = (n: NonNullable<Awaited<ReturnType<History["byId"]>>>) => ({
@@ -210,9 +189,7 @@ export async function createBroker(
     lastActivity: +n.modified,
     sequence: 0,
     epoch: 0,
-    recoveryBlockedReason: n.ambiguous
-      ? "ambiguous_session_id"
-      : migrationReason() || (ownerPresent(n.path) ? "owner_not_connected" : undefined),
+    recoveryBlockedReason: n.ambiguous ? "ambiguous_session_id" : undefined,
   });
   const find = async (id: string) => {
     const live = store.session(id);
@@ -235,15 +212,12 @@ export async function createBroker(
       ambiguous: native.ambiguous,
     };
   };
-  const send = (envelope: Envelope, device: string, local = false) => {
+  const send = (envelope: Envelope, device: string) => {
     const session = store.session(envelope.sessionId);
     if (!session || !inDeploymentScope(config, session) || !recent(session))
       throw new RemoteError("not_owner", 409);
     if (session.epoch !== envelope.epoch) throw new RemoteError("stale_epoch", 409);
-    if (envelope.command.action === "handoff" && !local)
-      throw new RemoteError("local_only", 403);
     const existing = store.command(envelope.commandId);
-    if (!existing) assertControlReady(config);
     let row;
     try {
       row = store.journal(envelope, device);
@@ -256,7 +230,7 @@ export async function createBroker(
         envelope.command.action === "message"
           ? imageBlocks(envelope.command.images, envelope.sessionId, device, store)
           : [];
-      owners.send(session, envelope, images);
+      connections.send(session, envelope, images);
     } catch (error) {
       store.status(
         envelope.commandId,
@@ -275,7 +249,7 @@ export async function createBroker(
     );
     return store.command(envelope.commandId);
   };
-  owners.onAdmin = async (action, data) => {
+  connections.onAdmin = async (action, data) => {
     if (action === "pair") {
       const secret = token();
       store.challenge("pair", "", "", digest(secret), PAIRING_LINK_TTL_MS);
@@ -303,23 +277,6 @@ export async function createBroker(
           ).n,
         ),
       };
-    if (action === "handoff") {
-      const id = z.string().uuid().parse(data.sessionId);
-      const session = store.session(id);
-      if (!session || session.instanceId !== data.expectedOwner)
-        throw new Error("Owner unavailable or changed");
-      return send(
-        {
-          version: 1,
-          commandId: randomUUID(),
-          sessionId: id,
-          epoch: session.epoch,
-          command: { action: "handoff" },
-        },
-        "local-admin",
-        true,
-      );
-    }
     throw new Error("Unsupported local action");
   };
   app.get("/api/v1/session-folders", async (req) => {
@@ -327,7 +284,7 @@ export async function createBroker(
     const live = visibleLive();
     const groups = new Map<string, SessionFolder>(
       (discoverLaptop
-        ? ((await catalog?.folders(live.map((s) => canonicalFile(s.sessionFile)))) ??
+        ? ((await catalog?.folders(live.map((s) => canonicalPath(s.sessionFile)))) ??
           [])
         : []
       ).map((folder) => [folder.cwd, folder]),
@@ -365,7 +322,7 @@ export async function createBroker(
           native.find(
             (row) =>
               row.nativeId === session.sessionId &&
-              row.path === canonicalFile(session.sessionFile),
+              row.path === canonicalPath(session.sessionFile),
           )?.name || session.name,
       })),
       ...native
@@ -373,7 +330,7 @@ export async function createBroker(
           (n) =>
             !allLive.some(
               (s) =>
-                s.sessionId === n.nativeId && canonicalFile(s.sessionFile) === n.path,
+                s.sessionId === n.nativeId && canonicalPath(s.sessionFile) === n.path,
             ),
         )
         .map(nativeSummary),
@@ -411,10 +368,9 @@ export async function createBroker(
   app.post("/api/v1/sessions/:id/recover", async (req) => {
     const a = mutate(req);
     if (proof) throw new RemoteError("proof_mode", 403);
-    assertControlReady(config);
     const id = sessionId(req);
     const active = store.session(id);
-    if (active && inDeploymentScope(config, active) && owners.isConnected(active))
+    if (active && inDeploymentScope(config, active) && connections.isConnected(active))
       return active;
     const ongoing = recovering.get(id);
     if (ongoing) return ongoing;
@@ -423,7 +379,6 @@ export async function createBroker(
       throw new RemoteError("ambiguous_session_id", 409);
     const claimed = recovering.get(id);
     if (claimed) return claimed;
-    if (ownerPresent(native.path)) throw new RemoteError("owner_still_alive", 409);
     const pending = processes.launch(native.cwd, native);
     recovering.set(id, pending);
     try {
@@ -576,7 +531,7 @@ export async function createBroker(
   }
   app.get("/api/v1/status", async (req) => {
     read(req);
-    return { online: true, owners: owners.sockets.size, version: 1 };
+    return { online: true, connections: connections.sockets.size, version: 1 };
   });
   app.get(
     "/api/v1/events",
@@ -661,13 +616,7 @@ export async function createBroker(
         : reply.sendFile("index.html"),
     );
   }
-  let previousMigration = migrationReason();
   const timer = setInterval(() => {
-    const currentMigration = migrationReason();
-    if (currentMigration !== previousMigration) {
-      previousMigration = currentMigration;
-      emit({ version: 1, type: "sessions.changed", data: null });
-    }
     for (const [socket, client] of clients) {
       try {
         read(client.request);
@@ -695,7 +644,6 @@ export async function createBroker(
               command: { action: "stop_session" },
             },
             "local-admin",
-            true,
           );
           session.state = "stopping";
           store.save(session);
@@ -706,12 +654,12 @@ export async function createBroker(
     processes.reapIdleShells();
   }, 5000);
   timer.unref();
-  if (ipc) await owners.listen();
+  if (ipc) await connections.listen();
   app.addHook("onClose", async () => {
     clearInterval(timer);
     for (const socket of clients.keys()) socket.close(1001, "broker_restart");
-    if (ipc) await owners.close();
+    if (ipc) await connections.close();
     store.close();
   });
-  return { app, store, owners, auth, config };
+  return { app, store, connections, auth, config };
 }

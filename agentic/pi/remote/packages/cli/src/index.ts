@@ -19,13 +19,6 @@ import {
   gates,
 } from "../../broker/src/gates.ts";
 
-import {
-  activateLaptop,
-  newOwner,
-  pendingMigration,
-  processIdentity,
-} from "../../../../extensions/_session_ownership/ownership.mjs";
-
 const args = process.argv.slice(2);
 const command = args.shift() ?? "status";
 const flag = (name: string) => {
@@ -49,63 +42,6 @@ const proof = args.includes("--proof");
 const label = "com.saattrupdan.pi-remote";
 function run(file: string, argv: string[]) {
   return execFileSync(file, argv, { encoding: "utf8", timeout: 30000 });
-}
-function untracked(config: Config, includeSupervisors = false) {
-  const locks = path.join(config.dataDir, "ownership", "locks.sqlite");
-  let tracked = new Set<number>();
-  if (fs.existsSync(locks)) {
-    const db = new DatabaseSync(locks, { readOnly: true });
-    try {
-      tracked = new Set(
-        db
-          .prepare("SELECT record FROM locks")
-          .all()
-          .map((row) => JSON.parse(row.record as string))
-          .filter(
-            (record) =>
-              record.kind !== "migration" &&
-              record.file &&
-              record.birth === processIdentity(record.pid),
-          )
-          .map((record) => record.pid),
-      );
-    } finally {
-      db.close();
-    }
-  }
-  const processes = run("ps", ["-axo", "pid=,ppid=,uid=,comm="])
-    .split("\n")
-    .flatMap((line) => {
-      const m = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+)$/.exec(line);
-      return m
-        ? [
-            {
-              pid: Number(m[1]),
-              parent: Number(m[2]),
-              uid: Number(m[3]),
-              command: path.basename(m[4]!),
-            },
-          ]
-        : [];
-    });
-  const pids = new Set<number>();
-  for (const item of processes)
-    if (
-      item.uid === process.getuid!() &&
-      item.command === "pi" &&
-      !tracked.has(item.pid)
-    ) {
-      pids.add(item.pid);
-      const parent =
-        includeSupervisors && processes.find((row) => row.pid === item.parent);
-      if (
-        parent &&
-        parent.uid === item.uid &&
-        ["node", "nodejs"].includes(parent.command)
-      )
-        pids.add(parent.pid);
-    }
-  return [...pids];
 }
 const launchFile = path.join(os.homedir(), "Library", "LaunchAgents", `${label}.plist`);
 const escape = (s: string) =>
@@ -204,32 +140,6 @@ async function main() {
     );
     return;
   }
-  if (command === "enable-laptop") {
-    if (config.deploymentPolicy !== "pilot" || config.pilotScope !== "laptop-main")
-      throw new Error("Explicit laptop-main pilot approval required");
-    assertDeployment(config);
-    const root = path.join(config.dataDir, "ownership");
-    const owners = untracked(config, true).flatMap((pid) => {
-      try {
-        return [newOwner("migration", pid)];
-      } catch (error) {
-        try {
-          process.kill(pid, 0);
-        } catch (gone) {
-          if ((gone as NodeJS.ErrnoException).code === "ESRCH") return [];
-          throw gone;
-        }
-        throw error;
-      }
-    });
-    activateLaptop(owners, root);
-    console.log(
-      pendingMigration(root)
-        ? "Laptop control enabled. Exit all pre-update Pi processes, then reopen Pi once. Existing work was not interrupted."
-        : "Laptop control enabled. Normal Pi sessions now connect automatically.",
-    );
-    return;
-  }
   if (command === "attest") {
     const name = args.shift();
     const evidence = flag("--evidence");
@@ -241,7 +151,6 @@ async function main() {
   if (command === "doctor") {
     const report = gates(config);
     const readiness = deployment(config);
-    const old = untracked(config);
     const checks = {
       node: process.version,
       wrapper: fs.existsSync(path.join(config.agentDir, "bin", "pi")),
@@ -249,35 +158,16 @@ async function main() {
       build: fs.existsSync(path.join(config.agentDir, "remote", "dist", "broker.mjs")),
       deploymentPolicy: config.deploymentPolicy,
       pilotScope: config.pilotScope,
-      migrationPending: Boolean(
-        pendingMigration(path.join(config.dataDir, "ownership")),
-      ),
       deploymentMissing: readiness.missing,
       missingGates: report.missing,
-      untrackedPiProcesses: old,
       origin: config.origin,
     };
     console.log(JSON.stringify(checks, null, 2));
-    if (
-      readiness.missing.length ||
-      (config.deploymentPolicy === "release" && old.length)
-    )
-      process.exitCode = 1;
+    if (readiness.missing.length) process.exitCode = 1;
     return;
   }
   if (command === "install" || command === "update") {
     assertDeployment(config);
-    const old = untracked(config);
-    if (
-      config.deploymentPolicy === "pilot" &&
-      config.pilotScope !== "laptop-main" &&
-      fs.existsSync(path.join(config.dataDir, "ownership", "enabled"))
-    )
-      throw new Error("Pilot cannot replace globally enabled ownership");
-    if (command === "install" && old.length && config.deploymentPolicy === "release")
-      throw new Error(
-        `Restart/exit unprotected Pi processes before enabling ownership: ${old.join(", ")}`,
-      );
     const release = await stage(config);
     const current = path.join(config.dataDir, "current");
     const previous = fs.existsSync(current) ? fs.realpathSync(current) : undefined;
@@ -289,17 +179,9 @@ async function main() {
       });
     fs.rmSync(current, { force: true });
     fs.symlinkSync(release, current, "dir");
-    fs.mkdirSync(path.join(config.dataDir, "ownership"), {
-      recursive: true,
-      mode: 0o700,
-    });
-    if (config.deploymentPolicy === "release")
-      fs.writeFileSync(path.join(config.dataDir, "ownership", "enabled"), "1", {
-        mode: 0o600,
-      });
     start(config, release);
     console.log(
-      `Installed ${release}. Pi owners were preserved. Configure private Tailscale Serve only after the ACL/HTTPS gate passes.`,
+      `Installed ${release}. Running Pi sessions were preserved. Configure private Tailscale Serve only after the ACL/HTTPS gate passes.`,
     );
     return;
   }
@@ -323,14 +205,14 @@ async function main() {
     fs.symlinkSync(previous, current, "dir");
     fs.writeFileSync(path.join(config.dataDir, "previous"), old, { mode: 0o600 });
     start(config, previous);
-    console.log("Previous broker restored; native histories and Pi owners untouched.");
+    console.log("Previous broker restored; native histories and running Pi sessions untouched.");
     return;
   }
   if (command === "uninstall") {
     stop();
     fs.rmSync(launchFile, { force: true });
     console.log(
-      "LaunchAgent removed. Ownership protection and saved data retained. Remove this service's Tailscale Serve mapping separately.",
+      "LaunchAgent removed. Saved data retained. Remove this service's Tailscale Serve mapping separately.",
     );
     return;
   }
@@ -354,7 +236,7 @@ async function main() {
     return;
   }
   throw new Error(
-    "Commands: init, doctor, install, uninstall, status, pair, devices, revoke, update, rollback, attest, approve-pilot, enable-laptop",
+    "Commands: init, doctor, install, uninstall, status, pair, devices, revoke, update, rollback, attest, approve-pilot",
   );
 }
 main().catch((error) => {

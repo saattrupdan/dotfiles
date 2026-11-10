@@ -1,4 +1,3 @@
-import { OwnedEditor } from "../_session_ownership/editor.ts";
 /**
  * Splash screen.
  *
@@ -333,7 +332,7 @@ function dismissSplash(ctx: ExtensionContext): void {
 	ctx.ui.setWidget(FOOTER_KEY, undefined);
 	ctx.ui.setHeader(undefined);
 	ctx.ui.setFooter(undefined);
-	ctx.ui.setEditorComponent(process.env.PI_SESSION_OWNER ? (tui, theme, keys) => new OwnedEditor(tui, theme, keys) : undefined);
+	ctx.ui.setEditorComponent(undefined);
 }
 
 function installSplash(pi: ExtensionAPI, ctx: ExtensionContext, clearScreen: boolean): void {

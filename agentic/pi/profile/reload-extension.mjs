@@ -68,7 +68,6 @@ export default function profileReloadExtension(pi) {
 				model: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined,
 				thinking: pi.getThinkingLevel(),
 				stringFlags,
-				owner: process.env.PI_SESSION_OWNER,
 			});
 			if (result.status === "rejected") throw new Error(result.error);
 			if (result.status !== "restart") return;

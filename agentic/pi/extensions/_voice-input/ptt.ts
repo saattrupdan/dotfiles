@@ -38,7 +38,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { OwnedEditor } from "../_session_ownership/editor.ts";
+import { CustomEditor } from "@earendil-works/pi-coding-agent";
 import {
 	isKeyRelease,
 	isKeyRepeat,
@@ -856,7 +856,7 @@ export function cleanup(): void {
  * CustomEditor untouched; the PTT branch is try/caught so a bug can't break
  * typing. Used directly by voice-input (post-splash) and wrapped by splash.
  */
-export class PttEditor extends OwnedEditor {
+export class PttEditor extends CustomEditor {
 	// Opt into key-release delivery — the TUI otherwise filters releases out
 	// before handleInput, so key-up (which stops a hold) would never arrive.
 	wantsKeyRelease = true;

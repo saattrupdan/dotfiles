@@ -9,14 +9,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolvePiPackage } from "./pi-runtime.mjs";
 export { resolvePiPackage } from "./pi-runtime.mjs";
 import { parseAgentProfile } from "./definition.mjs";
-import { prepareOwnedLaunch } from "./session-selection.mjs";
-import {
-	adopt,
-	lockRoot,
-	beginOwnershipStartup,
-	newOwner,
-	OWNERSHIP_ENV,
-} from "../extensions/_session_ownership/ownership.mjs";
 import { prepareProfileReload, profileReloadEnabled, profileReloadEnvironment } from "./reload.mjs";
 
 const NAME = /^[a-z][a-z0-9-]*$/;
@@ -233,21 +225,16 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
 	}
 	const agentDir = env.PI_CODING_AGENT_DIR ?? path.join(os.homedir(), ".pi", "agent");
 	const profile = await loadProfile(agent, agentDir, pkg);
-	const protectedMode = agent === "main" && beginOwnershipStartup(env);
-	const launch = protectedMode
-		? await prepareOwnedLaunch(args, pkg, { ...env, PI_CODING_AGENT_DIR: agentDir })
-		: { args, env };
 	return runCli(
 		cli,
 		buildProfileArgs(
 			profile,
 			agentDir,
-			launch.args,
+			args,
 			process.cwd(),
 			env.PI_CODING_AGENT_SESSION_DIR,
 		),
-		launch.env,
-		Boolean(launch.env.PI_SESSION_OWNER),
+		env,
 		{
 			profile,
 			agentDir,
@@ -258,17 +245,14 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
 	);
 }
 
-function runCli(cli, args, env, owned = false, identity) {
+function runCli(cli, args, env, identity) {
 	return new Promise((resolve, reject) => {
-		const supervised = owned || (identity && profileReloadEnabled(identity.userArgs));
+		const supervised = identity && profileReloadEnabled(identity.userArgs);
 		const token = supervised ? randomUUID() : undefined;
 		const childEnv = { ...env };
 		if (token) childEnv.PI_PROFILE_RELOAD_TOKEN = token;
 		else delete childEnv.PI_PROFILE_RELOAD_TOKEN;
-		const entry = supervised
-			? [fileURLToPath(new URL("./owned-cli.mjs", import.meta.url)), cli]
-			: [cli];
-		const child = spawn(process.execPath, [...entry, ...args], {
+		const child = spawn(process.execPath, [cli, ...args], {
 			stdio: supervised ? ["inherit", "inherit", "inherit", "ipc"] : "inherit",
 			env: childEnv,
 		});
@@ -276,16 +260,7 @@ function runCli(cli, args, env, owned = false, identity) {
 			reloadPlan,
 			preparing = false;
 		const cancelled = new Set();
-		const rollback = () => {
-			const plan = reloadPlan;
-			reloadPlan = undefined;
-			try {
-				plan?.rollback?.();
-			} catch (error) {
-				console.error(`Profile ownership rollback failed: ${error.message}`);
-				child.kill("SIGTERM");
-			}
-		};
+		const rollback = () => { reloadPlan = undefined; };
 		const reply = (id, result) => {
 			if (!child.connected) return false;
 			try {
@@ -304,8 +279,8 @@ function runCli(cli, args, env, owned = false, identity) {
 				return;
 			}
 			if (
-				(owned || identity?.profile.name === "main") &&
-				message?.type === "pi-owned-continuation" &&
+				identity?.profile.name === "main" &&
+				message?.type === "pi-profile-continuation" &&
 				Array.isArray(message.args) &&
 				message.args.every((a) => typeof a === "string") &&
 				typeof message.cwd === "string"
@@ -342,22 +317,7 @@ function runCli(cli, args, env, owned = false, identity) {
 					return;
 				}
 				const nextEnv = profileReloadEnvironment(env);
-				let undo;
-				if (env[OWNERSHIP_ENV] || message.state.owner) {
-					const previous = JSON.parse(message.state.owner || "null");
-					if (
-						!previous ||
-						previous.pid !== child.pid ||
-						(env[OWNERSHIP_ENV] &&
-							previous.instanceId !== JSON.parse(env[OWNERSHIP_ENV]).instanceId)
-					)
-						throw new Error("Profile reload ownership identity mismatch");
-					const parentOwner = { ...newOwner(previous.kind), instanceId: previous.instanceId };
-					adopt(previous, parentOwner, lockRoot(env));
-					undo = () => adopt(parentOwner, previous, lockRoot(env));
-					nextEnv[OWNERSHIP_ENV] = JSON.stringify(parentOwner);
-				}
-				reloadPlan = { ...plan, id: message.id, env: nextEnv, rollback: undo };
+				reloadPlan = { ...plan, id: message.id, env: nextEnv };
 				if (!reply(message.id, { status: "restart" })) rollback();
 			} catch (error) {
 				rollback();
@@ -386,7 +346,6 @@ function runCli(cli, args, env, owned = false, identity) {
 							cli,
 							reloadPlan.built,
 							reloadPlan.env,
-							Boolean(reloadPlan.env[OWNERSHIP_ENV]),
 							{ ...identity, profile: reloadPlan.profile },
 						),
 					);
@@ -395,7 +354,6 @@ function runCli(cli, args, env, owned = false, identity) {
 						nextEnv = { ...env };
 					// Cleanup may have removed our previous cwd. Enter the verified successor first.
 					process.chdir(cwd);
-					delete nextEnv.PI_SESSION_OWNER;
 					for (const key of Object.keys(nextEnv))
 						if (key.startsWith("PI_WORKTREE_") || key === "PI_LOOP_HANDOFF") delete nextEnv[key];
 					for (const [key, value] of Object.entries(continuation.changes ?? {}))
@@ -404,11 +362,7 @@ function runCli(cli, args, env, owned = false, identity) {
 							typeof value === "string"
 						)
 							nextEnv[key] = value;
-					const pkg = resolvePiPackage(nextEnv);
-					const launch = owned
-						? await prepareOwnedLaunch(continuation.args, pkg, nextEnv, cwd)
-						: { args: continuation.args, env: nextEnv };
-					resolve(await runCli(cli, launch.args, launch.env, owned, identity));
+					resolve(await runCli(cli, continuation.args, nextEnv, identity));
 				} else
 					resolve(
 						signal || interrupted

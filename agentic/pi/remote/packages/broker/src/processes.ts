@@ -4,21 +4,20 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config.ts";
-import type { Owners } from "./ipc.ts";
+import type { Connections } from "./ipc.ts";
 import { homeDirectory } from "./files.ts";
 import { RemoteError } from "../../protocol/src/index.ts";
-import { visibleWorkingDirectory, assertControlReady } from "./deployment-scope.ts";
+import { visibleWorkingDirectory } from "./deployment-scope.ts";
 export class Processes {
   shells = new Map<string, number>();
   constructor(
     readonly config: Config,
-    readonly owners: Owners,
+    readonly connections: Connections,
   ) {}
   tmux(...args: string[]) {
     return execFileSync(this.config.tmux, args, { encoding: "utf8", timeout: 10000 });
   }
   async launch(cwd: string, saved?: { id: string; path: string }) {
-    assertControlReady(this.config);
     cwd = homeDirectory(cwd, this.config.home);
     if (!visibleWorkingDirectory(this.config, cwd))
       throw new RemoteError("invalid_directory", 403);
@@ -73,8 +72,8 @@ export class Processes {
     this.tmux("send-keys", "-t", `${name}:0.0`, "Enter");
     const deadline = Date.now() + 45000;
     while (Date.now() < deadline) {
-      const session = this.owners.store.session(id);
-      if (session && this.owners.isConnected(session)) return session;
+      const session = this.connections.store.session(id);
+      if (session && this.connections.isConnected(session)) return session;
       await new Promise((r) => setTimeout(r, 200));
     }
     throw new RemoteError("launch_timeout_check_mac", 504);

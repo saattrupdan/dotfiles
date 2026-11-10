@@ -7,10 +7,6 @@ import { TuiFixture, waitFor } from "./tui-fixture.ts";
 import { ConfigSchema } from "../src/config.ts";
 import { Processes } from "../src/processes.ts";
 import { createBroker } from "../src/server.ts";
-import {
-  activateLaptop,
-  inspect,
-} from "../../../../extensions/_session_ownership/ownership.mjs";
 
 test(
   "managed Start here registers a fresh native conversation without a first message",
@@ -34,9 +30,8 @@ test(
       pilotScope: "laptop-main",
     });
     fs.writeFileSync(path.join(fixture.data, "config.json"), JSON.stringify(config));
-    activateLaptop([], fixture.locks);
     const broker = await createBroker(config, { history: false });
-    const processes = new Processes(config, broker.owners);
+    const processes = new Processes(config, broker.connections);
     const tmux = processes.tmux.bind(processes);
     t.mock.method(processes, "tmux", (...args: string[]) =>
       tmux(
@@ -57,21 +52,21 @@ test(
       .split("\n");
     try {
       const session = await processes.launch(fixture.cwd);
-      assert(broker.owners.isConnected(session));
+      assert(broker.connections.isConnected(session));
       assert.equal(session.cwd, fixture.cwd);
       assert(session.managed);
       assert(session.sessionFile.startsWith(path.join(fixture.agent, "sessions")));
       assert.equal(fs.existsSync(session.sessionFile), false);
-      broker.owners.send(session, {
+      broker.connections.send(session, {
         version: 1,
         commandId: randomUUID(),
         sessionId: session.sessionId,
         epoch: session.epoch,
-        command: { action: "handoff" },
+        command: { action: "stop_session" },
       });
       await waitFor(
-        () => !inspect(session.sessionFile, fixture.locks),
-        "managed original owner exit",
+        () => !broker.connections.isConnected(session),
+        "managed original process exit",
       );
     } catch (error) {
       const names = fixture

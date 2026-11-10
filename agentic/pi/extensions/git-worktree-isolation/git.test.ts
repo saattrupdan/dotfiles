@@ -2007,7 +2007,7 @@ test("serializes released-session activation and active transcript ownership", a
 
 
 test(
-	"protected child retains supervisor IPC after the readiness handshake",
+	"profile child retains supervisor IPC after the readiness handshake",
 	{ timeout: 15000 },
 	async () => {
 		const extension = path.join(path.dirname(fileURLToPath(import.meta.url)), "index.ts");
@@ -2019,7 +2019,7 @@ test(
 		);
 		const script = `const {createRequire}=await import('node:module');const require=createRequire(${JSON.stringify(loader)});const {createJiti}=require('jiti');const {signalChildReady}=await createJiti(import.meta.url).import(${JSON.stringify(extension)},{default:false});await signalChildReady();if(!process.connected)throw new Error('Supervisor channel was closed');process.send('followup-ready',()=>process.disconnect());`;
 		const child = spawn(process.execPath, ["--input-type=module", "-e", script], {
-			env: { ...process.env, PI_SESSION_OWNER: "proof" },
+			env: { ...process.env, PI_PROFILE_RELOAD_TOKEN: "proof" },
 			stdio: ["ignore", "pipe", "pipe", "ipc"],
 		});
 		let followup = false;

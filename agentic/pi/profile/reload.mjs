@@ -119,11 +119,6 @@ export function prepareProfileReload(identity, profile, state, buildProfileArgs)
 	const saved = fs.existsSync(state.sessionFile);
 	if (!saved && !state.empty)
 		throw new Error("The conversation has no saved file; profile reload was not applied");
-	if (
-		(identity.env.PI_SESSION_OWNER || state.owner) &&
-		!profile.extensions.includes("session-ownership")
-	)
-		throw new Error("Protected sessions must retain the session-ownership extension");
 	const next = { ...state, saved };
 	const args = profileResumeArgs(identity.userArgs, next, identity.cwd);
 	const terminator = identity.userArgs.indexOf("--");

@@ -9,14 +9,9 @@ import {
   type StreamEvent,
 } from "../../protocol/src/index.ts";
 import type { Config } from "./config.ts";
-import { inDeploymentScope } from "./deployment-scope.ts";
+import { inDeploymentScope, canonicalPath } from "./deployment-scope.ts";
 import { Store, token } from "./store.ts";
-import {
-  inspect,
-  isAlive,
-} from "../../../../extensions/_session_ownership/ownership.mjs";
-
-export class Owners {
+export class Connections {
   sockets = new Map<string, net.Socket>();
   connections = new Set<net.Socket>();
   lastSeen = new Map<string, number>();
@@ -132,19 +127,7 @@ export class Owners {
             const registration = Registration.parse(value.data);
             if (!inDeploymentScope(this.config, registration))
               throw new Error("pilot_history_scope");
-            const owner = inspect(
-              registration.sessionFile,
-              path.join(this.config.dataDir, "ownership"),
-            );
-            if (
-              !owner ||
-              owner.instanceId !== registration.instanceId ||
-              owner.pid !== registration.pid ||
-              owner.birth !== registration.birth ||
-              owner.sessionId !== registration.sessionId
-            )
-              throw new Error("ownership_unverified");
-            registration.sessionFile = owner.file!;
+            registration.sessionFile = canonicalPath(registration.sessionFile);
             instance = registration.instanceId;
             const old = this.store.session(registration.sessionId);
             const epoch = old
@@ -331,14 +314,7 @@ export class Owners {
         for (const session of this.store
           .sessions()
           .filter((s) => s.sessionId === current)) {
-          session.state = isAlive({
-            instanceId: session.instanceId,
-            pid: session.pid,
-            birth: session.birth,
-            kind: "local",
-          })
-            ? "disconnected"
-            : "stopped";
+          session.state = "disconnected";
           this.store.save(session);
           this.emit({ version: 1, type: "sessions.changed", data: session });
           this.store.db
@@ -349,17 +325,6 @@ export class Owners {
         }
       }
     });
-  }
-  released(session: Session) {
-    const id = this.activeSessions.get(session.instanceId);
-    const current = id ? this.store.session(id) : undefined;
-    return Boolean(
-      current &&
-      current.sessionId !== session.sessionId &&
-      current.pid === session.pid &&
-      current.birth === session.birth &&
-      this.isConnected(current),
-    );
   }
   isConnected(session: Session) {
     return (

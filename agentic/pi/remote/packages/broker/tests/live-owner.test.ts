@@ -10,12 +10,6 @@ import { Processes } from "../src/processes.ts";
 import { ConfigSchema } from "../src/config.ts";
 import { createBroker } from "../src/server.ts";
 import { Envelope } from "../../protocol/src/index.ts";
-import {
-  activateLaptop,
-  acquire,
-  inspect,
-  newOwner,
-} from "../../../../extensions/_session_ownership/ownership.mjs";
 const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 test(
   "live laptop Pi auto-connects, persists and steers in its original process, then exits gracefully",
@@ -37,8 +31,6 @@ test(
     });
     const sessions = path.join(root, "sessions");
     fs.mkdirSync(sessions);
-    fs.mkdirSync(path.join(config.dataDir, "ownership"), { recursive: true });
-    activateLaptop([], path.join(config.dataDir, "ownership"));
     const broker = await createBroker(config, { history: false });
     await broker.app.ready();
     const name = `pi-remote-proof-${randomUUID()}`;
@@ -55,7 +47,7 @@ test(
       }
       throw new Error("Live proof deadline expired");
     };
-    const processes = new Processes(config, broker.owners);
+    const processes = new Processes(config, broker.connections);
     let watcher: ReturnType<typeof setInterval> | undefined;
     try {
       target = tmux(
@@ -78,7 +70,6 @@ test(
         .replace(/^-/, "");
       assert(["zsh", "bash", "sh", "fish"].includes(shell));
       const env = {
-        PI_SESSION_LOCK_ROOT: path.join(config.dataDir, "ownership"),
         PI_REMOTE_DATA_DIR: config.dataDir,
         PI_WORKTREE_ISOLATION_DISABLE: "1",
       };
@@ -93,7 +84,7 @@ test(
       tmux("send-keys", "-t", `${target}:0.0`, "Enter");
       watcher = setInterval(() => processes.reapIdleShells(), 5000);
       const session = await wait(() =>
-        broker.store.sessions().find((s) => broker.owners.isConnected(s)),
+        broker.store.sessions().find((s) => broker.connections.isConnected(s)),
       );
       assert.equal(session.cwd, fs.realpathSync(root));
       assert.equal(session.managed, false);
@@ -109,7 +100,7 @@ test(
         },
       });
       broker.store.journal(message, "live-proof");
-      broker.owners.send(session, message);
+      broker.connections.send(session, message);
       await wait(
         () =>
           broker.store.command(message.commandId)?.status === "persisted"
@@ -120,7 +111,7 @@ test(
       const native = fs.readFileSync(session.sessionFile, "utf8");
       assert(native.includes("REMOTE_DELIVERY_OK"));
       assert(native.includes(`pi-remote-command:${message.commandId}`));
-      broker.owners.send(session, message);
+      broker.connections.send(session, message);
       await new Promise((r) => setTimeout(r, 300));
       const entries = fs
         .readFileSync(session.sessionFile, "utf8")
@@ -131,7 +122,6 @@ test(
         entries.filter((e) => e.type === "message" && e.message.role === "user").length,
         1,
       );
-      assert(inspect(session.sessionFile, path.join(config.dataDir, "ownership")));
       const running = Envelope.parse({
         version: 1,
         commandId: randomUUID(),
@@ -143,7 +133,7 @@ test(
         },
       });
       broker.store.journal(running, "live-proof");
-      broker.owners.send(session, running);
+      broker.connections.send(session, running);
       await wait(
         () =>
           broker.store.db
@@ -164,7 +154,7 @@ test(
         },
       });
       broker.store.journal(checkpoint, "live-proof");
-      broker.owners.send(session, checkpoint);
+      broker.connections.send(session, checkpoint);
       await wait(
         () =>
           broker.store.command(checkpoint.commandId)?.status === "persisted"
@@ -196,23 +186,22 @@ test(
         commandId: randomUUID(),
         sessionId: session.sessionId,
         epoch: session.epoch,
-        command: { action: "handoff" },
+        command: { action: "stop_session" },
       });
       broker.store.journal(handoff, "live-proof");
-      broker.owners.send(session, handoff);
+      broker.connections.send(session, handoff);
       await wait(
         () =>
-          !inspect(session.sessionFile, path.join(config.dataDir, "ownership"))
+          !broker.connections.isConnected(session)
             ? true
             : undefined,
         30000,
       );
       const finalNative = fs.readFileSync(session.sessionFile, "utf8");
-      acquire(session.sessionFile, newOwner(), path.join(config.dataDir, "ownership"));
       await new Promise((r) => setTimeout(r, 100));
       assert.equal(fs.readFileSync(session.sessionFile, "utf8"), finalNative);
       console.log(
-        "Live proof: registered original owner; persisted native command marker; duplicate ID injected once; busy steering followed tool completion; graceful handoff confirmed actual exit.",
+        "Live proof: registered original session; persisted native command marker; duplicate ID injected once; busy steering followed tool completion; graceful stop confirmed actual exit.",
       );
     } catch (error) {
       if (target)

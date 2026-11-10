@@ -1,4 +1,4 @@
-/** Authenticated owner-only local coordination; no network listener in Pi. */
+/** Authenticated local-user coordination; no network listener in Pi. */
 import net from "node:net";
 import fs from "node:fs";
 import path from "node:path";

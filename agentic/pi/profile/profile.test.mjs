@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 import { parseAgentProfile } from "./definition.mjs";
 import { buildProfileArgs, loadProfile, resolvePiPackage, selectProfile } from "./launcher.mjs";
 
@@ -40,6 +41,40 @@ const profile = (name, data = {}) =>
 		"Only use memory.\n",
 		`${name}.md`,
 	);
+
+test("native selectors and sessionless helpers ignore inherited ownership state", () => {
+	const dir = root();
+	const runtime = path.join(dir, "runtime");
+	fs.mkdirSync(path.join(runtime, "dist"), { recursive: true });
+	fs.symlinkSync(path.join(resolvePiPackage(), "dist/utils"), path.join(runtime, "dist/utils"));
+	fs.writeFileSync(path.join(runtime, "package.json"), JSON.stringify({ type: "module", bin: "cli.mjs" }));
+	fs.writeFileSync(path.join(runtime, "cli.mjs"), "console.log(JSON.stringify(process.argv.slice(2)));\n");
+	const lockRoot = path.join(dir, "unused-locks");
+	for (const role of ["main", "librarian"])
+		fs.writeFileSync(path.join(dir, "agents", `${role}.md`), `---\nname: ${role}\ndescription: Fixture\nsubagent: false\ntools: []\nskills: []\nextensions: []\n---\nFixture instructions.\n`);
+	for (const [role, args] of [
+		["main", ["--resume"]],
+		["main", ["--session", "native-id"]],
+		["main", ["--fork", "native-id"]],
+		["librarian", ["--no-session", "-p", "Fixture question"]],
+	]) {
+		const result = spawnSync(process.execPath, [fileURLToPath(new URL("./launcher.mjs", import.meta.url)), "--agent", role, ...args], {
+			encoding: "utf8",
+			env: { ...process.env, PI_CLI_PACKAGE: runtime, PI_CODING_AGENT_DIR: dir,
+				PI_SESSION_OWNER: "stale, invalid inherited identity", PI_SESSION_LOCK_ROOT: lockRoot,
+				PI_REMOTE_OWNERSHIP: "1" },
+		});
+		assert.equal(result.status, 0, result.stderr);
+		assert.deepEqual(JSON.parse(result.stdout).slice(-args.length), args);
+		assert.equal(fs.existsSync(lockRoot), false);
+	}
+});
+
+test("SDK discovery survives npm-run project prefixes", () => {
+	const env = { ...process.env, npm_config_prefix: root() };
+	delete env.PI_CLI_PACKAGE;
+	assert.ok(fs.existsSync(path.join(resolvePiPackage(env), "package.json")));
+});
 
 test("validates role, resource lists, and empty allow-lists", () => {
 	assert.equal(profile("librarian").subagent, false);

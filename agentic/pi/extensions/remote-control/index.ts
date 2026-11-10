@@ -1,23 +1,21 @@
 import { expandCommandInput, isInputCommand } from "../_remote_bridge/command-input.ts";
-import { hasRemoteCommand, invokeRemoteCommand } from "../_remote_bridge/commands.ts";
+import { hasRemoteCommand, invokeRemoteCommand, clearRemoteCommands } from "../_remote_bridge/commands.ts";
 /** Control the existing main-profile process over authenticated local IPC. */
 import net from "node:net";
 import fs from "node:fs";
 import path from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Envelope, type CommandStatus } from "../../remote/packages/protocol/src/index.ts";
-import { ownedRecord } from "../_session_ownership/ownership.mjs";
 import { dataDirectory } from "../_remote_bridge/local.ts";
 import { currentPrompt, configurePrompts, respondPrompt } from "../_remote_bridge/prompts.ts";
-import { missingGuards } from "../_remote_bridge/guards.ts";
+import { missingGuards, clearGuards } from "../_remote_bridge/guards.ts";
 import { isIncognito, incognitoRequested } from "../_incognito_state/state.ts";
 import { isLoopActive, suspendLoopForHandoff } from "../_loop_state/state.ts";
 
 const MARKER = /<!-- pi-remote-command:([0-9a-f-]{36}) -->/;
 
 const required = [
-	"session-ownership",
 	"vm-isolation",
 	"caffeinate",
 	"question",
@@ -26,10 +24,9 @@ const required = [
 ];
 type Journal = Record<string, { fingerprint: string; status: CommandStatus }>;
 export default function (pi: ExtensionAPI) {
-	if (!process.env.PI_SESSION_OWNER || process.env.PI_SUBAGENT_CHILD === "1") return;
-	const inherited = ownedRecord();
-	if (!inherited) return;
-	const { owner } = inherited;
+	if (process.env.PI_SUBAGENT_CHILD === "1" || process.argv.includes("-p") || process.argv.includes("--print")) return;
+	const processState = globalThis as typeof globalThis & { __piRemoteInstance?: string };
+	const instanceId = (processState.__piRemoteInstance ??= randomUUID());
 	let ctx: ExtensionContext;
 	let socket: net.Socket | undefined;
 	let reconnect: ReturnType<typeof setTimeout> | undefined;
@@ -39,27 +36,27 @@ export default function (pi: ExtensionAPI) {
 	let commands = Promise.resolve();
 	let epoch = 0;
 	let stopped = false;
-	let handoff = false;
+	let stopping = false;
 	let settled = true;
 	let retries = 0;
 	let registered = false;
 	const dir = dataDirectory();
 	const journalDir = path.join(dir, "commands");
 	fs.mkdirSync(journalDir, { recursive: true, mode: 0o700 });
-	const journalFile = path.join(journalDir, `${owner.instanceId}.json`);
+	const journalFile = path.join(journalDir, `${instanceId}.json`);
 	const journalRoot = globalThis as typeof globalThis & {
-		__piOwnerJournals?: Map<string, Journal>;
+		__piRemoteJournals?: Map<string, Journal>;
 	};
-	const journals = (journalRoot.__piOwnerJournals ??= new Map<string, Journal>());
-	let journal: Journal = journals.get(owner.instanceId) ?? {};
-	if (!journals.has(owner.instanceId)) {
+	const journals = (journalRoot.__piRemoteJournals ??= new Map<string, Journal>());
+	let journal: Journal = journals.get(instanceId) ?? {};
+	if (!journals.has(instanceId)) {
 		try {
 			journal = JSON.parse(fs.readFileSync(journalFile, "utf8"));
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== "ENOENT")
-				throw new Error("Owner delivery journal cannot be read safely", { cause: error });
+				throw new Error("Remote delivery journal cannot be read safely", { cause: error });
 		}
-		journals.set(owner.instanceId, journal);
+		journals.set(instanceId, journal);
 	}
 	const save = () => {
 		const temp = journalFile + ".tmp";
@@ -103,7 +100,6 @@ export default function (pi: ExtensionAPI) {
 	const capabilities = () => {
 		const result = pi
 			.getCommands()
-			.filter((c) => !c.name.startsWith("pi-owned-"))
 			.map((c) => ({
 				name: c.name,
 				supported: hasRemoteCommand(c.name) || isInputCommand(c),
@@ -155,13 +151,12 @@ export default function (pi: ExtensionAPI) {
 			type: "register",
 			data: {
 				version: 1,
-				instanceId: owner.instanceId,
+				instanceId: instanceId,
 				sessionId: ctx.sessionManager.getSessionId(),
 				sessionFile: ctx.sessionManager.getSessionFile(),
 				cwd: ctx.cwd,
 				name: pi.getSessionName() ?? "Untitled",
-				pid: owner.pid,
-				birth: owner.birth,
+				pid: process.pid,
 				managed: Boolean(process.env.PI_REMOTE_MANAGED),
 				tmux: process.env.PI_REMOTE_MANAGED,
 				model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "",
@@ -212,7 +207,7 @@ export default function (pi: ExtensionAPI) {
 	};
 	const drain = () => {
 		if (
-			handoff &&
+			stopping &&
 			queued === 0 &&
 			operations === 0 &&
 			inFlight.size === 0 &&
@@ -228,7 +223,7 @@ export default function (pi: ExtensionAPI) {
 		if (!ctx.model) throw new Error("no_model_selected");
 		if (!(await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model)).ok)
 			throw new Error("model_authentication_missing");
-		if (stopped || !visible()) throw new Error("owner_changed");
+		if (stopped || !visible()) throw new Error("session_changed");
 		const text = `<!-- pi-remote-command:${id} -->\n${input}`;
 		const parsedImages = Array.isArray(images)
 			? images.filter((p): p is { type: "image"; data: string; mimeType: string } =>
@@ -265,8 +260,8 @@ export default function (pi: ExtensionAPI) {
 		journal[id] = { fingerprint, status: "delivery_unknown" };
 		save();
 		const command = envelope.command;
-		if (handoff && !["stop_run", "answer"].includes(command.action)) {
-			ack(id, "rejected", "busy_handoff");
+		if (stopping && !["stop_run", "answer"].includes(command.action)) {
+			ack(id, "rejected", "session_stopping");
 			return;
 		}
 		operations++;
@@ -280,10 +275,9 @@ export default function (pi: ExtensionAPI) {
 					ctx.abort();
 					ack(id, "accepted_by_owner");
 					break;
-				case "handoff":
 				case "stop_session":
 					suspendLoopForHandoff();
-					handoff = true;
+					stopping = true;
 					ack(id, "accepted_by_owner");
 					drain();
 					break;
@@ -473,7 +467,7 @@ export default function (pi: ExtensionAPI) {
 	});
 	pi.on("input", (event) => {
 		if (!visible()) return;
-		if (handoff && event.source !== "extension") return { action: "handled" };
+		if (stopping && event.source !== "extension") return { action: "handled" };
 		// Input observation precedes native model/auth validation; it is not acceptance.
 	});
 	pi.on("agent_start", (_e, next) => {
@@ -521,6 +515,8 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_info_changed", (e) => event("session_info_changed", e));
 	pi.on("session_shutdown", () => {
 		stopped = true;
+		clearGuards();
+		clearRemoteCommands();
 		clearInterval(heartbeat);
 		if (reconnect) clearTimeout(reconnect);
 		configurePrompts();

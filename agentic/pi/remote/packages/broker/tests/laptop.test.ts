@@ -6,7 +6,6 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import WebSocket from "ws";
-import net from "node:net";
 import type { Session } from "../../protocol/src/index.ts";
 import { ConfigSchema } from "../src/config.ts";
 import { History, RECENT_SESSION_MS } from "../src/history.ts";
@@ -15,15 +14,8 @@ import { approvePilot, deployment } from "../src/gates.ts";
 import { createBroker } from "../src/server.ts";
 import { Processes } from "../src/processes.ts";
 import { digest } from "../src/store.ts";
-import {
-  activateLaptop,
-  acquire,
-  newOwner,
-  reserveNamespace,
-  releaseNamespace,
-} from "../../../../extensions/_session_ownership/ownership.mjs";
 
-function fixture(activated = true) {
+function fixture() {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pi-laptop-")));
   const config = ConfigSchema.parse({
     origin: "https://laptop.test.ts.net",
@@ -35,7 +27,6 @@ function fixture(activated = true) {
   });
   fs.mkdirSync(path.join(config.agentDir, "sessions/project"), { recursive: true });
   fs.mkdirSync(config.dataDir);
-  if (activated) activateLaptop([], path.join(config.dataDir, "ownership"));
   const seed = (directory: string, id = randomUUID(), name?: string) => {
     fs.mkdirSync(directory, { recursive: true });
     const file = path.join(directory, `${randomUUID()}.jsonl`);
@@ -387,6 +378,54 @@ test("simultaneous recovery requests launch the same stopped native history only
   }
 });
 
+test("phone resume does not require activation or wait for a previously registered process", async (t) => {
+  const f = fixture();
+  const saved = f.seed(path.join(f.config.agentDir, "sessions/project"));
+  const broker = await createBroker(f.config, { ipc: false });
+  const row = liveSession(saved, f.root);
+  row.state = "disconnected";
+  broker.store.save(row);
+  let launches = 0;
+  t.mock.method(Processes.prototype, "launch", async (cwd: string, native: { id: string; path: string }) => {
+    assert.equal(cwd, f.root);
+    assert.equal(native.id, saved.id);
+    assert.equal(native.path, saved.file);
+    launches++;
+    return row;
+  });
+  try {
+    const headers = authentication(broker, f.config.origin);
+    const detail = await broker.app.inject({ url: `/api/v1/sessions/${saved.id}`, headers });
+    assert.equal(detail.json().state, "stopped");
+    assert.equal(detail.json().recoveryBlockedReason, undefined);
+    const resumed = await broker.app.inject({ method: "POST", url: `/api/v1/sessions/${saved.id}/recover`, headers });
+    assert.equal(resumed.statusCode, 200);
+    assert.equal(launches, 1);
+    assert.equal(fs.existsSync(path.join(f.config.dataDir, "ownership")), false);
+  } finally {
+    await broker.app.close();
+    f.close();
+  }
+});
+
+test("phone resume reuses an already-connected session", async (t) => {
+  const f = fixture();
+  const saved = f.seed(path.join(f.config.agentDir, "sessions/project"));
+  const broker = await createBroker(f.config, { ipc: false });
+  const row = liveSession(saved, f.root);
+  broker.store.save(row);
+  t.mock.method(broker.connections, "isConnected", () => true);
+  t.mock.method(Processes.prototype, "launch", () => assert.fail("connected session must be reused"));
+  try {
+    const response = await broker.app.inject({ method: "POST", url: `/api/v1/sessions/${saved.id}/recover`, headers: authentication(broker, f.config.origin) });
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().instanceId, row.instanceId);
+  } finally {
+    await broker.app.close();
+    f.close();
+  }
+});
+
 test("expanded approval is bound to visibility scope and configured session directories", () => {
   const f = fixture();
   try {
@@ -403,173 +442,7 @@ test("expanded approval is bound to visibility scope and configured session dire
         "pilot-approval",
       ),
     );
-    fs.mkdirSync(path.join(f.config.dataDir, "ownership"), { recursive: true });
-    activateLaptop([], path.join(f.config.dataDir, "ownership"));
-    assert(!deployment(f.config).missing.includes("pilot-global-ownership-conflict"));
   } finally {
-    f.close();
-  }
-});
-
-test("a missing lease never permits recovery while the recorded process is alive", async () => {
-  const f = fixture();
-  const saved = f.seed(path.join(f.config.agentDir, "sessions/project"));
-  const broker = await createBroker(f.config, { ipc: false });
-  try {
-    const row = liveSession(saved, f.root);
-    row.birth = newOwner().birth;
-    broker.store.save(row);
-    const headers = authentication(broker, f.config.origin);
-    const detail = await broker.app.inject({
-      url: `/api/v1/sessions/${saved.id}`,
-      headers,
-    });
-    assert.equal(detail.json().recoveryBlockedReason, "owner_not_connected");
-    const recover = await broker.app.inject({
-      method: "POST",
-      url: `/api/v1/sessions/${saved.id}/recover`,
-      headers,
-    });
-    assert.equal(recover.statusCode, 409);
-    assert.equal(recover.json().error, "owner_still_alive");
-    assert(!fs.existsSync(path.join(f.config.dataDir, "launches")));
-  } finally {
-    await broker.app.close();
-    f.close();
-  }
-});
-
-test("verified registration on B releases A without permitting disconnected-owner takeover", async (t) => {
-  const f = fixture();
-  const a = f.seed(path.join(f.config.agentDir, "sessions/project"));
-  const b = f.seed(path.join(f.config.agentDir, "sessions/project"));
-  const broker = await createBroker(f.config, { ipc: false });
-  const owner = newOwner();
-  const first = {
-    ...liveSession(a, f.root),
-    instanceId: owner.instanceId,
-    birth: owner.birth,
-    state: "stopped",
-  };
-  const second = {
-    ...liveSession(b, f.root),
-    instanceId: owner.instanceId,
-    birth: owner.birth,
-  };
-  const socket = new net.Socket();
-  try {
-    acquire(b.file, owner, path.join(f.config.dataDir, "ownership"));
-    broker.store.save(first);
-    broker.store.save(second);
-    broker.owners.activeSessions.set(owner.instanceId, b.id);
-    broker.owners.sockets.set(owner.instanceId, socket);
-    let launches = 0;
-    t.mock.method(
-      Processes.prototype,
-      "launch",
-      async (_cwd: string, saved: { path: string }) => {
-        assert.equal(saved.path, a.file);
-        launches++;
-        return first;
-      },
-    );
-    const headers = authentication(broker, f.config.origin);
-    assert.equal(
-      (await broker.app.inject({ url: `/api/v1/sessions/${a.id}`, headers })).json()
-        .recoveryBlockedReason,
-      undefined,
-    );
-    const result = await broker.app.inject({
-      method: "POST",
-      url: `/api/v1/sessions/${a.id}/recover`,
-      headers,
-    });
-    assert.equal(result.statusCode, 200);
-    assert.equal(launches, 1);
-    broker.owners.sockets.delete(owner.instanceId);
-    assert.equal(
-      (await broker.app.inject({ url: `/api/v1/sessions/${a.id}`, headers })).json()
-        .recoveryBlockedReason,
-      "owner_not_connected",
-    );
-  } finally {
-    socket.destroy();
-    await broker.app.close();
-    f.close();
-  }
-});
-
-function liveSession(
-  saved: { id: string; file: string },
-  cwd: string,
-  lastActivity = Date.now(),
-): Session {
-  return {
-    version: 1,
-    instanceId: randomUUID(),
-    sessionId: saved.id,
-    sessionFile: saved.file,
-    cwd,
-    name: "Fixture",
-    pid: process.pid,
-    birth: "fixture",
-    managed: false,
-    model: "fixture",
-    thinking: "off",
-    capabilities: [],
-    idle: true,
-    loop: false,
-    epoch: 1,
-    sequence: 0,
-    state: "idle",
-    lastActivity,
-  };
-}
-
-test("laptop admission requires activation and migration fences commands before journaling", async (t) => {
-  const f = fixture(false);
-  const saved = f.seed(path.join(f.config.agentDir, "sessions/project"));
-  const broker = await createBroker(f.config, { ipc: false });
-  const owner = newOwner("migration");
-  try {
-    const headers = authentication(broker, f.config.origin);
-    const recover = await broker.app.inject({
-      method: "POST",
-      url: `/api/v1/sessions/${saved.id}/recover`,
-      headers,
-    });
-    assert.equal(recover.statusCode, 409);
-    assert.equal(recover.json().error, "laptop_activation_required");
-    assert(!fs.existsSync(path.join(f.config.dataDir, "launches")));
-    assert.equal(broker.store.sessions().length, 0);
-    activateLaptop([], path.join(f.config.dataDir, "ownership"));
-    broker.store.save(liveSession(saved, f.root));
-    reserveNamespace(owner, path.join(f.config.dataDir, "ownership"));
-    let forwarded = 0;
-    t.mock.method(broker.owners, "isConnected", () => true);
-    t.mock.method(broker.owners, "send", () => {
-      forwarded++;
-    });
-    const commandId = randomUUID();
-    const response = await broker.app.inject({
-      method: "POST",
-      url: `/api/v1/sessions/${saved.id}/messages`,
-      headers,
-      payload: {
-        version: 1,
-        sessionId: saved.id,
-        epoch: 1,
-        commandId,
-        command: { action: "message", text: "Must not be forwarded", images: [] },
-      },
-    });
-    assert.equal(response.statusCode, 409);
-    assert.equal(response.json().error, "laptop_restart_required");
-    assert.equal(forwarded, 0);
-    assert.equal(broker.store.command(commandId), undefined);
-  } finally {
-    releaseNamespace(owner, path.join(f.config.dataDir, "ownership"));
-    await broker.app.close();
     f.close();
   }
 });
@@ -609,13 +482,13 @@ test("rejected subscriptions and later-expired sessions never receive live priva
     await first;
     oldRow.lastActivity = Date.now();
     broker.store.save(oldRow);
-    broker.owners.emit({
+    broker.connections.emit({
       version: 1,
       type: "snapshot",
       sessionId: old.id,
       data: "REJECTED_SUBSCRIPTION",
     });
-    broker.owners.emit({
+    broker.connections.emit({
       version: 1,
       type: "snapshot",
       sessionId: secret.id,
@@ -624,13 +497,13 @@ test("rejected subscriptions and later-expired sessions never receive live priva
     recentRow.lastActivity = expired;
     fs.utimesSync(recent.file, expired / 1000, expired / 1000);
     broker.store.save(recentRow);
-    broker.owners.emit({
+    broker.connections.emit({
       version: 1,
       type: "snapshot",
       sessionId: recent.id,
       data: "EXPIRED_CONTENT",
     });
-    broker.owners.emit({
+    broker.connections.emit({
       version: 1,
       type: "sessions.changed",
       data: { ...recentRow, name: "PRIVATE_OLD_METADATA" },
@@ -642,7 +515,7 @@ test("rejected subscriptions and later-expired sessions never receive live priva
         if (JSON.parse(raw.toString()).type === "message_end") resolve();
       }),
     );
-    broker.owners.emit({
+    broker.connections.emit({
       version: 1,
       type: "message_end",
       sessionId: recent.id,
@@ -669,63 +542,29 @@ test("rejected subscriptions and later-expired sessions never receive live priva
   }
 });
 
-test("authenticated laptop catalog opens saved history; migration blocks process launch without side effects", async () => {
-  const f = fixture();
-  const saved = f.seed(
-    path.join(f.config.agentDir, "sessions/project"),
-    randomUUID(),
-    "Laptop conversation",
-  );
-  const broker = await createBroker(f.config, { ipc: false });
-  const owner = newOwner("migration");
-  try {
-    reserveNamespace(owner, path.join(f.config.dataDir, "ownership"));
-    const headers = authentication(broker, f.config.origin);
-    assert.equal(
-      (
-        await broker.app.inject({
-          url: "/api/v1/sessions",
-          headers: { host: headers.host },
-        })
-      ).statusCode,
-      401,
-    );
-    const response = await broker.app.inject({
-      url: `/api/v1/sessions?folder=${encodeURIComponent(f.root)}`,
-      headers,
-    });
-    assert.equal(response.statusCode, 200);
-    const rows = response.json();
-    assert.equal(rows.length, 1);
-    assert.equal(rows[0].sessionId, saved.id);
-    assert.equal(rows[0].name, "Laptop conversation");
-    assert(!response.body.includes("PRIVATE_FIRST_MESSAGE"));
-    assert.equal(rows[0].recoveryBlockedReason, "laptop_restart_required");
-    const history = await broker.app.inject({
-      url: `/api/v1/sessions/${saved.id}/history`,
-      headers,
-    });
-    assert.equal(history.statusCode, 200);
-    assert(history.body.includes("PRIVATE_FIRST_MESSAGE"));
-    const resumed = await broker.app.inject({
-      method: "POST",
-      url: `/api/v1/sessions/${saved.id}/recover`,
-      headers,
-    });
-    assert.equal(resumed.statusCode, 409);
-    assert.equal(resumed.json().error, "laptop_restart_required");
-    assert(!fs.existsSync(path.join(f.config.dataDir, "launches")));
-    assert.equal(broker.store.sessions().length, 0);
-    releaseNamespace(owner, path.join(f.config.dataDir, "ownership"));
-    const ready = (
-      await broker.app.inject({
-        url: `/api/v1/sessions?folder=${encodeURIComponent(f.root)}`,
-        headers,
-      })
-    ).json();
-    assert.equal(ready[0].recoveryBlockedReason, undefined);
-  } finally {
-    await broker.app.close();
-    f.close();
-  }
-});
+
+function liveSession(
+  saved: { id: string; file: string },
+  cwd: string,
+  lastActivity = Date.now(),
+): Session {
+  return {
+    version: 1,
+    instanceId: randomUUID(),
+    sessionId: saved.id,
+    sessionFile: saved.file,
+    cwd,
+    name: "Fixture",
+    pid: process.pid,
+    managed: false,
+    model: "fixture",
+    thinking: "off",
+    capabilities: [],
+    idle: true,
+    loop: false,
+    epoch: 1,
+    sequence: 0,
+    state: "idle",
+    lastActivity,
+  };
+}

@@ -75,7 +75,6 @@ skills:
   - xlsx
 # The librarian-only memory extension and its six concept tools are intentionally excluded.
 extensions:
-  - session-ownership
   - bash-output
   - caffeinate
   - code-tree

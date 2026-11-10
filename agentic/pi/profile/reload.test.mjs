@@ -7,7 +7,6 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { resolvePiPackage } from "./pi-runtime.mjs";
-import { acquire, inspect, newOwner } from "../extensions/_session_ownership/ownership.mjs";
 
 const launcher = fileURLToPath(new URL("./launcher.mjs", import.meta.url));
 const bridge = `import os,pty,select,signal,sys,fcntl,termios,struct,time
@@ -77,7 +76,7 @@ function fixture(options = {}) {
 			path.join(agentDir, "extensions", name, "index.ts"),
 			`import fs from 'node:fs'; export default function(pi) {
  pi.registerTool({name:'${name}_tool',label:'fixture',description:'fixture',parameters:{type:'object',properties:{}},async execute(){return {content:[{type:'text',text:'fixture'}]}}});
- pi.registerCommand('fixture-hop',{description:'Fixture continuation',handler:async(_,ctx)=>{process.send({type:'pi-owned-continuation',cwd:ctx.cwd,args:process.argv.slice(2),changes:{}});ctx.shutdown();}});
+ pi.registerCommand('fixture-hop',{description:'Fixture continuation',handler:async(_,ctx)=>{process.send({type:'pi-profile-continuation',cwd:ctx.cwd,args:process.argv.slice(2),changes:{}});ctx.shutdown();}});
  pi.on('session_start',(_,ctx)=>fs.appendFileSync(${JSON.stringify(state)},JSON.stringify({pid:process.pid,active:pi.getActiveTools(),all:pi.getAllTools().map(t=>t.name),prompt:ctx.getSystemPrompt(),commands:pi.getCommands(),session:ctx.sessionManager.getSessionFile(),id:ctx.sessionManager.getSessionId(),model:ctx.model?.id,thinking:ctx.thinkingLevel,name:ctx.sessionManager.getSessionName()})+'\\n'));
 }`,
 		);
@@ -91,12 +90,6 @@ function fixture(options = {}) {
 			path.join(agentDir, "extensions/git-worktree-isolation"),
 			"dir",
 		);
-	if (options.protected)
-		fs.symlinkSync(
-			fileURLToPath(new URL("../extensions/session-ownership", import.meta.url)),
-			path.join(agentDir, "extensions/session-ownership"),
-			"dir",
-		);
 	if (options.consume) {
 		fs.mkdirSync(path.join(agentDir, "extensions/consumer"));
 		fs.writeFileSync(
@@ -107,7 +100,7 @@ function fixture(options = {}) {
 	const profile = (name) =>
 		fs.writeFileSync(
 			path.join(agentDir, "agents", `${role}.md`),
-			`---\nname: ${role}\ndescription: Reload test\nsubagent: false\ntools: [${name}_tool]\nextensions: [${options.consume ? "consumer, " : ""}${name}${options.protected ? ", session-ownership" : ""}${options.worktree ? ", git-worktree-isolation" : ""}]\nskills: ${name === "new" ? "[fixture]" : "[]"}\n---\nUnique ${name} system prompt.\n`,
+			`---\nname: ${role}\ndescription: Reload test\nsubagent: false\ntools: [${name}_tool]\nextensions: [${options.consume ? "consumer, " : ""}${name}${options.worktree ? ", git-worktree-isolation" : ""}]\nskills: ${name === "new" ? "[fixture]" : "[]"}\n---\nUnique ${name} system prompt.\n`,
 		);
 	profile("old");
 	const session =
@@ -188,13 +181,10 @@ function fixture(options = {}) {
 		...process.env,
 		PI_CODING_AGENT_DIR: agentDir,
 		PI_CLI_PACKAGE: resolvePiPackage(),
-		PI_SESSION_LOCK_ROOT: path.join(root, "locks"),
-		PI_REMOTE_OWNERSHIP: options.protected ? "1" : "0",
 		TERM: "xterm-256color",
 	};
 	for (const key of Object.keys(env))
 		if (
-			key === "PI_SESSION_OWNER" ||
 			key === "PI_REMOTE_MANAGED" ||
 			key.startsWith("PI_WORKTREE_") ||
 			key === "PI_LOOP_HANDOFF"
@@ -368,29 +358,6 @@ test(
 			const fourth = await f.wait(4);
 			assert.deepEqual(fourth.active, ["new_tool"]);
 			assert.notEqual(fourth.pid, first.pid);
-		} finally {
-			await f.close();
-		}
-	},
-);
-
-test(
-	"protected profile reload transfers ownership without releasing the session",
-	{ timeout: 30000 },
-	async () => {
-		const f = fixture({ protected: true });
-		try {
-			const first = await f.wait(1),
-				locks = path.join(f.root, "locks");
-			assert.equal(inspect(f.session, locks).pid, first.pid);
-			const contender = newOwner("test");
-			assert.throws(() => acquire(f.session, contender, locks));
-			f.profile("new");
-			f.child.stdin.write("/reload\r");
-			const second = await f.wait(2);
-			assert.deepEqual(second.active, ["new_tool"]);
-			assert.equal(inspect(f.session, locks).pid, second.pid);
-			assert.throws(() => acquire(f.session, contender, locks));
 		} finally {
 			await f.close();
 		}

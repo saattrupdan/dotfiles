@@ -1,29 +1,6 @@
 import path from "node:path";
 import fs from "node:fs";
 import type { Config } from "./config.ts";
-import { RemoteError } from "../../protocol/src/index.ts";
-import {
-  historyInScope,
-  laptopActivated,
-  pendingMigration,
-} from "../../../../extensions/_session_ownership/ownership.mjs";
-
-export function controlBlockReason(config: Config) {
-  const root = path.join(config.dataDir, "ownership");
-  if (
-    config.deploymentPolicy === "pilot" &&
-    config.pilotScope === "laptop-main" &&
-    !laptopActivated(root)
-  )
-    return "laptop_activation_required";
-  if (pendingMigration(root)) return "laptop_restart_required";
-  return undefined;
-}
-export function assertControlReady(config: Config) {
-  const reason = controlBlockReason(config);
-  if (reason) throw new RemoteError(reason, 409);
-}
-
 /** The expanded pilot admits main histories without admitting private profiles. */
 export function sessionRoots(config: Config) {
   return [
@@ -33,6 +10,11 @@ export function sessionRoots(config: Config) {
   ];
 }
 
+function historyInScope(file: string, root: string) {
+  const relative = path.relative(canonicalPath(root), canonicalPath(file));
+  return !!relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
 export function mainHistory(config: Config, file: string) {
   return (
     !historyInScope(file, path.join(config.agentDir, "profile-sessions")) &&
@@ -40,7 +22,7 @@ export function mainHistory(config: Config, file: string) {
   );
 }
 const directoryRoots = new WeakMap<Config, { stamp: number; roots: string[] }>();
-function canonicalDirectory(input: string): string {
+export function canonicalPath(input: string): string {
   let current = path.resolve(input);
   const suffix: string[] = [];
   while (!fs.existsSync(current) && path.dirname(current) !== current) {
@@ -59,14 +41,14 @@ export function visibleWorkingDirectory(config: Config, cwd: string) {
   if (!cached || cached.stamp !== stamp) {
     const roots = new Set([
       path.resolve(config.agentDir),
-      canonicalDirectory(config.agentDir),
+      canonicalPath(config.agentDir),
     ]);
     for (const name of fs.existsSync(config.agentDir)
       ? fs.readdirSync(config.agentDir)
       : []) {
       const child = path.join(config.agentDir, name);
       try {
-        if (fs.statSync(child).isDirectory()) roots.add(canonicalDirectory(child));
+        if (fs.statSync(child).isDirectory()) roots.add(canonicalPath(child));
       } catch {
         /* Broken resource links cannot reveal conversations. */
       }
@@ -75,7 +57,7 @@ export function visibleWorkingDirectory(config: Config, cwd: string) {
     directoryRoots.set(config, cached);
   }
   return !cached.roots.some((root) =>
-    [path.resolve(cwd), canonicalDirectory(cwd)].some((target) => {
+    [path.resolve(cwd), canonicalPath(cwd)].some((target) => {
       const relative = path.relative(root, target);
       return (
         !relative ||
@@ -91,6 +73,7 @@ export function inDeploymentScope(
   session: { managed: boolean; tmux?: string; sessionFile: string; cwd?: string },
 ) {
   if (session.cwd && !visibleWorkingDirectory(config, session.cwd)) return false;
+  if (historyInScope(session.sessionFile, path.join(config.agentDir, "profile-sessions"))) return false;
   if (config.deploymentPolicy !== "pilot") return true;
   if (config.pilotScope === "laptop-main")
     return mainHistory(config, session.sessionFile);

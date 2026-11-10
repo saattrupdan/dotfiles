@@ -57,8 +57,8 @@ export async function signalChildReady(): Promise<void> {
 		const done = () => {
 			process.off("message", onMessage);
 			process.off("disconnect", done);
-			// Protected successors need this channel for later supervised continuations.
-			if (process.connected && !process.env.PI_SESSION_OWNER && !process.env.PI_PROFILE_RELOAD_TOKEN) process.disconnect();
+			// Supervised successors need this channel for later supervised continuations.
+			if (process.connected && !process.env.PI_PROFILE_RELOAD_TOKEN) process.disconnect();
 			resolve();
 		};
 		const onMessage = (message: unknown) => {
@@ -198,20 +198,20 @@ export function loopHandoffEnv(sessionFile: string, suspend = false): NodeJS.Pro
 
 /** The outer launcher starts the successor only after this Pi actually exits. */
 function onTransitionBoundary(pi: ExtensionAPI, handler: (event: unknown, ctx: ExtensionContext) => Promise<void>): void {
- if (process.env.PI_SESSION_OWNER || process.env.PI_PROFILE_RELOAD_TOKEN) pi.on("agent_settled", handler);
+ if (process.env.PI_PROFILE_RELOAD_TOKEN) pi.on("agent_settled", handler);
  else pi.on("turn_end", handler);
 }
 
-function requestOwnedContinuation(cwd: string, args: string[], env: NodeJS.ProcessEnv, ctx?: HandoffContext): void {
- if (!process.send || !process.connected || !ctx?.shutdown) throw new Error("Protected continuation requires the supervised launcher and live shutdown context");
+function requestProfileContinuation(cwd: string, args: string[], env: NodeJS.ProcessEnv, ctx?: HandoffContext): void {
+ if (!process.send || !process.connected || !ctx?.shutdown) throw new Error("Profile continuation requires the supervised launcher and live shutdown context");
  const changes = Object.fromEntries(Object.entries(env).filter(([key]) => key.startsWith("PI_WORKTREE_") || key === "PI_LOOP_HANDOFF"));
- process.send({ type: "pi-owned-continuation", cwd, args, changes });
+ process.send({ type: "pi-profile-continuation", cwd, args, changes });
  ctx.shutdown();
 }
 
 async function relaunch(plan: Awaited<ReturnType<typeof createLaunchPlan>>, ctx: HandoffContext, sessionFile: string, args = cliArgs()): Promise<void> {
- if (process.env.PI_SESSION_OWNER || (process.env.PI_PROFILE_RELOAD_TOKEN && process.connected && ctx?.shutdown)) {
-   requestOwnedContinuation(plan.childCwd, args, {
+ if ((process.env.PI_PROFILE_RELOAD_TOKEN && process.connected && ctx?.shutdown)) {
+   requestProfileContinuation(plan.childCwd, args, {
    ...loopHandoffEnv(sessionFile, true),
    [CHILD_MANIFEST_ENV]: plan.manifest.manifestPath,
    [BRANCH_CONTINUATION_ENV]: "1",
@@ -241,7 +241,7 @@ async function resumeInManagedWorktree(sessionFile: string, cwd: string, manifes
 	if (continueLoop) env[LOOP_RETURN_CONTINUATION_ENV] = "1";
 	else delete env[LOOP_RETURN_CONTINUATION_ENV];
 	const args = continuationArgs(sessionFile);
- if (process.env.PI_SESSION_OWNER || (process.env.PI_PROFILE_RELOAD_TOKEN && process.connected && ctx?.shutdown)) { requestOwnedContinuation(cwd, args, env, ctx); return; }
+ if ((process.env.PI_PROFILE_RELOAD_TOKEN && process.connected && ctx?.shutdown)) { requestProfileContinuation(cwd, args, env, ctx); return; }
 	const result = ctx
 		? await launchWithProgress(cwd, [process.argv[1]!, ...args], env, ctx)
 		: spawnSync(process.execPath, [process.argv[1]!, ...args], { cwd, stdio: "inherit", env });
@@ -680,7 +680,7 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 			if (!manifest.createdBranch) await releaseManagedWorktree(manifest);
 			await releaseTranscript();
 			await resumeInManagedWorktree(event.targetSessionFile, resumedCwd, targetManifest?.manifestPath, false, ctx);
-   if (process.env.PI_SESSION_OWNER || process.env.PI_PROFILE_RELOAD_TOKEN) return { cancel: true };
+   if (process.env.PI_PROFILE_RELOAD_TOKEN) return { cancel: true };
 		} catch (error) {
 			ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
 			return { cancel: true };
@@ -781,7 +781,7 @@ export default async function (pi: ExtensionAPI) {
 		try {
 			const plan = await activateReleasedSession(event.targetSessionFile, record.commonGitDir);
 			await resumeInManagedWorktree(event.targetSessionFile, plan.childCwd, plan.manifest.manifestPath, false, ctx);
-   if (process.env.PI_SESSION_OWNER || process.env.PI_PROFILE_RELOAD_TOKEN) return { cancel: true };
+   if (process.env.PI_PROFILE_RELOAD_TOKEN) return { cancel: true };
 		} catch (error) {
 			ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
 			return { cancel: true };

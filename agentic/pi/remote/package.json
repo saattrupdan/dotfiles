@@ -17,7 +17,7 @@
     "cli": "tsx packages/cli/src/index.ts",
     "verify": "tsx scripts/verify.ts",
     "test:browser": "PI_REMOTE_BROWSER_PROOF=1 tsx --test packages/web/tests/conversation.test.ts",
-    "test:tui": "PI_REMOTE_TUI_PROOF=1 tsx --test packages/broker/tests/tui-ownership.test.ts"
+    "test:tui": "PI_REMOTE_TUI_PROOF=1 tsx --test packages/broker/tests/tui-sessions.test.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.0",

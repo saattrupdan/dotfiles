@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { Config } from "./config.ts";
 export const REQUIRED = [
   "automated",
-  "ownership-tui",
+  "session-controls-tui",
   "iphone-webauthn",
   "iphone-push",
   "sleep-wake",
@@ -38,10 +38,8 @@ export function sourceDigest(root: string) {
     "bin/pi",
     "bin/pi-remote",
     "agents/main.md",
-    "extensions/_session_ownership",
     "extensions/_remote_bridge",
     "extensions/remote-control",
-    "extensions/session-ownership",
     "extensions/question/index.ts",
     "extensions/git-worktree-isolation/index.ts",
     "extensions/git-worktree-isolation/git.ts",
@@ -176,14 +174,10 @@ export function deployment(
     policy: "pilot" as const,
     missing: [
       ...report.missing.filter(
-        (name) => name === "automated" || name === "ownership-tui",
+        (name) => name === "automated" || name === "session-controls-tui",
       ),
       ...(!approved ? ["pilot-approval"] : []),
       ...(proof ? ["pilot-proof-conflict"] : []),
-      ...(config.pilotScope !== "laptop-main" &&
-      fs.existsSync(path.join(config.dataDir, "ownership", "enabled"))
-        ? ["pilot-global-ownership-conflict"]
-        : []),
     ],
   };
 }

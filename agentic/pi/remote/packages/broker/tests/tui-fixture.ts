@@ -1,4 +1,4 @@
-/** Real terminal/Neovim adapters with disposable profile, history, locks and PTYs. */
+/** Real terminal/Neovim adapters with disposable profile, history and PTYs. */
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -7,16 +7,11 @@ import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolvePiPackage } from "../../../../profile/pi-runtime.mjs";
-import {
-  inspect,
-  isAlive,
-} from "../../../../extensions/_session_ownership/ownership.mjs";
 
 export type ProofEvent = {
   label: string;
   kind: string;
   pid: number;
-  birth: string;
   tool?: string;
   command?: string;
   call?: string;
@@ -44,12 +39,12 @@ export async function waitFor<T>(
     if (result) return result;
     await new Promise((r) => setTimeout(r, 100));
   }
-  throw new Error(`Ownership proof timed out: ${description}`);
+  throw new Error(`Session proof timed out: ${description}`);
 }
 
 export class TuiFixture {
   readonly root = fs.realpathSync(
-    fs.mkdtempSync(path.join(os.tmpdir(), "pi-ownership-tui-")),
+    fs.mkdtempSync(path.join(os.tmpdir(), "pi-session-tui-")),
   );
   readonly source = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
@@ -57,7 +52,6 @@ export class TuiFixture {
   );
   readonly agent = path.join(this.root, "agent");
   readonly data = path.join(this.root, "data");
-  readonly locks = path.join(this.data, "ownership");
   readonly cwd = path.join(this.root, "workspace");
   readonly eventFile = path.join(this.root, "events.jsonl");
   readonly observer = path.join(this.root, "observer.ts");
@@ -107,22 +101,20 @@ export class TuiFixture {
       this.observer,
       `import fs from 'node:fs';
 export default function(pi){
- const log=(kind,ctx,extra={})=>fs.appendFileSync(process.env.PI_PROOF_EVENTS,JSON.stringify({label:process.env.PI_PROOF_LABEL,kind,pid:process.pid,birth:JSON.parse(process.env.PI_SESSION_OWNER).birth,file:ctx.sessionManager.getSessionFile(),id:ctx.sessionManager.getSessionId(),cwd:ctx.cwd,at:Date.now(),...extra})+'\\n');
- pi.on('session_start',(_event,ctx)=>{log('start',ctx);ctx.ui.setStatus('ownership-proof','OWNERSHIP_PROOF_READY');});
+ const log=(kind,ctx,extra={})=>fs.appendFileSync(process.env.PI_PROOF_EVENTS,JSON.stringify({label:process.env.PI_PROOF_LABEL,kind,pid:process.pid,file:ctx.sessionManager.getSessionFile(),id:ctx.sessionManager.getSessionId(),cwd:ctx.cwd,at:Date.now(),...extra})+'\\n');
+ pi.on('session_start',(_event,ctx)=>{log('start',ctx);ctx.ui.setStatus('session-proof','SESSION_PROOF_READY');});
  pi.on('input',(_event,ctx)=>{if(process.env.PI_PROOF_MODEL==='1')return;log('unexpected_input',ctx);return {action:'handled'};});
- pi.registerCommand('ownership-proof-ready',{handler:async(_args,ctx)=>{log('ready',ctx);}});
+ pi.registerCommand('session-proof-ready',{handler:async(_args,ctx)=>{log('ready',ctx);}});
  pi.on('session_before_switch',(_event,ctx)=>{log('before_switch',ctx);if(fs.existsSync(process.env.PI_PROOF_CANCEL)){log('cancel_switch',ctx);return {cancel:true};}});
  pi.on('agent_settled',(_event,ctx)=>log('settled',ctx));
  pi.on('tool_execution_start',(event,ctx)=>log('tool_start',ctx,{tool:event.toolName,command:event.args?.command,call:event.toolCallId}));
  pi.on('tool_execution_end',(event,ctx)=>log(event.isError?'tool_error':'tool_end',ctx,{tool:event.toolName,call:event.toolCallId}));
  pi.on('session_before_fork',(_event,ctx)=>{log('before_fork',ctx);});
- pi.on('session_shutdown',async(_event,ctx)=>{log('shutdown',ctx);if(process.env.PI_PROOF_DELAY==='1'){log('shutdown_wait',ctx);await new Promise(r=>setTimeout(r,1500));pi.appendEntry('ownership-proof-last-write',{pid:process.pid});log('shutdown_written',ctx);}});
+ pi.on('session_shutdown',async(_event,ctx)=>{log('shutdown',ctx);if(process.env.PI_PROOF_DELAY==='1'){log('shutdown_wait',ctx);await new Promise(r=>setTimeout(r,1500));pi.appendEntry('session-proof-last-write',{pid:process.pid});log('shutdown_written',ctx);}});
 }`,
     );
     this.env = {
-      PI_REMOTE_OWNERSHIP: "1",
       PI_CODING_AGENT_DIR: this.agent,
-      PI_SESSION_LOCK_ROOT: this.locks,
       PI_REMOTE_DATA_DIR: this.data,
       PI_WORKTREE_ISOLATION_DISABLE: "1",
       PI_PROOF_EVENTS: this.eventFile,
@@ -181,7 +173,7 @@ export default function(pi){
     );
     await new Promise((r) => setTimeout(r, 200));
     this.keys(pane, "C-u");
-    this.command(pane, "/ownership-proof-ready");
+    this.command(pane, "/session-proof-ready");
     await waitFor(
       () =>
         this.events(pane.label)
@@ -208,7 +200,7 @@ export default function(pi){
     const session = SessionManager.create(cwd, this.sessionDir(cwd));
     session.appendMessage({
       role: "user",
-      content: [{ type: "text", text: `Synthetic ownership fixture ${name}` }],
+      content: [{ type: "text", text: `Synthetic session fixture ${name}` }],
       timestamp: Date.now(),
     });
     session.appendMessage({
@@ -322,19 +314,13 @@ export default function(pi){
         .join(" ");
     }
     const line = [
-      "env -u PI_SESSION_OWNER -u PI_SESSION_ID -u PI_REMOTE_MANAGED",
+      "env -u PI_SESSION_ID -u PI_REMOTE_MANAGED",
       ...Object.entries(env).map(([key, value]) => `${key}=${quote(value)}`),
       command,
     ].join(" ");
     this.text(pane, line);
     this.keys(pane, "Enter");
     return pane;
-  }
-  owned(event: ProofEvent) {
-    const record = inspect(event.file, this.locks);
-    assert(record, `Missing lock for ${event.file}`);
-    assert.equal(record.pid, event.pid);
-    return record;
   }
   private reapIdle() {
     for (const pane of this.panes) {
@@ -427,17 +413,12 @@ export default function(pi){
         /* Pane already exited. */
       }
     }
-    // Wait for owned children to exit before removing their profile and lock files.
+    // Wait for fixture processes before removing their profiles.
     await waitFor(
-      () =>
-        this.events().every((event) => {
-          return !isAlive({
-            pid: event.pid,
-            birth: event.birth,
-            instanceId: "proof",
-            kind: "local",
-          });
-        }),
+      () => this.events().every((event) => {
+        try { process.kill(event.pid, 0); return false; }
+        catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH"; }
+      }),
       "fixture Pi processes exit",
       10000,
     );

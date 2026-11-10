@@ -45,12 +45,9 @@ const child = spawn(
     env: {
       ...environment,
       PI_CODING_AGENT_DIR: config.agentDir,
-      PI_SESSION_HISTORY_SCOPE: sessionDir,
       ...(sessionDir ? { PI_CODING_AGENT_SESSION_DIR: sessionDir } : {}),
       PI_REMOTE_MANAGED: launch.tmux,
       PI_REMOTE_DATA_DIR: config.dataDir,
-      PI_SESSION_LOCK_ROOT: path.join(config.dataDir, "ownership"),
-      PI_REMOTE_OWNERSHIP: "1",
     },
   },
 );

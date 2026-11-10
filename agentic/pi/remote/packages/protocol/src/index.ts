@@ -9,7 +9,6 @@ export const Command = z.discriminatedUnion("action", [
   }),
   z.object({ action: z.literal("stop_run") }),
   z.object({ action: z.literal("stop_session") }),
-  z.object({ action: z.literal("handoff") }),
   z.object({ action: z.literal("rename"), name: z.string().trim().min(1).max(160) }),
   z.object({
     action: z.literal("model"),
@@ -72,7 +71,6 @@ export const Registration = z.object({
   cwd: z.string(),
   name: z.string().max(1000),
   pid: z.number().int().positive(),
-  birth: z.string(),
   managed: z.boolean(),
   tmux: z.string().optional(),
   model: z.string(),
