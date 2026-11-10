@@ -6,6 +6,9 @@ import { markGuard, clearGuards } from "../_remote_bridge/guards.ts";
 import path from "node:path";
 import fs from "node:fs";
 import {
+	SessionManager,
+	SessionSelectorComponent,
+	type SessionInfo,
 	type ExtensionAPI,
 	type ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
@@ -17,11 +20,11 @@ import {
 	reserveNamespace,
 	inspect,
 	historyInScope,
+	canonicalFile,
 } from "../_session_ownership/ownership.mjs";
 import { withOwnedTransition, type OwnershipState } from "../_session_ownership/transition.ts";
 import { OwnedEditor } from "../_session_ownership/editor.ts";
 import { interactiveQueue } from "../_interactive_queue/queue.ts";
-import { listSavedSessions } from "../../profile/saved-sessions.mjs";
 import { localAction } from "../_remote_bridge/local.ts";
 import { isLoopActive } from "../_loop_state/state.ts";
 type State = OwnershipState;
@@ -143,28 +146,8 @@ async function resume(query: string, ctx: ExtensionCommandContext, state: State)
 			return;
 		}
 		await ctx.waitForIdle();
-		const sessions = listSavedSessions({
-			agentDir: process.env.PI_CODING_AGENT_DIR,
-			sessionDir: ctx.sessionManager.getSessionDir(),
-			scope: process.env.PI_SESSION_HISTORY_SCOPE,
-		})
-			.filter(
-				(s) =>
-					historyInScope(s.path) &&
-					s.path !== state.current &&
-					(!query || `${s.name ?? ""} ${s.firstMessage} ${s.cwd} ${s.id}`.toLowerCase().includes(query.toLowerCase())),
-			)
-			.sort((a, b) => +b.modified - +a.modified);
-		if (!sessions.length) {
-			ctx.ui.notify("No matching saved conversations.", "info");
-			return;
-		}
-		const labels = sessions.map(
-			(s) => `${s.name || s.firstMessage.slice(0, 70) || s.id} [${s.cwd}] (${s.id.slice(0, 8)})`,
-		);
-		const selected = await choose(ctx, "Resume conversation", labels);
-		if (!selected) return;
-		const destination = sessions[labels.indexOf(selected)]!;
+		const destination = await selectSession(ctx, state, query);
+		if (!destination) return;
 		const holder = inspect(destination.path, state.root);
 		if (holder && holder.instanceId !== state.owner.instanceId) {
 			const yes = await choose(
@@ -218,6 +201,84 @@ async function resume(query: string, ctx: ExtensionCommandContext, state: State)
 			/* Old context is no longer active. */
 		}
 	}
+}
+
+/** Use Pi's native picker; ownership wraps its mutations, not its presentation. */
+async function selectSession(ctx: ExtensionCommandContext, state: State, query: string) {
+	const rows = new Map<string, SessionInfo>();
+	const scope = process.env.PI_SESSION_HISTORY_SCOPE;
+	const agentDir = process.env.PI_CODING_AGENT_DIR || path.join(process.env.HOME!, ".pi", "agent");
+	const privateRoot = path.join(agentDir, "profile-sessions");
+	const defaultDir = path.join(agentDir, "sessions", `--${path.resolve(ctx.cwd).replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`);
+	const allowed = (sessions: readonly SessionInfo[]) => sessions.filter((session) => {
+		try {
+			if (!historyInScope(session.path)) return false;
+			const file = fs.realpathSync(session.path);
+			if (fs.existsSync(privateRoot)) {
+				const relative = path.relative(fs.realpathSync(privateRoot), file);
+				if (!relative || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))) return false;
+			}
+			rows.set(session.path, session);
+			return true;
+		} catch { return false; }
+	});
+	const load = async (all: boolean, progress?: Parameters<typeof SessionManager.list>[2], signal?: AbortSignal) => {
+		const onProgress: NonNullable<typeof progress> = (loaded, total, partial) =>
+			progress?.(loaded, total, partial ? allowed(partial) : undefined);
+		const sessionDir = scope || ctx.sessionManager.getSessionDir();
+		const sessions = all
+			? scope || canonicalFile(sessionDir) !== canonicalFile(defaultDir)
+				? await SessionManager.listAll(sessionDir, onProgress, signal)
+				: await SessionManager.listAll(onProgress, signal)
+			: await SessionManager.list(ctx.cwd, sessionDir, onProgress, signal);
+		return allowed(sessions);
+	};
+	const mutate = async (file: string, operation: () => unknown) => {
+		try {
+			const previous = inspect(file, state.root);
+			acquire(file, state.owner, state.root);
+			try { await operation(); }
+			finally {
+				if (previous?.instanceId !== state.owner.instanceId) release(file, state.owner, state.root);
+			}
+		} catch (error) {
+			ctx.ui.notify(`Session action blocked: ${String(error)}`, "error");
+		}
+	};
+	return interactiveQueue.run((signal) => ctx.ui.custom<SessionInfo | undefined>((tui, _theme, keybindings, done) => {
+		let closed = false;
+		const finish = (result: SessionInfo | undefined) => {
+			if (closed) return;
+			closed = true;
+			done(result);
+		};
+		const picker = new SessionSelectorComponent(
+			(progress, signal) => load(false, progress, signal),
+			(progress, signal) => load(true, progress, signal),
+			(file) => finish(rows.get(file)),
+			() => finish(undefined),
+			() => finish(undefined),
+			() => tui.requestRender(),
+			{
+				keybindings,
+				renameSession: async (file, name) => {
+					if (name?.trim()) await mutate(file, () => SessionManager.open(file).appendSessionInfo(name.trim()));
+				},
+			},
+			state.current,
+		);
+		const list = picker.getSessionList();
+		const remove = list.onDeleteSession!;
+		list.onDeleteSession = (file) => mutate(file, () => remove(file));
+		if (query.trim()) for (const character of query.trim()) list.handleInput(character);
+		const cancel = () => { list.onCancel?.(); finish(undefined); };
+		signal.addEventListener("abort", cancel, { once: true });
+		return Object.assign(picker, { dispose: () => {
+			closed = true;
+			signal.removeEventListener("abort", cancel);
+			list.onCancel?.();
+		} });
+	}));
 }
 
 async function choose(

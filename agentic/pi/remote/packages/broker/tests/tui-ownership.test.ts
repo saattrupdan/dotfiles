@@ -35,7 +35,7 @@ for (const mode of ["terminal", "neovim"] as const) {
         assert.equal(reloaded.pid, first.pid);
         assert.equal(fixture.owned(reloaded).instanceId, owner.instanceId);
         fixture.command(pane, `/resume ${seed.id}`);
-        await fixture.screenHas(pane, "Resume conversation");
+        await fixture.screenHas(pane, "Resume Session (Current Folder)");
         fixture.keys(pane, "Escape");
         await new Promise((r) => setTimeout(r, 200));
         assert.equal(fixture.latest(pane)!.id, first.id);
@@ -44,7 +44,7 @@ for (const mode of ["terminal", "neovim"] as const) {
         fs.writeFileSync(fixture.env.PI_PROOF_CANCEL!, "cancel");
         offset = fixture.events(pane!.label).length;
         fixture.command(pane, `/resume ${seed.id}`);
-        await fixture.screenHas(pane, "Resume conversation");
+        await fixture.screenHas(pane, "Resume Session (Current Folder)");
         fixture.keys(pane, "Enter");
         await waitFor(
           () =>
@@ -62,7 +62,7 @@ for (const mode of ["terminal", "neovim"] as const) {
         fs.unlinkSync(fixture.env.PI_PROOF_CANCEL!);
         offset = fixture.events(pane!.label).length;
         fixture.command(pane, `/resume ${seed.id}`);
-        await fixture.screenHas(pane, "Resume conversation");
+        await fixture.screenHas(pane, "Resume Session (Current Folder)");
         fixture.keys(pane, "Enter");
         const resumed = await fixture.start(pane, offset);
         assert.equal(resumed.id, seed.id);
@@ -98,7 +98,7 @@ for (const mode of ["terminal", "neovim"] as const) {
         fixture.owned(fresh);
         assert.equal(inspect(forked.file, fixture.locks), undefined);
         fixture.keys(pane, "C-r");
-        await fixture.screenHas(pane, "Resume conversation");
+        await fixture.screenHas(pane, "Resume Session (Current Folder)");
         fixture.keys(pane, "Escape");
         await new Promise((r) => setTimeout(r, 150));
         offset = fixture.events(pane!.label).length;
@@ -134,7 +134,12 @@ test(
       pane = await fixture.launch("custom");
       await fixture.start(pane);
       fixture.command(pane, `/resume ${seed.id}`);
-      await fixture.screenHas(pane, "Resume conversation");
+      await fixture.screenHas(pane, "Resume Session (Current Folder)");
+      fixture.keys(pane, "Tab");
+      await fixture.screenHas(pane, "Resume Session (All)");
+      fixture.keys(pane, "Tab");
+      await fixture.screenHas(pane, "Resume Session (Current Folder)");
+      assert(!fixture.screen(pane).includes("Other (type your own)"));
       fixture.keys(pane, "Enter");
       await fixture.start(pane, 1);
       assert.equal(fixture.latest(pane)!.id, seed.id);
@@ -171,11 +176,16 @@ test(
       const initial = await fixture.start(pane);
       const start = Date.now();
       fixture.command(pane, `/resume ${seed.id}`);
-      await fixture.screenHas(pane, "Large saved conversation");
+      await waitFor(
+        () => fixture.screen(pane!).includes("Resume Session (Current Folder)"),
+        "native resume picker opens before transcript loading",
+        3000,
+      );
+      assert(!fixture.screen(pane).includes("Other (type your own)"));
       assert(Date.now() - start < 5000, "picker must not wait for transcript loading");
       fixture.keys(pane, "Escape");
       await waitFor(
-        () => !fixture.screen(pane!).includes("Resume conversation"),
+        () => !fixture.screen(pane!).includes("Resume Session (Current Folder)"),
         "large-history picker cancellation",
       );
       fixture.command(pane, "/ownership-proof-ready");
@@ -186,6 +196,48 @@ test(
       assert.equal(fixture.latest(pane)!.id, initial.id);
       fixture.owned(initial);
       assert.equal(inspect(seed.file, fixture.locks), undefined);
+    } catch (error) {
+      if (pane) console.error(fixture.screen(pane));
+      throw error;
+    } finally {
+      await fixture.close();
+    }
+  },
+);
+
+test(
+  "real terminal: native picker refuses owned rename and delete without crashing",
+  { skip: process.env.PI_REMOTE_TUI_PROOF !== "1", timeout: 60000 },
+  async () => {
+    const fixture = new TuiFixture(true);
+    let pane: Pane | undefined;
+    try {
+      const seed = await fixture.seed("protected-history");
+      const original = fs.readFileSync(seed.file, "utf8");
+      const holder = newOwner();
+      acquire(seed.file, holder, fixture.locks);
+      pane = await fixture.launch("protected-mutations");
+      const initial = await fixture.start(pane);
+      fixture.command(pane, `/resume ${seed.id}`);
+      await fixture.screenHas(pane, "protected-history");
+      fixture.keys(pane, "C-d");
+      await fixture.screenHas(pane, "Delete session?");
+      fixture.keys(pane, "Enter");
+      await fixture.screenHas(pane, "Session action blocked");
+      assert.equal(fs.readFileSync(seed.file, "utf8"), original);
+      fixture.keys(pane, "C-r");
+      await fixture.screenHas(pane, "Rename Session");
+      fixture.keys(pane, "C-u");
+      fixture.text(pane, "Must not rename");
+      fixture.keys(pane, "Enter");
+      await fixture.screenHas(pane, "Resume Session (Current Folder)");
+      assert.equal(fs.readFileSync(seed.file, "utf8"), original);
+      assert.equal(fixture.latest(pane)!.id, initial.id);
+      fixture.keys(pane, "Escape");
+      await waitFor(() => !fixture.screen(pane!).includes("Resume Session (Current Folder)"), "native picker dismissed");
+      fixture.command(pane, "/ownership-proof-ready");
+      await waitFor(() => fixture.events(pane!.label).some((event) => event.kind === "ready"), "Pi usable after rejected mutations");
+      release(seed.file, holder, fixture.locks);
     } catch (error) {
       if (pane) console.error(fixture.screen(pane));
       throw error;
@@ -225,7 +277,7 @@ for (const destinationMode of ["terminal", "neovim"] as const) {
         await fixture.start(source);
         let offset = fixture.events(source.label).length;
         fixture.command(source, `/resume ${seed.id}`);
-        await fixture.screenHas(source, "Resume conversation");
+        await fixture.screenHas(source, "Resume Session (Current Folder)");
         fixture.keys(source, "Enter");
         const held = await fixture.start(source, offset);
         const holder = fixture.owned(held);
@@ -245,7 +297,7 @@ for (const destinationMode of ["terminal", "neovim"] as const) {
         const initial = await fixture.start(destination);
         const offer = async () => {
           fixture.command(destination!, `/resume ${seed.id}`);
-          await fixture.screenHas(destination!, "Resume conversation");
+          await fixture.screenHas(destination!, "Resume Session (Current Folder)");
           fixture.keys(destination!, "Enter");
           await fixture.screenHas(
             destination!,
@@ -253,12 +305,13 @@ for (const destinationMode of ["terminal", "neovim"] as const) {
           );
         };
         fixture.command(destination, `/resume ${seed.id}`);
-        await fixture.screenHas(destination, "Resume conversation");
-        fixture.keys(destination, "C-d", "C-r", "Delete");
-        await new Promise((r) => setTimeout(r, 100));
+        await fixture.screenHas(destination, "Resume Session (Current Folder)");
         assert.equal(fs.readFileSync(seed.file, "utf8"), before);
         fixture.keys(destination, "Escape");
-        await new Promise((r) => setTimeout(r, 150));
+        await waitFor(
+          () => !fixture.screen(destination!).includes("Resume Session (Current Folder)"),
+          "native picker cancelled before transfer",
+        );
         await offer();
         fixture.keys(destination, "Down", "Enter");
         await new Promise((r) => setTimeout(r, 200));
@@ -397,7 +450,7 @@ for (const mode of ["terminal", "neovim"] as const) {
         if (mode === "neovim") {
           const selectedOffset = fixture.events(pane.label).length;
           fixture.command(pane, `/resume ${seed.id}`);
-          await fixture.screenHas(pane, "Resume conversation");
+          await fixture.screenHas(pane, "Resume Session (Current Folder)");
           fixture.keys(pane, "Enter");
           original = await fixture.start(pane, selectedOffset);
         }
@@ -522,7 +575,7 @@ test(
       await fixture.start(restored);
       const offset = fixture.events(restored.label).length;
       fixture.command(restored, `/resume ${seed.id}`);
-      await fixture.screenHas(restored, "Resume conversation");
+      await fixture.screenHas(restored, "Resume Session (Current Folder)");
       fixture.keys(restored, "Enter");
       const current = await fixture.start(restored, offset);
       assert.equal(current.id, seed.id);
