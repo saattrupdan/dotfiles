@@ -108,3 +108,48 @@ test("phone reconnect reconciles without resending; background preserves drafts,
     mock.timers.reset();
   }
 });
+
+test("home loads folders and live summaries; newer snapshots win and lock purges both", async () => {
+  mock.timers.enable({ apis: ["setInterval"] });
+  Object.assign(globalThis, {
+    document: { visibilityState: "visible", addEventListener() {} },
+    window: { addEventListener() {} },
+    location: { protocol: "https:", host: "fixture.test.ts.net" },
+    WebSocket: Socket,
+  });
+  setActivePinia(createPinia());
+  const auth = useAuth();
+  const store = useSessions();
+  auth.unlocked = true;
+  const requests: Array<{ url: string; resolve: (value: unknown) => void }> = [];
+  auth.request = ((url: string) =>
+    new Promise((resolve) => requests.push({ url, resolve }))) as typeof auth.request;
+  try {
+    const initial = store.loadFolders();
+    assert.deepEqual(
+      requests.map((request) => request.url),
+      ["/session-folders", "/sessions"],
+    );
+    const latest = store.refresh();
+    requests[2]!.resolve([{ sessionId: "live", state: "running" }]);
+    await latest;
+    requests[1]!.resolve([{ sessionId: "stale", state: "idle" }]);
+    requests[0]!.resolve([{ cwd: "/Users/fixture", count: 1, lastActivity: 1000 }]);
+    await initial;
+    assert.equal(store.listing[0]?.sessionId, "live");
+    assert.equal(store.folders[0]?.cwd, "/Users/fixture");
+    assert(!requests.some((request) => request.url.includes("/history")));
+    const background = store.loadFolders();
+    auth.clear();
+    requests[3]!.resolve([{ cwd: "/Users/private", count: 1, lastActivity: 1000 }]);
+    requests[4]!.resolve([{ sessionId: "private", state: "running" }]);
+    await background;
+    assert.deepEqual(store.folders, []);
+    assert.deepEqual(store.listing, []);
+    assert.deepEqual(store.sessions, []);
+  } finally {
+    auth.clear();
+    mock.restoreAll();
+    mock.timers.reset();
+  }
+});

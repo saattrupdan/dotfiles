@@ -93,6 +93,7 @@ test(
       const folderRequests: string[] = [];
       const commandIds: string[] = [];
       let actionStatus = "persisted";
+      let extraSessions: unknown[] = [];
       let stopped = false,
         recoveries = 0,
         starts = 0;
@@ -133,7 +134,9 @@ test(
         } else if (url.pathname === "/api/v1/sessions") {
           if (url.searchParams.has("folder"))
             folderRequests.push(url.searchParams.get("folder")!);
-          body = [session()];
+          body = url.searchParams.has("folder")
+            ? [session()]
+            : [session(), ...extraSessions];
         } else if (url.pathname === `/api/v1/sessions/${id}`) body = session();
         else if (url.pathname === "/api/v1/session-folders")
           body = [
@@ -620,6 +623,80 @@ test(
           actionStatus = "persisted";
         },
       );
+      await t.test("home separates active sessions from folder history", async () => {
+        await page.setViewportSize({ width: 402, height: 874 });
+        extraSessions = [
+          "running",
+          "idle",
+          "waiting",
+          "answer_needed",
+          "stopped",
+          "interrupted",
+          "disconnected",
+          "stopping",
+        ].map((state, index) => ({
+          ...session(),
+          sessionId: `00000000-0000-4000-8000-00000000000${index}`,
+          name: `Home ${state} fixture`,
+          state,
+        }));
+        extraSessions.push({
+          ...session(),
+          sessionId: "00000000-0000-4000-8000-000000000009",
+          name: "Private active fixture",
+          cwd: "/private/fixture",
+          state: "running",
+        });
+        await page.getByRole("link", { name: "Pi Remote", exact: true }).click();
+        const active = page.getByRole("region", {
+          name: "Active sessions",
+          exact: true,
+        });
+        const folders = page.getByRole("region", { name: "Folders", exact: true });
+        await expect(active.getByRole("link")).toHaveCount(5);
+        for (const state of ["running", "idle", "waiting", "answer_needed"])
+          await expect(
+            active.getByRole("link", { name: new RegExp(`Home ${state} fixture`) }),
+          ).toHaveCount(1);
+        await expect(page.getByText("Private active fixture")).toHaveCount(0);
+        await expect(folders.locator("button.folder")).toHaveCount(1);
+        const top = await active.boundingBox(),
+          bottom = await folders.boundingBox();
+        assert(top && bottom && top.y < bottom.y);
+        const search = page.getByRole("searchbox", {
+          name: "Search sessions and folders",
+        });
+        await search.fill("running");
+        await expect(active.getByRole("link")).toHaveCount(1);
+        await expect(folders.locator("button.folder")).toHaveCount(0);
+        await search.fill("");
+        const screenshots = process.env.PI_REMOTE_VISUAL_PROOF_DIR;
+        if (screenshots) {
+          fs.mkdirSync(screenshots, { recursive: true });
+          await page.screenshot({
+            path: path.join(screenshots, "home-active-folders.png"),
+            fullPage: true,
+          });
+        }
+        extraSessions = [];
+        stopped = true;
+        socket!.send(
+          JSON.stringify({ version: 1, type: "sessions.changed", data: null }),
+        );
+        await expect(active.getByRole("link")).toHaveCount(0);
+        await expect(
+          active.getByText("No active sessions", { exact: true }),
+        ).toBeVisible();
+        stopped = false;
+        socket!.send(
+          JSON.stringify({ version: 1, type: "sessions.changed", data: null }),
+        );
+        const live = active.getByRole("link", { name: /Phone layout fixture/ });
+        await expect(live).toHaveCount(1);
+        await live.click();
+        await expect(page.getByRole("textbox", { name: "Message Pi" })).toBeVisible();
+        assert.equal(folderRequests.length, 0);
+      });
       await t.test(
         "minimal navigation keeps the cog accessible and mobile screens usable",
         async () => {

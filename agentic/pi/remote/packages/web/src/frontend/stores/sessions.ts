@@ -40,6 +40,8 @@ export const useSessions = defineStore("sessions", () => {
   const listing = ref<Session[]>([]);
   const folder = ref<string>();
   let currentFolder: string | undefined;
+  let foldersRequest = 0;
+  let listingRequest = 0;
   const messages = ref<Record<string, Message[]>>({});
   const streaming = ref<Record<string, Message | undefined>>({});
   const historyLimited = ref<Record<string, boolean>>({});
@@ -120,8 +122,17 @@ export const useSessions = defineStore("sessions", () => {
   async function loadFolders() {
     currentFolder = undefined;
     const expected = generation;
-    const result = await auth.request<SessionFolder[]>("/session-folders");
-    if (expected === generation && auth.unlocked && currentFolder === undefined)
+    const request = ++foldersRequest;
+    const [result] = await Promise.all([
+      auth.request<SessionFolder[]>("/session-folders"),
+      refresh(),
+    ]);
+    if (
+      expected === generation &&
+      auth.unlocked &&
+      currentFolder === undefined &&
+      request === foldersRequest
+    )
       folders.value = result;
   }
   function merge(rows: Session[]) {
@@ -134,12 +145,18 @@ export const useSessions = defineStore("sessions", () => {
   async function refresh(folder = currentFolder) {
     currentFolder = folder;
     const expected = generation;
+    const request = ++listingRequest;
     const result = await auth.request<Session[]>(
       folder === undefined
         ? "/sessions"
         : `/sessions?folder=${encodeURIComponent(folder)}`,
     );
-    if (expected === generation && auth.unlocked && currentFolder === folder) {
+    if (
+      expected === generation &&
+      auth.unlocked &&
+      currentFolder === folder &&
+      request === listingRequest
+    ) {
       listing.value = result;
       merge(result);
     }
@@ -224,7 +241,7 @@ export const useSessions = defineStore("sessions", () => {
         if (selected) void detail(selected).catch(() => {});
         if (currentFolder === undefined && !selected)
           void loadFolders().catch(() => {});
-        void refresh().catch(() => {});
+        else void refresh().catch(() => {});
         return;
       }
       if (!sid) return;

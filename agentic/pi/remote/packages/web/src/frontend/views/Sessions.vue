@@ -46,21 +46,26 @@ const folders = computed(() =>
       entry.cwd.toLowerCase().includes(search.value.toLowerCase()),
   ),
 );
+const activeStates = new Set(["idle", "running", "waiting", "answer_needed"]);
 const filtered = computed(() =>
   store.listing
     .filter(
       (session) =>
         (filter.value === "all" || session.state === filter.value) &&
-        `${session.name} ${session.sessionId}`
+        `${session.name} ${session.sessionId} ${session.cwd}`
           .toLowerCase()
           .includes(search.value.toLowerCase()),
     )
     .sort(
       (a, b) =>
-        Number(["idle", "running", "waiting"].includes(b.state)) -
-          Number(["idle", "running", "waiting"].includes(a.state)) ||
+        Number(activeStates.has(b.state)) - Number(activeStates.has(a.state)) ||
         b.lastActivity - a.lastActivity,
     ),
+);
+const active = computed(() =>
+  filtered.value.filter(
+    (session) => activeStates.has(session.state) && isUsersDirectory(session.cwd),
+  ),
 );
 const basename = (cwd: string) => cwd.split("/").filter(Boolean).at(-1) || cwd;
 </script>
@@ -98,7 +103,9 @@ const basename = (cwd: string) => cwd.split("/").filter(Boolean).at(-1) || cwd;
       <input
         v-model="search"
         type="search"
-        :aria-label="folder === undefined ? 'Search folders' : 'Search conversations'"
+        :aria-label="
+          folder === undefined ? 'Search sessions and folders' : 'Search conversations'
+        "
         placeholder="Search"
       />
       <select
@@ -132,26 +139,67 @@ const basename = (cwd: string) => cwd.split("/").filter(Boolean).at(-1) || cwd;
     </p>
     <div
       v-else-if="folder === undefined"
-      class="list"
+      class="home"
     >
-      <button
-        v-for="entry in folders"
-        :key="entry.cwd"
-        class="folder"
-        @click="store.folder = entry.cwd"
-      >
-        <div class="row">
-          <h2>{{ basename(entry.cwd) }}</h2>
-          <span class="time">{{ entry.count }}</span>
+      <section aria-labelledby="active-sessions-heading">
+        <h2
+          id="active-sessions-heading"
+          class="section-title"
+        >
+          Active sessions
+        </h2>
+        <div class="list">
+          <RouterLink
+            v-for="session in active"
+            :key="session.sessionId"
+            :to="`/session/${session.sessionId}`"
+            class="session"
+          >
+            <div class="row">
+              <span :class="['dot', session.state]" />
+              <span class="state">{{
+                session.state === "answer_needed" ? "answer needed" : session.state
+              }}</span>
+            </div>
+            <h3>{{ session.name || "Saved conversation" }}</h3>
+            <p class="path">{{ session.cwd }}</p>
+          </RouterLink>
+          <p
+            v-if="!active.length"
+            class="empty muted"
+          >
+            {{ search ? "No matches" : "No active sessions" }}
+          </p>
         </div>
-        <p class="path">{{ entry.cwd }}</p>
-      </button>
-      <p
-        v-if="!folders.length"
-        class="empty muted"
-      >
-        {{ search ? "No matches" : "No conversations in the last 7 days" }}
-      </p>
+      </section>
+      <section aria-labelledby="folders-heading">
+        <h2
+          id="folders-heading"
+          class="section-title"
+        >
+          Folders
+        </h2>
+        <div class="list">
+          <button
+            v-for="entry in folders"
+            :key="entry.cwd"
+            class="folder"
+            @click="store.folder = entry.cwd"
+          >
+            <div class="row">
+              <h3>{{ basename(entry.cwd) }}</h3>
+              <span class="time">{{ entry.count }}</span>
+            </div>
+            <p class="path">{{ entry.cwd }}</p>
+          </button>
+          <p
+            v-if="!folders.length"
+            class="empty muted"
+          >
+            {{ search ? "No matches" : "No conversations in the last 7 days" }}
+          </p>
+        </div>
+      </section>
     </div>
     <div
       v-else
@@ -240,11 +288,12 @@ const basename = (cwd: string) => cwd.split("/").filter(Boolean).at(-1) || cwd;
 .folder:hover {
   border-color: var(--accent);
 }
-h2 {
+h2,
+h3 {
   font-size: 18px;
   margin: 10px 0 6px;
 }
-.folder h2 {
+.folder h3 {
   margin: 0 0 6px;
 }
 .path {
@@ -274,8 +323,15 @@ h2 {
   background: var(--accent);
   box-shadow: 0 0 0 3px #b4e4cc0c;
 }
-.dot.waiting {
+.dot.waiting,
+.dot.answer_needed {
   background: #f0cf84;
+}
+.section-title {
+  margin: 24px 0 0;
+}
+.home .empty {
+  padding: 18px 0;
 }
 .empty {
   padding: 38px 22px;
