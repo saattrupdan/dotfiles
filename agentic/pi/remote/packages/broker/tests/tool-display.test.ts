@@ -257,7 +257,7 @@ test("oversized writes keep identifying arguments in completed and separately st
   for (const message of [together[1], separately[0]]) {
     const text = (message as { toolDisplay: string }).toolDisplay;
     assert.match(text, /important\.ts/);
-    assert.match(text, /shortened; expand for full/);
+    assert.doesNotMatch(text, /shortened|expand for full/i);
   }
   assert.equal(JSON.stringify(original), before);
 });
@@ -411,6 +411,40 @@ for (const lockDuringReplay of [false, true])
       }
     },
   );
+
+test("bounded outputs and deeply nested arguments stay quiet", async () => {
+  const display = new ToolDisplay(agentDir);
+  let nested: unknown = "original nested value";
+  for (let depth = 0; depth < 12; depth++) nested = { nested };
+  const original = [
+    {
+      role: "assistant",
+      content: [
+        { type: "toolCall", id: "quiet", name: "fixture_tool", arguments: { nested } },
+      ],
+    },
+    {
+      role: "toolResult",
+      toolCallId: "quiet",
+      toolName: "fixture_tool",
+      ...result("long output line\n".repeat(5000)),
+    },
+  ];
+  const before = JSON.stringify(original);
+  const rows = await display.messages(original, cwd, "quiet-limits");
+  const text = JSON.stringify(
+    rows.map((row) => {
+      const message = row as {
+        toolDisplay?: string;
+        content?: Array<{ toolDisplay?: string }>;
+      };
+      return message.toolDisplay ?? message.content?.[0]?.toolDisplay;
+    }),
+  );
+  assert.doesNotMatch(text, /shortened|expand for full/i);
+  assert.match(text, /fixture_tool/);
+  assert.equal(JSON.stringify(original), before);
+});
 
 test("historical edit display never reads the current target for a preview", async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-display-no-preview-"));

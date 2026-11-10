@@ -14,7 +14,6 @@ type Present = (
   result: unknown,
   id: string,
   cwd: string,
-  limited?: boolean,
 ) => string;
 function record(value: unknown): value is RecordValue {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -23,10 +22,7 @@ function record(value: unknown): value is RecordValue {
 /** Adds native display text to transport copies, never to native history or stored events. */
 export class ToolDisplay {
   private load?: Promise<Present | undefined>;
-  private calls = new Map<
-    string,
-    { name: string; args: unknown; bytes: number; limited: boolean }
-  >();
+  private calls = new Map<string, { name: string; args: unknown; bytes: number }>();
   private callBytes = 0;
   private rendered = new Map<string, string>();
   private queues = new Map<string, Promise<void>>();
@@ -59,7 +55,7 @@ export class ToolDisplay {
     const previous = this.calls.get(key);
     if (previous) this.callBytes -= previous.bytes;
     this.calls.delete(key);
-    this.calls.set(key, { name, args: bounded.args, bytes, limited: bounded.limited });
+    this.calls.set(key, { name, args: bounded.args, bytes });
     this.callBytes += bytes;
     while (this.calls.size > 512 || this.callBytes > 4 * 1024 * 1024) {
       const oldest = this.calls.keys().next().value!;
@@ -69,7 +65,7 @@ export class ToolDisplay {
   }
   async messages(messages: unknown[], cwd: string, scope: string): Promise<unknown[]> {
     const present = await this.renderer();
-    const batch = new Map<string, { name: string; args: unknown; limited: boolean }>();
+    const batch = new Map<string, { name: string; args: unknown }>();
     for (const message of messages) {
       if (
         !record(message) ||
@@ -87,28 +83,21 @@ export class ToolDisplay {
           batch.set(`${scope}:${part.id}`, {
             name: part.name,
             args: part.arguments,
-            limited: false,
           });
           this.remember(`${scope}:${part.id}`, part.name, part.arguments);
         }
       }
     }
-    const text = (
-      name: string,
-      args: unknown,
-      result: unknown,
-      id: string,
-      limited = false,
-    ) => {
+    const text = (name: string, args: unknown, result: unknown, id: string) => {
       if (!present) return `${name}\nTool display unavailable. Expand for full output.`;
       const key = createHash("sha256")
-        .update(JSON.stringify([name, args, result, id, cwd, limited]))
+        .update(JSON.stringify([name, args, result, id, cwd]))
         .digest("hex");
       const cached = this.rendered.get(key);
       if (cached !== undefined) return cached;
       let output: string;
       try {
-        output = present(name, args, result, id, cwd, limited);
+        output = present(name, args, result, id, cwd);
       } catch {
         output = `${name}\nTool display unavailable. Expand for full output.`;
       }
@@ -128,7 +117,7 @@ export class ToolDisplay {
             : (call?.name ?? "tool");
         return {
           ...message,
-          toolDisplay: text(name, call?.args, message, id, call?.limited),
+          toolDisplay: text(name, call?.args, message, id),
         };
       }
       if (message.role !== "assistant" || !Array.isArray(message.content))

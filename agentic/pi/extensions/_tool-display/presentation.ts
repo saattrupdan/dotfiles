@@ -41,9 +41,7 @@ const shorten = (text: string) => {
 		.slice(0, 1000)
 		.map((line) => line.slice(0, 2048))
 		.join("\n");
-	return value.length < text.length
-		? value + "\n[Tool text shortened; expand for full output]"
-		: value;
+	return value;
 };
 
 const builtins = {
@@ -74,7 +72,6 @@ export function toolPresentation(
 	result: Result | undefined,
 	id: string,
 	cwd: string,
-	inputLimited = false,
 ): string {
 	if (!initialized) {
 		initTheme("dark");
@@ -115,15 +112,6 @@ export function toolPresentation(
 	if (branchRenderers[name]) renderers = branchRenderers[name]!;
 	const bounded = boundedToolArguments(args);
 	const details = result?.details ? boundedToolArguments(result.details) : undefined;
-	const limited =
-		inputLimited ||
-		Boolean(details?.limited) ||
-		bounded.limited ||
-		Boolean(
-			result?.content.some(
-				(part) => part.type === "text" && shorten(part.text ?? "") !== (part.text ?? ""),
-			),
-		);
 	const row = new ToolExecutionComponent(
 		name,
 		id,
@@ -148,7 +136,5 @@ export function toolPresentation(
 		.map((line) => stripVTControlCharacters(line).trimEnd())
 		.join("\n")
 		.trim();
-	return text.length > 16384
-		? text.slice(0, 16384) + "\n[Tool display shortened; expand for full output]"
-		: text + (limited ? "\n[Tool data shortened; expand for full output]" : "");
+	return text.slice(0, 16384);
 }

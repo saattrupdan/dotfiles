@@ -15,7 +15,7 @@ export function boundedToolArguments(input: unknown): { args: unknown; limited: 
 	function visit(value: unknown, depth: number): unknown {
 		if (--nodes < 0 || depth >= 8) {
 			limited = true;
-			return "[Arguments shortened; expand for full input]";
+			return "…";
 		}
 		if (typeof value === "string") {
 			const kept = value
@@ -27,7 +27,7 @@ export function boundedToolArguments(input: unknown): { args: unknown; limited: 
 			remaining -= kept.length;
 			if (kept === value) return value;
 			limited = true;
-			return kept + "\n[Tool text shortened; expand for full output]";
+			return kept;
 		}
 		if (!value || typeof value !== "object") return value;
 		if (Array.isArray(value)) {
