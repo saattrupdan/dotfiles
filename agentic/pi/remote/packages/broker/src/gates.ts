@@ -103,7 +103,9 @@ const PilotApproval = z
     digest: z.string().regex(/^[a-f0-9]{64}$/),
     origin: z.string().url(),
     dataDir: z.string(),
-    scope: z.literal("fresh-managed-only"),
+    scope: z.enum(["fresh-managed-only", "laptop-main"]),
+    agentDir: z.string(),
+    sessionDirectories: z.array(z.string()),
     at: z.number().int().positive(),
     evidence: z.string(),
     evidenceHash: z.string().regex(/^[a-f0-9]{64}$/),
@@ -121,7 +123,11 @@ export function approvePilot(config: Config, evidenceFile: string) {
     digest: report.digest,
     origin: config.origin,
     dataDir: fs.realpathSync(config.dataDir),
-    scope: "fresh-managed-only",
+    scope: config.pilotScope,
+    agentDir: fs.realpathSync(config.agentDir),
+    sessionDirectories: config.sessionDirectories
+      .map((dir) => fs.realpathSync(dir))
+      .sort(),
     at: Date.now(),
     evidence,
     evidenceHash: createHash("sha256").update(fs.readFileSync(evidence)).digest("hex"),
@@ -158,6 +164,12 @@ export function deployment(
     approved =
       approval.digest === report.digest &&
       approval.origin === config.origin &&
+      approval.scope === config.pilotScope &&
+      approval.agentDir === fs.realpathSync(config.agentDir) &&
+      JSON.stringify(approval.sessionDirectories) ===
+        JSON.stringify(
+          config.sessionDirectories.map((dir) => fs.realpathSync(dir)).sort(),
+        ) &&
       approval.dataDir === fs.realpathSync(config.dataDir) &&
       approval.evidenceHash ===
         createHash("sha256").update(fs.readFileSync(approval.evidence)).digest("hex");
@@ -171,7 +183,8 @@ export function deployment(
       ),
       ...(!approved ? ["pilot-approval"] : []),
       ...(proof ? ["pilot-proof-conflict"] : []),
-      ...(fs.existsSync(path.join(config.dataDir, "ownership", "enabled"))
+      ...(config.pilotScope !== "laptop-main" &&
+      fs.existsSync(path.join(config.dataDir, "ownership", "enabled"))
         ? ["pilot-global-ownership-conflict"]
         : []),
     ],

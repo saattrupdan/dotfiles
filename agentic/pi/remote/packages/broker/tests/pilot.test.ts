@@ -316,7 +316,7 @@ test("pilot IPC rejects unmanaged and out-of-scope owners but accepts verified n
         socket.write(JSON.stringify({ type: "register", data: registration }) + "\n");
         if (registration === base) {
           await wait(() => received.includes("registered"));
-          assert.equal(store.session(id)?.sessionFile, file);
+          assert.equal(store.session(id)?.sessionFile, fs.realpathSync(file));
         } else {
           await wait(() => socket.destroyed);
           assert.equal(store.sessions().length, 0);

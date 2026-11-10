@@ -15,16 +15,25 @@ import {
   CreateSession,
   RemoteError,
   type StreamEvent,
+  type Session,
+  type SessionFolder,
 } from "../../protocol/src/index.ts";
 import { Store, token, digest } from "./store.ts";
 import { Auth, PAIRING_LINK_TTL_MS } from "./auth.ts";
 import { Owners } from "./ipc.ts";
-import { History } from "./history.ts";
+import { History, RECENT_SESSION_MS } from "./history.ts";
 import { Processes } from "./processes.ts";
 import { browse, imageBlocks, uploadImage } from "./files.ts";
 import { prepare, type Config } from "./config.ts";
-import { inDeploymentScope } from "./deployment-scope.ts";
-import { inspect } from "../../../../extensions/_session_ownership/ownership.mjs";
+import {
+  inDeploymentScope,
+  assertControlReady,
+  controlBlockReason,
+} from "./deployment-scope.ts";
+import {
+  canonicalFile,
+  inspect,
+} from "../../../../extensions/_session_ownership/ownership.mjs";
 
 export async function createBroker(
   config: Config,
@@ -46,6 +55,11 @@ export async function createBroker(
     }
   >();
   const emit = (event: StreamEvent) => {
+    if (event.type.startsWith("sessions.")) event = { ...event, data: null };
+    else if (event.sessionId && event.type !== "session.hidden") {
+      const session = store.session(event.sessionId);
+      if (!session || !inDeploymentScope(config, session) || !recent(session)) return;
+    }
     for (const [socket, client] of clients) {
       try {
         auth.unlocked(client.request);
@@ -147,24 +161,75 @@ export async function createBroker(
       .string()
       .uuid()
       .parse((req.params as { id: string }).id);
+  const discoverLaptop =
+    config.deploymentPolicy !== "pilot" || config.pilotScope === "laptop-main";
+  const migrationReason = () => controlBlockReason(config);
+  const lastActivity = (session: Session) => {
+    let modified = 0;
+    try {
+      modified = fs.statSync(session.sessionFile).mtimeMs;
+    } catch {
+      /* Unflushed native path. */
+    }
+    return Math.max(session.lastActivity, modified);
+  };
+  const recent = (session: Session) =>
+    lastActivity(session) >= Date.now() - RECENT_SESSION_MS;
+  const visibleLive = () =>
+    store
+      .sessions()
+      .filter((session) => inDeploymentScope(config, session) && recent(session));
+  const liveSummary = (session: Session) => {
+    const connected = owners.isConnected(session);
+    const alive =
+      !connected &&
+      inspect(session.sessionFile, path.join(config.dataDir, "ownership"));
+    return {
+      ...session,
+      lastActivity: lastActivity(session),
+      state: connected ? session.state : alive ? "disconnected" : "stopped",
+      recoveryBlockedReason:
+        migrationReason() || (!connected && alive ? "owner_not_connected" : undefined),
+    };
+  };
+  const nativeSummary = (n: NonNullable<Awaited<ReturnType<History["byId"]>>>) => ({
+    sessionId: n.id,
+    name: n.name || "Saved conversation",
+    cwd: n.cwd,
+    state: "stopped",
+    lastActivity: +n.modified,
+    sequence: 0,
+    epoch: 0,
+    recoveryBlockedReason: n.ambiguous
+      ? "ambiguous_session_id"
+      : migrationReason() ||
+        (inspect(n.path, path.join(config.dataDir, "ownership"))
+          ? "owner_not_connected"
+          : undefined),
+  });
   const find = async (id: string) => {
     const live = store.session(id);
-    if (live && inDeploymentScope(config, live))
-      return { id: live.sessionId, path: live.sessionFile, cwd: live.cwd };
-    if (config.deploymentPolicy === "pilot")
-      throw new RemoteError("session_not_found", 404);
+    if (live && inDeploymentScope(config, live) && recent(live))
+      return { ...liveSummary(live), id: live.sessionId, path: live.sessionFile };
+    if (!discoverLaptop) throw new RemoteError("session_not_found", 404);
     const native = await catalog?.byId(id);
     if (!native) throw new RemoteError("session_not_found", 404);
-    return { id: native.id, path: native.path, cwd: native.cwd };
+    return {
+      ...nativeSummary(native),
+      id: native.nativeId,
+      path: native.path,
+      ambiguous: native.ambiguous,
+    };
   };
   const send = (envelope: Envelope, device: string, local = false) => {
     const session = store.session(envelope.sessionId);
-    if (!session || !inDeploymentScope(config, session))
+    if (!session || !inDeploymentScope(config, session) || !recent(session))
       throw new RemoteError("not_owner", 409);
     if (session.epoch !== envelope.epoch) throw new RemoteError("stale_epoch", 409);
     if (envelope.command.action === "handoff" && !local)
       throw new RemoteError("local_only", 403);
     const existing = store.command(envelope.commandId);
+    if (!existing) assertControlReady(config);
     let row;
     try {
       row = store.journal(envelope, device);
@@ -243,33 +308,58 @@ export async function createBroker(
     }
     throw new Error("Unsupported local action");
   };
+  app.get("/api/v1/session-folders", async (req) => {
+    read(req);
+    const live = visibleLive();
+    const groups = new Map<string, SessionFolder>(
+      (discoverLaptop
+        ? ((await catalog?.folders(live.map((s) => canonicalFile(s.sessionFile)))) ??
+          [])
+        : []
+      ).map((folder) => [folder.cwd, folder]),
+    );
+    for (const session of live) {
+      const group = groups.get(session.cwd) ?? {
+        cwd: session.cwd,
+        count: 0,
+        lastActivity: 0,
+      };
+      group.count++;
+      group.lastActivity = Math.max(group.lastActivity, lastActivity(session));
+      groups.set(session.cwd, group);
+    }
+    return [...groups.values()].sort((a, b) => b.lastActivity - a.lastActivity);
+  });
   app.get("/api/v1/sessions", async (req) => {
     read(req);
+    const { folder } = z
+      .object({ folder: z.string().max(4096).optional() })
+      .parse(req.query);
+    const allLive = visibleLive();
+    const live = allLive
+      .filter((s) => folder === undefined || s.cwd === folder)
+      .map(liveSummary);
+    // No archive labels or transcripts are read until a folder is selected.
     const native =
-      config.deploymentPolicy === "pilot" ? [] : ((await catalog?.catalog()) ?? []);
-    const live = store
-      .sessions()
-      .filter((session) => inDeploymentScope(config, session));
+      discoverLaptop && folder !== undefined
+        ? ((await catalog?.catalog(folder)) ?? [])
+        : [];
     return [
       ...live,
       ...native
-        .filter((n) => !live.some((s) => s.sessionId === n.id))
-        .map((n) => ({
-          sessionId: n.id,
-          name: n.name || n.firstMessage.slice(0, 100) || n.id,
-          cwd: n.cwd,
-          state: "stopped",
-          lastActivity: +n.modified,
-          sequence: 0,
-          epoch: 0,
-        })),
+        .filter(
+          (n) =>
+            !allLive.some(
+              (s) =>
+                s.sessionId === n.nativeId && canonicalFile(s.sessionFile) === n.path,
+            ),
+        )
+        .map(nativeSummary),
     ].sort((a, b) => b.lastActivity - a.lastActivity);
   });
   app.get("/api/v1/sessions/:id", async (req) => {
     read(req);
-    const id = sessionId(req);
-    const live = store.session(id);
-    return live && inDeploymentScope(config, live) ? live : await find(id);
+    return find(sessionId(req));
   });
   app.get("/api/v1/sessions/:id/history", async (req) => {
     read(req);
@@ -281,7 +371,7 @@ export async function createBroker(
       })
       .parse(req.query);
     return (
-      (await catalog?.messages(session.path, q.offset, q.limit)) ?? {
+      (await catalog?.messages(session.path, q.offset, q.limit, session.id)) ?? {
         messages: [],
         next: null,
       }
@@ -299,6 +389,8 @@ export async function createBroker(
     const a = mutate(req);
     if (proof) throw new RemoteError("proof_mode", 403);
     const native = await find(sessionId(req));
+    if ("ambiguous" in native && native.ambiguous)
+      throw new RemoteError("ambiguous_session_id", 409);
     if (inspect(native.path, path.join(config.dataDir, "ownership")))
       throw new RemoteError("owner_still_alive", 409);
     const session = await processes.launch(native.cwd, native);
@@ -474,10 +566,12 @@ export async function createBroker(
                 .max(100),
             })
             .parse(JSON.parse(raw.toString()));
-          client.subscriptions = new Set(b.subscriptions.map((s) => s.sessionId));
+          client.subscriptions = new Set<string>();
           for (const sub of b.subscriptions) {
             const session = store.session(sub.sessionId);
-            if (!session || !inDeploymentScope(config, session)) continue;
+            if (!session || !inDeploymentScope(config, session) || !recent(session))
+              continue;
+            client.subscriptions.add(sub.sessionId);
             const rows = store.db
               .prepare(
                 "SELECT sequence,type,data FROM events WHERE session=? AND sequence>? ORDER BY sequence",
@@ -522,7 +616,13 @@ export async function createBroker(
         : reply.sendFile("index.html"),
     );
   }
+  let previousMigration = migrationReason();
   const timer = setInterval(() => {
+    const currentMigration = migrationReason();
+    if (currentMigration !== previousMigration) {
+      previousMigration = currentMigration;
+      emit({ version: 1, type: "sessions.changed", data: null });
+    }
     for (const [socket, client] of clients) {
       try {
         read(client.request);

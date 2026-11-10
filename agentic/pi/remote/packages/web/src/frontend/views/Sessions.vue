@@ -1,21 +1,49 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { RouterLink } from "vue-router";
 import { useSessions } from "../stores/sessions.ts";
 const store = useSessions();
+const folder = ref<string>();
 const search = ref("");
 const filter = ref("all");
 const error = ref("");
+const loading = ref(false);
+let navigation = 0;
+async function browse(cwd?: string) {
+  const expected = ++navigation;
+  folder.value = cwd;
+  search.value = "";
+  filter.value = "all";
+  error.value = "";
+  loading.value = true;
+  try {
+    if (cwd === undefined) await store.loadFolders();
+    else await store.refresh(cwd);
+  } catch (e) {
+    if (expected === navigation) error.value = (e as Error).message;
+  } finally {
+    if (expected === navigation) loading.value = false;
+  }
+}
 onMounted(() => {
   store.connect("");
-  void store.refresh().catch((e) => (error.value = e.message));
+  void browse();
 });
+onUnmounted(() => {
+  navigation++;
+  store.disconnect(true);
+});
+const folders = computed(() =>
+  store.folders.filter((entry) =>
+    entry.cwd.toLowerCase().includes(search.value.toLowerCase()),
+  ),
+);
 const filtered = computed(() =>
-  store.sessions
+  store.listing
     .filter(
-      (s) =>
-        (filter.value === "all" || s.state === filter.value) &&
-        `${s.name} ${s.cwd} ${s.sessionId}`
+      (session) =>
+        (filter.value === "all" || session.state === filter.value) &&
+        `${session.name} ${session.sessionId}`
           .toLowerCase()
           .includes(search.value.toLowerCase()),
     )
@@ -26,13 +54,12 @@ const filtered = computed(() =>
         b.lastActivity - a.lastActivity,
     ),
 );
+const basename = (cwd: string) => cwd.split("/").filter(Boolean).at(-1) || cwd;
 </script>
 <template>
   <section>
     <div class="row heading">
-      <div>
-        <h1>Conversations</h1>
-      </div>
+      <h1>Conversations</h1>
       <RouterLink
         to="/new"
         class="new icon-button"
@@ -41,13 +68,31 @@ const filtered = computed(() =>
         >+</RouterLink
       >
     </div>
+    <div class="row context">
+      <button
+        v-if="folder !== undefined"
+        class="quiet"
+        @click="browse()"
+      >
+        All folders
+      </button>
+      <span class="small muted">Last 7 days</span>
+    </div>
+    <p
+      v-if="folder"
+      class="path selected-folder"
+    >
+      {{ folder }}
+    </p>
     <div class="filters">
       <input
         v-model="search"
         type="search"
-        aria-label="Search conversations"
+        :aria-label="folder === undefined ? 'Search folders' : 'Search conversations'"
         placeholder="Search"
-      /><select
+      />
+      <select
+        v-if="folder !== undefined"
         v-model="filter"
         aria-label="Filter state"
       >
@@ -64,16 +109,51 @@ const filtered = computed(() =>
     <p
       v-if="error"
       class="error"
+      role="alert"
     >
       {{ error }}
     </p>
-    <div class="list">
+    <p
+      v-if="loading"
+      class="small muted"
+      role="status"
+    >
+      Loading...
+    </p>
+    <div
+      v-else-if="folder === undefined"
+      class="list"
+    >
+      <button
+        v-for="entry in folders"
+        :key="entry.cwd"
+        class="folder"
+        @click="browse(entry.cwd)"
+      >
+        <div class="row">
+          <h2>{{ basename(entry.cwd) }}</h2>
+          <span class="time">{{ entry.count }}</span>
+        </div>
+        <p class="path">{{ entry.cwd }}</p>
+      </button>
+      <p
+        v-if="!folders.length"
+        class="empty muted"
+      >
+        {{ search ? "No matches" : "No conversations in the last 7 days" }}
+      </p>
+    </div>
+    <div
+      v-else
+      class="list"
+    >
       <RouterLink
         v-for="session in filtered"
         :key="session.sessionId"
         :to="`/session/${session.sessionId}`"
         class="session"
-        ><div class="row">
+      >
+        <div class="row">
           <span :class="['dot', session.state]" /><span class="state">{{
             session.prompt?.state === "expired" ? "answer needed" : session.state
           }}</span
@@ -81,32 +161,39 @@ const filtered = computed(() =>
             new Date(session.lastActivity).toLocaleDateString()
           }}</span>
         </div>
-        <h2>{{ session.name || "Untitled conversation" }}</h2>
-        <p class="path">{{ session.cwd }}</p></RouterLink
-      >
-      <div
+        <h2>{{ session.name || "Saved conversation" }}</h2>
+      </RouterLink>
+      <p
         v-if="!filtered.length"
-        class="empty card"
+        class="empty muted"
       >
-        <p class="muted">
-          {{ search || filter !== "all" ? "No matches" : "No conversations yet" }}
-        </p>
-      </div>
+        {{ search || filter !== "all" ? "No matches" : "No recent conversations" }}
+      </p>
     </div>
   </section>
 </template>
 <style scoped>
 .heading {
   justify-content: space-between;
-  margin-bottom: 22px;
+  margin-bottom: 12px;
 }
 .heading h1 {
   margin: 0;
 }
+.context {
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.selected-folder {
+  margin-bottom: 14px;
+}
 .filters {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
   gap: 8px;
+}
+.filters input {
+  min-width: 0;
+  flex: 1;
 }
 .filters input,
 .filters select {
@@ -126,18 +213,29 @@ const filtered = computed(() =>
   gap: 0;
   margin-top: 16px;
 }
-.session {
+.session,
+.folder {
   display: block;
   text-decoration: none;
+  border: 0;
   border-bottom: 1px solid var(--line);
+  border-radius: 0;
   padding: 22px 0;
+  text-align: left;
+  background: none;
+  color: var(--fg);
+  width: 100%;
 }
-.session:hover {
+.session:hover,
+.folder:hover {
   border-color: var(--accent);
 }
 h2 {
   font-size: 18px;
   margin: 10px 0 6px;
+}
+.folder h2 {
+  margin: 0 0 6px;
 }
 .path {
   font-family: ui-monospace, monospace;

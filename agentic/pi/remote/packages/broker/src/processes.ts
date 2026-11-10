@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import type { Config } from "./config.ts";
 import type { Owners } from "./ipc.ts";
 import { homeDirectory } from "./files.ts";
+import { assertControlReady } from "./deployment-scope.ts";
 export class Processes {
   shells = new Map<string, number>();
   constructor(
@@ -16,6 +17,7 @@ export class Processes {
     return execFileSync(this.config.tmux, args, { encoding: "utf8", timeout: 10000 });
   }
   async launch(cwd: string, saved?: { id: string; path: string }) {
+    assertControlReady(this.config);
     cwd = homeDirectory(cwd, this.config.home);
     const id = saved?.id ?? randomUUID();
     const name = `pi-remote-${randomUUID()}`;

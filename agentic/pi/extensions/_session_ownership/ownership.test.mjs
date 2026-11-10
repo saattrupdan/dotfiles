@@ -8,6 +8,9 @@ import path from "node:path";
 import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { once } from "node:events";
 import {
+	activateLaptop,
+	beginOwnershipStartup,
+	laptopActivated,
 	acquire,
 	inspect,
 	release,
@@ -17,8 +20,74 @@ import {
 	adopt,
 	historyInScope,
 	isAlive,
+	deferLegacyOwners,
+	pendingMigration,
+	reserveId,
 } from "./ownership.mjs";
 const fixture = () => fs.mkdtempSync(path.join(os.tmpdir(), "pi-owner-test-"));
+test("atomic activation captures a launcher paused before native title or import", async () => {
+	const root = fixture();
+	const module = new URL("./ownership.mjs", import.meta.url).href;
+	const child = spawn(process.execPath, ["--input-type=module", "-e", `import{beginOwnershipStartup}from ${JSON.stringify(module)};console.log(beginOwnershipStartup());setInterval(()=>{},1000);`], {
+		env: { ...process.env, PI_SESSION_LOCK_ROOT: root, PI_REMOTE_OWNERSHIP: "" }, stdio: ["ignore", "pipe", "ignore"],
+	});
+	try {
+		const [chunk] = await once(child.stdout, "data");
+		assert.equal(String(chunk).trim(), "false");
+		activateLaptop([], root);
+		assert(laptopActivated(root));
+		assert(pendingMigration(root));
+		assert(beginOwnershipStartup({ PI_SESSION_LOCK_ROOT: root }));
+		assert.throws(() => reserveNamespace(newOwner(), root), /exit older Pi sessions/);
+		child.kill();
+		await once(child, "exit");
+		assert.equal(pendingMigration(root), undefined);
+		reserveNamespace(newOwner(), root);
+		fs.writeFileSync(path.join(root, "enabled"), JSON.stringify({ version: 1, mode: "laptop-main", id: "uncommitted" }));
+		assert.equal(laptopActivated(root), false);
+		assert.throws(() => beginOwnershipStartup({ PI_SESSION_LOCK_ROOT: root }), /Incomplete phone-control activation/);
+	} finally {
+		if (child.exitCode === null && child.signalCode === null) child.kill();
+		fs.rmSync(root, { recursive: true, force: true });
+	}
+});
+test("migration waits for every original writer to exit and blocks native mutation first", async () => {
+	const root = fixture();
+	const children = Array.from({ length: 2 }, () =>
+		spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore" }),
+	);
+	await Promise.all(children.map((child) => once(child, "spawn")));
+	try {
+		const owners = children.map((child) => newOwner("migration", child.pid));
+		const file = path.join(root, "untouched.jsonl");
+		fs.writeFileSync(file, '{"type":"session","id":"original"}\n');
+		const before = fs.readFileSync(file);
+		deferLegacyOwners(owners, root);
+		const candidate = newOwner();
+		for (const action of [
+			() => acquire(file, candidate, root),
+			() => reserveNamespace(candidate, root),
+			() => reserveId("new-id", candidate, root),
+			() => adopt(candidate, newOwner(), root),
+		]) assert.throws(action, /exit older Pi sessions/);
+		assert.deepEqual(fs.readFileSync(file), before);
+		assert(pendingMigration(root));
+		children[0].kill();
+		await once(children[0], "exit");
+		assert(pendingMigration(root));
+		assert.throws(() => acquire(file, candidate, root), /exit older Pi sessions/);
+		children[1].kill();
+		await once(children[1], "exit");
+		assert.equal(pendingMigration(root), undefined);
+		reserveNamespace(candidate, root);
+		releaseNamespace(candidate, root);
+		assert.deepEqual(fs.readFileSync(file), before);
+	} finally {
+		for (const child of children) child.kill();
+		fs.rmSync(root, { recursive: true, force: true });
+	}
+});
+
 test("exclusive ownership, owner-only release and namespace exclusion", () => {
 	const root = fixture();
 	try {

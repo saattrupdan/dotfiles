@@ -82,13 +82,14 @@ test(
       let socket: WebSocketRoute | undefined;
       let prompt: Record<string, unknown> | undefined;
       const submissions: Array<Record<string, unknown>> = [];
+      const folderRequests: string[] = [];
       const session = () => ({
         sessionId: id,
         name: "Phone layout fixture",
         cwd: "/fixture",
         epoch: 1,
         sequence: 0,
-        updatedAt: 1000,
+        lastActivity: 1000,
         state: prompt ? "waiting" : "idle",
         prompt,
       });
@@ -98,7 +99,13 @@ test(
       await page.route("**/api/v1/**", async (route) => {
         const url = new URL(route.request().url());
         let body: unknown = {};
-        if (url.pathname === "/api/v1/sessions") body = [session()];
+        if (url.pathname === "/api/v1/sessions") {
+          if (url.searchParams.has("folder"))
+            folderRequests.push(url.searchParams.get("folder")!);
+          body = [session()];
+        } else if (url.pathname === `/api/v1/sessions/${id}`) body = session();
+        else if (url.pathname === "/api/v1/session-folders")
+          body = [{ cwd: "/fixture", count: 1, lastActivity: 1000 }];
         else if (
           url.pathname === "/api/v1/devices" ||
           url.pathname === "/api/v1/favorites"
@@ -142,6 +149,9 @@ test(
         }
         await route.fulfill({ json: body });
       });
+      await page.addInitScript({
+        content: `window.__scrollModes=[];const originalScroll=window.scrollTo.bind(window);window.scrollTo=(...args)=>{if(typeof args[0]==="object")window.__scrollModes.push(args[0].behavior);originalScroll(...args);};`,
+      });
       await page.clock.setFixedTime(1000);
       await page.goto(`http://127.0.0.1:${address.port}/`);
       await expect(page.getByRole("heading", { name: session().name })).toBeVisible();
@@ -154,6 +164,52 @@ test(
             page.getByText("Describe the attached image.", { exact: true }),
           ).toBeVisible();
           await expect(page.getByText(/\[Image: original 3024x4032/)).toHaveCount(0);
+        },
+      );
+      await t.test(
+        "opening and incoming messages smoothly follow the bottom",
+        async () => {
+          const gap = () =>
+            page.evaluate(
+              () =>
+                document.documentElement.scrollHeight -
+                window.scrollY -
+                window.innerHeight,
+            );
+          await expect.poll(gap).toBeLessThan(3);
+          await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+          socket!.send(
+            JSON.stringify({
+              version: 1,
+              sessionId: id,
+              type: "message_end",
+              data: {
+                role: "assistant",
+                timestamp: 1001,
+                content: "New message. ".repeat(300),
+              },
+            }),
+          );
+          await expect.poll(gap).toBeLessThan(3);
+          await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+          socket!.send(
+            JSON.stringify({
+              version: 1,
+              sessionId: id,
+              type: "message_update",
+              data: {
+                role: "assistant",
+                timestamp: 1002,
+                content: "Streaming message. ".repeat(500),
+              },
+            }),
+          );
+          await expect.poll(gap).toBeLessThan(3);
+          assert(
+            await page.evaluate(
+              "window.__scrollModes.filter(mode=>mode==='smooth').length >= 3",
+            ),
+          );
         },
       );
       const publish = async (next: typeof prompt) => {
@@ -242,6 +298,16 @@ test(
           const submit = page.getByRole("button", { name: "Submit selections" });
           await expect(submit).toBeDisabled();
           const panel = page.locator(".composer");
+          await expect
+            .poll(() =>
+              page.evaluate(
+                () =>
+                  document.documentElement.scrollHeight -
+                  window.scrollY -
+                  window.innerHeight,
+              ),
+            )
+            .toBeLessThan(3);
           const beforeScroll = await panel.evaluate((element) => ({
             documentY: window.scrollY,
             height: element.clientHeight,
@@ -340,6 +406,13 @@ test(
           await expect(
             page.getByRole("heading", { name: "Conversations", exact: true }),
           ).toBeVisible();
+          assert.equal(folderRequests.length, 0);
+          await page.locator("button.folder").click();
+          await expect(
+            page.getByRole("link", { name: /Phone layout fixture/ }),
+          ).toBeVisible();
+          assert(folderRequests.every((folder) => folder === "/fixture"));
+          assert(folderRequests.length > 0);
           if (screenshots)
             await page.screenshot({
               path: path.join(screenshots, "conversations.png"),

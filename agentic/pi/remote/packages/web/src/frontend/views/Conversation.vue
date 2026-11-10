@@ -1,16 +1,31 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { useAuth } from "../stores/auth.ts";
 import { useSessions } from "../stores/sessions.ts";
 import Transcript from "../components/Transcript.vue";
 import type { Command } from "../../../../protocol/src/index.ts";
+const content = ref<HTMLElement>();
+let scrollFrame: number | undefined;
+let resize: ResizeObserver | undefined;
 const route = useRoute();
 const auth = useAuth();
 const store = useSessions();
 const id = computed(() => String(route.params.id));
 const session = computed(() => store.sessions.find((s) => s.sessionId === id.value));
 const question = computed(() => store.prompt[id.value] ?? session.value?.prompt);
+const recoveryReason = computed(
+  () =>
+    ({
+      laptop_restart_required:
+        "Exit all pre-update Pi sessions on your laptop, then reopen Pi once.",
+      laptop_activation_required: "Enable laptop phone control on your Mac to connect.",
+      owner_not_connected:
+        "Pi is still open on your laptop. Waiting for it to reconnect.",
+      ambiguous_session_id:
+        "This history has a duplicate session ID. Resolve it on your laptop.",
+    })[session.value?.recoveryBlockedReason ?? ""],
+);
 const delivery = computed(() => {
   const warnings: [string, string][] = [];
   const details: [string, string][] = [];
@@ -45,20 +60,42 @@ watch(
   },
 );
 const time = setInterval(() => (now.value = Date.now()), 1000);
+function scrollBottom() {
+  if (!auth.unlocked || !auth.visible) return;
+  if (scrollFrame !== undefined) cancelAnimationFrame(scrollFrame);
+  scrollFrame = requestAnimationFrame(() => {
+    window.scrollTo({
+      top: document.documentElement.scrollHeight,
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "instant"
+        : "smooth",
+    });
+  });
+}
+watch(() => [store.messages[id.value], store.streaming[id.value]], scrollBottom, {
+  deep: true,
+  flush: "post",
+});
 async function load() {
   try {
-    await store.refresh();
+    await store.detail(id.value);
     await store.history(id.value);
     store.connect(id.value);
     name.value = session.value?.name ?? "";
     const parts = (session.value?.model ?? "").split("/");
     provider.value = parts.shift() ?? "";
     model.value = parts.join("/");
+    await nextTick();
+    scrollBottom();
   } catch (e) {
     error.value = (e as Error).message;
   }
 }
-onMounted(load);
+onMounted(() => {
+  resize = new ResizeObserver(scrollBottom);
+  if (content.value) resize.observe(content.value);
+  void load();
+});
 watch(id, load);
 watch(
   () => auth.visible,
@@ -68,10 +105,16 @@ watch(
 );
 onUnmounted(() => {
   clearInterval(time);
+  resize?.disconnect();
+  if (scrollFrame !== undefined) cancelAnimationFrame(scrollFrame);
   store.disconnect(true);
   previews.value.forEach(URL.revokeObjectURL);
 });
 async function action(command: Command) {
+  if (recoveryReason.value) {
+    error.value = recoveryReason.value;
+    return;
+  }
   error.value = "";
   try {
     await store.command(id.value, command);
@@ -80,6 +123,10 @@ async function action(command: Command) {
   }
 }
 async function send() {
+  if (recoveryReason.value) {
+    error.value = recoveryReason.value;
+    return;
+  }
   if (!draft.value.trim() && !images.value.length) return;
   sending.value = true;
   const text = draft.value;
@@ -120,7 +167,7 @@ async function recover() {
 }
 </script>
 <template>
-  <section>
+  <section ref="content">
     <p class="small muted session-state">{{ session?.state || "Saved" }}</p>
     <h1>{{ session?.name || "Conversation" }}</h1>
     <p class="muted small">{{ session?.cwd }}</p>
@@ -128,14 +175,16 @@ async function recover() {
       <button
         v-if="
           !session?.epoch ||
-          ['stopped', 'interrupted', 'crashed'].includes(session.state)
+          ['stopped', 'interrupted', 'crashed', 'disconnected'].includes(session.state)
         "
         class="primary"
+        :disabled="Boolean(session?.recoveryBlockedReason)"
         @click="recover"
       >
-        Recover on Mac</button
+        Resume on Mac</button
       ><button
         v-else
+        :disabled="Boolean(recoveryReason)"
         class="danger"
         @click="action({ action: 'stop_run' })"
       >
@@ -202,11 +251,25 @@ async function recover() {
       </details>
     </div>
     <p
+      v-if="recoveryReason"
+      class="small muted"
+      role="status"
+    >
+      {{ recoveryReason }}
+    </p>
+    <p
       v-if="error"
       class="error"
       role="alert"
     >
       {{ error }}
+    </p>
+    <p
+      v-if="store.historyLimited[id]"
+      class="small muted"
+      role="status"
+    >
+      Showing the latest saved messages from this large conversation.
     </p>
     <Transcript
       :messages="store.messages[id] || []"

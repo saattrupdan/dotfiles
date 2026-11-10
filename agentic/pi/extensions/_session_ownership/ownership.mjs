@@ -126,6 +126,80 @@ function sessionId(file) {
 	}
 }
 
+function activatedMarker(db, root) {
+	const file = path.join(root, "enabled");
+	if (!fs.existsSync(file)) return undefined;
+	const content = fs.readFileSync(file, "utf8").trim();
+	if (content === "1") return { mode: "release" };
+	const marker = JSON.parse(content);
+	const activation = read(db, "laptop-activation");
+	if (marker.version !== 1 || marker.mode !== "laptop-main" || !marker.id || activation?.id !== marker.id)
+		throw new Error("Incomplete phone-control activation; restart blocked before native history access");
+	return marker;
+}
+
+/** Decide startup under the same lock that activates phone control. */
+export function beginOwnershipStartup(env = process.env) {
+	const root = lockRoot(env), owner = newOwner("startup");
+	return transaction(root, (db) => {
+		if (env.PI_REMOTE_OWNERSHIP === "1" || activatedMarker(db, root)) return true;
+		write(db, `startup:${owner.instanceId}`, owner);
+		return false;
+	});
+}
+
+export function laptopActivated(root = lockRoot()) {
+	return transaction(root, (db) => {
+		try { return activatedMarker(db, root)?.mode === "laptop-main"; }
+		catch { return false; }
+	});
+}
+
+/** Marker publication and startup fencing are one fail-closed handshake. */
+export function activateLaptop(owners, root = lockRoot()) {
+	return transaction(root, (db) => {
+		const starters = db.prepare("SELECT record FROM locks WHERE key LIKE 'startup:%'").all()
+			.map((row) => JSON.parse(row.record));
+		for (const owner of [...owners, ...starters]) {
+			if (!["migration", "startup"].includes(owner.kind) || !Number.isInteger(owner.pid) || !owner.birth?.startsWith(BIRTH_PREFIX))
+				throw new Error("Invalid migration process identity");
+			if (isAlive(owner)) write(db, `legacy:${owner.pid}:${owner.birth}`, { ...owner, kind: "migration" });
+		}
+		const marker = { version: 1, mode: "laptop-main", id: randomUUID() };
+		write(db, "laptop-activation", marker);
+		const temporary = path.join(root, `enabled.${marker.id}.tmp`);
+		fs.writeFileSync(temporary, JSON.stringify(marker), { mode: 0o600, flag: "wx" });
+		fs.renameSync(temporary, path.join(root, "enabled"));
+	});
+}
+
+function legacyWriter(db) {
+	for (const row of db.prepare("SELECT key,record FROM locks WHERE key LIKE 'legacy:%'").all()) {
+		const owner = JSON.parse(row.record);
+		if (owner.kind !== "migration" || !Number.isInteger(owner.pid) || typeof owner.birth !== "string")
+			throw new Error("Uncertain migration record; refusing native history access");
+		if (isAlive(owner)) return owner;
+		db.prepare("DELETE FROM locks WHERE key=?").run(row.key);
+	}
+	return undefined;
+}
+
+function checkLegacy(db) {
+	const owner = legacyWriter(db);
+	if (owner) throw new Error("Phone-control migration: exit older Pi sessions, then restart Pi");
+}
+
+/** Fence pre-update writers without stopping their current work. */
+export function deferLegacyOwners(owners, root = lockRoot()) {
+	return transaction(root, (db) => {
+		for (const owner of owners) {
+			if (owner.kind !== "migration" || !Number.isInteger(owner.pid) || typeof owner.birth !== "string")
+				throw new Error("Invalid migration process identity");
+			write(db, `legacy:${owner.pid}:${owner.birth}`, owner);
+		}
+	});
+}
+
 function check(record, owner) {
 	// Old localized stamps cannot prove PID reuse. Keep their live PID locked
 	// until it exits; only versioned canonical stamps can safely be reclaimed.
@@ -141,6 +215,7 @@ function check(record, owner) {
 export function acquire(file, owner, root = lockRoot(), expectedId) {
 	if (!historyInScope(file)) throw new Error("Native history outside pilot scope");
 	return transaction(root, (db) => {
+		checkLegacy(db);
 		check(read(db, "namespace"), owner);
 		const target = canonicalFile(file);
 		check(read(db, target), owner);
@@ -155,6 +230,7 @@ export function acquire(file, owner, root = lockRoot(), expectedId) {
 
 export function reserveNamespace(owner, root = lockRoot()) {
 	return transaction(root, (db) => {
+		checkLegacy(db);
 		check(read(db, "namespace"), owner);
 		write(db, "namespace", owner);
 	});
@@ -164,6 +240,16 @@ export function releaseNamespace(owner, root = lockRoot()) {
 	return transaction(root, (db) => {
 		if (read(db, "namespace")?.instanceId === owner.instanceId)
 			db.prepare("DELETE FROM locks WHERE key='namespace'").run();
+	});
+}
+
+/** A migration fence lasts until the original unprotected process actually exits. */
+export function pendingMigration(root = lockRoot()) {
+	return transaction(root, (db) => {
+		const legacy = legacyWriter(db);
+		if (legacy) return legacy;
+		const owner = read(db, "namespace");
+		return owner?.kind === "migration" && isAlive(owner) ? owner : undefined;
 	});
 }
 
@@ -193,6 +279,7 @@ export function release(file, owner, root = lockRoot()) {
 /** Child claims inherited locks atomically before importing the Pi executable. */
 export function adopt(previous, next, root = lockRoot()) {
 	return transaction(root, (db) => {
+		checkLegacy(db);
 		let found = false;
 		for (const row of db.prepare("SELECT key,record FROM locks").all()) {
 			const record = JSON.parse(row.record);
@@ -220,6 +307,7 @@ export function ownedRecord(root = lockRoot()) {
 /** Reserve a known native ID before Pi allocates a filename or appends --name. */
 export function reserveId(id, owner, root = lockRoot()) {
 	return transaction(root, (db) => {
+		checkLegacy(db);
 		check(read(db, "namespace"), owner);
 		check(read(db, `id:${id}`), owner);
 		write(db, `id:${id}`, { ...owner, sessionId: id });

@@ -4,6 +4,10 @@ import path from "node:path";
 import { z } from "zod";
 export const ConfigSchema = z.object({
   deploymentPolicy: z.enum(["release", "pilot"]).default("release"),
+  pilotScope: z
+    .enum(["fresh-managed-only", "laptop-main"])
+    .default("fresh-managed-only"),
+  sessionDirectories: z.array(z.string().min(1)).max(100).default([]),
   port: z.number().int().min(1024).max(65535).default(8787),
   origin: z
     .string()

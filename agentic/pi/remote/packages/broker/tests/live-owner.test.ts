@@ -11,13 +11,14 @@ import { ConfigSchema } from "../src/config.ts";
 import { createBroker } from "../src/server.ts";
 import { Envelope } from "../../protocol/src/index.ts";
 import {
+  activateLaptop,
   acquire,
   inspect,
   newOwner,
 } from "../../../../extensions/_session_ownership/ownership.mjs";
 const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 test(
-  "live Pi registers, persists one remote message, and releases history only after graceful exit",
+  "live laptop Pi auto-connects, persists and steers in its original process, then exits gracefully",
   { skip: process.env.PI_REMOTE_LIVE_PROOF !== "1", timeout: 150000 },
   async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-live-proof-"));
@@ -27,12 +28,17 @@ test(
     );
     const config = ConfigSchema.parse({
       origin: "https://fixture.test.ts.net",
+      deploymentPolicy: "pilot",
+      pilotScope: "laptop-main",
+      sessionDirectories: [path.join(root, "sessions")],
       dataDir: path.join(root, "data"),
       home: root,
       agentDir,
     });
     const sessions = path.join(root, "sessions");
     fs.mkdirSync(sessions);
+    fs.mkdirSync(path.join(config.dataDir, "ownership"), { recursive: true });
+    activateLaptop([], path.join(config.dataDir, "ownership"));
     const broker = await createBroker(config, { history: false });
     await broker.app.ready();
     const name = `pi-remote-proof-${randomUUID()}`;
@@ -72,10 +78,8 @@ test(
         .replace(/^-/, "");
       assert(["zsh", "bash", "sh", "fish"].includes(shell));
       const env = {
-        PI_REMOTE_OWNERSHIP: "1",
         PI_SESSION_LOCK_ROOT: path.join(config.dataDir, "ownership"),
         PI_REMOTE_DATA_DIR: config.dataDir,
-        PI_REMOTE_MANAGED: name,
         PI_WORKTREE_ISOLATION_DISABLE: "1",
       };
       const line = [
@@ -92,6 +96,8 @@ test(
         broker.store.sessions().find((s) => broker.owners.isConnected(s)),
       );
       assert.equal(session.cwd, fs.realpathSync(root));
+      assert.equal(session.managed, false);
+      const originalPid = session.pid;
       const message = Envelope.parse({
         version: 1,
         commandId: randomUUID(),
@@ -183,6 +189,8 @@ test(
         consumed && consumed.sequence > ended.sequence,
         "Steering input must be consumed after tool completion",
       );
+      assert.equal(broker.store.session(session.sessionId)!.pid, originalPid);
+      assert.equal(broker.store.sessions().length, 1);
       const handoff = Envelope.parse({
         version: 1,
         commandId: randomUUID(),

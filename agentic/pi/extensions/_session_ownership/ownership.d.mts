@@ -4,6 +4,7 @@ export interface Owner {
 	birth: string;
 	kind: string;
 	file?: string;
+	sessionId?: string;
 	acquiredAt?: number;
 }
 export const OWNERSHIP_ENV: string;
@@ -18,6 +19,11 @@ export function acquire(file: string, owner: Owner, root?: string, expectedId?: 
 export function reserveNamespace(owner: Owner, root?: string): void;
 export function releaseNamespace(owner: Owner, root?: string): void;
 export function inspect(file: string, root?: string): Owner | undefined;
+export function pendingMigration(root?: string): Owner | undefined;
+export function deferLegacyOwners(owners: Owner[], root?: string): void;
+export function beginOwnershipStartup(env?: NodeJS.ProcessEnv): boolean;
+export function activateLaptop(owners: Owner[], root?: string): void;
+export function laptopActivated(root?: string): boolean;
 export function release(file: string, owner: Owner, root?: string): void;
 export function adopt(previous: Owner, next: Owner, root?: string): void;
 export function ownedRecord(root?: string): { owner: Owner; root: string } | undefined;

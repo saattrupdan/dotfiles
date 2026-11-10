@@ -8,6 +8,7 @@ import { ConfigSchema } from "../src/config.ts";
 import { createBroker } from "../src/server.ts";
 import { TuiFixture, waitFor, type Pane } from "./tui-fixture.ts";
 import {
+  activateLaptop,
   acquire,
   newOwner,
   release,
@@ -161,7 +162,10 @@ for (const destinationMode of ["terminal", "neovim"] as const) {
         dataDir: fixture.data,
         home: fixture.root,
         agentDir: fixture.agent,
+        deploymentPolicy: "pilot",
+        pilotScope: "laptop-main",
       });
+      activateLaptop([], fixture.locks);
       let broker: Awaited<ReturnType<typeof createBroker>> | undefined;
       let destination: Pane | undefined;
       try {

@@ -1,6 +1,11 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
-import type { Session, Command, StreamEvent } from "../../../../protocol/src/index.ts";
+import type {
+  Session,
+  SessionFolder,
+  Command,
+  StreamEvent,
+} from "../../../../protocol/src/index.ts";
 import { useAuth, onLock } from "./auth.ts";
 export interface Message {
   role?: string;
@@ -25,8 +30,12 @@ export interface Message {
 export const useSessions = defineStore("sessions", () => {
   const auth = useAuth();
   const sessions = ref<Session[]>([]);
+  const folders = ref<SessionFolder[]>([]);
+  const listing = ref<Session[]>([]);
+  let currentFolder: string | undefined;
   const messages = ref<Record<string, Message[]>>({});
   const streaming = ref<Record<string, Message | undefined>>({});
+  const historyLimited = ref<Record<string, boolean>>({});
   const statuses = ref<Record<string, string>>({});
   const drafts = ref<Record<string, string>>({});
   const prompt = ref<
@@ -70,31 +79,69 @@ export const useSessions = defineStore("sessions", () => {
     disconnect();
     pending.value = {};
     sessions.value = [];
+    folders.value = [];
+    listing.value = [];
+    currentFolder = undefined;
     messages.value = {};
     streaming.value = {};
+    historyLimited.value = {};
     statuses.value = {};
     drafts.value = {};
     prompt.value = {};
     selected = "";
   });
-  async function refresh() {
+  async function loadFolders() {
+    currentFolder = undefined;
     const expected = generation;
-    const result = await auth.request<Session[]>("/sessions");
-    if (expected === generation && auth.unlocked) sessions.value = result;
+    const result = await auth.request<SessionFolder[]>("/session-folders");
+    if (expected === generation && auth.unlocked && currentFolder === undefined)
+      folders.value = result;
+  }
+  function merge(rows: Session[]) {
+    const known = new Map(
+      sessions.value.map((session) => [session.sessionId, session]),
+    );
+    for (const row of rows) known.set(row.sessionId, row);
+    sessions.value = [...known.values()];
+  }
+  async function refresh(folder = currentFolder) {
+    currentFolder = folder;
+    const expected = generation;
+    const result = await auth.request<Session[]>(
+      folder === undefined
+        ? "/sessions"
+        : `/sessions?folder=${encodeURIComponent(folder)}`,
+    );
+    if (expected === generation && auth.unlocked && currentFolder === folder) {
+      listing.value = result;
+      merge(result);
+    }
+  }
+  async function detail(id: string) {
+    const expected = generation;
+    const result = await auth.request<Session>(`/sessions/${id}`);
+    if (expected === generation && auth.unlocked) merge([result]);
   }
   async function history(id: string) {
     const expected = generation;
     let offset = 0;
     const all: Message[] = [];
+    let limited = false;
     for (;;) {
-      const page = await auth.request<{ messages: Message[]; next: number | null }>(
-        `/sessions/${id}/history?offset=${offset}&limit=200`,
-      );
+      const page = await auth.request<{
+        messages: Message[];
+        next: number | null;
+        truncated?: boolean;
+      }>(`/sessions/${id}/history?offset=${offset}&limit=200`);
       all.push(...page.messages);
+      limited ||= Boolean(page.truncated);
       if (page.next === null) break;
       offset = page.next;
     }
-    if (expected === generation && auth.unlocked) messages.value[id] = all;
+    if (expected === generation && auth.unlocked) {
+      messages.value[id] = all;
+      historyLimited.value[id] = limited;
+    }
   }
   function subscribe() {
     if (socket?.readyState === WebSocket.OPEN && selected)
@@ -133,6 +180,8 @@ export const useSessions = defineStore("sessions", () => {
       const event = JSON.parse(e.data) as StreamEvent;
       const sid = event.sessionId;
       if (event.type === "sessions.changed") {
+        if (selected) void detail(selected).catch(() => {});
+        if (currentFolder === undefined && !selected) void loadFolders();
         void refresh();
         return;
       }
@@ -228,7 +277,7 @@ export const useSessions = defineStore("sessions", () => {
   async function command(id: string, command: Command, retryOf?: string) {
     const session = sessions.value.find((s) => s.sessionId === id);
     if (!session?.epoch)
-      throw new Error("Recover this conversation before sending commands.");
+      throw new Error("Resume this conversation on your Mac before sending commands.");
     const commandId = crypto.randomUUID();
     statuses.value[commandId] = "sending";
     if (command.action === "message" || command.action === "slash")
@@ -273,6 +322,11 @@ export const useSessions = defineStore("sessions", () => {
     return commandId;
   }
   return {
+    historyLimited,
+    folders,
+    listing,
+    loadFolders,
+    detail,
     resume,
     pending,
     sessions,

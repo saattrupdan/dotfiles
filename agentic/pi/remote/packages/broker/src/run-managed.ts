@@ -25,7 +25,7 @@ const args = launch.sessionFile
   ? ["--session", launch.sessionFile]
   : ["--session-id", launch.id];
 const sessionDir =
-  config.deploymentPolicy === "pilot"
+  config.deploymentPolicy === "pilot" && config.pilotScope === "fresh-managed-only"
     ? path.join(config.dataDir, "native-sessions")
     : undefined;
 if (sessionDir) fs.mkdirSync(sessionDir, { recursive: true, mode: 0o700 });

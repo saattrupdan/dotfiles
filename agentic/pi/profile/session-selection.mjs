@@ -1,5 +1,6 @@
 /** Resolve native startup selectors without opening a session for mutation. */
 import fs from "node:fs";
+import os from "node:os";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -44,7 +45,7 @@ export async function prepareOwnedLaunch(args, pkg, env = process.env, cwd = pro
 		);
 
 	const { parseArgs } = await import(pathToFileURL(path.join(pkg, "dist", "cli", "args.js")).href);
-	const { SessionManager } = await import(
+	const { SessionManager, findMostRecentSession } = await import(
 		pathToFileURL(path.join(pkg, "dist", "core", "session-manager.js")).href
 	);
 	const parsed = parseArgs(args);
@@ -70,7 +71,6 @@ export async function prepareOwnedLaunch(args, pkg, env = process.env, cwd = pro
 		throw new Error(
 			"Saved main sessions require ownership guards; helper opt-outs must use --no-session",
 		);
-	const candidates = await SessionManager.list(cwd, sessionDir);
 	const all = async () => SessionManager.listAll(sessionDir);
 	let target;
 	const explicit = parsed.session || parsed.fork;
@@ -83,9 +83,13 @@ export async function prepareOwnedLaunch(args, pkg, env = process.env, cwd = pro
 			if (rows.length !== 1) throw new Error("Session ID missing or ambiguous");
 			target = rows[0].path;
 		}
-	} else if (parsed.continue)
-		target = candidates.sort((a, b) => +b.modified - +a.modified)[0]?.path;
-	else if (parsed.sessionId) target = candidates.find((s) => s.id === parsed.sessionId)?.path;
+	} else if (parsed.continue) {
+		const defaultDir = path.join(
+			env.PI_CODING_AGENT_DIR || path.join(os.homedir(), ".pi", "agent"),
+			"sessions", `--${path.resolve(cwd).replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`,
+		);
+		target = findMostRecentSession(sessionDir || defaultDir, cwd) || undefined;
+	} else if (parsed.sessionId) target = SessionManager.findById(cwd, parsed.sessionId, sessionDir);
 	else if (parsed.resume) {
 		if (!process.stdin.isTTY)
 			throw new Error("Startup --resume picker requires a terminal; use --session PATH");

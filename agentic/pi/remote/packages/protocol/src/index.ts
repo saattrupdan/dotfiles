@@ -90,9 +90,15 @@ export const Registration = z.object({
 });
 export type Registration = z.infer<typeof Registration>;
 export interface Session extends Registration {
+  recoveryBlockedReason?: string;
   epoch: number;
   sequence: number;
   state: string;
+  lastActivity: number;
+}
+export interface SessionFolder {
+  cwd: string;
+  count: number;
   lastActivity: number;
 }
 export interface StreamEvent {

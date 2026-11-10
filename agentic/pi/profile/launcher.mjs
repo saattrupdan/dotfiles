@@ -13,6 +13,7 @@ import { prepareOwnedLaunch } from "./session-selection.mjs";
 import {
 	adopt,
 	lockRoot,
+	beginOwnershipStartup,
 	newOwner,
 	OWNERSHIP_ENV,
 } from "../extensions/_session_ownership/ownership.mjs";
@@ -232,9 +233,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
 	}
 	const agentDir = env.PI_CODING_AGENT_DIR ?? path.join(os.homedir(), ".pi", "agent");
 	const profile = await loadProfile(agent, agentDir, pkg);
-	const protectedMode =
-		agent === "main" &&
-		(env.PI_REMOTE_OWNERSHIP === "1" || fs.existsSync(path.join(lockRoot(env), "enabled")));
+	const protectedMode = agent === "main" && beginOwnershipStartup(env);
 	const launch = protectedMode
 		? await prepareOwnedLaunch(args, pkg, { ...env, PI_CODING_AGENT_DIR: agentDir })
 		: { args, env };

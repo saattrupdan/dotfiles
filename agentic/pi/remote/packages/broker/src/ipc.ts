@@ -140,9 +140,11 @@ export class Owners {
               !owner ||
               owner.instanceId !== registration.instanceId ||
               owner.pid !== registration.pid ||
-              owner.birth !== registration.birth
+              owner.birth !== registration.birth ||
+              owner.sessionId !== registration.sessionId
             )
               throw new Error("ownership_unverified");
+            registration.sessionFile = owner.file!;
             instance = registration.instanceId;
             const old = this.store.session(registration.sessionId);
             const epoch = old

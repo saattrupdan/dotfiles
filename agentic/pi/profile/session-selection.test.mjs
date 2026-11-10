@@ -6,6 +6,7 @@ import path from "node:path";
 import process from "node:process";
 import { resolvePiPackage } from "./pi-runtime.mjs";
 import { randomUUID } from "node:crypto";
+import { pathToFileURL } from "node:url";
 import { prepareOwnedLaunch } from "./session-selection.mjs";
 import {
 	acquire,
@@ -111,6 +112,23 @@ test("contradictory selectors and saved-session extension opt-outs fail closed",
 		);
 	} finally {
 		f.close();
+	}
+});
+
+test("fresh and exact-path startup never scans transcript bodies", async (t) => {
+	const { SessionManager } = await import(pathToFileURL(path.join(pkg, "dist/core/session-manager.js")).href);
+	t.mock.method(SessionManager, "list", () => { throw new Error("Transcript scan forbidden"); });
+	t.mock.method(SessionManager, "listAll", () => { throw new Error("Transcript scan forbidden"); });
+	for (const selector of ["fresh", "id", "path", "continue"]) {
+		const f = fixture();
+		try {
+			const id = randomUUID(), file = path.join(f.sessions, `saved_${id}.jsonl`);
+			fs.writeFileSync(file, JSON.stringify({ type: "session", version: 3, id, cwd: f.root, timestamp: new Date().toISOString() }) + "\n");
+			const args = selector === "id" ? ["--session-id", id] : selector === "path" ? ["--session", file] : selector === "continue" ? ["--continue"] : [];
+			const result = await prepareOwnedLaunch([...args, "--session-dir", f.sessions], pkg, f.env, f.root);
+			assert(result.env.PI_SESSION_OWNER);
+			if (selector !== "fresh") assert(result.args.includes(file));
+		} finally { f.close(); }
 	}
 });
 
