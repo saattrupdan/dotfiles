@@ -51,7 +51,7 @@ export async function prepareOwnedLaunch(args, pkg, env = process.env, cwd = pro
 	if (parsed.noSession) {
 		if (selectors || parsed.sessionId)
 			throw new Error("--no-session cannot bypass protected saved-session selectors");
-		if (parsed.print && parsed.noExtensions) {
+		if (parsed.print) {
 			const clean = { ...env };
 			delete clean[OWNERSHIP_ENV];
 			return { args, env: clean };

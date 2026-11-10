@@ -11,6 +11,7 @@ import { prepareOwnedLaunch } from "./session-selection.mjs";
 import {
 	acquire,
 	reserveId,
+	reserveNamespace,
 	releaseNamespace,
 	newOwner,
 } from "../extensions/_session_ownership/ownership.mjs";
@@ -48,6 +49,17 @@ test("in-memory interactive owners retain runtime switching protection; print he
 		f.close();
 	}
 });
+test("no-history print helpers never reserve a namespace even with extensions enabled", async () => {
+  const f = fixture();
+  try {
+    const helper = await prepareOwnedLaunch(["-p", "--no-session", "--session-dir", f.sessions], pkg, f.env, f.root);
+    assert.equal(helper.env.PI_SESSION_OWNER, undefined);
+    const owner = newOwner();
+    reserveNamespace(owner, f.env.PI_SESSION_LOCK_ROOT);
+    releaseNamespace(owner, f.env.PI_SESSION_LOCK_ROOT);
+  } finally { f.close(); }
+});
+
 test("startup selectors precede -- and reserve explicit IDs before native allocation", async () => {
 	const f = fixture();
 	try {
