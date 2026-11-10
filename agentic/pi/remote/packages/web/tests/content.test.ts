@@ -11,7 +11,13 @@ const sharp = createRequire(new URL("../../broker/package.json", import.meta.url
   "sharp",
 );
 
-test("app icons reproduce the native splash grid at both Home Screen sizes", async () => {
+test("app and explicitly sized iPhone icons reproduce the native splash grid", async () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  const touch = html.match(/<link[^>]*rel="apple-touch-icon"[^>]*>/)![0];
+  assert.match(touch, /sizes="180x180"/);
+  const touchPath = touch.match(/href="([^"]+)"/)![1]!;
+  assert.notEqual(touchPath, "/icons/pi-192.png");
+  assert(fs.readFileSync(path.join(root, "public/sw.js"), "utf8").includes(touchPath));
   const splash = fs.readFileSync(
     new URL("../../../../extensions/splash/index.ts", import.meta.url),
     "utf8",
@@ -24,8 +30,13 @@ test("app icons reproduce the native splash grid at both Home Screen sizes", asy
     (match) => JSON.parse(match[0]) as number[],
   );
   assert.equal(grid.length, 4);
-  for (const size of [192, 512]) {
-    const { data, info } = await sharp(path.join(root, `public/icons/pi-${size}.png`))
+  const icons = [
+    [192, "/icons/pi-192.png"],
+    [512, "/icons/pi-512.png"],
+    [180, touchPath],
+  ] as const;
+  for (const [size, iconPath] of icons) {
+    const { data, info } = await sharp(path.join(root, "public", iconPath.slice(1)))
       .removeAlpha()
       .raw()
       .toBuffer({ resolveWithObject: true });

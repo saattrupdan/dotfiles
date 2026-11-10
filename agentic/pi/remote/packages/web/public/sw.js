@@ -7,6 +7,7 @@ const STATIC = [
   "/icons/pi.svg",
   "/icons/pi-192.png",
   "/icons/pi-512.png",
+  "/icons/pi-touch-pixel-180.png",
   "/fonts.css",
 ];
 self.addEventListener("install", (event) => {
