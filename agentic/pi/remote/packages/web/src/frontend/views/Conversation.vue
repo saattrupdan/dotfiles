@@ -4,7 +4,11 @@ import { useRoute } from "vue-router";
 import { useAuth } from "../stores/auth.ts";
 import { useSessions } from "../stores/sessions.ts";
 import Transcript from "../components/Transcript.vue";
+import Icon from "../components/Icon.vue";
 import type { Command } from "../../../../protocol/src/index.ts";
+const toolsExpanded = ref(false),
+  thinkingExpanded = ref(false);
+let disposed = false;
 const content = ref<HTMLElement>();
 let scrollFrame: number | undefined;
 let resize: ResizeObserver | undefined;
@@ -104,6 +108,7 @@ watch(
   },
 );
 onUnmounted(() => {
+  disposed = true;
   clearInterval(time);
   resize?.disconnect();
   if (scrollFrame !== undefined) cancelAnimationFrame(scrollFrame);
@@ -117,25 +122,54 @@ async function action(command: Command) {
   }
   error.value = "";
   try {
-    await store.command(id.value, command);
+    return await store.command(id.value, command);
   } catch (e) {
     error.value = (e as Error).message;
   }
 }
 async function send() {
+  if (sending.value) return;
   if (recoveryReason.value) {
     error.value = recoveryReason.value;
     return;
   }
   if (!draft.value.trim() && !images.value.length) return;
   sending.value = true;
+  const target = id.value;
   const text = draft.value;
   const attached = [...images.value];
+  try {
+    await store.ensureOwner(target);
+    if (disposed || id.value !== target || !auth.unlocked || !auth.visible) {
+      sending.value = false;
+      return;
+    }
+  } catch (e) {
+    error.value = (e as Error).message;
+    sending.value = false;
+    return;
+  }
   draft.value = "";
   images.value = [];
-  previews.value.forEach(URL.revokeObjectURL);
+  const urls = previews.value;
   previews.value = [];
-  await action({ action: "message", text, images: attached });
+  const sent = await action({ action: "message", text, images: attached });
+  if (
+    !sent &&
+    !Object.values(store.pending).some(
+      (entry) =>
+        entry.sessionId === target &&
+        entry.text === text &&
+        JSON.stringify(entry.images) === JSON.stringify(attached),
+    ) &&
+    !disposed &&
+    id.value === target &&
+    auth.unlocked
+  ) {
+    draft.value = text;
+    images.value = attached;
+    previews.value = urls;
+  } else urls.forEach(URL.revokeObjectURL);
   sending.value = false;
 }
 async function upload(event: Event) {
@@ -157,41 +191,49 @@ async function upload(event: Event) {
   }
   input.value = "";
 }
-async function recover() {
-  try {
-    await auth.request(`/sessions/${id.value}/recover`, { method: "POST", body: "{}" });
-    await load();
-  } catch (e) {
-    error.value = (e as Error).message;
-  }
-}
 </script>
 <template>
   <section ref="content">
     <p class="small muted session-state">{{ session?.state || "Saved" }}</p>
     <h1>{{ session?.name || "Conversation" }}</h1>
     <p class="muted small">{{ session?.cwd }}</p>
-    <div class="row">
+    <div class="row conversation-toolbar">
       <button
-        v-if="
-          !session?.epoch ||
-          ['stopped', 'interrupted', 'crashed', 'disconnected'].includes(session.state)
-        "
-        class="primary"
-        :disabled="Boolean(session?.recoveryBlockedReason)"
-        @click="recover"
+        class="icon-button"
+        :aria-label="toolsExpanded ? 'Collapse tool outputs' : 'Expand tool outputs'"
+        title="Tool outputs"
+        :aria-pressed="toolsExpanded"
+        @click="toolsExpanded = !toolsExpanded"
       >
-        Resume on Mac</button
-      ><button
-        v-else
+        <Icon name="tools" />
+      </button>
+      <button
+        class="icon-button"
+        :aria-label="thinkingExpanded ? 'Collapse reasoning' : 'Expand reasoning'"
+        title="Reasoning"
+        :aria-pressed="thinkingExpanded"
+        @click="thinkingExpanded = !thinkingExpanded"
+      >
+        <Icon name="brain" />
+      </button>
+      <button
+        v-if="session?.state === 'running'"
+        class="icon-button danger"
         :disabled="Boolean(recoveryReason)"
-        class="danger"
+        aria-label="Stop run"
+        title="Stop run"
         @click="action({ action: 'stop_run' })"
       >
-        Stop run
+        <Icon name="stop" />
       </button>
-      <details>
-        <summary class="quiet">Controls</summary>
+      <details class="conversation-settings">
+        <summary
+          class="icon-button"
+          aria-label="Conversation settings"
+          title="Conversation settings"
+        >
+          <Icon name="sliders" /><span class="sr-only">Conversation settings</span>
+        </summary>
         <div class="card">
           <label>Name<input v-model="name" /></label
           ><button @click="action({ action: 'rename', name })">Rename</button
@@ -258,13 +300,6 @@ async function recover() {
       {{ recoveryReason }}
     </p>
     <p
-      v-if="error"
-      class="error"
-      role="alert"
-    >
-      {{ error }}
-    </p>
-    <p
       v-if="store.historyLimited[id]"
       class="small muted"
       role="status"
@@ -274,6 +309,8 @@ async function recover() {
     <Transcript
       :messages="store.messages[id] || []"
       :streaming="store.streaming[id]"
+      :tools-expanded="toolsExpanded"
+      :thinking-expanded="thinkingExpanded"
     />
     <div
       v-for="(pending, pendingId) in Object.fromEntries(
@@ -327,6 +364,14 @@ async function recover() {
       </details>
     </div>
     <div class="composer">
+      <p
+        v-if="error"
+        class="error"
+        role="alert"
+      >
+        {{ error }}
+      </p>
+
       <form
         v-if="question?.state === 'pending'"
         class="question card"
@@ -411,28 +456,31 @@ async function recover() {
         </div>
         <textarea
           v-model="draft"
+          :readonly="sending"
           placeholder="Message Pi..."
           aria-label="Message Pi"
         />
         <div class="row">
-          <label class="image-button"
-            >+ Image<input
+          <label
+            class="image-button icon-button"
+            aria-label="Attach image"
+            title="Attach image"
+            ><Icon name="image" /><input
               type="file"
+              :disabled="sending"
               accept="image/png,image/jpeg,image/webp,image/heic,image/heif"
               multiple
               @change="upload" /></label
           ><button
-            class="primary"
-            :disabled="sending || !session?.epoch"
+            class="primary icon-button"
+            aria-label="Send message"
+            title="Send message"
+            :disabled="
+              sending || Boolean(recoveryReason) || (!draft.trim() && !images.length)
+            "
             type="submit"
           >
-            {{
-              sending
-                ? "Sending..."
-                : session?.state === "running"
-                  ? "Steer Pi"
-                  : "Send"
-            }}
+            <Icon :name="sending ? 'spinner' : 'send'" />
           </button>
         </div>
       </form>
@@ -440,6 +488,38 @@ async function recover() {
   </section>
 </template>
 <style scoped>
+.conversation-toolbar {
+  position: sticky;
+  top: calc(76px + env(safe-area-inset-top));
+  z-index: 25;
+  background: var(--bg);
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line);
+}
+.conversation-toolbar [aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--panel);
+}
+.conversation-settings {
+  margin-left: auto;
+  position: relative;
+}
+.conversation-settings > summary {
+  list-style: none;
+}
+.conversation-settings > summary::-webkit-details-marker {
+  display: none;
+}
+.conversation-settings > .card {
+  position: absolute;
+  right: 0;
+  width: min(360px, 85vw);
+  max-height: 65dvh;
+  overflow: auto;
+  z-index: 26;
+  background: var(--bg);
+  box-shadow: 0 10px 40px #0008;
+}
 h1 {
   font-size: 25px;
   margin-bottom: 8px;
@@ -447,7 +527,7 @@ h1 {
 .composer {
   position: sticky;
   bottom: 0;
-  max-height: calc(100dvh - env(safe-area-inset-top) - 24px);
+  max-height: calc(100dvh - env(safe-area-inset-top) - 132px);
   overflow-y: auto;
   overscroll-behavior: contain;
   background: var(--bg);

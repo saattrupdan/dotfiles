@@ -6,15 +6,18 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import WebSocket from "ws";
+import net from "node:net";
 import type { Session } from "../../protocol/src/index.ts";
 import { ConfigSchema } from "../src/config.ts";
 import { History, RECENT_SESSION_MS } from "../src/history.ts";
 import { inDeploymentScope } from "../src/deployment-scope.ts";
 import { approvePilot, deployment } from "../src/gates.ts";
 import { createBroker } from "../src/server.ts";
+import { Processes } from "../src/processes.ts";
 import { digest } from "../src/store.ts";
 import {
   activateLaptop,
+  acquire,
   newOwner,
   reserveNamespace,
   releaseNamespace,
@@ -280,6 +283,110 @@ test("large saved conversations use a bounded recent window instead of reading g
   }
 });
 
+test("native names in the middle of large histories and appended renames are preserved", async () => {
+  const f = fixture();
+  try {
+    const saved = f.seed(path.join(f.config.agentDir, "sessions/project"));
+    fs.appendFileSync(
+      saved.file,
+      JSON.stringify({ type: "message", message: { content: "x".repeat(150000) } }) +
+        "\n",
+    );
+    fs.appendFileSync(
+      saved.file,
+      JSON.stringify({
+        id: "named",
+        type: "session_info",
+        name: "Native session title",
+      }) + "\n",
+    );
+    fs.appendFileSync(
+      saved.file,
+      JSON.stringify({ type: "message", message: { content: "x".repeat(150000) } }) +
+        "\n",
+    );
+    const history = new History(f.config);
+    assert.equal((await history.catalog(f.root))[0]?.name, "Native session title");
+    fs.appendFileSync(
+      saved.file,
+      JSON.stringify({ type: "session_info", name: "Renamed in Pi" }) + "\n",
+    );
+    assert.equal((await history.catalog(f.root))[0]?.name, "Renamed in Pi");
+  } finally {
+    f.close();
+  }
+});
+
+test("agent-working-directory sessions and canonical aliases stay off the phone", async () => {
+  const f = fixture();
+  try {
+    const alias = path.join(f.root, "agent-alias");
+    fs.symlinkSync(f.config.agentDir, alias);
+    const source = path.join(f.root, "extension-source");
+    fs.mkdirSync(source);
+    fs.symlinkSync(source, path.join(f.config.agentDir, "extensions"));
+    for (const cwd of [
+      f.config.agentDir,
+      path.join(f.config.agentDir, "extensions"),
+      alias,
+      path.join(alias, "child"),
+      source,
+    ]) {
+      const saved = f.seed(path.join(f.config.agentDir, "sessions/project"));
+      const lines = fs.readFileSync(saved.file, "utf8").split("\n");
+      lines[0] = JSON.stringify({ ...JSON.parse(lines[0]!), cwd });
+      fs.writeFileSync(saved.file, lines.join("\n"));
+    }
+    assert.deepEqual(await new History(f.config).folders(), []);
+    assert.deepEqual(await new History(f.config).catalog(), []);
+  } finally {
+    f.close();
+  }
+});
+
+test("simultaneous recovery requests launch the same stopped native history only once", async (t) => {
+  const f = fixture();
+  const saved = f.seed(path.join(f.config.agentDir, "sessions/project"));
+  const broker = await createBroker(f.config, { ipc: false });
+  let launches = 0,
+    release!: (value: Session) => void;
+  const pending = new Promise<Session>((resolve) => {
+    release = resolve;
+  });
+  t.mock.method(
+    Processes.prototype,
+    "launch",
+    (cwd: string, native: { id: string; path: string }) => {
+      assert.equal(cwd, f.root);
+      assert.equal(native.path, saved.file);
+      assert.equal(native.id, saved.id);
+      launches++;
+      return pending;
+    },
+  );
+  try {
+    const headers = authentication(broker, f.config.origin);
+    const request = () =>
+      broker.app.inject({
+        method: "POST",
+        url: `/api/v1/sessions/${saved.id}/recover`,
+        headers,
+      });
+    const requests = [request(), request()];
+    while (!launches) await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(launches, 1);
+    release(liveSession(saved, f.root));
+    const results = await Promise.all(requests);
+    assert(results.every((result) => result.statusCode === 200));
+    assert.equal(launches, 1);
+  } finally {
+    release(liveSession(saved, f.root));
+    await broker.app.close();
+    f.close();
+  }
+});
+
 test("expanded approval is bound to visibility scope and configured session directories", () => {
   const f = fixture();
   try {
@@ -300,6 +407,94 @@ test("expanded approval is bound to visibility scope and configured session dire
     activateLaptop([], path.join(f.config.dataDir, "ownership"));
     assert(!deployment(f.config).missing.includes("pilot-global-ownership-conflict"));
   } finally {
+    f.close();
+  }
+});
+
+test("a missing lease never permits recovery while the recorded process is alive", async () => {
+  const f = fixture();
+  const saved = f.seed(path.join(f.config.agentDir, "sessions/project"));
+  const broker = await createBroker(f.config, { ipc: false });
+  try {
+    const row = liveSession(saved, f.root);
+    row.birth = newOwner().birth;
+    broker.store.save(row);
+    const headers = authentication(broker, f.config.origin);
+    const detail = await broker.app.inject({
+      url: `/api/v1/sessions/${saved.id}`,
+      headers,
+    });
+    assert.equal(detail.json().recoveryBlockedReason, "owner_not_connected");
+    const recover = await broker.app.inject({
+      method: "POST",
+      url: `/api/v1/sessions/${saved.id}/recover`,
+      headers,
+    });
+    assert.equal(recover.statusCode, 409);
+    assert.equal(recover.json().error, "owner_still_alive");
+    assert(!fs.existsSync(path.join(f.config.dataDir, "launches")));
+  } finally {
+    await broker.app.close();
+    f.close();
+  }
+});
+
+test("verified registration on B releases A without permitting disconnected-owner takeover", async (t) => {
+  const f = fixture();
+  const a = f.seed(path.join(f.config.agentDir, "sessions/project"));
+  const b = f.seed(path.join(f.config.agentDir, "sessions/project"));
+  const broker = await createBroker(f.config, { ipc: false });
+  const owner = newOwner();
+  const first = {
+    ...liveSession(a, f.root),
+    instanceId: owner.instanceId,
+    birth: owner.birth,
+    state: "stopped",
+  };
+  const second = {
+    ...liveSession(b, f.root),
+    instanceId: owner.instanceId,
+    birth: owner.birth,
+  };
+  const socket = new net.Socket();
+  try {
+    acquire(b.file, owner, path.join(f.config.dataDir, "ownership"));
+    broker.store.save(first);
+    broker.store.save(second);
+    broker.owners.activeSessions.set(owner.instanceId, b.id);
+    broker.owners.sockets.set(owner.instanceId, socket);
+    let launches = 0;
+    t.mock.method(
+      Processes.prototype,
+      "launch",
+      async (_cwd: string, saved: { path: string }) => {
+        assert.equal(saved.path, a.file);
+        launches++;
+        return first;
+      },
+    );
+    const headers = authentication(broker, f.config.origin);
+    assert.equal(
+      (await broker.app.inject({ url: `/api/v1/sessions/${a.id}`, headers })).json()
+        .recoveryBlockedReason,
+      undefined,
+    );
+    const result = await broker.app.inject({
+      method: "POST",
+      url: `/api/v1/sessions/${a.id}/recover`,
+      headers,
+    });
+    assert.equal(result.statusCode, 200);
+    assert.equal(launches, 1);
+    broker.owners.sockets.delete(owner.instanceId);
+    assert.equal(
+      (await broker.app.inject({ url: `/api/v1/sessions/${a.id}`, headers })).json()
+        .recoveryBlockedReason,
+      "owner_not_connected",
+    );
+  } finally {
+    socket.destroy();
+    await broker.app.close();
     f.close();
   }
 });

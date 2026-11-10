@@ -1,52 +1,67 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
-import { useAuth } from "../stores/auth.ts";
+import { onLock, useAuth } from "../stores/auth.ts";
 import { useSessions } from "../stores/sessions.ts";
+import FolderTree from "../components/FolderTree.vue";
+import Icon from "../components/Icon.vue";
 const auth = useAuth();
 const sessions = useSessions();
 const router = useRouter();
-const directory = ref<{
-  path: string;
-  parent: string | null;
-  directories: { name: string; path: string }[];
-}>();
-const favorites = ref<string[]>([]);
+const root = ref<{ path: string; directories: { name: string; path: string }[] }>();
+const selected = ref("");
 const error = ref("");
 const busy = ref(false);
-async function browse(path?: string) {
+const uncertain = ref(false);
+let generation = 0;
+const reset = onLock(() => {
+  generation++;
+  root.value = undefined;
+  selected.value = "";
+  error.value = "";
+});
+onUnmounted(() => {
+  generation++;
+  reset();
+});
+onMounted(async () => {
+  const expected = generation;
   try {
-    directory.value = await auth.request(
-      `/directories${path ? `?path=${encodeURIComponent(path)}` : ""}`,
-    );
+    const result = await auth.request<NonNullable<typeof root.value>>("/directories");
+    if (!auth.unlocked || expected !== generation) return;
+    root.value = result;
+    selected.value = result.path;
   } catch (e) {
     error.value = (e as Error).message;
   }
-}
-onMounted(async () => {
-  await browse();
-  favorites.value = await auth.request("/favorites");
-  await sessions.refresh();
 });
-async function favorite() {
-  if (!directory.value) return;
-  favorites.value = [...new Set([...favorites.value, directory.value.path])];
-  await auth.request("/favorites", {
-    method: "PUT",
-    body: JSON.stringify(favorites.value),
-  });
-}
 async function create() {
-  if (!directory.value) return;
+  if (!selected.value || busy.value || uncertain.value) return;
   busy.value = true;
+  const expected = generation;
+  let created = false;
+  error.value = "";
   try {
     const result = await auth.request<{ sessionId: string }>("/sessions", {
       method: "POST",
-      body: JSON.stringify({ cwd: directory.value.path }),
+      body: JSON.stringify({ cwd: selected.value }),
     });
+    if (!auth.unlocked || expected !== generation) return;
+    created = true;
+    if (!result.sessionId)
+      throw new Error(
+        "Pi startup returned no conversation. Check your Mac before starting again.",
+      );
+    await sessions.detail(result.sessionId);
+    if (!auth.unlocked || expected !== generation) return;
     await router.push(`/session/${result.sessionId}`);
   } catch (e) {
     error.value = (e as Error).message;
+    uncertain.value =
+      created ||
+      /unknown|timed out|launch_timeout|fetch|network|returned no conversation|internal_error/i.test(
+        error.value,
+      );
   } finally {
     busy.value = false;
   }
@@ -55,85 +70,70 @@ async function create() {
 <template>
   <section>
     <h1>Choose a folder</h1>
-    <p
-      v-if="error"
-      class="error"
+    <ul
+      v-if="root"
+      class="folder-tree"
+      role="tree"
+      aria-label="Folders"
     >
-      {{ error }}
-    </p>
-    <details>
-      <summary>Recent &amp; saved</summary>
+      <FolderTree
+        :path="root.path"
+        :name="root.path.split('/').at(-1) || root.path"
+        :initial="root.directories"
+        :selected="selected"
+        @select="selected = $event"
+      />
+    </ul>
+    <div class="start-panel">
+      <p class="small muted path">{{ selected }}</p>
+      <p
+        v-if="error"
+        class="error"
+        role="alert"
+      >
+        {{ error }}
+      </p>
+      <p
+        v-if="uncertain"
+        class="small error"
+      >
+        Check Pi on your Mac before starting another session.
+      </p>
       <button
-        v-for="cwd in [
-          ...new Set([...favorites, ...sessions.sessions.map((s) => s.cwd)]),
-        ].slice(0, 30)"
-        :key="cwd"
-        class="directory"
-        @click="browse(cwd)"
+        class="primary start"
+        :disabled="busy || uncertain || !selected"
+        @click="create"
       >
-        {{ cwd }}
+        <Icon
+          v-if="busy"
+          name="spinner"
+        />{{ busy ? "Starting Pi..." : "Start here" }}
       </button>
-    </details>
-    <div
-      v-if="directory"
-      class="card browser"
-    >
-      <p class="path">{{ directory.path }}</p>
-      <button
-        v-if="directory.parent"
-        class="directory"
-        aria-label="Parent directory"
-        @click="browse(directory.parent!)"
-      >
-        ..</button
-      ><button
-        v-for="child in directory.directories"
-        :key="child.path"
-        class="directory"
-        @click="browse(child.path)"
-      >
-        {{ child.name }}
-      </button>
-      <div class="row">
-        <button @click="favorite">
-          {{ favorites.includes(directory.path) ? "Saved" : "Save folder" }}</button
-        ><button
-          class="primary"
-          :disabled="busy"
-          @click="create"
-        >
-          {{ busy ? "Starting Pi..." : "Start here" }}
-        </button>
-      </div>
     </div>
   </section>
 </template>
 <style scoped>
-.browser {
-  margin-top: 16px;
-  background: none;
-  border: 0;
+.folder-tree {
+  margin: 20px 0;
   padding: 0;
 }
-.directory {
-  display: block;
-  text-align: left;
-  width: 100%;
-  margin: 0;
-  border: 0;
-  border-radius: 0;
-  border-bottom: 1px solid var(--line);
-  padding: 14px 0;
-  overflow-wrap: anywhere;
+.start-panel {
+  position: sticky;
+  bottom: 0;
+  padding: 16px 0;
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+  background: var(--bg);
+  border-top: 1px solid var(--line);
 }
 .path {
-  font-family: ui-monospace, monospace;
-  font-size: 12px;
-  color: var(--muted);
+  overflow-wrap: anywhere;
   margin: 0 0 12px;
 }
-.browser .row {
-  justify-content: space-between;
-  margin-top: 20px;
+.start {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
 }
 </style>

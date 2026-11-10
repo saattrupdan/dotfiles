@@ -389,7 +389,7 @@ export default function (pi: ExtensionAPI) {
 					if (value.type === "registered") {
 						epoch = value.epoch;
 						registered = true;
-						ctx.ui.setStatus("remote-control", "Phone connected");
+						ctx.ui.setStatus("remote-control", undefined);
 						persisted();
 						for (const [id, entry] of Object.entries(journal))
 							send({ type: "ack", commandId: id, status: entry.status });

@@ -4,11 +4,14 @@ import { pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
 import { resolvePiPackage } from "../../../../profile/pi-runtime.mjs";
 import { Id, RemoteError, type SessionFolder } from "../../protocol/src/index.ts";
-import { mainHistory, sessionRoots } from "./deployment-scope.ts";
+import {
+  mainHistory,
+  sessionRoots,
+  visibleWorkingDirectory,
+} from "./deployment-scope.ts";
 import type { Config } from "./config.ts";
 
 export const RECENT_SESSION_MS = 7 * 24 * 60 * 60 * 1000;
-const NAME_WINDOW_BYTES = 64 * 1024;
 const HISTORY_BYTES = 128 * 1024 * 1024;
 const RECENT_HISTORY_BYTES = 8 * 1024 * 1024;
 interface NativeSession {
@@ -48,7 +51,11 @@ function stamp(stats: fs.Stats) {
 export class History {
   module: Promise<NativeModule>;
   private headers = new Map<string, { stamp: string; row: NativeSession }>();
-  private names = new Map<string, { stamp: string; name?: string }>();
+  private names = new Map<
+    string,
+    { stamp: string; identity: string; size: number; offset: number; name?: string }
+  >();
+  private naming = new Map<string, Promise<NativeSession>>();
   constructor(readonly config: Config) {
     this.module = import(
       pathToFileURL(path.join(resolvePiPackage(), "dist/core/session-manager.js")).href
@@ -99,6 +106,7 @@ export class History {
         if (!stats.isFile() || stats.mtimeMs < Date.now() - RECENT_SESSION_MS) continue;
         const cached = this.headers.get(file);
         if (cached?.stamp === stamp(stats)) {
+          if (!visibleWorkingDirectory(this.config, cached.row.cwd)) continue;
           rows.push(cached.row);
           continue;
         }
@@ -114,7 +122,8 @@ export class History {
           if (
             header.type !== "session" ||
             !Id.safeParse(header.id).success ||
-            typeof header.cwd !== "string"
+            typeof header.cwd !== "string" ||
+            !visibleWorkingDirectory(this.config, header.cwd)
           )
             continue;
           if (fs.realpathSync(file) !== file || !mainHistory(this.config, file))
@@ -152,45 +161,79 @@ export class History {
       )
       .sort((a, b) => +b.modified - +a.modified);
   }
-  private named(row: NativeSession) {
-    const stats = fs.statSync(row.path),
-      cached = this.names.get(row.path);
-    if (cached?.stamp === stamp(stats)) return { ...row, name: cached.name };
-    const fd = fs.openSync(row.path, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-    let name: string | undefined;
+  private async named(row: NativeSession): Promise<NativeSession> {
+    const pending = this.naming.get(row.path);
+    if (pending) return pending;
+    const task = this.readName(row);
+    this.naming.set(row.path, task);
     try {
-      const opened = fs.fstatSync(fd);
-      if (opened.dev !== stats.dev || opened.ino !== stats.ino)
-        throw new RemoteError("session_changed", 409);
-      // Never scan multi-GB transcripts for a label. Metadata outside these
-      // windows uses a neutral label until its native owner publishes its name.
-      const starts =
-        stats.size <= NAME_WINDOW_BYTES
-          ? [0]
-          : [0, Math.max(0, stats.size - NAME_WINDOW_BYTES)];
-      for (const start of starts) {
-        const buffer = Buffer.alloc(Math.min(NAME_WINDOW_BYTES, stats.size - start));
-        const length = fs.readSync(fd, buffer, 0, buffer.length, start);
-        const lines = buffer.subarray(0, length).toString("utf8").split("\n");
-        if (start) lines.shift();
-        for (const line of lines) {
-          if (
-            line.length > 16384 ||
-            !/^\s*\{\s*"type"\s*:\s*"session_info"\s*[,}]/.test(line)
-          )
-            continue;
-          try {
-            const entry = JSON.parse(line);
-            if (typeof entry.name === "string") name = entry.name.slice(0, 1000);
-          } catch {
-            /* Ignore a partial append. */
+      return await task;
+    } finally {
+      this.naming.delete(row.path);
+    }
+  }
+  private async readName(row: NativeSession): Promise<NativeSession> {
+    const fd = fs.openSync(row.path, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    try {
+      const stats = fs.fstatSync(fd),
+        identity = `${stats.dev}:${stats.ino}:${row.nativeId}`;
+      const cached = this.names.get(row.path);
+      if (cached?.stamp === stamp(stats)) return { ...row, name: cached.name };
+      const append = cached?.identity === identity && stats.size > cached.size;
+      const start = append ? cached.offset : 0;
+      let offset = start,
+        absolute = start,
+        name = append ? cached.name : undefined;
+      let partial = Buffer.alloc(0),
+        discarded = false;
+      // Scan labels only when their folder is opened, then only appended bytes.
+      // Message/image records are discarded without JSON parsing or retention.
+      if (stats.size > start)
+        for await (const chunk of fs.createReadStream(row.path, {
+          fd,
+          autoClose: false,
+          start,
+          end: stats.size - 1,
+          highWaterMark: 1024 * 1024,
+        })) {
+          const bytes = chunk as Buffer;
+          let position = 0;
+          while (position < bytes.length) {
+            const newline = bytes.indexOf(10, position);
+            const end = newline < 0 ? bytes.length : newline;
+            const piece = bytes.subarray(position, end);
+            if (!discarded && partial.length + piece.length <= 16384)
+              partial = Buffer.concat([partial, piece]);
+            else {
+              discarded = true;
+              partial = Buffer.alloc(0);
+            }
+            if (newline < 0) break;
+            if (!discarded && partial.includes('"session_info"')) {
+              try {
+                const entry = JSON.parse(partial.toString("utf8"));
+                if (entry.type === "session_info" && typeof entry.name === "string")
+                  name = entry.name.trim().slice(0, 1000) || undefined;
+              } catch {
+                /* An incomplete append is read again on the next request. */
+              }
+            }
+            partial = Buffer.alloc(0);
+            discarded = false;
+            offset = absolute + newline + 1;
+            position = newline + 1;
           }
+          absolute += bytes.length;
         }
-      }
       if (fs.realpathSync(row.path) !== row.path || !mainHistory(this.config, row.path))
         throw new RemoteError("session_changed", 409);
-      if (stamp(fs.statSync(row.path)) === stamp(stats))
-        this.names.set(row.path, { stamp: stamp(stats), name });
+      this.names.set(row.path, {
+        stamp: stamp(stats),
+        identity,
+        size: stats.size,
+        offset,
+        name,
+      });
       return { ...row, name };
     } finally {
       fs.closeSync(fd);
@@ -209,15 +252,15 @@ export class History {
     return [...groups.values()];
   }
   async catalog(cwd?: string) {
-    return this.index()
-      .filter((row) => cwd === undefined || row.cwd === cwd)
-      .flatMap((row) => {
-        try {
-          return [this.named(row)];
-        } catch {
-          return [];
-        }
-      });
+    const rows = this.index().filter((row) => cwd === undefined || row.cwd === cwd);
+    const result: NativeSession[] = [];
+    for (let i = 0; i < rows.length; i += 4) {
+      const batch = await Promise.all(
+        rows.slice(i, i + 4).map((row) => this.named(row).catch(() => undefined)),
+      );
+      result.push(...batch.filter((row): row is NativeSession => !!row));
+    }
+    return result;
   }
   async byId(id: string) {
     const row = this.index().find((session) => session.id === id);

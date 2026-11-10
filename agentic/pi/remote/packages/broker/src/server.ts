@@ -27,12 +27,14 @@ import { browse, imageBlocks, uploadImage } from "./files.ts";
 import { prepare, type Config } from "./config.ts";
 import {
   inDeploymentScope,
+  visibleWorkingDirectory,
   assertControlReady,
   controlBlockReason,
 } from "./deployment-scope.ts";
 import {
   canonicalFile,
   inspect,
+  isAlive,
 } from "../../../../extensions/_session_ownership/ownership.mjs";
 
 export async function createBroker(
@@ -179,11 +181,19 @@ export async function createBroker(
     store
       .sessions()
       .filter((session) => inDeploymentScope(config, session) && recent(session));
+  const ownerPresent = (file: string) =>
+    inspect(file, path.join(config.dataDir, "ownership")) ||
+    store
+      .sessions()
+      .some(
+        (session) =>
+          canonicalFile(session.sessionFile) === canonicalFile(file) &&
+          !owners.released(session) &&
+          isAlive({ ...session, kind: session.managed ? "tmux" : "local" }),
+      );
   const liveSummary = (session: Session) => {
     const connected = owners.isConnected(session);
-    const alive =
-      !connected &&
-      inspect(session.sessionFile, path.join(config.dataDir, "ownership"));
+    const alive = !connected && ownerPresent(session.sessionFile);
     return {
       ...session,
       lastActivity: lastActivity(session),
@@ -202,15 +212,19 @@ export async function createBroker(
     epoch: 0,
     recoveryBlockedReason: n.ambiguous
       ? "ambiguous_session_id"
-      : migrationReason() ||
-        (inspect(n.path, path.join(config.dataDir, "ownership"))
-          ? "owner_not_connected"
-          : undefined),
+      : migrationReason() || (ownerPresent(n.path) ? "owner_not_connected" : undefined),
   });
   const find = async (id: string) => {
     const live = store.session(id);
-    if (live && inDeploymentScope(config, live) && recent(live))
-      return { ...liveSummary(live), id: live.sessionId, path: live.sessionFile };
+    if (live && inDeploymentScope(config, live) && recent(live)) {
+      const named = discoverLaptop ? await catalog?.byId(id) : undefined;
+      return {
+        ...liveSummary(live),
+        name: named?.name || live.name,
+        id: live.sessionId,
+        path: live.sessionFile,
+      };
+    }
     if (!discoverLaptop) throw new RemoteError("session_not_found", 404);
     const native = await catalog?.byId(id);
     if (!native) throw new RemoteError("session_not_found", 404);
@@ -345,7 +359,15 @@ export async function createBroker(
         ? ((await catalog?.catalog(folder)) ?? [])
         : [];
     return [
-      ...live,
+      ...live.map((session) => ({
+        ...session,
+        name:
+          native.find(
+            (row) =>
+              row.nativeId === session.sessionId &&
+              row.path === canonicalFile(session.sessionFile),
+          )?.name || session.name,
+      })),
       ...native
         .filter(
           (n) =>
@@ -385,17 +407,32 @@ export async function createBroker(
     store.audit(a.device, session.sessionId, "create", "created");
     return session;
   });
+  const recovering = new Map<string, Promise<Session>>();
   app.post("/api/v1/sessions/:id/recover", async (req) => {
     const a = mutate(req);
     if (proof) throw new RemoteError("proof_mode", 403);
-    const native = await find(sessionId(req));
+    assertControlReady(config);
+    const id = sessionId(req);
+    const active = store.session(id);
+    if (active && inDeploymentScope(config, active) && owners.isConnected(active))
+      return active;
+    const ongoing = recovering.get(id);
+    if (ongoing) return ongoing;
+    const native = await find(id);
     if ("ambiguous" in native && native.ambiguous)
       throw new RemoteError("ambiguous_session_id", 409);
-    if (inspect(native.path, path.join(config.dataDir, "ownership")))
-      throw new RemoteError("owner_still_alive", 409);
-    const session = await processes.launch(native.cwd, native);
-    store.audit(a.device, session.sessionId, "recover", "recovered");
-    return session;
+    const claimed = recovering.get(id);
+    if (claimed) return claimed;
+    if (ownerPresent(native.path)) throw new RemoteError("owner_still_alive", 409);
+    const pending = processes.launch(native.cwd, native);
+    recovering.set(id, pending);
+    try {
+      const session = await pending;
+      store.audit(a.device, session.sessionId, "recover", "recovered");
+      return session;
+    } finally {
+      recovering.delete(id);
+    }
   });
   for (const route of ["actions", "messages", "stop"]) {
     app.post(`/api/v1/sessions/:id/${route}`, async (req) => {
@@ -415,7 +452,15 @@ export async function createBroker(
   app.get("/api/v1/directories", async (req) => {
     read(req);
     const input = z.object({ path: z.string().optional() }).parse(req.query);
-    return browse(input.path ?? config.home, config.home);
+    const directory = browse(input.path ?? config.home, config.home);
+    if (!visibleWorkingDirectory(config, directory.path))
+      throw new RemoteError("invalid_directory", 403);
+    return {
+      ...directory,
+      directories: directory.directories.filter((child) =>
+        visibleWorkingDirectory(config, child.path),
+      ),
+    };
   });
   app.get("/api/v1/favorites", async (req) => {
     read(req);

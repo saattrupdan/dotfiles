@@ -30,7 +30,7 @@ test("phone reconnect reconciles without resending; background preserves drafts,
   const store = useSessions();
   const id = "c2d90aba-4820-494b-978d-1991e3e820cf";
   let submissions = 0;
-  let status = "forwarded";
+  let status: string | undefined = "forwarded";
   auth.request = (async (url: string) => {
     if (url.endsWith("/actions")) {
       submissions++;
@@ -51,6 +51,11 @@ test("phone reconnect reconciles without resending; background preserves drafts,
     });
     assert(store.pending[command]);
     store.statuses[command] = "delivery_unknown";
+    status = undefined;
+    store.connect(id);
+    Socket.latest.onopen?.();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(store.statuses[command], "delivery_unknown");
     status = "persisted";
     store.connect(id);
     Socket.latest.onopen?.();
@@ -59,6 +64,7 @@ test("phone reconnect reconciles without resending; background preserves drafts,
     assert.equal(store.statuses[command], "persisted");
     assert.equal(store.pending[command], undefined);
     assert.equal(submissions, 1);
+    store.folder = "/private/working-folder";
     store.drafts[id] = "Memory only";
     store.messages[id] = [{ role: "user", content: "Private transcript" }];
     auth.visible = false;
@@ -70,9 +76,20 @@ test("phone reconnect reconciles without resending; background preserves drafts,
     Socket.latest.onclose?.({ code: 4001 });
     assert(!auth.unlocked);
     assert.deepEqual(store.messages, {});
+    assert.equal(store.folder, undefined);
     assert.deepEqual(store.drafts, {});
     assert.deepEqual(store.pending, {});
+    const stale = Socket.latest;
     auth.unlocked = true;
+    stale.onmessage?.({
+      data: JSON.stringify({
+        version: 1,
+        type: "snapshot",
+        sessionId: id,
+        data: [{ role: "user", content: "Stale private socket" }],
+      }),
+    });
+    assert.deepEqual(store.messages, {});
     let release!: (value: unknown) => void;
     auth.request = (() =>
       new Promise((resolve) => {

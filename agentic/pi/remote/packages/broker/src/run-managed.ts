@@ -29,20 +29,31 @@ const sessionDir =
     ? path.join(config.dataDir, "native-sessions")
     : undefined;
 if (sessionDir) fs.mkdirSync(sessionDir, { recursive: true, mode: 0o700 });
-const child = spawn(path.join(config.agentDir, "bin", "pi"), args, {
-  cwd,
-  stdio: "inherit",
-  env: {
-    ...process.env,
-    PI_CODING_AGENT_DIR: config.agentDir,
-    PI_SESSION_HISTORY_SCOPE: sessionDir,
-    ...(sessionDir ? { PI_CODING_AGENT_SESSION_DIR: sessionDir } : {}),
-    PI_REMOTE_MANAGED: launch.tmux,
-    PI_REMOTE_DATA_DIR: config.dataDir,
-    PI_SESSION_LOCK_ROOT: path.join(config.dataDir, "ownership"),
-    PI_REMOTE_OWNERSHIP: "1",
+const environment = { ...process.env };
+for (const key of Object.keys(environment))
+  if (
+    /^PI_(SUBAGENT_|PROFILE_|SESSION_)/.test(key) ||
+    key === "PI_CODING_AGENT_SESSION_DIR"
+  )
+    delete environment[key];
+const child = spawn(
+  path.join(config.agentDir, "bin", "pi"),
+  ["--agent", "main", ...args],
+  {
+    cwd,
+    stdio: "inherit",
+    env: {
+      ...environment,
+      PI_CODING_AGENT_DIR: config.agentDir,
+      PI_SESSION_HISTORY_SCOPE: sessionDir,
+      ...(sessionDir ? { PI_CODING_AGENT_SESSION_DIR: sessionDir } : {}),
+      PI_REMOTE_MANAGED: launch.tmux,
+      PI_REMOTE_DATA_DIR: config.dataDir,
+      PI_SESSION_LOCK_ROOT: path.join(config.dataDir, "ownership"),
+      PI_REMOTE_OWNERSHIP: "1",
+    },
   },
-});
+);
 for (const signal of ["SIGINT", "SIGTERM"] as const)
   process.on(signal, () => child.kill(signal));
 child.on("error", () => {

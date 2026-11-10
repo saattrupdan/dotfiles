@@ -1,13 +1,40 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from "vue";
-import { RouterLink } from "vue-router";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { RouterLink, useRoute, useRouter } from "vue-router";
+import Icon from "./components/Icon.vue";
 import { useAuth } from "./stores/auth.ts";
 import { useSessions } from "./stores/sessions.ts";
 const auth = useAuth();
 const sessions = useSessions();
 const pairing = ref(location.hash.slice(1));
 const deviceName = ref("My iPhone");
-onMounted(() => auth.initialize());
+const route = useRoute(),
+  router = useRouter();
+const current = computed(() =>
+  sessions.sessions.find((s) => s.sessionId === route.params.id),
+);
+const headerTitle = computed(() =>
+  route.path.startsWith("/session/") ? current.value?.name : "",
+);
+function back() {
+  sessions.folder = route.path.startsWith("/session/") ? current.value?.cwd : undefined;
+  void router.push("/");
+}
+const preventZoom = (event: Event) => event.preventDefault();
+const preventPinch = (event: TouchEvent) => {
+  if (event.touches.length > 1) event.preventDefault();
+};
+onMounted(() => {
+  void auth.initialize();
+  document.addEventListener("gesturestart", preventZoom, { passive: false });
+  document.addEventListener("gesturechange", preventZoom, { passive: false });
+  document.addEventListener("touchmove", preventPinch, { passive: false });
+});
+onUnmounted(() => {
+  document.removeEventListener("gesturestart", preventZoom);
+  document.removeEventListener("gesturechange", preventZoom);
+  document.removeEventListener("touchmove", preventPinch);
+});
 watch(
   () => [auth.unlocked, auth.visible],
   ([unlocked, visible]) => {
@@ -20,10 +47,20 @@ watch(
 <template>
   <div class="shell">
     <header>
+      <button
+        v-if="auth.unlocked && auth.visible && route.path !== '/'"
+        class="icon-button back"
+        aria-label="Go back"
+        title="Go back"
+        @click="back"
+      >
+        <Icon name="back" />
+      </button>
       <RouterLink
         to="/"
         class="brand"
         aria-label="Pi Remote"
+        @click="sessions.folder = undefined"
       >
         <img
           src="/icons/pi.svg"
@@ -33,6 +70,11 @@ watch(
         />
         <span>Pi</span>
       </RouterLink>
+      <span
+        v-if="auth.unlocked && auth.visible"
+        class="header-title"
+        >{{ headerTitle }}</span
+      >
       <RouterLink
         v-if="auth.unlocked && auth.visible"
         to="/settings"
@@ -136,11 +178,30 @@ watch(
   padding: 0 22px;
 }
 header {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: var(--bg);
+  padding-top: env(safe-area-inset-top);
   display: flex;
   align-items: center;
   justify-content: space-between;
   min-height: 76px;
   border-bottom: 1px solid var(--line);
+}
+.header-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  flex: 1;
+  margin: 0 12px;
+}
+.back {
+  margin-left: -10px;
+}
+.back + .brand {
+  margin-left: 0;
 }
 .brand {
   display: inline-flex;

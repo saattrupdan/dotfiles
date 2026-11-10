@@ -6,6 +6,7 @@ import type {
   Command,
   StreamEvent,
 } from "../../../../protocol/src/index.ts";
+import { CommandStatus } from "../../../../protocol/src/index.ts";
 import { useAuth, onLock } from "./auth.ts";
 export interface Message {
   role?: string;
@@ -13,6 +14,7 @@ export interface Message {
     | string
     | Array<{
         type: string;
+        id?: string;
         text?: string;
         thinking?: string;
         data?: string;
@@ -32,6 +34,7 @@ export const useSessions = defineStore("sessions", () => {
   const sessions = ref<Session[]>([]);
   const folders = ref<SessionFolder[]>([]);
   const listing = ref<Session[]>([]);
+  const folder = ref<string>();
   let currentFolder: string | undefined;
   const messages = ref<Record<string, Message[]>>({});
   const streaming = ref<Record<string, Message | undefined>>({});
@@ -82,6 +85,7 @@ export const useSessions = defineStore("sessions", () => {
     folders.value = [];
     listing.value = [];
     currentFolder = undefined;
+    folder.value = undefined;
     messages.value = {};
     streaming.value = {};
     historyLimited.value = {};
@@ -171,12 +175,13 @@ export const useSessions = defineStore("sessions", () => {
     );
     socket = ws;
     ws.onopen = () => {
+      if (socket !== ws) return;
       subscribe();
       void refresh();
       void reconcile();
     };
     ws.onmessage = (e) => {
-      if (!auth.unlocked || !auth.visible) return;
+      if (socket !== ws || !auth.unlocked || !auth.visible) return;
       const event = JSON.parse(e.data) as StreamEvent;
       const sid = event.sessionId;
       if (event.type === "sessions.changed") {
@@ -264,7 +269,8 @@ export const useSessions = defineStore("sessions", () => {
       try {
         const known = await auth.request<{ status: string }>(`/commands/${id}`);
         if (expected !== generation || !auth.unlocked) return;
-        statuses.value[id] = known.status;
+        const status = CommandStatus.parse(known.status);
+        statuses.value[id] = status;
         if (pending.value[id]) {
           pending.value[id]!.status = known.status;
           if (known.status === "persisted") delete pending.value[id];
@@ -274,7 +280,39 @@ export const useSessions = defineStore("sessions", () => {
       }
     }
   }
+  async function ensureOwner(id: string) {
+    const expected = generation;
+    let session = sessions.value.find((s) => s.sessionId === id);
+    if (!session) {
+      await detail(id);
+      session = sessions.value.find((s) => s.sessionId === id);
+    }
+    if (!session) throw new Error("Conversation not found.");
+    if (session.recoveryBlockedReason)
+      throw new Error(
+        "This conversation cannot connect yet. Check the connection message above.",
+      );
+    if (
+      !session.epoch ||
+      ["stopped", "crashed", "interrupted"].includes(session.state)
+    ) {
+      const result = await auth.request<Session>(`/sessions/${id}/recover`, {
+        method: "POST",
+        body: "{}",
+      });
+      if (expected !== generation || !auth.unlocked) throw new Error("Session locked.");
+      merge([result]);
+      session = result;
+      connect(id);
+    }
+    if (!session.epoch)
+      throw new Error("Pi has not connected. Your message has not been sent.");
+    return session;
+  }
   async function command(id: string, command: Command, retryOf?: string) {
+    const expected = generation;
+    if (command.action === "message") await ensureOwner(id);
+    if (expected !== generation || !auth.unlocked) throw new Error("Session locked.");
     const session = sessions.value.find((s) => s.sessionId === id);
     if (!session?.epoch)
       throw new Error("Resume this conversation on your Mac before sending commands.");
@@ -303,13 +341,15 @@ export const useSessions = defineStore("sessions", () => {
           command,
         }),
       });
-      statuses.value[commandId] = result.status;
+      if (expected !== generation || !auth.unlocked) throw new Error("Session locked.");
+      statuses.value[commandId] = CommandStatus.parse(result.status);
     } catch (e) {
-      if (!auth.unlocked) throw e;
+      if (expected !== generation || !auth.unlocked) throw e;
       statuses.value[commandId] = "delivery_unknown";
       try {
         const known = await auth.request<{ status: string }>(`/commands/${commandId}`);
-        statuses.value[commandId] = known.status;
+        if (expected !== generation || !auth.unlocked) throw e;
+        statuses.value[commandId] = CommandStatus.parse(known.status);
       } catch {
         /* Never re-inject a command after an uncertain response. */
       }
@@ -322,6 +362,8 @@ export const useSessions = defineStore("sessions", () => {
     return commandId;
   }
   return {
+    folder,
+    ensureOwner,
     historyLimited,
     folders,
     listing,

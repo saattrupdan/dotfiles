@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
+import Icon from "../components/Icon.vue";
 import { useSessions } from "../stores/sessions.ts";
 const store = useSessions();
-const folder = ref<string>();
+const folder = computed(() => store.folder);
 const search = ref("");
 const filter = ref("all");
 const error = ref("");
@@ -11,7 +12,7 @@ const loading = ref(false);
 let navigation = 0;
 async function browse(cwd?: string) {
   const expected = ++navigation;
-  folder.value = cwd;
+
   search.value = "";
   filter.value = "all";
   error.value = "";
@@ -27,8 +28,8 @@ async function browse(cwd?: string) {
 }
 onMounted(() => {
   store.connect("");
-  void browse();
 });
+watch(folder, browse, { immediate: true });
 onUnmounted(() => {
   navigation++;
   store.disconnect(true);
@@ -71,10 +72,12 @@ const basename = (cwd: string) => cwd.split("/").filter(Boolean).at(-1) || cwd;
     <div class="row context">
       <button
         v-if="folder !== undefined"
-        class="quiet"
-        @click="browse()"
+        class="icon-button"
+        aria-label="Back to folders"
+        title="Back to folders"
+        @click="store.folder = undefined"
       >
-        All folders
+        <Icon name="back" />
       </button>
       <span class="small muted">Last 7 days</span>
     </div>
@@ -128,7 +131,7 @@ const basename = (cwd: string) => cwd.split("/").filter(Boolean).at(-1) || cwd;
         v-for="entry in folders"
         :key="entry.cwd"
         class="folder"
-        @click="browse(entry.cwd)"
+        @click="store.folder = entry.cwd"
       >
         <div class="row">
           <h2>{{ basename(entry.cwd) }}</h2>

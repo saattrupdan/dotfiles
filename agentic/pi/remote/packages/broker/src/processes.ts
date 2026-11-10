@@ -6,7 +6,8 @@ import { fileURLToPath } from "node:url";
 import type { Config } from "./config.ts";
 import type { Owners } from "./ipc.ts";
 import { homeDirectory } from "./files.ts";
-import { assertControlReady } from "./deployment-scope.ts";
+import { RemoteError } from "../../protocol/src/index.ts";
+import { visibleWorkingDirectory, assertControlReady } from "./deployment-scope.ts";
 export class Processes {
   shells = new Map<string, number>();
   constructor(
@@ -19,6 +20,8 @@ export class Processes {
   async launch(cwd: string, saved?: { id: string; path: string }) {
     assertControlReady(this.config);
     cwd = homeDirectory(cwd, this.config.home);
+    if (!visibleWorkingDirectory(this.config, cwd))
+      throw new RemoteError("invalid_directory", 403);
     const id = saved?.id ?? randomUUID();
     const name = `pi-remote-${randomUUID()}`;
     const launches = path.join(this.config.dataDir, "launches");
@@ -74,9 +77,7 @@ export class Processes {
       if (session && this.owners.isConnected(session)) return session;
       await new Promise((r) => setTimeout(r, 200));
     }
-    throw new Error(
-      "Pi did not register with required ownership/remote guards; inspect managed tmux session",
-    );
+    throw new RemoteError("launch_timeout_check_mac", 504);
   }
   reapIdleShells() {
     let sessions: string;

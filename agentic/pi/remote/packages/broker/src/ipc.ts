@@ -350,6 +350,17 @@ export class Owners {
       }
     });
   }
+  released(session: Session) {
+    const id = this.activeSessions.get(session.instanceId);
+    const current = id ? this.store.session(id) : undefined;
+    return Boolean(
+      current &&
+      current.sessionId !== session.sessionId &&
+      current.pid === session.pid &&
+      current.birth === session.birth &&
+      this.isConnected(current),
+    );
+  }
   isConnected(session: Session) {
     return (
       this.activeSessions.get(session.instanceId) === session.sessionId &&

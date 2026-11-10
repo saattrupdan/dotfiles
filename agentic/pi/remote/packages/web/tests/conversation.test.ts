@@ -31,6 +31,8 @@ const router = createRouter({ history: createMemoryHistory(), routes: [
   { path: '/settings', component: Settings },
   { path: '/new', component: NewSession },
 ] });
+window.__paths = [];
+router.afterEach(to => window.__paths.push(to.fullPath));
 await router.push('/session/${id}');
 await router.isReady();
 createApp(App).use(pinia).use(router).mount('#app');
@@ -79,18 +81,24 @@ test(
         isMobile: true,
         hasTouch: true,
       });
+      const pageErrors: string[] = [];
+      page.on("pageerror", (error) => pageErrors.push(error.message));
       let socket: WebSocketRoute | undefined;
       let prompt: Record<string, unknown> | undefined;
       const submissions: Array<Record<string, unknown>> = [];
       const folderRequests: string[] = [];
+      let stopped = false,
+        recoveries = 0,
+        starts = 0;
+      let createError = false;
       const session = () => ({
         sessionId: id,
         name: "Phone layout fixture",
         cwd: "/fixture",
-        epoch: 1,
+        epoch: stopped ? 0 : 1,
         sequence: 0,
         lastActivity: 1000,
-        state: prompt ? "waiting" : "idle",
+        state: stopped ? "stopped" : prompt ? "waiting" : "idle",
         prompt,
       });
       await page.routeWebSocket("**/api/v1/events", (route) => {
@@ -99,7 +107,24 @@ test(
       await page.route("**/api/v1/**", async (route) => {
         const url = new URL(route.request().url());
         let body: unknown = {};
-        if (url.pathname === "/api/v1/sessions") {
+        if (
+          url.pathname === "/api/v1/sessions" &&
+          route.request().method() === "POST"
+        ) {
+          starts++;
+          if (createError) {
+            await route.fulfill({
+              status: 504,
+              json: { error: "launch_timeout_check_mac" },
+            });
+            return;
+          }
+          body = session();
+        } else if (url.pathname.endsWith("/recover")) {
+          recoveries++;
+          stopped = false;
+          body = session();
+        } else if (url.pathname === "/api/v1/sessions") {
           if (url.searchParams.has("folder"))
             folderRequests.push(url.searchParams.get("folder")!);
           body = [session()];
@@ -111,13 +136,19 @@ test(
           url.pathname === "/api/v1/favorites"
         )
           body = [];
-        else if (url.pathname === "/api/v1/directories")
+        else if (url.pathname === "/api/v1/directories") {
+          const current = url.searchParams.get("path") || "/Users/you";
           body = {
-            path: "/Users/you",
-            parent: "/Users",
-            directories: [{ name: "Projects", path: "/Users/you/Projects" }],
+            path: current,
+            parent: current === "/Users/you" ? null : "/Users/you",
+            directories:
+              current === "/Users/you"
+                ? [{ name: "Projects", path: "/Users/you/Projects" }]
+                : current === "/Users/you/Projects"
+                  ? [{ name: "Nested", path: "/Users/you/Projects/Nested" }]
+                  : [],
           };
-        else if (url.pathname.endsWith("/history"))
+        } else if (url.pathname.endsWith("/history"))
           body = {
             messages: [
               ...Array.from({ length: 35 }, (_, index) => ({
@@ -139,6 +170,26 @@ test(
                   },
                 ],
                 timestamp: 36,
+              },
+              {
+                role: "assistant",
+                content: [
+                  { type: "thinking", thinking: "PRIVATE_REASONING_FIXTURE" },
+                  {
+                    type: "toolCall",
+                    id: "memory1",
+                    name: "store_memory",
+                    arguments: { text: "FULL_TOOL_ARGUMENT" },
+                  },
+                ],
+              },
+              {
+                role: "toolResult",
+                toolCallId: "memory1",
+                toolName: "store_memory",
+                content: [
+                  { type: "text", text: "Queued memory request 123; FULL_TOOL_OUTPUT" },
+                ],
               },
             ],
             next: null,
@@ -209,6 +260,46 @@ test(
             await page.evaluate(
               "window.__scrollModes.filter(mode=>mode==='smooth').length >= 3",
             ),
+          );
+        },
+      );
+      await t.test(
+        "tool summaries, global output toggles, sticky header and zoom guards",
+        async () => {
+          await expect(
+            page.getByText("Queued a memory", { exact: true }),
+          ).toBeVisible();
+          await expect(page.locator(".tool-entry details")).toHaveCount(0);
+          await expect(
+            page.getByText("FULL_TOOL_ARGUMENT", { exact: false }),
+          ).toHaveCount(0);
+          await page.getByRole("button", { name: "Expand tool outputs" }).click();
+          await expect(page.getByText(/FULL_TOOL_ARGUMENT/)).toBeVisible();
+          await page.getByRole("button", { name: "Expand reasoning" }).click();
+          await expect(
+            page.getByText("PRIVATE_REASONING_FIXTURE", { exact: true }),
+          ).toBeVisible();
+          await page.evaluate(() =>
+            window.scrollTo({
+              top: document.documentElement.scrollHeight,
+              behavior: "instant",
+            }),
+          );
+          assert((await page.locator("header").boundingBox())!.y >= 0);
+          assert((await page.locator("header").boundingBox())!.y < 2);
+          assert(
+            await page.evaluate(
+              () =>
+                !document.dispatchEvent(
+                  new Event("gesturestart", { cancelable: true }),
+                ),
+            ),
+          );
+          assert.equal(
+            await page
+              .getByRole("textbox", { name: "Message Pi" })
+              .evaluate((e) => getComputedStyle(e).fontSize),
+            "16px",
           );
         },
       );
@@ -413,6 +504,12 @@ test(
           ).toBeVisible();
           assert(folderRequests.every((folder) => folder === "/fixture"));
           assert(folderRequests.length > 0);
+          await page.getByRole("link", { name: "Pi Remote", exact: true }).click();
+          await expect(page.locator("button.folder")).toBeVisible();
+          await expect(
+            page.getByRole("button", { name: "Back to folders" }),
+          ).toHaveCount(0);
+          await page.locator("button.folder").click();
           if (screenshots)
             await page.screenshot({
               path: path.join(screenshots, "conversations.png"),
@@ -432,6 +529,58 @@ test(
               path: path.join(screenshots, "folder.png"),
               fullPage: true,
             });
+          await page.getByRole("button", { name: "Projects", exact: true }).click();
+          await expect(
+            page.getByRole("button", { name: "Nested", exact: true }),
+          ).toBeVisible();
+          await page.getByRole("button", { name: "Nested", exact: true }).click();
+          await page.getByRole("button", { name: "Start here", exact: true }).click();
+          await expect(
+            page.getByRole("heading", { name: session().name }),
+          ).toBeVisible();
+          assert.equal(starts, 1);
+          stopped = true;
+          await page.reload();
+          await expect(page.getByRole("button", { name: "Resume on Mac" })).toHaveCount(
+            0,
+          );
+          await page
+            .getByRole("textbox", { name: "Message Pi" })
+            .fill("Resume and send once");
+          await page.getByRole("button", { name: "Send message" }).click();
+          await expect.poll(() => recoveries).toBe(1);
+          await expect
+            .poll(
+              () =>
+                submissions.filter((command) => command.text === "Resume and send once")
+                  .length,
+            )
+            .toBe(1);
+          await page.getByRole("button", { name: "Go back", exact: true }).click();
+          await expect(
+            page.getByRole("button", { name: "Back to folders" }),
+          ).toBeVisible();
+          await page.getByRole("link", { name: "New conversation" }).click();
+          createError = true;
+          await page.getByRole("button", { name: "Start here", exact: true }).click();
+          await expect(page.getByRole("alert")).toBeVisible();
+          await expect(
+            page.getByRole("button", { name: "Start here", exact: true }),
+          ).toBeDisabled();
+          assert.equal(starts, 2);
+          assert.deepEqual(pageErrors, []);
+          assert(
+            (
+              await page.evaluate(
+                () => (window as unknown as { __paths: string[] }).__paths,
+              )
+            ).every(
+              (path) =>
+                !path.includes("?") &&
+                !path.includes("fixture") &&
+                !path.includes("Users"),
+            ),
+          );
           await settings.click();
           await page.getByRole("button", { name: "Lock", exact: true }).click();
           await expect(
