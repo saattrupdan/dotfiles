@@ -13,6 +13,65 @@ import { attest, gates } from "../src/gates.ts";
 import { Envelope } from "../../protocol/src/index.ts";
 const fixture = () => fs.mkdtempSync(path.join(os.tmpdir(), "pi-remote-test-"));
 const origin = "https://fixture.test.ts.net";
+test("conventional icon endpoints serve public image bytes, never the SPA fallback", async () => {
+  const dir = fixture();
+  const webDir = path.join(dir, "web");
+  fs.cpSync(new URL("../../web/public/", import.meta.url), webDir, { recursive: true });
+  fs.copyFileSync(
+    new URL("../../web/index.html", import.meta.url),
+    path.join(webDir, "index.html"),
+  );
+  const broker = await createBroker(
+    ConfigSchema.parse({ origin, dataDir: path.join(dir, "data"), home: dir, webDir }),
+    { ipc: false, history: false },
+  );
+  try {
+    for (const url of [
+      "/apple-touch-icon.png",
+      "/favicon-16x16.png",
+      "/favicon-32x32.png",
+      "/favicon.ico",
+      "/icons/pi-1024.png",
+    ]) {
+      const response = await broker.app.inject({
+        url,
+        headers: { host: new URL(origin).host },
+      });
+      assert.equal(response.statusCode, 200, url);
+      assert.match(
+        String(response.headers["content-type"]),
+        url.endsWith(".ico") ? /^image\/(?:x-icon|vnd.microsoft.icon)/ : /^image\/png/,
+        url,
+      );
+      assert.deepEqual(
+        response.rawPayload,
+        fs.readFileSync(path.join(webDir, url.slice(1))),
+        url,
+      );
+      assert(!response.headers["set-cookie"]);
+      const head = await broker.app.inject({
+        method: "HEAD",
+        url,
+        headers: { host: new URL(origin).host },
+      });
+      assert.equal(head.statusCode, 200, url);
+      assert.equal(head.headers["content-type"], response.headers["content-type"], url);
+      assert.equal(head.payload, "");
+    }
+    assert.equal(
+      (
+        await broker.app.inject({
+          url: "/api/v1/sessions",
+          headers: { host: new URL(origin).host },
+        })
+      ).statusCode,
+      401,
+    );
+  } finally {
+    await broker.app.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 test("journal deduplicates identical IDs and refuses changed intent", () => {
   const dir = fixture();
   const store = new Store(dir);

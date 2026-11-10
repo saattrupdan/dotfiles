@@ -7,7 +7,12 @@ const STATIC = [
   "/icons/pi.svg",
   "/icons/pi-192.png",
   "/icons/pi-512.png",
+  "/icons/pi-1024.png",
   "/icons/pi-touch-pixel-180.png",
+  "/apple-touch-icon.png",
+  "/favicon-16x16.png",
+  "/favicon-32x32.png",
+  "/favicon.ico",
   "/fonts.css",
 ];
 self.addEventListener("install", (event) => {

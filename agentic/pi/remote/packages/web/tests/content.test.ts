@@ -16,7 +16,26 @@ test("app and explicitly sized iPhone icons reproduce the native splash grid", a
   const touch = html.match(/<link[^>]*rel="apple-touch-icon"[^>]*>/)![0];
   assert.match(touch, /sizes="180x180"/);
   const touchPath = touch.match(/href="([^"]+)"/)![1]!;
-  assert.notEqual(touchPath, "/icons/pi-192.png");
+  assert.equal(touchPath, "/apple-touch-icon.png");
+  for (const size of [16, 32]) {
+    assert.match(
+      html,
+      new RegExp(
+        `<link[^>]*rel="icon"[^>]*type="image/png"[^>]*sizes="${size}x${size}"[^>]*href="/favicon-${size}x${size}.png"[^>]*>`,
+      ),
+    );
+  }
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(root, "public/manifest.webmanifest"), "utf8"),
+  );
+  assert(
+    manifest.icons.some(
+      (icon: { src: string; sizes: string; type: string }) =>
+        icon.src === "/icons/pi-1024.png" &&
+        icon.sizes === "1024x1024" &&
+        icon.type === "image/png",
+    ),
+  );
   assert(fs.readFileSync(path.join(root, "public/sw.js"), "utf8").includes(touchPath));
   const splash = fs.readFileSync(
     new URL("../../../../extensions/splash/index.ts", import.meta.url),
@@ -34,9 +53,34 @@ test("app and explicitly sized iPhone icons reproduce the native splash grid", a
     [192, "/icons/pi-192.png"],
     [512, "/icons/pi-512.png"],
     [180, touchPath],
+    [16, "/favicon-16x16.png"],
+    [32, "/favicon-32x32.png"],
+    [1024, "/icons/pi-1024.png"],
   ] as const;
-  for (const [size, iconPath] of icons) {
-    const { data, info } = await sharp(path.join(root, "public", iconPath.slice(1)))
+  const rasters: Array<[number, Buffer]> = icons.map(([size, iconPath]) => [
+    size,
+    fs.readFileSync(path.join(root, "public", iconPath.slice(1))),
+  ]);
+  const ico = fs.readFileSync(path.join(root, "public/favicon.ico"));
+  assert.deepEqual([...ico.subarray(0, 4)], [0, 0, 1, 0]);
+  assert.equal(ico.readUInt16LE(4), 4);
+  for (let index = 0; index < ico.readUInt16LE(4); index++) {
+    const offset = 6 + index * 16;
+    const size = ico[offset] || 256;
+    assert.equal(ico[offset + 1] || 256, size);
+    assert.equal(ico.readUInt16LE(offset + 4), 1);
+    assert.equal(ico.readUInt16LE(offset + 6), 32);
+    const start = ico.readUInt32LE(offset + 12);
+    const length = ico.readUInt32LE(offset + 8);
+    assert(start >= 70 && start + length <= ico.length);
+    rasters.push([size, ico.subarray(start, start + length)]);
+  }
+  assert.deepEqual(
+    rasters.slice(icons.length).map(([size]) => size),
+    [16, 32, 48, 256],
+  );
+  for (const [size, raster] of rasters) {
+    const { data, info } = await sharp(raster)
       .removeAlpha()
       .raw()
       .toBuffer({ resolveWithObject: true });
