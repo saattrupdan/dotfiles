@@ -5,10 +5,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { createServer } from "vite";
 import vue from "@vitejs/plugin-vue";
+import { ToolDisplay } from "../../broker/src/tool-display.ts";
 import { expect, webkit, type WebSocketRoute } from "@playwright/test";
 
 const id = "c2d90aba-4820-494b-978d-1991e3e820cf";
 const entry = "/__conversation-fixture.ts";
+const toolDisplay = new ToolDisplay(
+  fileURLToPath(new URL("../../../../", import.meta.url)),
+);
 const bootstrap = `
 import { createApp } from 'vue';
 import { createPinia } from 'pinia';
@@ -87,6 +91,8 @@ test(
       let prompt: Record<string, unknown> | undefined;
       const submissions: Array<Record<string, unknown>> = [];
       const folderRequests: string[] = [];
+      const commandIds: string[] = [];
+      let actionStatus = "persisted";
       let stopped = false,
         recoveries = 0,
         starts = 0;
@@ -94,7 +100,7 @@ test(
       const session = () => ({
         sessionId: id,
         name: "Phone layout fixture",
-        cwd: "/fixture",
+        cwd: "/Users/fixture",
         epoch: stopped ? 0 : 1,
         sequence: 0,
         lastActivity: 1000,
@@ -130,7 +136,11 @@ test(
           body = [session()];
         } else if (url.pathname === `/api/v1/sessions/${id}`) body = session();
         else if (url.pathname === "/api/v1/session-folders")
-          body = [{ cwd: "/fixture", count: 1, lastActivity: 1000 }];
+          body = [
+            { cwd: "/Users/fixture", count: 1, lastActivity: 1000 },
+            { cwd: "/private/fixture", count: 1, lastActivity: 1000 },
+            { cwd: "/tmp/fixture", count: 1, lastActivity: 1000 },
+          ];
         else if (
           url.pathname === "/api/v1/devices" ||
           url.pathname === "/api/v1/favorites"
@@ -191,13 +201,51 @@ test(
                   { type: "text", text: "Queued memory request 123; FULL_TOOL_OUTPUT" },
                 ],
               },
+              { role: "system", content: "HIDDEN_SYSTEM_NOTICE" },
+              {
+                role: "custom",
+                customType: "internal",
+                display: false,
+                content: "HIDDEN_CUSTOM_NOTICE",
+              },
+              {
+                role: "custom",
+                customType: "remote:answer-needed",
+                display: true,
+                content: "Visible answer needed notice",
+              },
+              {
+                role: "assistant",
+                content: [
+                  {
+                    type: "toolCall",
+                    id: "skill1",
+                    name: "skill",
+                    arguments: { name: "diagnosing-bugs" },
+                  },
+                ],
+              },
+              {
+                role: "toolResult",
+                toolCallId: "skill1",
+                toolName: "skill",
+                details: { name: "diagnosing-bugs" },
+                content: [{ type: "text", text: "## Private skill heading" }],
+              },
             ],
             next: null,
           };
         else if (url.pathname.endsWith("/actions")) {
           submissions.push(route.request().postDataJSON().command);
-          body = { status: "persisted" };
+          commandIds.push(route.request().postDataJSON().commandId);
+          body = { status: actionStatus };
         }
+        if (body && typeof body === "object" && "messages" in body)
+          body.messages = await toolDisplay.messages(
+            body.messages,
+            "/Users/fixture",
+            id,
+          );
         await route.fulfill({ json: body });
       });
       await page.addInitScript({
@@ -210,6 +258,9 @@ test(
       await t.test(
         "image and message render without internal sizing text",
         async () => {
+          await expect(page.getByText("HIDDEN_SYSTEM_NOTICE")).toHaveCount(0);
+          await expect(page.getByText("HIDDEN_CUSTOM_NOTICE")).toHaveCount(0);
+          await expect(page.getByText("Visible answer needed notice")).toBeVisible();
           await expect(page.getByAltText("Conversation image")).toHaveCount(1);
           await expect(
             page.getByText("Describe the attached image.", { exact: true }),
@@ -218,7 +269,7 @@ test(
         },
       );
       await t.test(
-        "opening and incoming messages smoothly follow the bottom",
+        "opens at the bottom instantly; smooth follow never pulls a reader down",
         async () => {
           const gap = () =>
             page.evaluate(
@@ -228,7 +279,11 @@ test(
                 window.innerHeight,
             );
           await expect.poll(gap).toBeLessThan(3);
-          await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+          assert.equal(
+            await page.evaluate("window.__scrollModes.includes('smooth')"),
+            false,
+          );
+          await page.evaluate("window.__scrollModes=[]");
           socket!.send(
             JSON.stringify({
               version: 1,
@@ -237,12 +292,21 @@ test(
               data: {
                 role: "assistant",
                 timestamp: 1001,
-                content: "New message. ".repeat(300),
+                content: "New message. ".repeat(100),
               },
             }),
           );
+          await expect
+            .poll(() => page.evaluate("window.__scrollModes.includes('smooth')"))
+            .toBe(true);
           await expect.poll(gap).toBeLessThan(3);
-          await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+          await page.evaluate(() => {
+            window.dispatchEvent(new Event("wheel"));
+            window.scrollTo({ top: 0, behavior: "instant" });
+          });
+          await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+          await page.waitForTimeout(80);
+          await page.evaluate("window.__scrollModes=[]");
           socket!.send(
             JSON.stringify({
               version: 1,
@@ -251,23 +315,31 @@ test(
               data: {
                 role: "assistant",
                 timestamp: 1002,
-                content: "Streaming message. ".repeat(500),
+                content: "Streaming message. ".repeat(300),
               },
             }),
           );
-          await expect.poll(gap).toBeLessThan(3);
-          assert(
-            await page.evaluate(
-              "window.__scrollModes.filter(mode=>mode==='smooth').length >= 3",
-            ),
+          await expect(page.getByText(/Streaming message/)).toBeAttached();
+          await page.waitForTimeout(150);
+          assert.equal(await page.evaluate(() => window.scrollY), 0);
+          assert.equal(
+            await page.evaluate("window.__scrollModes.includes('smooth')"),
+            false,
           );
+          await page.evaluate(() => {
+            window.scrollTo({
+              top: document.documentElement.scrollHeight,
+              behavior: "instant",
+            });
+            window.dispatchEvent(new Event("scroll"));
+          });
         },
       );
       await t.test(
         "tool summaries, global output toggles, sticky header and zoom guards",
         async () => {
           await expect(
-            page.getByText("Queued a memory", { exact: true }),
+            page.getByText("✓ Queued a memory", { exact: true }),
           ).toBeVisible();
           await expect(page.locator(".tool-entry details")).toHaveCount(0);
           await expect(
@@ -301,6 +373,30 @@ test(
               .evaluate((e) => getComputedStyle(e).fontSize),
             "16px",
           );
+        },
+      );
+      await t.test(
+        "tool labels match the laptop skill renderer instead of raw markdown",
+        async () => {
+          await expect(
+            page.locator(".tool-name").filter({ hasText: /^skill diagnosing-bugs$/ }),
+          ).toBeVisible();
+          await expect(
+            page.getByText('✓ loaded skill "diagnosing-bugs"', { exact: true }),
+          ).toBeVisible();
+          await expect(
+            page
+              .locator(".tool-preview")
+              .filter({ hasText: "## Private skill heading" }),
+          ).toHaveCount(0);
+          await page.getByRole("button", { name: "Collapse tool outputs" }).click();
+          await page.getByRole("button", { name: "Collapse reasoning" }).click();
+          if (process.env.PI_REMOTE_VISUAL_PROOF_DIR) {
+            fs.mkdirSync(process.env.PI_REMOTE_VISUAL_PROOF_DIR, { recursive: true });
+            await page.screenshot({
+              path: path.join(process.env.PI_REMOTE_VISUAL_PROOF_DIR, "chat.png"),
+            });
+          }
         },
       );
       const publish = async (next: typeof prompt) => {
@@ -435,10 +531,9 @@ test(
         },
       );
       await t.test(
-        "collapsing receipts never hides existing or subsequent delivery failures",
+        "delivery foldouts are absent and failures stay visible",
         async () => {
-          const receipts = page.getByText("Delivery", { exact: true });
-          await receipts.click();
+          await expect(page.getByText("Delivery", { exact: true })).toHaveCount(0);
           socket!.send(
             JSON.stringify({
               version: 1,
@@ -451,7 +546,6 @@ test(
           await expect(
             page.getByRole("status").filter({ hasText: "rejected" }),
           ).toBeVisible();
-          await receipts.click();
           socket!.send(
             JSON.stringify({
               version: 1,
@@ -464,12 +558,66 @@ test(
           await expect(
             page.getByRole("status").filter({ hasText: "rejected" }),
           ).toBeVisible();
-          await expect(page.getByText(/retrying may duplicate work/)).toBeVisible();
-          await expect(page.locator(".delivery details")).not.toHaveAttribute(
-            "open",
-            "",
-          );
+          await expect(
+            page.getByText(/another submission may duplicate work/),
+          ).toBeVisible();
+          await expect(page.locator(".delivery details")).toHaveCount(0);
           assert.equal(submissions.length, 3);
+        },
+      );
+      await t.test(
+        "a sent bubble gets a tick only after native persistence",
+        async () => {
+          actionStatus = "forwarded";
+          await page
+            .getByRole("textbox", { name: "Message Pi" })
+            .fill("Native receipt fixture");
+          await page.getByRole("button", { name: "Send message" }).click();
+          await expect(page.locator(".outgoing-message")).toHaveCount(1);
+          await expect(
+            page.getByRole("status", { name: "Received by your laptop", exact: true }),
+          ).toHaveCount(0);
+          const commandId = commandIds.at(-1)!;
+          socket!.send(
+            JSON.stringify({
+              version: 1,
+              sessionId: id,
+              type: "command.status",
+              data: { id: commandId, status: "accepted_by_owner" },
+            }),
+          );
+          socket!.send(
+            JSON.stringify({
+              version: 1,
+              sessionId: id,
+              type: "message_end",
+              data: {
+                role: "user",
+                timestamp: 9900,
+                content: `<!-- pi-remote-command:${commandId} -->\nNative receipt fixture`,
+              },
+            }),
+          );
+          await expect(
+            page.locator(".message.user").filter({ hasText: "Native receipt fixture" }),
+          ).toHaveCount(1);
+          await expect(page.locator(".outgoing-message")).toHaveCount(0);
+          await expect(
+            page.getByRole("status", { name: "Received by your laptop", exact: true }),
+          ).toHaveCount(0);
+          socket!.send(
+            JSON.stringify({
+              version: 1,
+              sessionId: id,
+              type: "command.status",
+              data: { id: commandId, status: "persisted" },
+            }),
+          );
+          await expect(
+            page.getByRole("status", { name: "Received by your laptop", exact: true }),
+          ).toBeVisible();
+          await expect(page.locator(".message.user .receipt svg")).toHaveCount(1);
+          actionStatus = "persisted";
         },
       );
       await t.test(
@@ -498,11 +646,16 @@ test(
             page.getByRole("heading", { name: "Conversations", exact: true }),
           ).toBeVisible();
           assert.equal(folderRequests.length, 0);
+          await expect(page.locator("button.folder")).toHaveCount(1);
+          await expect(page.getByText("/private/fixture", { exact: true })).toHaveCount(
+            0,
+          );
+          await expect(page.getByText("/tmp/fixture", { exact: true })).toHaveCount(0);
           await page.locator("button.folder").click();
           await expect(
             page.getByRole("link", { name: /Phone layout fixture/ }),
           ).toBeVisible();
-          assert(folderRequests.every((folder) => folder === "/fixture"));
+          assert(folderRequests.every((folder) => folder === "/Users/fixture"));
           assert(folderRequests.length > 0);
           await page.getByRole("link", { name: "Pi Remote", exact: true }).click();
           await expect(page.locator("button.folder")).toBeVisible();
@@ -540,6 +693,7 @@ test(
           ).toBeVisible();
           assert.equal(starts, 1);
           stopped = true;
+          await page.waitForLoadState("networkidle");
           await page.reload();
           await expect(page.getByRole("button", { name: "Resume on Mac" })).toHaveCount(
             0,

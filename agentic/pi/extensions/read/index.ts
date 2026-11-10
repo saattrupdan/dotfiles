@@ -1,3 +1,4 @@
+import { readCallRenderers } from "../_tool-display/renderers.ts";
 /**
  * Index-backed `read` tool extension.
  *
@@ -43,7 +44,6 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { type Component, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { renderExpandedCall } from "../_tool-display/expanded-call.ts";
 
 import { convertHeicToJpeg, isHeifImage } from "./heic.js";
 
@@ -543,7 +543,6 @@ const Params = Type.Object({
 // document support and answers every URL read with
 // `ENOENT: no such file or directory, access '<cwd>/https:/…'`.
 
-
 type OutlinerModule = Awaited<ReturnType<typeof loadModules>>["outliner"];
 type IndexStoreModule = Awaited<ReturnType<typeof loadModules>>["indexStore"];
 type SkillModule = Awaited<ReturnType<typeof loadSkillRenderHelpers>>;
@@ -903,18 +902,7 @@ export default function (pi: ExtensionAPI, overrides: ReadExtensionOverrides = {
 			})(), filePath);
 		},
 
-		renderCall(args, theme, context) {
-			if (context?.expanded) return renderExpandedCall("read", args, theme);
-			const rawPath = args?.path;
-			const pathStr = rawPath ? String(rawPath) : "...";
-			const symbol = args?.symbol;
-			const suffix = symbol ? `::${String(symbol)}` : "";
-			return new Text(
-				`${theme.fg("toolTitle", theme.bold("read"))} ${theme.fg("accent", pathStr)}${theme.fg("warning", suffix)}`,
-				0,
-				0,
-			);
-		},
+		...readCallRenderers,
 
 		// A blocked read (e.g. skill autoload) surfaces as an error result whose
 		// text the harness shows in full even when collapsed. Collapse such an
@@ -1103,7 +1091,6 @@ function renderContent(
 		details: undefined,
 	};
 }
-
 
 /** Read a file living outside the indexed repo, then render it index-free. */
 function readOutsideRepo(

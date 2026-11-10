@@ -1,3 +1,4 @@
+import { createBashResultRenderer } from "../_tool-display/renderers.ts";
 /**
  * Bash output visibility control.
  * 
@@ -11,7 +12,6 @@
  */
 
 import { createBashToolDefinition, type ExtensionAPI, type ToolExecutionStartEvent } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
 
 // Track bash execution state by toolCallId
 const bashState = new Map<string, { status: "running" | "completed" | "failed"; exitCode?: number | null }>();
@@ -41,53 +41,12 @@ export default function (pi: ExtensionAPI) {
 
 	// Create the built-in bash tool definition to get its execute/logic
 	const builtInBash = createBashToolDefinition(process.cwd());
-	
+
 	// Wrap renderResult to hide output when collapsed
 	const baseRenderResult = builtInBash.renderResult;
-	
-	builtInBash.renderResult = (result, options, theme, context) => {
-		// If collapsed (not expanded), show only a status indicator
-		if (!options.expanded) {
-			// Check context for error state (available even if state map lookup fails)
-			const isError = context.isError;
-			
-			// Try to get state for this tool call from our tracked map
-			const toolCallId = context.toolCallId;
-			const state = toolCallId ? bashState.get(toolCallId) : undefined;
-			
-			// If we have tracked state and it's not running, use it
-			if (state && state.status !== "running") {
-				if (state.status === "failed") {
-					return new Text(theme.fg("error", "✗ bash failed"), 0, 0);
-				}
-				return new Text(theme.fg("success", "✓ bash executed"), 0, 0);
-			}
-			
-			// Fallback: use context.isError if state lookup failed
-			if (isError) {
-				return new Text(theme.fg("error", "✗ bash failed"), 0, 0);
-			}
-			if (state?.status === "running") {
-				return new Text(theme.fg("warning", "⋯ bash running"), 0, 0);
-			}
-			
-			// Default: assume success if we got here (renderResult means execution completed)
-			return new Text(theme.fg("success", "✓ bash executed"), 0, 0);
-		}
-		
-		// Expanded: delegate to the built-in renderer for full output
-		if (baseRenderResult) {
-			return baseRenderResult(result, options, theme, context);
-		}
-		
-		// Fallback: show raw text content
-		const text = (result.content ?? [])
-			.filter((c) => c.type === "text")
-			.map((c) => c.text ?? "")
-			.join("\n");
-		return new Text(text || "(no output)", 0, 0);
-	};
-	
+
+	builtInBash.renderResult = createBashResultRenderer(bashState, baseRenderResult);
+
 	// Re-register the wrapped bash tool
 	pi.registerTool(builtInBash);
 }

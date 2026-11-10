@@ -1,7 +1,8 @@
+import { storeMemoryRenderers, recallMemoryRenderers } from "../_tool-display/renderers.ts";
 /** Main-only memory bridge: the librarian runs with its own strict five-tool profile. */
 
-import type { AgentToolResult, ExtensionAPI, Theme, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
 import { Type } from "typebox";
 
 import { counts, enqueue, wake } from "./queue.mjs";
@@ -10,17 +11,6 @@ import { runLibrarian } from "./runner.ts";
 const Params = Type.Object({
 	text: Type.String({ description: "The text to remember or the question to recall from the OKF bundle." }),
 });
-
-function renderMemoryResult(kind: "store" | "recall") {
-	return (result: AgentToolResult<unknown>, options: ToolRenderResultOptions, theme: Theme,
-		context: { isError: boolean }) => {
-		const text = result.content.filter((item) => item.type === "text").map((item) => item.text).join("\n");
-		if (options.isPartial) return new Text(theme.fg("muted",
-			kind === "store" ? "… Storing to memory" : "… Recalling from memory"), 0, 0);
-		if (options.expanded || context.isError) return new Text(text || "(no output)", 0, 0);
-		return new Text(theme.fg("success", kind === "store" ? "✓ Queued a memory" : "✓ Recalled a memory"), 0, 0);
-	};
-}
 
 export default function (pi: ExtensionAPI): void {
 	if (process.env.PI_SUBAGENT_CHILD === "1") return;
@@ -34,11 +24,7 @@ export default function (pi: ExtensionAPI): void {
 			"Returns a job ID immediately, NOT confirmation that the memory was stored. " +
 			"Failed requests remain in ~/memory/requests/failed for inspection and retry.",
 		parameters: Params,
-		renderCall(args, theme, context) {
-			const title = theme.fg("toolTitle", theme.bold("store_memory"));
-			return new Text(context.expanded ? `${title}\n${args.text}` : title, 0, 0);
-		},
-		renderResult: renderMemoryResult("store"),
+		...storeMemoryRenderers,
 		async execute(_id, { text }) {
 			const id = enqueue(text);
 			try { wake(); } catch (error) { console.error(`[pi-memory] queued ${id}, worker launch failed: ${String(error)}`); }
@@ -54,11 +40,7 @@ export default function (pi: ExtensionAPI): void {
 		description: "Ask the isolated librarian to search and read concepts in ~/memory. " +
 			"Returns a cited answer. This read-only handoff cannot register write tools.",
 		parameters: Params,
-		renderCall(args, theme, context) {
-			const title = theme.fg("toolTitle", theme.bold("recall_memory"));
-			return new Text(context.expanded ? `${title}\n${args.text}` : title, 0, 0);
-		},
-		renderResult: renderMemoryResult("recall"),
+		...recallMemoryRenderers,
 		async execute(_id, { text }, signal) {
 			const answer = await runLibrarian("recall", text, signal);
 			return { content: [{ type: "text", text: answer }], details: undefined };

@@ -1,3 +1,4 @@
+import { branchRenderers } from "../_tool-display/branch-result.ts";
 import { markGuard } from "../_remote_bridge/guards.ts";
 /**
  * Enter a managed Git worktree only when an agent explicitly creates a branch.
@@ -8,7 +9,7 @@ import { spawn, spawnSync } from "node:child_process";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Loader, Text } from "@earendil-works/pi-tui";
+import { Loader } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { getLoopHandoff, LOOP_HANDOFF_ENV, restoreLoopForHandoff, setLoopReturnToBase, suspendLoopForHandoff } from "../_loop_state/state.ts";
 import {
@@ -293,18 +294,6 @@ function registerReleasedSessionStartup(pi: ExtensionAPI): void {
 
 const CLEANUP_UNAVAILABLE = "No eligible isolated feature branch is active. Run this from the worktree created by isolated_new_branch; older managed sessions without recorded branch ownership cannot safely delete a branch.";
 
-function renderBranchResult(
-	result: { content: Array<{ type: string; text?: string }> },
-	options: { expanded: boolean; isPartial: boolean },
-	theme: { fg: (color: "success" | "warning", text: string) => string },
-	isError: boolean, summary: string, progress: string,
-): Text {
-	if (options.isPartial) return new Text(theme.fg("warning", `⋯ ${progress}`), 0, 0);
-	const text = result.content.filter((item) => item.type === "text").map((item) => item.text ?? "").join("\n");
-	if (options.expanded || isError) return new Text(text || (isError ? "Operation failed" : ""), 0, 0);
-	return new Text(theme.fg("success", `✓ ${summary}`), 0, 0);
-}
-
 function registerUnavailableCleanupTool(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "discard_isolated_branch",
@@ -313,12 +302,8 @@ function registerUnavailableCleanupTool(pi: ExtensionAPI): void {
 		parameters: Type.Object({}),
 		executionMode: "sequential",
 		async execute() { throw new Error(CLEANUP_UNAVAILABLE); },
-		renderCall(_args, theme) {
-			return new Text(theme.fg("toolTitle", theme.bold("discard_isolated_branch")), 0, 0);
-		},
-		renderResult(result, options, theme, context) {
-			return renderBranchResult(result, options, theme, context.isError, "discarded branch and worktree", "discarding branch");
-		},
+		...branchRenderers["discard_isolated_branch"],
+
 	});
 	pi.registerCommand("clean_up_isolated_branch", {
 		description: "Clean up the current isolated feature branch after its changes reach main",
@@ -333,12 +318,8 @@ function registerUnavailableCleanupTool(pi: ExtensionAPI): void {
 		async execute() {
 			throw new Error(CLEANUP_UNAVAILABLE);
 		},
-		renderCall(_args, theme) {
-			return new Text(theme.fg("toolTitle", theme.bold("clean_up_isolated_branch")), 0, 0);
-		},
-		renderResult(result, options, theme, context) {
-			return renderBranchResult(result, options, theme, context.isError, "cleaned up branch and worktree", "cleaning up branch");
-		},
+		...branchRenderers["clean_up_isolated_branch"],
+
 	});
 }
 
@@ -354,12 +335,8 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 		async execute() {
 			throw new Error("An isolated branch is already active; cannot create another branch from this worktree.");
 		},
-		renderCall(args, theme) {
-			return new Text(`${theme.fg("toolTitle", theme.bold("isolated_new_branch"))} ${theme.fg("accent", args.name)}`, 0, 0);
-		},
-		renderResult(result, options, theme, context) {
-			return renderBranchResult(result, options, theme, context.isError, "switched to new branch", "creating branch");
-		},
+		...branchRenderers["isolated_new_branch"],
+
 	});
 	let repairTurns = 0;
 	let enforcementRunning = false;
@@ -581,12 +558,8 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 			pendingCleanup = { sessionFile, mainRoot, branchSha, branchExists };
 			return { content: [{ type: "text", text: `Verified this worktree's HEAD is on main. Cleaning up the isolated worktree and returning to main.` }], details: undefined };
 		},
-		renderCall(_args, theme) {
-			return new Text(theme.fg("toolTitle", theme.bold("clean_up_isolated_branch")), 0, 0);
-		},
-		renderResult(result, options, theme, context) {
-			return renderBranchResult(result, options, theme, context.isError, "cleaned up branch and worktree", "cleaning up branch");
-		},
+		...branchRenderers["clean_up_isolated_branch"],
+
 	});
 	pi.registerTool({
 		name: "discard_isolated_branch",
@@ -602,12 +575,8 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 			pendingCleanup = { sessionFile, ...prepared, discard: true };
 			return { content: [{ type: "text", text: "Discarding this isolated branch, its unmerged commits, and all local files. Removing the worktree and returning saved sessions to main." }], details: undefined };
 		},
-		renderCall(_args, theme) {
-			return new Text(theme.fg("toolTitle", theme.bold("discard_isolated_branch")), 0, 0);
-		},
-		renderResult(result, options, theme, context) {
-			return renderBranchResult(result, options, theme, context.isError, "discarded branch and worktree", "discarding branch");
-		},
+		...branchRenderers["discard_isolated_branch"],
+
 	});
 	// The tool result is persisted before turn_end; aborting inside execute instead
 	// records a spurious provider error and leaves the conversation stopped.
@@ -803,12 +772,8 @@ export default async function (pi: ExtensionAPI) {
 			pending = { plan, sessionFile };
 			return { content: [{ type: "text", text: `Created ${name} at ${plan.childCwd}. Continuing this session there now; do not perform more work in the original checkout. Do not call isolated_new_branch again for this request.` }], details: undefined };
 		},
-		renderCall(args, theme) {
-			return new Text(`${theme.fg("toolTitle", theme.bold("isolated_new_branch"))} ${theme.fg("accent", args.name)}`, 0, 0);
-		},
-		renderResult(result, options, theme, context) {
-			return renderBranchResult(result, options, theme, context.isError, "switched to new branch", "creating branch");
-		},
+		...branchRenderers["isolated_new_branch"],
+
 	});
 	// Stop later tool calls in the same batch before switching checkouts. Handoff
 	// at turn_end, once the branch tool's result is safely in the transcript.

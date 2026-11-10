@@ -1,5 +1,6 @@
+import { skillRenderers } from "../_tool-display/renderers.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
+
 import { Type } from "typebox";
 
 import { markSkillLoadedForSession, registerAutoload } from "./autoload.ts";
@@ -65,38 +66,12 @@ function registerSkillTool(pi: ExtensionAPI): void {
 			};
 		},
 
-		renderCall(args, theme) {
-			const name = args?.name ? String(args.name) : "...";
-			return new Text(
-				`${theme.fg("toolTitle", theme.bold("skill"))} ${theme.fg("accent", name)}`,
-				0,
-				0,
-			);
-		},
+		...skillRenderers,
 
 		// The model gets the full SKILL.md via `content`. Keep the collapsed
 		// chat view concise, but show the full content when expanded (Ctrl+O).
-		renderResult(result, { expanded }, theme, _context) {
-			const text = textContent(result.content);
-			if (expanded) return new Text(text, 0, 0);
 
-			const details = result.details as { name?: string } | undefined;
-			if (!details?.name) return new Text(firstLine(text), 0, 0);
-
-			return new Text(theme.fg("success", `✓ loaded skill "${details.name}"`), 0, 0);
-		},
 	});
-}
-
-function textContent(content: Array<{ type: string; text?: string }>): string {
-	return content
-		.filter((item) => item.type === "text" && item.text)
-		.map((item) => item.text)
-		.join("\n");
-}
-
-function firstLine(text: string): string {
-	return text.split("\n")[0] || "(no output)";
 }
 
 export default function (pi: ExtensionAPI): void {

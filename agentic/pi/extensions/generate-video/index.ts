@@ -1,9 +1,10 @@
+import { generateVideoRenderers } from "../_tool-display/renderers.ts";
 /** Generate an MP4 with native audio through MiniMax-H3 and its LoRA on Sparkie. */
 import { pathToFileURL } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
+
 import { Type } from "typebox";
-import { renderExpandedCall } from "../_tool-display/expanded-call.ts";
+
 import { generateVideo } from "./video.ts";
 
 const Params = Type.Object({
@@ -38,15 +39,7 @@ export default function (pi: ExtensionAPI) {
 				running = false;
 			}
 		},
-		renderCall(args, theme, context) {
-			if (context?.expanded) return renderExpandedCall("generate_video", args, theme);
-			return new Text(theme.fg("toolTitle", theme.bold("generate_video")), 0, 0);
-		},
-		renderResult(result, options, theme, context) {
-			if (options.isPartial) return new Text(theme.fg("warning", "⋯ Generating video"), 0, 0);
-			const text = result.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
-			if (options.expanded) return new Text(text, 0, 0);
-			return new Text(context.isError ? theme.fg("error", "✗ video generation failed") : theme.fg("success", "✓ Generated video"), 0, 0);
-		},
+		...generateVideoRenderers,
+
 	});
 }

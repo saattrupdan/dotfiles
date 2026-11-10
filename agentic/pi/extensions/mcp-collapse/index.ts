@@ -1,3 +1,5 @@
+import { makeRenderCall, makeRenderResult, type ToolResult } from "./display.ts";
+export { summarize, summarizeResult, collapsedSummary } from "./display.ts";
 /**
  * Collapse MCP tool call + result display to a one-line summary, expandable with Ctrl+O.
  *
@@ -37,32 +39,10 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
-import type { Component } from "@earendil-works/pi-tui";
+
 import mcpAdapter from "pi-mcp-adapter";
 
 // Minimal shapes for the pieces of the render API we touch (the full types live in pi-tui).
-interface Theme {
-	fg(name: string, text: string): string;
-	bold(text: string): string;
-}
-interface RenderContext {
-	expanded: boolean;
-	isError: boolean;
-}
-interface ResultOptions {
-	expanded: boolean;
-	isPartial: boolean;
-}
-type ContentBlock = { type: "text"; text: string } | { type: "image"; mimeType?: string };
-interface ToolResult {
-	content: ContentBlock[];
-	details?: {
-		error?: unknown;
-		outputGuard?: { truncated?: boolean };
-		[key: string]: unknown;
-	};
-}
 
 type ToolExecute = (...args: unknown[]) => Promise<ToolResult>;
 
@@ -106,7 +86,6 @@ export function guardMcpGatewayExecute(
 	};
 }
 
-const MAX_SUMMARY_CHARS = 80;
 // The adapter announces itself on every session start with a splash-screen notification
 // (`ui.notify("MCP: N servers connected (M tools)", "info")` in pi-mcp-adapter's init).
 // The footer already shows connection status, so this line is pure noise. We drop exactly
@@ -124,15 +103,10 @@ const MEMORY_TOOLS = new Set(["memory_query", "memory_add", "memory_update"]);
 // registered by the memory-async extension instead of by the adapter (see mcp.json
 // excludeTools), in which case those entries are unused and that extension's own
 // renderers apply; they take effect again only if the direct tools are re-enabled.
-const FIXED_RESULT_SUMMARY: Record<string, string> = {
-	memory_query: "remembered a thing",
-	memory_add: "Stored a memory",
-	memory_update: "Updated a memory",
-};
+
 // The copy-paste extension prepends a standalone `[toolCallId: <id>]` text block to every
 // tool result so the model can reference it. It is noise in the display, so we drop it
 // before summarizing or pretty-printing.
-const TOOLCALLID_MARKER = /^\[toolCallId:[^\]]*\]$/;
 
 // Substring of pi's "stale ctx" guard message (extensions/loader.js invalidate()). After a
 // /reload — or a session replacement that races an in-flight MCP init — the adapter's
@@ -154,80 +128,9 @@ const STALE_CTX_SENTINEL = "stale after session replacement or reload";
 // another wrapper.
 const STALE_CONSOLE_PATCHED = Symbol.for("mcp-collapse.stale-console-patched");
 
-function oneLine(text: string): string {
-	const collapsed = text.replace(/\s+/g, " ").trim();
-	return collapsed.length > MAX_SUMMARY_CHARS ? `${collapsed.slice(0, MAX_SUMMARY_CHARS - 1)}…` : collapsed;
-}
-
-function count(n: number, noun: string): string {
-	return `${n} ${noun}${n === 1 ? "" : "s"}`;
-}
-
-function summarizeParsed(parsed: unknown): string | undefined {
-	if (Array.isArray(parsed)) return count(parsed.length, "item");
-	if (parsed && typeof parsed === "object") {
-		const obj = parsed as Record<string, unknown>;
-		if (Array.isArray(obj.results)) return `Found ${count(obj.results.length, "result")}`;
-		for (const key of ["answer", "message", "summary", "content", "text"]) {
-			const value = obj[key];
-			if (typeof value === "string" && value.trim()) return oneLine(value);
-		}
-		return "Done";
-	}
-	if (typeof parsed === "string" && parsed.trim()) return oneLine(parsed);
-	return undefined;
-}
-
-function summarizeJson(text: string): string | undefined {
-	try {
-		return summarizeParsed(JSON.parse(text.trim()));
-	} catch {
-		return undefined;
-	}
-}
-
 /** Best-effort one-line summary of a tool result for the collapsed view. */
-export function summarize(text: string): string {
-	const trimmed = text.trim();
-	if (!trimmed) return "Done";
-	const parsedSummary = summarizeJson(trimmed);
-	if (parsedSummary !== undefined) return parsedSummary;
-
-	// Not JSON — fall through to the first non-empty line of raw text.
-	const firstLine = trimmed.split("\n").map((line) => line.trim()).find(Boolean);
-	return firstLine ? oneLine(firstLine) : "Done";
-}
-
-function resultText(result: ToolResult): string {
-	return result.content
-		.filter((block) => !(block.type === "text" && TOOLCALLID_MARKER.test(block.text.trim())))
-		.map((block) => (block.type === "text" ? block.text : `[image: ${block.mimeType ?? "?"}]`))
-		.join("\n");
-}
 
 /** Summarize text blocks independently before falling back to their joined text. */
-export function summarizeResult(result: ToolResult): string {
-	if (result.details?.outputGuard?.truncated) return "Completed (output truncated)";
-
-	const textBlocks = result.content
-		.filter((block): block is { type: "text"; text: string } => block.type === "text")
-		.filter((block) => !TOOLCALLID_MARKER.test(block.text.trim()));
-	const text = textBlocks.map((block) => block.text).join("\n");
-	if (!text.trim()) return summarize(resultText(result));
-	for (const block of textBlocks) {
-		const parsedSummary = summarizeJson(block.text);
-		if (parsedSummary !== undefined) return parsedSummary;
-	}
-	return summarize(text);
-}
-
-function prettyText(text: string): string {
-	try {
-		return JSON.stringify(JSON.parse(text.trim()), null, 2);
-	} catch {
-		return text;
-	}
-}
 
 /** `/users/dan-smart.md` → `users/dan-smart` (drop leading slash + `.md` extension). */
 function pathToConcept(path: string): string {
@@ -257,46 +160,8 @@ function neutralizeMemoryResult(result: ToolResult): ToolResult {
 }
 
 /** renderCall: just the tool title. Raw arguments appear only when expanded (Ctrl+O). */
-function makeRenderCall(name: string) {
-	return (args: Record<string, unknown>, theme: Theme, ctx: RenderContext): Component => {
-		const title = theme.fg("toolTitle", theme.bold(name));
-		if (!ctx.expanded || !args || Object.keys(args).length === 0) {
-			return new Text(title, 0, 0);
-		}
-		return new Text(`${title}\n${theme.fg("muted", JSON.stringify(args, null, 2))}`, 0, 0);
-	};
-}
-
-export function collapsedSummary(name: string, result: ToolResult): string {
-	return FIXED_RESULT_SUMMARY[name] ?? (result.details?.outputGuard?.truncated ? "Completed (output truncated)" : summarizeResult(result));
-}
 
 /** renderResult: one-line "✓ summary" when collapsed; full output when expanded or on error. */
-function colourPrefix(line: string, theme: Theme): string {
-	if (line.startsWith("✓")) {
-		return theme.fg("success", line);
-	}
-	if (line.startsWith("✗")) {
-		return theme.fg("error", line);
-	}
-	return theme.fg("toolOutput", line);
-}
-
-function makeRenderResult(name: string) {
-	return (result: ToolResult, options: ResultOptions, theme: Theme, ctx: RenderContext): Component => {
-		if (options.isPartial) {
-			return new Text(theme.fg("warning", "…"), 0, 0);
-		}
-		const text = resultText(result);
-		const isError = ctx.isError || Boolean(result.details?.error);
-		if (options.expanded || isError) {
-			const lines = prettyText(text).split("\n").map((line) => colourPrefix(line, theme));
-			return new Text(lines.join("\n"), 0, 0);
-		}
-		const summary = collapsedSummary(name, result);
-		return new Text(colourPrefix(`✓ ${summary}`, theme), 0, 0);
-	};
-}
 
 // Condense the verbose footer status. The adapter sets the "mcp" status slot to
 // `🔌 MCP: N servers enabled (M connected)` (init.ts updateStatusBar); we replace it with

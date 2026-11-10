@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
+import { isUsersDirectory } from "./lib/session-paths.ts";
 import Icon from "./components/Icon.vue";
 import { useAuth } from "./stores/auth.ts";
 import { useSessions } from "./stores/sessions.ts";
@@ -17,7 +18,9 @@ const headerTitle = computed(() =>
   route.path.startsWith("/session/") ? current.value?.name : "",
 );
 function back() {
-  sessions.folder = route.path.startsWith("/session/") ? current.value?.cwd : undefined;
+  const cwd = current.value?.cwd;
+  sessions.folder =
+    route.path.startsWith("/session/") && isUsersDirectory(cwd) ? cwd : undefined;
   void router.push("/");
 }
 const preventZoom = (event: Event) => event.preventDefault();
@@ -68,7 +71,7 @@ watch(
           width="44"
           height="44"
         />
-        <span>Pi</span>
+        <span v-if="!headerTitle">Pi</span>
       </RouterLink>
       <span
         v-if="auth.unlocked && auth.visible"
@@ -112,6 +115,7 @@ watch(
     <main
       v-if="auth.unlocked"
       v-show="auth.visible"
+      :class="{ chat: route.path.startsWith('/session/') }"
     >
       <RouterView />
     </main>
@@ -145,9 +149,11 @@ watch(
           v-else
           class="primary"
           aria-label="Unlock with passkey"
+          :disabled="auth.verifying || auth.initializing"
+          :aria-busy="auth.verifying"
           @click="auth.unlock"
         >
-          Unlock
+          {{ auth.verifying ? "Verifying…" : "Unlock" }}
         </button>
         <details v-if="!auth.paired">
           <summary>Pair a device</summary>
@@ -175,18 +181,21 @@ watch(
   max-width: 800px;
   margin: auto;
   min-height: 100dvh;
-  padding: 0 22px;
+  padding: 0 12px;
 }
 header {
   position: sticky;
   top: 0;
   z-index: 40;
-  background: var(--bg);
+  background: var(--panel);
+  margin: 0 -12px;
+  padding-left: 12px;
+  padding-right: 12px;
   padding-top: env(safe-area-inset-top);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 76px;
+  min-height: calc(var(--header-height) + env(safe-area-inset-top));
   border-bottom: 1px solid var(--line);
 }
 .header-title {
@@ -195,7 +204,9 @@ header {
   white-space: nowrap;
   font-size: 14px;
   flex: 1;
-  margin: 0 12px;
+  margin: 0 8px;
+  font-size: 16px;
+  font-weight: 600;
 }
 .back {
   margin-left: -10px;
@@ -248,5 +259,8 @@ header {
   margin-top: 16px;
   color: var(--muted);
   font-size: 13px;
+}
+main.chat {
+  padding: 0;
 }
 </style>

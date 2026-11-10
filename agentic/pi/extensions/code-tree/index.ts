@@ -1,3 +1,4 @@
+import { codeTreeRenderers } from "../_tool-display/renderers.ts";
 /**
  * `code_tree` tool.
  *
@@ -15,9 +16,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
+
 import { Type } from "typebox";
-import { renderExpandedCall } from "../_tool-display/expanded-call.ts";
 
 const DEFAULT_DEPTH = 2;
 const MAX_DEPTH = 6;
@@ -221,49 +221,8 @@ export default function (pi: ExtensionAPI) {
 			};
 		},
 
-		renderCall(args, theme, context) {
-			if (context?.expanded) return renderExpandedCall("code_tree", args, theme);
-			const p = (args?.path as string | undefined) ?? ".";
-			const d = (args?.depth as number | undefined) ?? DEFAULT_DEPTH;
-			return new Text(
-				`${theme.fg("toolTitle", theme.bold("code_tree "))}${theme.fg("accent", p)}${theme.fg("warning", ` d=${d}`)}`,
-				0,
-				0,
-			);
-		},
+		...codeTreeRenderers,
 
-		renderResult(result, options, theme, context) {
-			// If collapsed (not expanded), show only a summary line
-			if (!options.expanded) {
-				const text = (result.content ?? [])
-					.filter((c) => c.type === "text")
-					.map((c) => c.text ?? "")
-					.join("\n");
-				// Extract summary from header line: "# tree <path> (<N> files, depth <d>)"
-				const headerMatch = text.match(/^# tree (.+) \((\d+) files, depth (\d+)\)/);
-				if (headerMatch) {
-					const [, treePath, fileCount] = headerMatch;
-					return new Text(
-						theme.fg("muted", `code_tree `) +
-						theme.fg("accent", treePath) +
-						theme.fg("success", ` ✓ ${fileCount} files`),
-						0,
-						0,
-					);
-				}
-				// Fallback for errors or unexpected output
-				if (context.isError) {
-					return new Text(theme.fg("error", "✗ code_tree failed"), 0, 0);
-				}
-				return new Text(theme.fg("success", "✓ code_tree executed"), 0, 0);
-			}
 
-			// Expanded: show full tree output
-			const text = (result.content ?? [])
-				.filter((c) => c.type === "text")
-				.map((c) => c.text ?? "")
-				.join("\n");
-			return new Text(text || "(no output)", 0, 0);
-		},
 	});
 }

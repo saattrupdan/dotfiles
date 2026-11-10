@@ -14,11 +14,19 @@ export const useAuth = defineStore("auth", () => {
     online = ref(true),
     csrf = ref(""),
     error = ref("");
+  const verifying = ref(false);
+  const initializing = ref(true);
+  let authGeneration = 0;
+  let unlockInFlight: Promise<void> | undefined;
+  let unlockGeneration = -1;
+  let queuedGeneration: number | undefined;
   const name = ref("");
   let verifiedAt = 0;
   let background = 0;
   let lastPresence = 0;
   function clear() {
+    authGeneration++;
+    queuedGeneration = undefined;
     unlocked.value = false;
     visible.value = document.visibilityState === "visible";
     for (const request of pendingRequests) request.abort();
@@ -66,6 +74,7 @@ export const useAuth = defineStore("auth", () => {
     name.value = data.device ?? "";
   }
   async function initialize() {
+    initializing.value = true;
     try {
       await me();
       if (paired.value) await request("/auth/lock", { method: "POST" });
@@ -73,27 +82,78 @@ export const useAuth = defineStore("auth", () => {
       error.value = "Mac unreachable. It must be awake with Tailscale connected.";
     }
     clear();
+    initializing.value = false;
+    await autoUnlock();
   }
-  async function unlock() {
+  async function verify() {
+    const expected = authGeneration;
+    verifying.value = true;
+    let submitted = false;
     error.value = "";
     try {
       const data = await request<{
         ceremony: string;
         options: Parameters<typeof startAuthentication>[0]["optionsJSON"];
       }>("/auth/options", { method: "POST", body: "{}" });
+      if (expected !== authGeneration || document.visibilityState !== "visible") return;
       const response = await startAuthentication({ optionsJSON: data.options });
+      if (expected !== authGeneration || document.visibilityState !== "visible") return;
+      submitted = true;
       await request("/auth/assert", {
         method: "POST",
         body: JSON.stringify({ ceremony: data.ceremony, response }),
       });
       await me();
+      if (expected !== authGeneration || document.visibilityState !== "visible") return;
       unlocked.value = true;
       visible.value = true;
       verifiedAt = Date.now();
       lastPresence = Date.now();
     } catch (e) {
-      error.value = e instanceof Error ? e.message : "Verification failed";
+      if (expected === authGeneration && !unlocked.value)
+        error.value =
+          e instanceof Error &&
+          (e.name === "NotAllowedError" ||
+            (e.cause as Error | undefined)?.name === "NotAllowedError")
+            ? "Tap Unlock to verify with your passkey."
+            : e instanceof Error
+              ? e.message
+              : "Verification failed";
+    } finally {
+      if (
+        submitted &&
+        (expected !== authGeneration || document.visibilityState !== "visible")
+      ) {
+        await request("/auth/lock", { method: "POST", keepalive: true }).catch(
+          () => {},
+        );
+      }
+      verifying.value = false;
     }
+  }
+  function unlock(): Promise<void> {
+    if (unlockInFlight) {
+      if (unlockGeneration !== authGeneration) queuedGeneration = authGeneration;
+      return unlockInFlight;
+    }
+    unlockGeneration = authGeneration;
+    unlockInFlight = verify().finally(async () => {
+      unlockInFlight = undefined;
+      const queued = queuedGeneration;
+      queuedGeneration = undefined;
+      if (queued === authGeneration) await autoUnlock();
+    });
+    return unlockInFlight;
+  }
+  async function autoUnlock() {
+    if (
+      !initializing.value &&
+      paired.value &&
+      !unlocked.value &&
+      document.visibilityState === "visible" &&
+      !location.hash
+    )
+      await unlock();
   }
   async function pair(secret: string, deviceName: string) {
     error.value = "";
@@ -138,6 +198,7 @@ export const useAuth = defineStore("auth", () => {
       (background && Date.now() - background >= 120000)
     ) {
       clear();
+      await autoUnlock();
       return;
     }
     const authorized = await presence(true);
@@ -149,8 +210,10 @@ export const useAuth = defineStore("auth", () => {
       visible.value = false;
       background = Date.now();
       void presence(false);
-    } else if (!unlocked.value) visible.value = true;
-    else void resumeForeground();
+    } else if (!unlocked.value) {
+      visible.value = true;
+      void autoUnlock();
+    } else void resumeForeground();
   }
   document.addEventListener("visibilitychange", backgroundChanged);
   window.addEventListener("pagehide", () => {
@@ -170,6 +233,8 @@ export const useAuth = defineStore("auth", () => {
   }, 15000);
   return {
     paired,
+    verifying,
+    initializing,
     unlocked,
     visible,
     online,

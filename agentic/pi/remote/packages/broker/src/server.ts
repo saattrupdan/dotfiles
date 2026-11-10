@@ -1,3 +1,4 @@
+import { ToolDisplay } from "./tool-display.ts";
 import Fastify from "fastify";
 import cookie from "@fastify/cookie";
 import multipart from "@fastify/multipart";
@@ -41,39 +42,62 @@ export async function createBroker(
   prepare(config);
   const app = Fastify({ logger: false, bodyLimit: 256 * 1024, requestTimeout: 60000 });
   const store = new Store(config.dataDir);
-  const clients = new Map<
-    WebSocket,
-    {
-      device: string;
-      request: Parameters<Auth["unlocked"]>[0];
-      subscriptions: Set<string>;
-    }
-  >();
+  type Client = {
+    device: string;
+    request: Parameters<Auth["unlocked"]>[0];
+    subscriptions: Set<string>;
+    minimumLiveSequence: Map<string, number>;
+    subscriptionGeneration: number;
+  };
+  const clients = new Map<WebSocket, Client>();
+  const display = new ToolDisplay(config.agentDir);
   const emit = (event: StreamEvent) => {
+    const session = event.sessionId ? store.session(event.sessionId) : undefined;
+    if (
+      event.sessionId &&
+      !event.type.startsWith("sessions.") &&
+      event.type !== "session.hidden" &&
+      (!session || !inDeploymentScope(config, session) || !recent(session))
+    )
+      return;
+    display.emit(event, session?.cwd ?? "/", publish, session?.sessionFile ?? "");
+  };
+  function deliver(socket: WebSocket, client: Client, event: StreamEvent) {
     if (event.type.startsWith("sessions.")) event = { ...event, data: null };
     else if (event.sessionId && event.type !== "session.hidden") {
       const session = store.session(event.sessionId);
       if (!session || !inDeploymentScope(config, session) || !recent(session)) return;
     }
+    if (
+      event.sessionId &&
+      !client.subscriptions.has(event.sessionId) &&
+      !event.type.startsWith("sessions.") &&
+      event.type !== "session.hidden"
+    )
+      return;
+    try {
+      auth.unlocked(client.request);
+    } catch {
+      socket.close(4001, "locked");
+      return;
+    }
+    if (socket.bufferedAmount > 1024 * 1024) {
+      socket.close(4002, "resnapshot_required");
+      return;
+    }
+    socket.send(JSON.stringify(event));
+  }
+  const publish = (event: StreamEvent) => {
     for (const [socket, client] of clients) {
-      try {
-        auth.unlocked(client.request);
-      } catch {
-        socket.close(4001, "locked");
-        continue;
-      }
       if (
         event.sessionId &&
-        !client.subscriptions.has(event.sessionId) &&
         !event.type.startsWith("sessions.") &&
-        event.type !== "session.hidden"
+        event.type !== "session.hidden" &&
+        (event.sequence ?? Infinity) <=
+          (client.minimumLiveSequence.get(event.sessionId) ?? -1)
       )
         continue;
-      if (socket.bufferedAmount > 1024 * 1024) {
-        socket.close(4002, "resnapshot_required");
-        continue;
-      }
-      socket.send(JSON.stringify(event));
+      deliver(socket, client, event);
     }
     if (
       event.type === "agent_settled" ||
@@ -91,7 +115,7 @@ export async function createBroker(
         );
   });
   const connections = new Connections(config, store, emit);
-  const catalog = history && !proof ? new History(config) : undefined;
+  const catalog = history && !proof ? new History(config, display) : undefined;
   connections.allowRegistration = !proof;
   const processes = new Processes(config, connections);
   await app.register(cookie);
@@ -549,6 +573,8 @@ export async function createBroker(
         device: a.device,
         request: req,
         subscriptions: new Set<string>(),
+        minimumLiveSequence: new Map<string, number>(),
+        subscriptionGeneration: 0,
       };
       clients.set(socket, client);
       socket.on("message", (raw) => {
@@ -567,11 +593,25 @@ export async function createBroker(
             })
             .parse(JSON.parse(raw.toString()));
           client.subscriptions = new Set<string>();
+          client.minimumLiveSequence.clear();
+          const round = ++client.subscriptionGeneration;
           for (const sub of b.subscriptions) {
             const session = store.session(sub.sessionId);
             if (!session || !inDeploymentScope(config, session) || !recent(session))
               continue;
             client.subscriptions.add(sub.sessionId);
+            // Already-queued live events through this snapshot must not overtake replay.
+            client.minimumLiveSequence.set(sub.sessionId, session.sequence);
+            const replay = (event: StreamEvent) =>
+              display.emit(
+                event,
+                session.cwd,
+                (formatted) => {
+                  if (round === client.subscriptionGeneration)
+                    deliver(socket, client, formatted);
+                },
+                session.sessionFile,
+              );
             const rows = store.db
               .prepare(
                 "SELECT sequence,type,data FROM events WHERE session=? AND sequence>? ORDER BY sequence",
@@ -579,25 +619,21 @@ export async function createBroker(
               .all(sub.sessionId, sub.sequence);
             if (rows.length && Number(rows[0]!.sequence) === sub.sequence + 1) {
               for (const row of rows)
-                socket.send(
-                  JSON.stringify({
-                    version: 1,
-                    type: row.type,
-                    sessionId: sub.sessionId,
-                    sequence: row.sequence,
-                    data: JSON.parse(row.data as string),
-                  }),
-                );
-            } else
-              socket.send(
-                JSON.stringify({
+                replay({
                   version: 1,
-                  type: "resnapshot",
+                  type: String(row.type),
                   sessionId: sub.sessionId,
-                  sequence: session.sequence,
-                  data: session,
-                }),
-              );
+                  sequence: Number(row.sequence),
+                  data: JSON.parse(row.data as string),
+                });
+            } else
+              replay({
+                version: 1,
+                type: "resnapshot",
+                sessionId: sub.sessionId,
+                sequence: session.sequence,
+                data: session,
+              });
           }
         } catch {
           socket.close(4003, "invalid_subscription");

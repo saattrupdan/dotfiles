@@ -1,3 +1,4 @@
+import { ToolDisplay } from "./tool-display.ts";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -56,7 +57,10 @@ export class History {
     { stamp: string; identity: string; size: number; offset: number; name?: string }
   >();
   private naming = new Map<string, Promise<NativeSession>>();
-  constructor(readonly config: Config) {
+  constructor(
+    readonly config: Config,
+    readonly display = new ToolDisplay(config.agentDir),
+  ) {
     this.module = import(
       pathToFileURL(path.join(resolvePiPackage(), "dist/core/session-manager.js")).href
     );
@@ -318,7 +322,11 @@ export class History {
       all.filter((entry) => entry.type !== "session"),
     );
     return {
-      messages: projection.messages.slice(offset, offset + limit),
+      messages: await this.display.messages(
+        projection.messages.slice(offset, offset + limit),
+        String(all.find((entry) => entry.type === "session")?.cwd ?? "/"),
+        file,
+      ),
       ...(truncated ? { truncated: true } : {}),
       offset,
       next: offset + limit < projection.messages.length ? offset + limit : null,

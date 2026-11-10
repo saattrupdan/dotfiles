@@ -1,11 +1,11 @@
+import { generateImageRenderers } from "../_tool-display/renderers.ts";
 /** Generate images through the generate_image tool. */
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
+
 import { Type } from "typebox";
-import { renderExpandedCall } from "../_tool-display/expanded-call.ts";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "scripts", "enhance_and_generate.py");
 const MAX_IMAGES = 10;
@@ -86,17 +86,7 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 		},
-		renderCall(args, theme, context) {
-			if (context?.expanded) return renderExpandedCall("generate_image", args, theme);
-			return new Text(theme.fg("toolTitle", theme.bold("generate_image")), 0, 0);
-		},
-		renderResult(result, options, theme, context) {
-			if (options.isPartial) return new Text(theme.fg("warning", (context.args?.num ?? 1) > 1 ? "⋯ Generating images" : "⋯ Generating image"), 0, 0);
-			const text = result.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
-			if (options.expanded) return new Text(text, 0, 0);
-			if (context.isError) return new Text(theme.fg("error", "✗ image generation failed"), 0, 0);
-			const count = (result.details as { count?: number } | undefined)?.count ?? 1;
-			return new Text(theme.fg("success", count === 1 ? "✓ Generated image" : `✓ Generated ${count} images`), 0, 0);
-		},
+		...generateImageRenderers,
+
 	});
 }

@@ -1,3 +1,4 @@
+import { codemodeRenderers } from "../_tool-display/renderers.ts";
 /** Keep codemode's script and nested results behind Ctrl+O, like bash output. */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -13,14 +14,12 @@ export default function (pi: ExtensionAPI): void {
 			renderCall(args, theme, context) {
 				if (context.expanded) return original?.renderCall?.(args, theme, context)
 					?? renderExpandedCall("codemode", args, theme);
-				return new Text(theme.fg("toolTitle", theme.bold("codemode")), 0, 0);
+				return codemodeRenderers.renderCall!({}, theme, { ...context, args: {} });
 			},
 			renderResult(result, options, theme, context) {
 				if (options.expanded) return original?.renderResult?.(result, options, theme, context)
 					?? new Text(result.content.filter((item) => item.type === "text").map((item) => item.text).join("\n"), 0, 0);
-				if (options.isPartial) return new Text(theme.fg("warning", "⋯ codemode running"), 0, 0);
-				if (context.isError) return new Text(theme.fg("error", "✗ codemode failed"), 0, 0);
-				return new Text(theme.fg("success", "✓ codemode executed"), 0, 0);
+				return codemodeRenderers.renderResult!(result, options, theme, { ...context, args: {} });
 			},
 		};
 	});

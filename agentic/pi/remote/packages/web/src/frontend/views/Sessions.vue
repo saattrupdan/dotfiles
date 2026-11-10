@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
+import { isUsersDirectory } from "../lib/session-paths.ts";
 import Icon from "../components/Icon.vue";
 import { useSessions } from "../stores/sessions.ts";
 const store = useSessions();
@@ -12,6 +13,10 @@ const loading = ref(false);
 let navigation = 0;
 async function browse(cwd?: string) {
   const expected = ++navigation;
+  if (cwd !== undefined && !isUsersDirectory(cwd)) {
+    store.folder = undefined;
+    return;
+  }
 
   search.value = "";
   filter.value = "all";
@@ -35,8 +40,10 @@ onUnmounted(() => {
   store.disconnect(true);
 });
 const folders = computed(() =>
-  store.folders.filter((entry) =>
-    entry.cwd.toLowerCase().includes(search.value.toLowerCase()),
+  store.folders.filter(
+    (entry) =>
+      isUsersDirectory(entry.cwd) &&
+      entry.cwd.toLowerCase().includes(search.value.toLowerCase()),
   ),
 );
 const filtered = computed(() =>

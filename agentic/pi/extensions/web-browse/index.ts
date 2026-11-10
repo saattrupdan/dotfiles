@@ -1,3 +1,4 @@
+import { webBrowseRenderers } from "../_tool-display/renderers.ts";
 import { remotePromptsEnabled } from "../_remote_bridge/prompts.ts";
 import { dispatchAsk } from "../question/index.ts";
 /**
@@ -9,10 +10,9 @@ import { dispatchAsk } from "../question/index.ts";
  * network bodies, and screenshots are never exposed to the model.
  */
 
-import type { AgentToolResult, ExtensionAPI, Theme, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
 import { Type } from "typebox";
-import { renderExpandedCall } from "../_tool-display/expanded-call.ts";
 
 import { interactiveQueue } from "../_interactive_queue/queue.ts";
 import { parseCommand, safeCommandPreview } from "./command.ts";
@@ -72,18 +72,6 @@ async function withDeadline<T>(
 		if (timer) clearTimeout(timer);
 		if (onAbort) signal?.removeEventListener("abort", onAbort);
 	}
-}
-
-function resultText(result: AgentToolResult<unknown>): string {
-	return (
-		result.content
-			.filter(
-				(content: { type: string; text?: string }): content is { type: "text"; text: string } =>
-					content.type === "text" && content.text != null,
-			)
-			.map((content: { type: string; text?: string }) => content.text)
-			.join("\n") || "(no output)"
-	);
 }
 
 export default function (pi: ExtensionAPI) {
@@ -150,29 +138,8 @@ export default function (pi: ExtensionAPI) {
 			}
 		},
 
-		renderCall(args, theme, context) {
-			if (context?.expanded) return renderExpandedCall("web_browse", {
-				...args, command: safeCommandPreview(args?.command ?? "", Infinity),
-			}, theme);
-			return new Text(
-				`${theme.fg("toolTitle", theme.bold("web_browse "))}${theme.fg("accent", safeCommandPreview((args?.command as string) || ""))}`,
-				0,
-				0,
-			);
-		},
+		...webBrowseRenderers,
 
-		renderResult(
-			result: AgentToolResult<unknown>,
-			{ expanded }: ToolRenderResultOptions,
-			theme: Theme,
-			context: { isError: boolean },
-		) {
-			if (expanded) return new Text(resultText(result), 0, 0);
-			const details = result.details as { error?: string } | undefined;
-			if (context.isError || details?.error) {
-				return new Text(theme.fg("error", "✗ Firefox action failed"), 0, 0);
-			}
-			return new Text(theme.fg("success", "✓ Firefox action completed"), 0, 0);
-		},
+
 	});
 }

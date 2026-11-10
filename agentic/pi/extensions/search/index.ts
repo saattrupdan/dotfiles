@@ -1,3 +1,4 @@
+import { searchRenderers } from "../_tool-display/renderers.ts";
 /**
  * `search` tool extension.
  *
@@ -52,9 +53,8 @@ function findRipgrep(): string {
 }
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
+
 import { Type } from "typebox";
-import { renderExpandedCall } from "../_tool-display/expanded-call.ts";
 
 // ---------------------------------------------------------------------------
 // Resolve the outliner — use jiti-relative import from the extension dir
@@ -65,7 +65,7 @@ let outlineModule: typeof import("../_outliner/outliner.js") | null = null;
 async function loadOutliner(): Promise<typeof import("../_outliner/outliner.js") | null> {
 	if (outlineModule) return outlineModule;
 	const jiti = await import("jiti").then((m) => m.createJiti(import.meta.url, { moduleCache: false }));
-	 
+
 	outlineModule = await jiti.import("../_outliner/outliner.js", { default: true }) as typeof import("../_outliner/outliner.js") | null;
 	return outlineModule;
 }
@@ -643,43 +643,8 @@ export default async function (pi: ExtensionAPI) {
 			};
 		},
 
-		renderCall(args, theme, context) {
-			if (context?.expanded) return renderExpandedCall("search", args, theme);
-			const query = args?.query ?? "...";
-			const kind = args?.kind;
-			return new Text(
-				`${theme.fg("toolTitle", theme.bold("search"))} ${theme.fg("accent", String(query))}${kind ? theme.fg("warning", ` [${kind}]`) : ""}`,
-				0,
-				0,
-			);
-		},
+		...searchRenderers,
 
-		renderResult(result, options, theme) {
-			// Collapsed: show only the summary from details.collapsed
-			if (!options.expanded) {
-				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				const details = result.details as any;
-				const summary = details?.collapsed;
-				if (summary) {
-					// Status indicators:
-					// ✓ search succeeded (results found or completed normally)
-					// ⚠ search used fallback engine (grep instead of ripgrep) or had partial issues
-					// ✗ search failed (outliner missing or no engine available)
-					if (summary.includes("[⚠")) {
-						return new Text(theme.fg("warning", `⚠ ${summary}`), 0, 0);
-					}
-					return new Text(theme.fg("success", `✓ ${summary}`), 0, 0);
-				}
-				// Fallback if no summary available
-				return new Text(theme.fg("success", "✓ search completed"), 0, 0);
-			}
 
-			// Expanded: show full output as normal
-			const text = (result.content ?? [])
-				.filter((c) => c.type === "text")
-				.map((c) => c.text ?? "")
-				.join("\n");
-			return new Text(text || "(no results)", 0, 0);
-		},
 	});
 }

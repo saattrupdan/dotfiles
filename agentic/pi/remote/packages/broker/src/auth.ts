@@ -193,11 +193,13 @@ export class Auth {
       const options = await generateAuthenticationOptions({
         rpID,
         userVerification: "required",
-        allowCredentials: credential ? [{ id: credential.id }] : undefined,
+        allowCredentials: credential
+          ? [{ id: credential.id, transports: credential.transports }]
+          : undefined,
       });
       return {
         ceremony: this.store.challenge("assert", options.challenge, device),
-        options,
+        options: { ...options, hints: ["client-device"] },
       };
     });
     app.post("/api/v1/auth/assert", async (req, reply) => {

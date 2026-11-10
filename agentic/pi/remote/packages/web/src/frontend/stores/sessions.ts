@@ -7,6 +7,7 @@ import type {
   StreamEvent,
 } from "../../../../protocol/src/index.ts";
 import { CommandStatus } from "../../../../protocol/src/index.ts";
+import { remoteCommandId } from "../lib/receipts.ts";
 import { useAuth, onLock } from "./auth.ts";
 export interface Message {
   role?: string;
@@ -21,10 +22,13 @@ export interface Message {
         mimeType?: string;
         name?: string;
         arguments?: unknown;
+        toolDisplay?: string;
       }>;
   toolCallId?: string;
   toolName?: string;
   isError?: boolean;
+  toolDisplay?: string;
+  remotePersisted?: boolean;
   timestamp?: number;
   customType?: string;
   [key: string]: unknown;
@@ -40,6 +44,7 @@ export const useSessions = defineStore("sessions", () => {
   const streaming = ref<Record<string, Message | undefined>>({});
   const historyLimited = ref<Record<string, boolean>>({});
   const statuses = ref<Record<string, string>>({});
+  const commandSessions = ref<Record<string, string>>({});
   const drafts = ref<Record<string, string>>({});
   const prompt = ref<
     Record<
@@ -67,6 +72,22 @@ export const useSessions = defineStore("sessions", () => {
       }
     >
   >({});
+  const outgoing = ref<typeof pending.value>({});
+  function updateStatus(id: string, status: string) {
+    if (statuses.value[id] === "persisted" && status !== "rejected") return;
+    statuses.value[id] = status;
+    if (outgoing.value[id]) outgoing.value[id]!.status = status;
+    if (pending.value[id]) {
+      pending.value[id]!.status = status;
+      if (status === "persisted") delete pending.value[id];
+    }
+  }
+  function retireOutgoing(records: Message[]) {
+    for (const message of records) {
+      const id = remoteCommandId(message);
+      if (id) delete outgoing.value[id];
+    }
+  }
   let generation = 0;
   let socket: WebSocket | undefined;
   let retry: ReturnType<typeof setTimeout> | undefined;
@@ -81,6 +102,8 @@ export const useSessions = defineStore("sessions", () => {
     generation++;
     disconnect();
     pending.value = {};
+    outgoing.value = {};
+    commandSessions.value = {};
     sessions.value = [];
     folders.value = [];
     listing.value = [];
@@ -143,7 +166,20 @@ export const useSessions = defineStore("sessions", () => {
       offset = page.next;
     }
     if (expected === generation && auth.unlocked) {
-      messages.value[id] = all;
+      messages.value[id] = all.map((message) => ({
+        ...message,
+        remotePersisted: true,
+      }));
+      for (const message of all) {
+        const commandId = remoteCommandId(message);
+        if (
+          commandId &&
+          commandSessions.value[commandId] === id &&
+          statuses.value[commandId] !== "rejected"
+        )
+          updateStatus(commandId, "persisted");
+      }
+      retireOutgoing(all);
       historyLimited.value[id] = limited;
     }
   }
@@ -177,7 +213,7 @@ export const useSessions = defineStore("sessions", () => {
     ws.onopen = () => {
       if (socket !== ws) return;
       subscribe();
-      void refresh();
+      void refresh().catch(() => {});
       void reconcile();
     };
     ws.onmessage = (e) => {
@@ -186,19 +222,21 @@ export const useSessions = defineStore("sessions", () => {
       const sid = event.sessionId;
       if (event.type === "sessions.changed") {
         if (selected) void detail(selected).catch(() => {});
-        if (currentFolder === undefined && !selected) void loadFolders();
-        void refresh();
+        if (currentFolder === undefined && !selected)
+          void loadFolders().catch(() => {});
+        void refresh().catch(() => {});
         return;
       }
       if (!sid) return;
       const session = sessions.value.find((s) => s.sessionId === sid);
       if (session && event.sequence) session.sequence = event.sequence;
       if (event.type === "resnapshot") {
-        void history(sid);
-        void refresh();
+        void history(sid).catch(() => {});
+        void refresh().catch(() => {});
       }
       if (event.type === "snapshot") {
         messages.value[sid] = event.data as Message[];
+        retireOutgoing(messages.value[sid]!);
         streaming.value[sid] = undefined;
       }
       if (event.type === "message_update") streaming.value[sid] = event.data as Message;
@@ -215,15 +253,16 @@ export const useSessions = defineStore("sessions", () => {
           )
         )
           messages.value[sid]!.push(message);
+        retireOutgoing([message]);
         streaming.value[sid] = undefined;
       }
       if (event.type === "agent_settled") {
-        void history(sid);
-        void refresh();
+        void history(sid).catch(() => {});
+        void refresh().catch(() => {});
       }
       if (event.type === "prompt") {
         prompt.value[sid] = event.data as (typeof prompt.value)[string];
-        void refresh();
+        void refresh().catch(() => {});
       }
       if (event.type === "prompt.expired") {
         if (prompt.value[sid]) prompt.value[sid]!.state = "expired";
@@ -232,15 +271,14 @@ export const useSessions = defineStore("sessions", () => {
         delete messages.value[sid];
         delete drafts.value[sid];
         delete streaming.value[sid];
-        void refresh();
+        void refresh().catch(() => {});
       }
       if (event.type === "command.status") {
         const data = event.data as { id: string; status: string };
-        statuses.value[data.id] = data.status;
-        if (pending.value[data.id]) {
-          pending.value[data.id]!.status = data.status;
-          if (data.status === "persisted") delete pending.value[data.id];
-        }
+        const status = CommandStatus.safeParse(data.status);
+        if (!status.success) return;
+        commandSessions.value[data.id] = sid;
+        updateStatus(data.id, status.data);
       }
     };
     ws.onclose = (event) => {
@@ -270,11 +308,7 @@ export const useSessions = defineStore("sessions", () => {
         const known = await auth.request<{ status: string }>(`/commands/${id}`);
         if (expected !== generation || !auth.unlocked) return;
         const status = CommandStatus.parse(known.status);
-        statuses.value[id] = status;
-        if (pending.value[id]) {
-          pending.value[id]!.status = known.status;
-          if (known.status === "persisted") delete pending.value[id];
-        }
+        updateStatus(id, status);
       } catch {
         /* Status lookup never re-injects a command. */
       }
@@ -317,6 +351,7 @@ export const useSessions = defineStore("sessions", () => {
     if (!session?.epoch)
       throw new Error("Resume this conversation on your Mac before sending commands.");
     const commandId = crypto.randomUUID();
+    commandSessions.value[commandId] = id;
     statuses.value[commandId] = "sending";
     if (command.action === "message" || command.action === "slash")
       pending.value[commandId] = {
@@ -329,6 +364,7 @@ export const useSessions = defineStore("sessions", () => {
         command,
         status: "sending",
       };
+    if (pending.value[commandId]) outgoing.value[commandId] = pending.value[commandId]!;
     try {
       const result = await auth.request<{ status: string }>(`/sessions/${id}/actions`, {
         method: "POST",
@@ -342,14 +378,14 @@ export const useSessions = defineStore("sessions", () => {
         }),
       });
       if (expected !== generation || !auth.unlocked) throw new Error("Session locked.");
-      statuses.value[commandId] = CommandStatus.parse(result.status);
+      updateStatus(commandId, CommandStatus.parse(result.status));
     } catch (e) {
       if (expected !== generation || !auth.unlocked) throw e;
-      statuses.value[commandId] = "delivery_unknown";
+      updateStatus(commandId, "delivery_unknown");
       try {
         const known = await auth.request<{ status: string }>(`/commands/${commandId}`);
         if (expected !== generation || !auth.unlocked) throw e;
-        statuses.value[commandId] = CommandStatus.parse(known.status);
+        updateStatus(commandId, CommandStatus.parse(known.status));
       } catch {
         /* Never re-inject a command after an uncertain response. */
       }
@@ -363,6 +399,8 @@ export const useSessions = defineStore("sessions", () => {
   }
   return {
     folder,
+    outgoing,
+    commandSessions,
     ensureOwner,
     historyLimited,
     folders,

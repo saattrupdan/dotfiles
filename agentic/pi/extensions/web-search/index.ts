@@ -1,9 +1,9 @@
+import { webSearchRenderers } from "../_tool-display/renderers.ts";
 /** Native SearXNG-backed web search for the private local service. */
 
-import type { AgentToolResult, ExtensionAPI, Theme, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
 import { Type } from "typebox";
-import { renderExpandedCall } from "../_tool-display/expanded-call.ts";
 
 export const DEFAULT_SEARXNG_URL = "http://127.0.0.1:8888";
 export const DEFAULT_TIMEOUT_MS = 15_000;
@@ -290,23 +290,7 @@ export default function (pi: ExtensionAPI) {
 				},
 			};
 		},
-		renderCall(args, theme, context) {
-			if (context?.expanded) return renderExpandedCall("web_search", args, theme);
-			const query = String(args?.query ?? "...");
-			return new Text(`${theme.fg("toolTitle", theme.bold("web_search "))}${theme.fg("accent", query.slice(0, 80))}`, 0, 0);
-		},
-		renderResult(result: AgentToolResult<unknown>, options: ToolRenderResultOptions, theme: Theme) {
-			const details = result.details as { status?: SearchStatus; resultCount?: number } | undefined;
-			if (options.expanded) {
-				return new Text(result.content.filter((item) => item.type === "text").map((item) => item.text ?? "").join("\n") || "(no output)", 0, 0);
-			}
-			const status = details?.status ?? "ok";
-			if (status === "ok" || status === "partial_failure") {
-				const marker = status === "partial_failure" ? "⚠" : "✓";
-				const count = details?.resultCount ?? 0;
-				return new Text(theme.fg(status === "partial_failure" ? "warning" : "success", `${marker} web search (${count} ${count === 1 ? "result" : "results"}${status === "partial_failure" ? "; partial" : ""})`), 0, 0);
-			}
-			return new Text(theme.fg("error", `✗ web search ${status}`), 0, 0);
-		},
+		...webSearchRenderers,
+
 	});
 }

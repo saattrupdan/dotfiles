@@ -5,6 +5,7 @@ import { useAuth } from "../stores/auth.ts";
 import { useSessions } from "../stores/sessions.ts";
 import Transcript from "../components/Transcript.vue";
 import Icon from "../components/Icon.vue";
+import { remoteCommandId, receiptLabel } from "../lib/receipts.ts";
 import type { Command } from "../../../../protocol/src/index.ts";
 const toolsExpanded = ref(false),
   thinkingExpanded = ref(false);
@@ -30,16 +31,22 @@ const recoveryReason = computed(
         "This history has a duplicate session ID. Resolve it on your laptop.",
     })[session.value?.recoveryBlockedReason ?? ""],
 );
-const delivery = computed(() => {
-  const warnings: [string, string][] = [];
-  const details: [string, string][] = [];
-  for (const entry of Object.entries(store.statuses)) {
-    (["delivery_unknown", "rejected"].includes(entry[1]) ? warnings : details).push(
-      entry,
-    );
-  }
-  return { warnings, details };
-});
+const outgoing = computed(() =>
+  Object.entries(store.outgoing).filter(
+    ([commandId, message]) =>
+      message.sessionId === id.value &&
+      !(store.messages[id.value] ?? []).some(
+        (native) => remoteCommandId(native) === commandId,
+      ),
+  ),
+);
+const warnings = computed(() =>
+  Object.entries(store.statuses).filter(
+    ([commandId, status]) =>
+      store.commandSessions[commandId] === id.value &&
+      ["delivery_unknown", "rejected"].includes(status),
+  ),
+);
 const error = ref("");
 const sending = ref(false);
 const images = ref<string[]>([]);
@@ -64,57 +71,115 @@ watch(
   },
 );
 const time = setInterval(() => (now.value = Date.now()), 1000);
-function scrollBottom() {
-  if (!auth.unlocked || !auth.visible) return;
-  if (scrollFrame !== undefined) cancelAnimationFrame(scrollFrame);
+let following = true;
+const opening = ref(true);
+const composerInput = ref<HTMLTextAreaElement>();
+let automaticUntil = 0;
+let loadGeneration = 0;
+function nearBottom() {
+  return (
+    document.documentElement.scrollHeight - window.innerHeight - window.scrollY < 80
+  );
+}
+function userScroll() {
+  automaticUntil = 0;
+}
+function scrolled() {
+  if (Date.now() >= automaticUntil) following = nearBottom();
+}
+let smoothPending = false;
+function scrollBottom(smooth = false) {
+  if (!auth.unlocked || !auth.visible || (!opening.value && !following)) return;
+  if (opening.value) smoothPending = false;
+  else smoothPending ||= smooth;
+  if (scrollFrame !== undefined) return;
   scrollFrame = requestAnimationFrame(() => {
+    scrollFrame = undefined;
+    const animate =
+      smoothPending &&
+      !opening.value &&
+      !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    smoothPending = false;
+    automaticUntil = Date.now() + (animate ? 700 : 0);
     window.scrollTo({
       top: document.documentElement.scrollHeight,
-      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
-        ? "instant"
-        : "smooth",
+      behavior: animate ? "smooth" : "instant",
     });
   });
 }
-watch(() => [store.messages[id.value], store.streaming[id.value]], scrollBottom, {
-  deep: true,
-  flush: "post",
-});
-async function load() {
+watch(
+  () => [store.messages[id.value], store.streaming[id.value], store.outgoing],
+  () => scrollBottom(true),
+  { deep: true, flush: "post" },
+);
+async function load(initial = true) {
+  const expected = ++loadGeneration;
+  const target = id.value;
+  if (initial) {
+    opening.value = true;
+    following = true;
+  }
   try {
-    await store.detail(id.value);
-    await store.history(id.value);
-    store.connect(id.value);
+    await store.detail(target);
+    await store.history(target);
+    if (disposed || expected !== loadGeneration || target !== id.value) return;
+    store.connect(target);
     name.value = session.value?.name ?? "";
     const parts = (session.value?.model ?? "").split("/");
     provider.value = parts.shift() ?? "";
     model.value = parts.join("/");
     await nextTick();
     scrollBottom();
+    requestAnimationFrame(() => {
+      if (!disposed && expected === loadGeneration) opening.value = false;
+    });
   } catch (e) {
-    error.value = (e as Error).message;
+    if (!disposed && expected === loadGeneration) error.value = (e as Error).message;
+    if (expected === loadGeneration) opening.value = false;
   }
 }
 onMounted(() => {
-  resize = new ResizeObserver(scrollBottom);
+  resize = new ResizeObserver(() => scrollBottom());
   if (content.value) resize.observe(content.value);
+  window.addEventListener("scroll", scrolled, { passive: true });
+  window.addEventListener("wheel", userScroll, { passive: true });
+  window.addEventListener("touchstart", userScroll, { passive: true });
+  window.addEventListener("resize", resized);
+  window.visualViewport?.addEventListener("resize", resized);
   void load();
 });
-watch(id, load);
+watch(id, () => void load());
 watch(
   () => auth.visible,
   (value) => {
-    if (value && auth.unlocked) void load();
+    if (value && auth.unlocked) void load(false);
   },
 );
 onUnmounted(() => {
   disposed = true;
+  loadGeneration++;
   clearInterval(time);
   resize?.disconnect();
+  window.removeEventListener("scroll", scrolled);
+  window.removeEventListener("wheel", userScroll);
+  window.removeEventListener("touchstart", userScroll);
+  window.removeEventListener("resize", resized);
+  window.visualViewport?.removeEventListener("resize", resized);
   if (scrollFrame !== undefined) cancelAnimationFrame(scrollFrame);
   store.disconnect(true);
   previews.value.forEach(URL.revokeObjectURL);
 });
+function resized() {
+  scrollBottom();
+}
+watch(draft, (value) => {
+  if (!value && composerInput.value) composerInput.value.style.height = "auto";
+});
+function growComposer(event: Event) {
+  const input = event.target as HTMLTextAreaElement;
+  input.style.height = "auto";
+  input.style.height = `${Math.min(input.scrollHeight, 140)}px`;
+}
 async function action(command: Command) {
   if (recoveryReason.value) {
     error.value = recoveryReason.value;
@@ -193,10 +258,12 @@ async function upload(event: Event) {
 }
 </script>
 <template>
-  <section ref="content">
-    <p class="small muted session-state">{{ session?.state || "Saved" }}</p>
-    <h1>{{ session?.name || "Conversation" }}</h1>
-    <p class="muted small">{{ session?.cwd }}</p>
+  <section
+    ref="content"
+    class="conversation"
+    :class="{ positioning: opening }"
+  >
+    <h1 class="sr-only">{{ session?.name || "Conversation" }}</h1>
     <div class="row conversation-toolbar">
       <button
         class="icon-button"
@@ -311,57 +378,64 @@ async function upload(event: Event) {
       :streaming="store.streaming[id]"
       :tools-expanded="toolsExpanded"
       :thinking-expanded="thinkingExpanded"
+      :statuses="store.statuses"
     />
-    <div
-      v-for="(pending, pendingId) in Object.fromEntries(
-        Object.entries(store.pending).filter(([, message]) => message.sessionId === id),
-      )"
-      :key="pendingId"
-      class="card"
+    <article
+      v-for="[commandId, pending] in outgoing"
+      :key="commandId"
+      class="outgoing-message"
     >
       <p>{{ pending.text }}</p>
-      <p class="small muted">
-        {{ pending.images.length ? `${pending.images.length} image(s). ` : ""
-        }}{{ pending.status.replaceAll("_", " ") }}
-      </p>
-      <template v-if="pending.status === 'delivery_unknown'">
-        <p class="small">
-          Check the conversation before retrying. Another submission may duplicate work.
-        </p>
-        <button
-          @click="
-            store
-              .command(id, pending.command, String(pendingId))
-              .catch((e) => (error = e.message))
-          "
-        >
-          Explicitly retry
-        </button>
-      </template>
-    </div>
-    <div class="delivery">
       <p
-        v-for="[commandId, status] in delivery.warnings"
-        :key="commandId"
-        class="small error"
-        role="status"
+        v-if="pending.images.length"
+        class="small muted"
       >
-        {{ commandId.slice(0, 8) }}: {{ status.replaceAll("_", " ")
-        }}<span v-if="status === 'delivery_unknown'"
-          >. Check the conversation before explicitly retrying; retrying may duplicate
+        {{ pending.images.length }} photo(s)
+      </p>
+      <span
+        class="receipt"
+        role="status"
+        :aria-label="
+          receiptLabel(pending.status === 'persisted' ? 'received' : pending.status)
+        "
+        :title="
+          receiptLabel(pending.status === 'persisted' ? 'received' : pending.status)
+        "
+      >
+        <span v-if="['rejected', 'delivery_unknown'].includes(pending.status)">!</span>
+        <Icon
+          v-else
+          :name="pending.status === 'persisted' ? 'check' : 'spinner'"
+        />
+      </span>
+    </article>
+    <div
+      v-for="[commandId, status] in warnings"
+      :key="commandId"
+      class="send-warning"
+      role="status"
+    >
+      <p class="small error">
+        {{
+          status === "delivery_unknown"
+            ? "Delivery unknown"
+            : "Message or command rejected"
+        }}
+        <span v-if="status === 'delivery_unknown'"
+          >. Check the conversation before retrying; another submission may duplicate
           work.</span
         >
       </p>
-      <details v-if="delivery.details.length">
-        <summary class="small muted">Delivery</summary>
-        <p
-          v-for="[commandId, status] in delivery.details"
-          :key="commandId"
-          class="small muted"
-        >
-          {{ commandId.slice(0, 8) }}: {{ status.replaceAll("_", " ") }}
-        </p>
-      </details>
+      <button
+        v-if="status === 'delivery_unknown' && store.pending[commandId]"
+        @click="
+          store
+            .command(id, store.pending[commandId]!.command, commandId)
+            .catch((e) => (error = e.message))
+        "
+      >
+        Explicitly retry
+      </button>
     </div>
     <div class="composer">
       <p
@@ -455,10 +529,13 @@ async function upload(event: Event) {
           />
         </div>
         <textarea
+          ref="composerInput"
           v-model="draft"
           :readonly="sending"
-          placeholder="Message Pi..."
+          placeholder="Message"
+          rows="1"
           aria-label="Message Pi"
+          @input="growComposer"
         />
         <div class="row">
           <label
@@ -490,10 +567,10 @@ async function upload(event: Event) {
 <style scoped>
 .conversation-toolbar {
   position: sticky;
-  top: calc(76px + env(safe-area-inset-top));
+  top: calc(var(--header-height) + env(safe-area-inset-top));
   z-index: 25;
   background: var(--bg);
-  padding: 4px 0;
+  padding: 2px 0;
   border-bottom: 1px solid var(--line);
 }
 .conversation-toolbar [aria-pressed="true"] {
@@ -531,15 +608,14 @@ h1 {
   overflow-y: auto;
   overscroll-behavior: contain;
   background: var(--bg);
-  border-top: 1px solid var(--line);
-  padding: 12px 0 max(8px, env(safe-area-inset-bottom));
+  padding: 8px 0 max(8px, env(safe-area-inset-bottom));
 }
 .composer .row {
   justify-content: space-between;
 }
 .image-button {
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  border: 0;
+  border-radius: 50%;
   padding: 10px;
   color: var(--accent);
   cursor: pointer;
@@ -571,23 +647,79 @@ h1 {
   width: auto;
   margin-right: 10px;
 }
-.delivery {
-  margin-top: 12px;
-}
-.session-state {
-  margin: 0 0 8px;
-}
 .composer textarea {
   border: 0;
-  padding: 10px 0;
-  background: none;
+  padding: 12px 14px;
+  background: var(--panel);
+  border-radius: 24px;
+  resize: none;
+  min-height: 48px;
+  max-height: 140px;
+  margin: 0;
 }
 .image-button {
   min-height: 44px;
-  margin: 10px 0;
+  margin: 0;
 }
 .question h3 {
   margin: 0;
   font-size: 17px;
+}
+.message-form {
+  display: grid;
+  grid-template-columns: 44px 1fr 48px;
+  gap: 6px;
+  align-items: end;
+}
+.message-form > .row {
+  display: contents;
+}
+.message-form > textarea {
+  grid-column: 2;
+  grid-row: 2;
+}
+.message-form .image-button {
+  grid-column: 1;
+  grid-row: 2;
+}
+.message-form button[type="submit"] {
+  grid-column: 3;
+  grid-row: 2;
+  border-radius: 50%;
+  width: 48px;
+  height: 48px;
+}
+.previews {
+  grid-column: 1 / -1;
+}
+.outgoing-message {
+  background: var(--outgoing);
+  margin: 8px 0 8px auto;
+  padding: 10px 12px 6px;
+  border-radius: 14px 14px 3px 14px;
+  max-width: 88%;
+  width: fit-content;
+  overflow-wrap: anywhere;
+}
+.outgoing-message > p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+.receipt {
+  display: flex;
+  justify-content: end;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.receipt :deep(svg) {
+  width: 16px;
+  height: 16px;
+}
+.send-warning {
+  margin: 12px 0;
+}
+.positioning :deep(.transcript),
+.positioning .outgoing-message {
+  visibility: hidden;
 }
 </style>

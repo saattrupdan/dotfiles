@@ -4,12 +4,14 @@ import { computed } from "vue";
 import Icon from "./Icon.vue";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
+import { messageReceipt, receiptLabel } from "../lib/receipts.ts";
 import type { Message } from "../stores/sessions.ts";
 const props = defineProps<{
   messages: Message[];
   streaming?: Message;
   toolsExpanded?: boolean;
   thinkingExpanded?: boolean;
+  statuses?: Record<string, string>;
 }>();
 const clean = (s: string) =>
   DOMPurify.sanitize(
@@ -44,7 +46,13 @@ const parts = (m: Message) => {
     return text.trim() ? [{ ...part, text }] : [];
   });
 };
-type Tool = { kind: "tool"; name: string; result?: Message; args?: unknown };
+type Tool = {
+  kind: "tool";
+  name: string;
+  result?: Message;
+  args?: unknown;
+  display?: string;
+};
 type Row =
   Tool | { kind: "message"; message: Message } | { kind: "thinking"; text: string };
 const rows = computed<Row[]>(() => {
@@ -57,12 +65,18 @@ const rows = computed<Row[]>(() => {
     for (const part of parts(message))
       if (part.type === "toolCall" && part.id) calls.set(part.id, part);
   return all.flatMap((message): Row[] => {
+    if (
+      message.role === "system" ||
+      (message.role === "custom" && message.display !== true)
+    )
+      return [];
     if (message.role === "toolResult")
       return [
         {
           kind: "tool",
           name: message.toolName || calls.get(message.toolCallId || "")?.name || "tool",
           result: message,
+          display: message.toolDisplay,
           args: calls.get(message.toolCallId || "")?.arguments,
         },
       ];
@@ -76,24 +90,23 @@ const rows = computed<Row[]>(() => {
       if (part.type === "thinking")
         rows.push({ kind: "thinking", text: part.thinking || "" });
       if (part.type === "toolCall" && (!part.id || !results.has(part.id)))
-        rows.push({ kind: "tool", name: part.name || "tool", args: part.arguments });
+        rows.push({
+          kind: "tool",
+          name: part.name || "tool",
+          args: part.arguments,
+          display: part.toolDisplay,
+        });
     }
     return rows;
   });
 });
+function callText(row: Tool) {
+  return row.display?.split("\n")[0] || row.name;
+}
 function preview(row: Tool) {
-  if (!row.result) return "Running...";
-  const text = parts(row.result)
-    .map((part) => part.text || "")
-    .join("\n");
-  if (row.name === "store_memory" && !row.result.isError && /queued/i.test(text))
-    return "Queued a memory";
   return (
-    text
-      .split("\n")
-      .map((line) => line.trim())
-      .find((line) => line && !/^\[toolCallId:/.test(line))
-      ?.slice(0, 180) || (row.result.isError ? "Failed" : "Completed")
+    row.display?.split("\n").slice(1).join("\n").trim() ??
+    "Tool display unavailable. Expand for full output."
   );
 }
 </script>
@@ -111,14 +124,12 @@ function preview(row: Tool) {
         v-if="row.kind === 'tool'"
         class="tool-entry"
       >
-        <div class="tool-name">{{ row.name }}</div>
+        <div class="tool-name">{{ callText(row) }}</div>
         <p
+          v-if="preview(row)"
           class="tool-preview"
           :class="{ error: row.result?.isError }"
         >
-          <Icon
-            :name="!row.result ? 'spinner' : row.result.isError ? 'close' : 'check'"
-          />
           <span>{{ preview(row) }}</span>
         </p>
         <div
@@ -160,15 +171,6 @@ function preview(row: Tool) {
         v-else-if="row.kind === 'message'"
         :class="['message', row.message.role]"
       >
-        <div class="role">
-          {{
-            row.message.role === "user"
-              ? "You"
-              : row.message.role === "assistant"
-                ? "Pi"
-                : row.message.customType || "Notice"
-          }}
-        </div>
         <template
           v-for="(part, p) in parts(row.message)"
           :key="p"
@@ -187,6 +189,30 @@ function preview(row: Tool) {
             v-html="clean(part.text)"
           />
         </template>
+        <span
+          v-if="messageReceipt(row.message, statuses ?? {})"
+          class="receipt"
+          role="status"
+          :aria-label="receiptLabel(messageReceipt(row.message, statuses ?? {})!)"
+          :title="receiptLabel(messageReceipt(row.message, statuses ?? {})!)"
+        >
+          <span
+            v-if="
+              ['rejected', 'delivery_unknown'].includes(
+                messageReceipt(row.message, statuses ?? {})!,
+              )
+            "
+            >!</span
+          >
+          <Icon
+            v-else
+            :name="
+              messageReceipt(row.message, statuses ?? {}) === 'received'
+                ? 'check'
+                : 'spinner'
+            "
+          />
+        </span>
       </article>
     </template>
     <p
@@ -199,24 +225,39 @@ function preview(row: Tool) {
 </template>
 <style scoped>
 .message {
-  padding: 18px 0;
-  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  padding: 10px 13px;
+  border-radius: 3px 14px 14px 14px;
+  margin: 8px auto 8px 0;
+  width: fit-content;
+  max-width: 94%;
+  min-width: 40px;
   font-size: 15px;
-  line-height: 1.6;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
 }
 .message.user {
-  background: #1a3035;
-  padding: 16px;
-  border-radius: 16px;
-  margin: 16px 0;
-  border: 0;
+  background: var(--outgoing);
+  border-radius: 14px 14px 3px 14px;
+  margin-left: auto;
+  margin-right: 0;
+  max-width: 88%;
 }
-.role {
-  font-size: 10px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--accent);
-  margin-bottom: 8px;
+.message:not(.user):not(.assistant) {
+  background: transparent;
+  margin: 12px auto;
+  color: var(--muted);
+  font-size: 13px;
+}
+.receipt {
+  display: flex;
+  justify-content: end;
+  color: #a6c9c2;
+  margin: 3px 0 -2px;
+}
+.receipt :deep(svg) {
+  width: 16px;
+  height: 16px;
 }
 .tool-entry {
   font-size: 12px;
@@ -226,13 +267,14 @@ function preview(row: Tool) {
   margin: 8px 0;
 }
 .tool-name {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
   font-family: ui-monospace, monospace;
   font-size: 13px;
 }
 .tool-preview {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   margin: 5px 0;
   font-size: 13px;
   color: var(--muted);

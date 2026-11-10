@@ -1,3 +1,4 @@
+import { questionRenderers } from "../_tool-display/renderers.ts";
 import { markGuard } from "../_remote_bridge/guards.ts";
 /**
  * `question` tool.
@@ -7,9 +8,8 @@ import * as crypto from "node:crypto";
 import * as net from "node:net";
 
 import type { AgentToolResult, ExtensionAPI, ExtensionContext, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
+
 import { Type } from "typebox";
-import { renderExpandedCall } from "../_tool-display/expanded-call.ts";
 
 import { isLidClosed } from "../_lid_state/lid.ts";
 import { askRemote, remotePromptsEnabled } from "../_remote_bridge/prompts.ts";
@@ -343,12 +343,7 @@ export default function (pi: ExtensionAPI) {
 			const out = await dispatchAsk(ctx, [item], signal);
 			return buildResult(item, out);
 		},
-		renderCall(args, theme, context) {
-			if (context?.expanded) return renderExpandedCall("question", args, theme);
-			const q = typeof args?.question === "string" ? args.question : "...";
-			const preview = q.length > 50 ? q.slice(0, 47) + "..." : q;
-			return new Text(theme.fg("toolTitle", theme.bold("question")) + " " + theme.fg("accent", preview), 0, 0);
-		},
+		...questionRenderers,
 	});
 
 	markGuard("question");
