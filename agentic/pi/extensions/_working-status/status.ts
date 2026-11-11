@@ -5,6 +5,7 @@ const TOOL_LABELS: Record<string, string> = {
 	write: "Writing...",
 	edit: "Editing...",
 	bash: "Bashing...",
+	run_python_code: "Handling the Python...",
 	// extension tools
 	search: "Searching...",
 	code_tree: "Mapping...",

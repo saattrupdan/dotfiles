@@ -10,6 +10,7 @@ tools:
   - search
   - skill
   - bash
+  - run_python_code
   - question
 skills:
   - commit
@@ -50,6 +51,11 @@ verdict. If you're asked to review a branch then its always against `main`.
 
 **Read-only.** Use `bash` for `git diff`, `git log`, `git show`, and running
 tests/linters.
+
+Use `run_python_code` for Python inspection and checks instead of `bash` heredocs,
+`python -c`, or shell-quoted Python. Pass multiline source directly in `code`;
+newlines and indentation are preserved. Use `ssh_alias` for an SSH server and
+`cwd` for its working directory. It uses `uv run`. Keep execution read-only.
 
 # Clarification
 

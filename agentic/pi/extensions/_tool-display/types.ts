@@ -14,6 +14,7 @@ export type DisplayContext = Omit<NativeContext, "args" | "state"> & {
 
 /** Partial arguments also cover the model's first streaming paint. */
 export interface DisplayArgs {
+	code?: string;
 	name?: string;
 	path?: string;
 	symbol?: string;

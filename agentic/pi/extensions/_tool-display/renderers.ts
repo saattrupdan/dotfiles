@@ -120,6 +120,20 @@ export const generateImageRenderers: DisplayRenderers = {
 	},
 };
 
+export const pythonCodeRenderers: DisplayRenderers = {
+	renderCall(args, theme, context) {
+		if (context?.expanded) return renderExpandedCall("run_python_code", args, theme);
+		return new Text(theme.fg("toolTitle", theme.bold("run_python_code")), 0, 0);
+	},
+	renderResult(result, options, theme, context) {
+		if (options.expanded) return new Text(textContent(result.content) || "(no output)", 0, 0);
+		if (options.isPartial) return new Text(theme.fg("warning", "⋯ Python code running"), 0, 0);
+		return new Text(context.isError
+			? theme.fg("error", "✗ Python code failed")
+			: theme.fg("success", "✓ Python code executed"), 0, 0);
+	},
+};
+
 export const generateVideoRenderers: DisplayRenderers = {
 	renderCall(args, theme, context) {
 		if (context?.expanded) return renderExpandedCall("generate_video", args, theme);

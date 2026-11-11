@@ -11,6 +11,7 @@ tools:
   - edit
   - skill
   - bash
+  - run_python_code
   - question
 skills:
   - commit
@@ -72,6 +73,13 @@ into the parent's HEAD on exit.
 - Parallel builders may run in other worktrees. Stay strictly within your scope to keep
   merges clean. If your task forces you to touch a file outside your scope, stop and
   report.
+
+# Running Python
+
+Use `run_python_code` instead of `bash` heredocs, `python -c`, or shell-quoted
+Python. Pass multiline source directly in `code`; newlines, indentation, quotes,
+and Unicode need no shell escaping. Use `ssh_alias` for an SSH server and `cwd`
+for its working directory. The tool runs Python through `uv run`.
 
 # Workflow
 
