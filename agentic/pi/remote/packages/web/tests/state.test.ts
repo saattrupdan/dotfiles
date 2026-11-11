@@ -138,13 +138,24 @@ test("home loads folders and live summaries; newer snapshots win and lock purges
     await initial;
     assert.equal(store.listing[0]?.sessionId, "live");
     assert.equal(store.folders[0]?.cwd, "/Users/fixture");
+    assert.equal(store.homeLoaded, true);
+    assert.equal(store.homeListing[0]?.sessionId, "live");
+    const selectedFolder = store.refresh("/Users/fixture");
+    requests[3]!.resolve([{ sessionId: "archive", state: "stopped" }]);
+    await selectedFolder;
+    assert.equal(store.listing[0]?.sessionId, "archive");
+    assert.equal(store.homeListing[0]?.sessionId, "live");
     assert(!requests.some((request) => request.url.includes("/history")));
     const background = store.loadFolders();
+    assert.equal(store.homeLoaded, true);
+    assert.equal(store.homeListing[0]?.sessionId, "live");
     auth.clear();
-    requests[3]!.resolve([{ cwd: "/Users/private", count: 1, lastActivity: 1000 }]);
-    requests[4]!.resolve([{ sessionId: "private", state: "running" }]);
+    requests[4]!.resolve([{ cwd: "/Users/private", count: 1, lastActivity: 1000 }]);
+    requests[5]!.resolve([{ sessionId: "private", state: "running" }]);
     await background;
     assert.deepEqual(store.folders, []);
+    assert.equal(store.homeLoaded, false);
+    assert.deepEqual(store.homeListing, []);
     assert.deepEqual(store.listing, []);
     assert.deepEqual(store.sessions, []);
   } finally {

@@ -49,8 +49,11 @@ const folders = computed(() =>
   ),
 );
 const activeStates = new Set(["idle", "running", "waiting", "answer_needed"]);
+const showListing = computed(
+  () => !loading.value || (folder.value === undefined && store.homeLoaded),
+);
 const filtered = computed(() =>
-  store.listing
+  (folder.value === undefined ? store.homeListing : store.listing)
     .filter(
       (session) =>
         !isUntitled(session.name) &&
@@ -74,7 +77,7 @@ const active = computed(() =>
 const basename = (cwd: string) => cwd.split("/").filter(Boolean).at(-1) || cwd;
 </script>
 <template>
-  <section>
+  <section :aria-busy="loading">
     <div class="row heading">
       <h1>Conversations</h1>
       <RouterLink
@@ -141,11 +144,11 @@ const basename = (cwd: string) => cwd.split("/").filter(Boolean).at(-1) || cwd;
       Try again
     </button>
     <LoadingIndicator
-      v-if="loading"
+      v-if="!showListing"
       label="Loading conversations"
     />
     <div
-      v-else-if="folder === undefined"
+      v-if="showListing && folder === undefined"
       class="home"
     >
       <section aria-labelledby="active-sessions-heading">
@@ -209,7 +212,7 @@ const basename = (cwd: string) => cwd.split("/").filter(Boolean).at(-1) || cwd;
       </section>
     </div>
     <div
-      v-else
+      v-else-if="showListing"
       class="list"
     >
       <RouterLink

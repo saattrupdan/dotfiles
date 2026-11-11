@@ -96,6 +96,7 @@ test(
       let actionStatus = "persisted";
       let extraSessions: unknown[] = [];
       let historyGate: Promise<void> | undefined;
+      let homeGate: Promise<void> | undefined;
       let stopped = false,
         recoveries = 0,
         starts = 0;
@@ -119,6 +120,11 @@ test(
       });
       await page.route("**/api/v1/**", async (route) => {
         const url = new URL(route.request().url());
+        if (
+          homeGate &&
+          ["/api/v1/sessions", "/api/v1/session-folders"].includes(url.pathname)
+        )
+          await homeGate;
         if (url.pathname.endsWith("/history") && historyGate) await historyGate;
         let body: unknown = {};
         if (
@@ -768,6 +774,51 @@ test(
           } finally {
             release();
             historyGate = undefined;
+          }
+        },
+      );
+      await t.test(
+        "Home keeps its memory snapshot visible while refreshing after Back",
+        async () => {
+          await page.getByRole("link", { name: "Pi Remote", exact: true }).click();
+          await expect(page.locator("button.folder")).toHaveCount(1);
+          await page.locator("button.folder").click();
+          await page.getByRole("link", { name: /Phone layout fixture/ }).click();
+          await expect(page.locator(".opening-indicator")).toHaveCount(0);
+          let release!: () => void;
+          homeGate = new Promise((resolve) => (release = resolve));
+          extraSessions = [
+            {
+              ...session(),
+              sessionId: "00000000-0000-4000-8000-000000000033",
+              name: "Fresh background fixture",
+            },
+          ];
+          try {
+            await page.getByRole("button", { name: "Go back", exact: true }).click();
+            const active = page.getByRole("region", {
+              name: "Active sessions",
+              exact: true,
+            });
+            await expect(
+              active.getByRole("link", { name: /Phone layout fixture/ }),
+            ).toBeVisible();
+            await expect(page.locator("button.folder")).toBeVisible();
+            await expect(
+              page.getByText("Loading conversations", { exact: true }),
+            ).toHaveCount(0);
+            await expect(
+              active.getByRole("link", { name: /Fresh background fixture/ }),
+            ).toHaveCount(0);
+            release();
+            await expect(
+              active.getByRole("link", { name: /Fresh background fixture/ }),
+            ).toBeVisible();
+          } finally {
+            release();
+            homeGate = undefined;
+            extraSessions = [];
+            folderRequests.length = 0;
           }
         },
       );

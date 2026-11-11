@@ -38,6 +38,8 @@ export const useSessions = defineStore("sessions", () => {
   const sessions = ref<Session[]>([]);
   const folders = ref<SessionFolder[]>([]);
   const listing = ref<Session[]>([]);
+  const homeListing = ref<Session[]>([]);
+  const homeLoaded = ref(false);
   const folder = ref<string>();
   let currentFolder: string | undefined;
   let foldersRequest = 0;
@@ -109,6 +111,8 @@ export const useSessions = defineStore("sessions", () => {
     sessions.value = [];
     folders.value = [];
     listing.value = [];
+    homeListing.value = [];
+    homeLoaded.value = false;
     currentFolder = undefined;
     folder.value = undefined;
     messages.value = {};
@@ -132,8 +136,10 @@ export const useSessions = defineStore("sessions", () => {
       auth.unlocked &&
       currentFolder === undefined &&
       request === foldersRequest
-    )
+    ) {
       folders.value = result;
+      homeLoaded.value = true;
+    }
   }
   function merge(rows: Session[]) {
     const known = new Map(
@@ -158,6 +164,7 @@ export const useSessions = defineStore("sessions", () => {
       request === listingRequest
     ) {
       listing.value = result;
+      if (folder === undefined) homeListing.value = result;
       merge(result);
     }
   }
@@ -285,6 +292,7 @@ export const useSessions = defineStore("sessions", () => {
         if (prompt.value[sid]) prompt.value[sid]!.state = "expired";
       }
       if (event.type === "session.hidden") {
+        homeListing.value = homeListing.value.filter((row) => row.sessionId !== sid);
         delete messages.value[sid];
         delete drafts.value[sid];
         delete streaming.value[sid];
@@ -434,6 +442,8 @@ export const useSessions = defineStore("sessions", () => {
     historyLimited,
     folders,
     listing,
+    homeListing,
+    homeLoaded,
     loadFolders,
     detail,
     resume,
