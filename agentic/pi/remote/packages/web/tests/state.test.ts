@@ -549,3 +549,80 @@ test("a delayed equal-sequence detail cannot resurrect stopped activity", async 
   assert.equal(store.sessions[0]!.state, "stopped");
   assert.equal(store.sessions[0]!.workingMessage, undefined);
 });
+
+test("subagent previews update in memory, settle to final results and clear on disconnect and lock", async () => {
+  mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
+  Object.assign(globalThis, {
+    document: { visibilityState: "visible", addEventListener() {} },
+    window: { addEventListener() {} },
+    location: { protocol: "https:", host: "fixture.test.ts.net" },
+    WebSocket: Socket,
+  });
+  setActivePinia(createPinia());
+  const auth = useAuth(),
+    store = useSessions(),
+    id = "c2d90aba-4820-494b-978d-1991e3e820cf";
+  auth.unlocked = true;
+  auth.visible = true;
+  auth.request = (async () => []) as typeof auth.request;
+  store.sessions = [{ sessionId: id, epoch: 1, sequence: 0 } as Session];
+  const preview = (text: string) => ({
+    toolCallId: "child",
+    toolDisplay: `subagent Builder #2\n${text}`,
+    toolDisplayStyles: ["plain", "plain"],
+  });
+  const emit = (type: string, data: unknown) =>
+    Socket.latest.onmessage?.({
+      data: JSON.stringify({ version: 1, sessionId: id, type, data }),
+    });
+  try {
+    store.connect(id);
+    Socket.latest.onopen?.();
+    emit("tool_progress_snapshot", [preview("Reading source")]);
+    assert.match(store.toolProgress[id]!.child!.toolDisplay, /Reading source/);
+    emit("tool_progress", preview("Running tests"));
+    assert.match(store.toolProgress[id]!.child!.toolDisplay, /Running tests/);
+    assert.equal(store.messages[id], undefined);
+    emit("message_end", {
+      role: "toolResult",
+      toolCallId: "child",
+      toolName: "subagent",
+      content: [{ type: "text", text: "Done" }],
+    });
+    assert.equal(store.toolProgress[id]!.child, undefined);
+    assert.equal(store.messages[id]![0]!.role, "toolResult");
+
+    emit("tool_progress", preview("Before empty snapshot"));
+    emit("tool_progress_snapshot", []);
+    assert.deepEqual(store.toolProgress[id], {});
+    emit("tool_progress", preview("Before tool end"));
+    emit("tool_execution_end", { toolCallId: "child" });
+    assert.equal(store.toolProgress[id]!.child, undefined);
+    emit("tool_progress", preview("Before same-epoch disconnection"));
+    auth.request = (async () => ({
+      sessionId: id,
+      epoch: 1,
+      sequence: 0,
+      state: "stopped",
+    })) as typeof auth.request;
+    await store.detail(id);
+    assert.equal(store.toolProgress[id], undefined);
+    emit("tool_progress", preview("Late obsolete preview"));
+    assert.equal(store.toolProgress[id], undefined);
+    store.sessions[0]!.state = "running";
+    emit("tool_progress", preview("Still running"));
+    auth.visible = false;
+    Socket.latest.onclose?.({ code: 4000 });
+    assert.deepEqual(store.toolProgress, {});
+    auth.visible = true;
+    store.connect(id);
+    Socket.latest.onopen?.();
+    emit("tool_progress_snapshot", [preview("Restored current preview")]);
+    assert.match(store.toolProgress[id]!.child!.toolDisplay, /Restored/);
+    auth.clear();
+    assert.deepEqual(store.toolProgress, {});
+  } finally {
+    auth.clear();
+    mock.timers.reset();
+  }
+});

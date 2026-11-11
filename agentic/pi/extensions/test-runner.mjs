@@ -13,6 +13,7 @@ await jiti.import(path.join(root, "run-python-code", "index.test.ts"), { default
 await jiti.import(path.join(root, "conversation-name", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "codemode-collapse", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "_tool-display", "expanded-call.test.ts"), { default: false });
+await jiti.import(path.join(root, "_remote_bridge", "progress.test.ts"), { default: false });
 await jiti.import(path.join(root, "generate-image", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "generate-video", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "generate-video", "lifecycle.test.ts"), { default: false });

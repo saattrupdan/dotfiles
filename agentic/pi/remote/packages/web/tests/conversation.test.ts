@@ -456,6 +456,100 @@ test(
           }
         },
       );
+
+      await t.test(
+        "running subagent previews show live native output and yield to final results",
+        async () => {
+          const call = {
+            role: "assistant",
+            content: [
+              {
+                type: "toolCall",
+                id: "live-child",
+                name: "subagent",
+                arguments: {
+                  agent: "builder",
+                  taskName: "Fix tests",
+                  task: "Fix the tests",
+                },
+              },
+            ],
+          };
+          const projected = await toolDisplay.messages([call], "/Users/fixture", id);
+          socket!.send(
+            JSON.stringify({
+              version: 1,
+              sessionId: id,
+              type: "message_end",
+              data: projected[0],
+            }),
+          );
+          const send = (type: string, data: unknown) =>
+            socket!.send(JSON.stringify({ version: 1, sessionId: id, type, data }));
+          const preview = (text: string) => ({
+            toolCallId: "live-child",
+            toolDisplay: `subagent Builder #2 [user]\n↳ $ npm test\n${text}`,
+            toolDisplayStyles: ["plain", "plain", "plain"],
+          });
+          send("tool_progress_snapshot", [preview("Reading source fixture")]);
+          await expect(
+            page.getByText("Reading source fixture", { exact: true }),
+          ).toBeVisible();
+          send("tool_progress", preview("Fixing failing test fixture"));
+          await expect(
+            page.getByText("Fixing failing test fixture", { exact: true }),
+          ).toBeVisible();
+          await expect(
+            page.getByText("Reading source fixture", { exact: true }),
+          ).toHaveCount(0);
+          send("tool_progress", preview("<img src=x onerror=window.previewLeak=1>"));
+          await expect(
+            page.getByText("<img src=x onerror=window.previewLeak=1>", { exact: true }),
+          ).toBeVisible();
+          assert.equal(await page.evaluate("window.previewLeak"), undefined);
+          const result = {
+            role: "toolResult",
+            toolCallId: "live-child",
+            toolName: "subagent",
+            content: [{ type: "text", text: "Child completed fixture" }],
+            details: {
+              agent: "builder",
+              agentSource: "user",
+              task: "Fix the tests",
+              exitCode: 0,
+              sessionLabel: "Builder #2",
+              messages: [
+                {
+                  role: "assistant",
+                  content: [{ type: "text", text: "Child completed fixture" }],
+                },
+              ],
+              usage: {
+                input: 5,
+                output: 3,
+                cacheRead: 0,
+                cacheWrite: 0,
+                cost: 0,
+                contextTokens: 0,
+                turns: 1,
+              },
+            },
+          };
+          const final = await toolDisplay.messages([result], "/Users/fixture", id);
+          send("message_end", final[0]);
+          await expect(
+            page.getByText("<img src=x onerror=window.previewLeak=1>", { exact: true }),
+          ).toHaveCount(0);
+          const completedLine = (final[0] as { toolDisplay: string }).toolDisplay
+            .split("\n")
+            .slice(1)
+            .find((line) => line.includes("✓"));
+          assert(completedLine);
+          await expect(
+            page.locator(".tool-preview").filter({ hasText: completedLine }),
+          ).toBeVisible();
+        },
+      );
       const publish = async (next: typeof prompt) => {
         prompt = next;
         socket!.send(

@@ -602,6 +602,7 @@ async function upload(event: Event) {
     <Transcript
       :messages="store.messages[id] || []"
       :streaming="store.streaming[id]"
+      :tool-progress="store.toolProgress[id]"
       :tools-expanded="toolsExpanded"
       :thinking-expanded="thinkingExpanded"
       :statuses="store.statuses"

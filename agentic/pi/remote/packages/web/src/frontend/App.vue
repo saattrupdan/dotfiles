@@ -3,10 +3,30 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import LoadingIndicator from "./components/LoadingIndicator.vue";
 import { isUntitled } from "./lib/conversation-name.ts";
+import { activateNotifications } from "./lib/notifications.ts";
 import Icon from "./components/Icon.vue";
 import { useAuth } from "./stores/auth.ts";
 import { useSessions } from "./stores/sessions.ts";
 const auth = useAuth();
+const notificationError = ref("");
+let notificationSync = false;
+async function syncNotifications() {
+  if (notificationSync || !auth.unlocked || !auth.visible) return;
+  notificationSync = true;
+  try {
+    await activateNotifications(
+      auth.request,
+      () => auth.unlocked && auth.visible && document.visibilityState === "visible",
+    );
+    notificationError.value = "";
+  } catch {
+    if (auth.unlocked && auth.visible)
+      notificationError.value =
+        "Notifications could not reconnect. Enable notifications in Settings.";
+  } finally {
+    notificationSync = false;
+  }
+}
 const sessions = useSessions();
 const pairing = ref(location.hash.slice(1));
 const deviceName = ref("My iPhone");
@@ -38,12 +58,16 @@ const previousRestoration = window.history.scrollRestoration;
 onMounted(() => {
   window.history.scrollRestoration = "manual";
   void auth.initialize();
+  window.addEventListener("focus", syncNotifications);
+  navigator.serviceWorker?.addEventListener("controllerchange", syncNotifications);
   document.addEventListener("gesturestart", preventZoom, { passive: false });
   document.addEventListener("gesturechange", preventZoom, { passive: false });
   document.addEventListener("touchmove", preventPinch, { passive: false });
 });
 onUnmounted(() => {
   window.history.scrollRestoration = previousRestoration;
+  window.removeEventListener("focus", syncNotifications);
+  navigator.serviceWorker?.removeEventListener("controllerchange", syncNotifications);
   document.removeEventListener("gesturestart", preventZoom);
   document.removeEventListener("gesturechange", preventZoom);
   document.removeEventListener("touchmove", preventPinch);
@@ -53,8 +77,12 @@ watch(
   ([unlocked, visible]) => {
     if (unlocked) pairing.value = "";
     if (!unlocked || !visible) sessions.disconnect();
-    else sessions.resume();
+    else {
+      sessions.resume();
+      void syncNotifications();
+    }
   },
+  { immediate: true, flush: "sync" },
 );
 </script>
 <template>
@@ -145,6 +173,13 @@ watch(
         />{{ auth.reconnecting ? "Connecting..." : "Try again" }}
       </button>
     </section>
+    <p
+      v-if="auth.unlocked && auth.visible && notificationError"
+      class="connection-error"
+      role="alert"
+    >
+      {{ notificationError }}
+    </p>
     <main
       v-if="auth.unlocked"
       v-show="auth.visible"

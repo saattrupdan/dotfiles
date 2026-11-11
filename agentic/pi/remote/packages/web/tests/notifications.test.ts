@@ -42,6 +42,7 @@ function settings(browser: Record<string, unknown> = {}, granted = true) {
       serviceWorker: {
         ready: Promise.resolve({
           pushManager: {
+            getSubscription: async () => null,
             subscribe: async (options: PushSubscriptionOptionsInit) => {
               subscriptions++;
               assert.equal(options.userVisibleOnly, true);

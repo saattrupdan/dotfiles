@@ -23,6 +23,7 @@ import {
 	questionRenderers,
 	pythonCodeRenderers,
 	readCallRenderers,
+	writeRenderers,
 	recallMemoryRenderers,
 	searchRenderers,
 	skillRenderers,
@@ -82,10 +83,17 @@ export function toolPresentationBlock(
 	let renderers: object = custom[name as keyof typeof custom] ?? {};
 	const builtin = builtins[name as keyof typeof builtins];
 	if (builtin) {
-		const original = builtin.renderResult as ToolRenderers["renderResult"];
+		const original = (
+			name === "write" ? writeRenderers.renderResult : builtin.renderResult
+		) as ToolRenderers["renderResult"];
 		renderers = {
 			renderShell: builtin.renderShell,
-			renderCall: name === "read" ? readCallRenderers.renderCall : builtin.renderCall,
+			renderCall:
+				name === "read"
+					? readCallRenderers.renderCall
+					: name === "write"
+						? writeRenderers.renderCall
+						: builtin.renderCall,
 			renderResult:
 				name === "bash"
 					? createBashResultRenderer(new Map(), builtins.bash.renderResult)
@@ -139,7 +147,8 @@ export function toolPresentationBlock(
 	);
 	// argsComplete stays false: historical rows must never compute previews from live files.
 	row.markExecutionStarted();
-	if (!result && name === "run_python_code") row.updateResult({ content: [], details: undefined, isError: false }, true);
+	if (!result && name === "run_python_code")
+		row.updateResult({ content: [], details: undefined, isError: false }, true);
 	if (result)
 		row.updateResult({
 			...result,

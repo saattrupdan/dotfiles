@@ -5,7 +5,10 @@ import Icon from "./Icon.vue";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { messageReceipt, receiptLabel } from "../lib/receipts.ts";
-import type { ToolLineStyle } from "../../../../../../extensions/_tool-display/block-types.ts";
+import type {
+  ToolLineStyle,
+  ToolProgress,
+} from "../../../../../../extensions/_tool-display/block-types.ts";
 import type { Message } from "../stores/sessions.ts";
 const props = defineProps<{
   messages: Message[];
@@ -13,6 +16,7 @@ const props = defineProps<{
   toolsExpanded?: boolean;
   thinkingExpanded?: boolean;
   statuses?: Record<string, string>;
+  toolProgress?: Record<string, ToolProgress>;
 }>();
 const clean = (s: string) =>
   DOMPurify.sanitize(
@@ -116,8 +120,10 @@ const rows = computed<Row[]>(() => {
           key: part.id ? `tool:${part.id}` : `${base}:tool:${index}`,
           name: part.name || "tool",
           args: part.arguments,
-          display: part.toolDisplay,
-          styles: part.toolDisplayStyles,
+          display: props.toolProgress?.[part.id ?? ""]?.toolDisplay ?? part.toolDisplay,
+          styles:
+            props.toolProgress?.[part.id ?? ""]?.toolDisplayStyles ??
+            part.toolDisplayStyles,
         });
     }
     return rows;

@@ -1,4 +1,7 @@
-import type { ToolLineStyle } from "../../../../../../extensions/_tool-display/block-types.ts";
+import type {
+  ToolLineStyle,
+  ToolProgress,
+} from "../../../../../../extensions/_tool-display/block-types.ts";
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import type {
@@ -56,6 +59,7 @@ export const useSessions = defineStore("sessions", () => {
   let listingRequest = 0;
   const messages = ref<Record<string, Message[]>>({});
   const streaming = ref<Record<string, Message | undefined>>({});
+  const toolProgress = ref<Record<string, Record<string, ToolProgress>>>({});
   const historyLimited = ref<Record<string, boolean>>({});
   const historyPages = ref<
     Record<
@@ -119,6 +123,7 @@ export const useSessions = defineStore("sessions", () => {
   let activityGeneration = 0;
   const acceptedMetadata = new Map<string, number>();
   function clearActivity() {
+    toolProgress.value = {};
     activityGeneration++;
     for (const row of [...sessions.value, ...listing.value, ...homeListing.value])
       row.workingMessage = undefined;
@@ -191,6 +196,11 @@ export const useSessions = defineStore("sessions", () => {
         continue;
       }
       acceptedMetadata.set(row.sessionId, request);
+      if (
+        (previous && previous.epoch !== row.epoch) ||
+        ["stopped", "interrupted", "disconnected"].includes(row.state)
+      )
+        delete toolProgress.value[row.sessionId];
       if (
         previous &&
         previous.epoch === row.epoch &&
@@ -430,6 +440,9 @@ export const useSessions = defineStore("sessions", () => {
       }
       if (event.type === "message_update") streaming.value[sid] = event.data as Message;
       if (event.type === "message_end") {
+        const complete = event.data as Message;
+        if (complete.role === "toolResult" && complete.toolCallId)
+          delete toolProgress.value[sid]?.[complete.toolCallId];
         const message = event.data as Message;
         messages.value[sid] ??= [];
         if (
@@ -445,6 +458,36 @@ export const useSessions = defineStore("sessions", () => {
         retireOutgoing([message]);
         streaming.value[sid] = undefined;
       }
+
+      if (event.type === "tool_execution_end")
+        delete toolProgress.value[sid]?.[
+          (event.data as { toolCallId: string }).toolCallId
+        ];
+      if (event.type === "tool_progress") {
+        const progress = event.data as ToolProgress;
+        if (
+          !["stopped", "interrupted", "disconnected"].includes(
+            sessions.value.find((row) => row.sessionId === sid)?.state ?? "",
+          ) &&
+          typeof progress?.toolCallId === "string" &&
+          typeof progress.toolDisplay === "string"
+        ) {
+          const current = toolProgress.value[sid] ?? (toolProgress.value[sid] = {});
+          delete current[progress.toolCallId];
+          current[progress.toolCallId] = progress;
+          while (Object.keys(current).length > 16)
+            delete current[Object.keys(current)[0]!];
+        }
+      }
+      if (event.type === "tool_progress_snapshot")
+        toolProgress.value[sid] = Object.fromEntries(
+          (event.data as ToolProgress[]).map((progress) => [
+            progress.toolCallId,
+            progress,
+          ]),
+        );
+      if (event.type === "agent_start" || event.type === "agent_settled")
+        delete toolProgress.value[sid];
       if (event.type === "agent_settled") {
         void history(sid).catch(() => {});
         void refresh().catch(() => {});
@@ -463,6 +506,7 @@ export const useSessions = defineStore("sessions", () => {
         delete messages.value[sid];
         delete drafts.value[sid];
         delete streaming.value[sid];
+        delete toolProgress.value[sid];
         void refresh().catch(() => {});
       }
       if (event.type === "command.status") {
@@ -622,6 +666,7 @@ export const useSessions = defineStore("sessions", () => {
     sessions,
     messages,
     streaming,
+    toolProgress,
     statuses,
     drafts,
     prompt,

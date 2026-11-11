@@ -5,6 +5,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { TSchema } from "typebox";
 
+import { writeRenderers } from "../_tool-display/renderers.ts";
 import { collapseAutoloadResult } from "./types.ts";
 
 /**
@@ -12,19 +13,27 @@ import { collapseAutoloadResult } from "./types.ts";
  * injection to its summary line. Generic over the concrete schema/details/state
  * so the wrapped renderer's parameters keep their precise built-in types.
  */
-function registerWithCollapsedAutoload<P extends TSchema, D, S>(pi: ExtensionAPI, def: ToolDefinition<P, D, S>): void {
+function registerWithCollapsedAutoload<P extends TSchema, D, S>(
+	pi: ExtensionAPI,
+	def: ToolDefinition<P, D, S>,
+): void {
 	const original = def.renderResult;
 	if (!original) return;
 	def.renderResult = (result, options, theme, context) =>
-		original(collapseAutoloadResult(result, options.expanded, context.isError), options, theme, context);
+		original(
+			collapseAutoloadResult(result, options.expanded, context.isError),
+			options,
+			theme,
+			context,
+		);
 	pi.registerTool(def);
 }
 
 /**
  * Override the built-in `write` tool with a thin wrapper that reuses the
- * built-in definition verbatim — same execute, schema, and call renderer — and
- * only wraps the result renderer to collapse a skill-autoload injection to its
- * summary line.
+ * built-in execution and schema. Shared renderers keep successful writes quiet
+ * while preserving expanded output and visible errors. The result adapter also
+ * collapses skill-autoload guidance to its summary line.
  *
  * Autoload injects guidance as the reason of a blocked tool call, which the
  * harness turns into an error result the built-in renderers show in full even
@@ -43,7 +52,10 @@ export function registerAutoloadRenderOverrides(pi: ExtensionAPI): void {
 	// pi API change must never take down the core skill tool or autoload
 	// (already registered by the time we get here).
 	try {
-		registerWithCollapsedAutoload(pi, createWriteToolDefinition(process.cwd()));
+		registerWithCollapsedAutoload(pi, {
+			...createWriteToolDefinition(process.cwd()),
+			...writeRenderers,
+		});
 	} catch {
 		// Built-in tool factory moved or changed — leave the built-in renderer
 		// in place (injections just render uncollapsed, as before this change).

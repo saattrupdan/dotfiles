@@ -345,7 +345,10 @@ for (const lockDuringReplay of [false, true])
           },
         });
         await once(socket, "open");
-        socket.on("message", (raw) => received.push(JSON.parse(raw.toString())));
+        socket.on("message", (raw) => {
+          const event = JSON.parse(raw.toString());
+          if (event.type !== "tool_progress_snapshot") received.push(event);
+        });
         broker.store.event(id, "message_end", {
           role: "assistant",
           content: [
@@ -567,4 +570,56 @@ test("native edit colours and multiline shell command styling survive history an
   shell.toolDisplayStyles[0] = "removed";
   const again = (await display.messages([originals[1]], cwd, "styled")) as Styled[];
   assert.equal(again[0]!.toolDisplayStyles[0], "command");
+});
+
+test("write and Python completed previews match native quiet summaries without changing history", async () => {
+  const display = new ToolDisplay(agentDir);
+  const original = [
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "toolCall",
+          id: "write-quiet",
+          name: "write",
+          arguments: { path: "/not/a/real/file.py", content: "Generated file body" },
+        },
+        {
+          type: "toolCall",
+          id: "python-quiet",
+          name: "run_python_code",
+          arguments: { code: "print('original')" },
+        },
+      ],
+    },
+    {
+      role: "toolResult",
+      toolCallId: "write-quiet",
+      toolName: "write",
+      content: [{ type: "text", text: "Original write output" }],
+      isError: false,
+    },
+    {
+      role: "toolResult",
+      toolCallId: "python-quiet",
+      toolName: "run_python_code",
+      content: [{ type: "text", text: "Original Python stdout" }],
+      isError: false,
+    },
+  ];
+  const before = JSON.stringify(original);
+  const projected = (await display.messages(
+    original,
+    "/fixture",
+    "quiet-python-write",
+  )) as Array<{ toolDisplay?: string; content: unknown }>;
+  assert.match(projected[1]!.toolDisplay!, /✓ Written file/);
+  assert.doesNotMatch(
+    projected[1]!.toolDisplay!,
+    /Generated file body|Original write output/,
+  );
+  assert.match(projected[2]!.toolDisplay!, /✓ Python code executed/);
+  assert.doesNotMatch(projected[2]!.toolDisplay!, /Original Python stdout/);
+  assert.equal(JSON.stringify(original), before);
+  assert.deepEqual(projected[2]!.content, original[2]!.content);
 });

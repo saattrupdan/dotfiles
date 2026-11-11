@@ -110,10 +110,9 @@ self.addEventListener("push", (event) => {
       : "/";
   event.waitUntil(
     self.registration.showNotification("Pi Remote", {
-      body:
-        data.body === "A run finished."
-          ? "A run finished."
-          : "Pi needs your attention.",
+      body: ["A run finished.", "A run failed."].includes(data.body)
+        ? data.body
+        : "Pi needs your attention.",
       icon: "/icons/pi-192.png",
       data: { url },
     }),
@@ -121,5 +120,23 @@ self.addEventListener("push", (event) => {
 });
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  event.waitUntil(clients.openWindow(event.notification.data?.url || "/"));
+  event.waitUntil(
+    (async () => {
+      const url =
+        typeof event.notification.data?.url === "string" &&
+        /^\/session\/[0-9a-f-]{36}$/.test(event.notification.data.url)
+          ? event.notification.data.url
+          : "/";
+      const windows = await clients.matchAll({ type: "window" });
+      const existing = windows.find(
+        (client) => new URL(client.url).origin === self.location.origin,
+      );
+      if (existing) {
+        await existing.navigate(url);
+        await existing.focus();
+      } else await clients.openWindow(url);
+      for (const notification of await self.registration.getNotifications())
+        notification.close();
+    })(),
+  );
 });

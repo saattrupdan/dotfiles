@@ -120,6 +120,24 @@ export const generateImageRenderers: DisplayRenderers = {
 	},
 };
 
+export const writeRenderers: DisplayRenderers = {
+	renderCall(args, theme, context) {
+		if (context?.expanded) return renderExpandedCall("write", args, theme);
+		return new Text(
+			`${theme.fg("toolTitle", theme.bold("write"))} ${theme.fg("accent", String(args.path ?? "..."))}`,
+			0,
+			0,
+		);
+	},
+	renderResult(result, options, theme, context) {
+		const output = textContent(result.content);
+		if (options.expanded) return new Text(output || "(no output)", 0, 0);
+		if (context.isError) return new Text(theme.fg("error", output || "✗ Write failed"), 0, 0);
+		if (options.isPartial) return new Text(theme.fg("warning", "⋯ Writing file"), 0, 0);
+		return new Text(theme.fg("success", "✓ Written file"), 0, 0);
+	},
+};
+
 export const pythonCodeRenderers: DisplayRenderers = {
 	renderCall(args, theme, context) {
 		if (context?.expanded) return renderExpandedCall("run_python_code", args, theme);
@@ -128,9 +146,13 @@ export const pythonCodeRenderers: DisplayRenderers = {
 	renderResult(result, options, theme, context) {
 		if (options.expanded) return new Text(textContent(result.content) || "(no output)", 0, 0);
 		if (options.isPartial) return new Text(theme.fg("warning", "⋯ Python code running"), 0, 0);
-		return new Text(context.isError
-			? theme.fg("error", "✗ Python code failed")
-			: theme.fg("success", "✓ Python code executed"), 0, 0);
+		return new Text(
+			context.isError
+				? theme.fg("error", "✗ Python code failed")
+				: theme.fg("success", "✓ Python code executed"),
+			0,
+			0,
+		);
 	},
 };
 

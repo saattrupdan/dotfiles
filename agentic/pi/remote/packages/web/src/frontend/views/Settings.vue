@@ -55,10 +55,12 @@ async function notifications() {
     const { key } = await auth.request<{ key: string }>("/push/key");
     const raw = atob(key.replace(/-/g, "+").replace(/_/g, "/"));
     const applicationServerKey = Uint8Array.from(raw, (c) => c.charCodeAt(0));
-    const subscription = await worker.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey,
-    });
+    const subscription =
+      (await worker.pushManager.getSubscription()) ??
+      (await worker.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey,
+      }));
     await auth.request("/push/subscriptions", {
       method: "POST",
       body: JSON.stringify(subscription.toJSON()),
@@ -94,7 +96,7 @@ async function notifications() {
         <span class="setting-icon"><Icon name="bell" /></span>
         <div>
           <h2 id="notifications-heading">Notifications</h2>
-          <p class="small muted">When Pi finishes or needs your input.</p>
+          <p class="small muted">When Pi finishes, fails or needs your input.</p>
         </div>
       </div>
       <button

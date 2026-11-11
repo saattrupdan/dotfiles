@@ -1,3 +1,4 @@
+import { SubagentProgress } from "../_remote_bridge/progress.ts";
 import { expandCommandInput, isInputCommand } from "../_remote_bridge/command-input.ts";
 import {
 	hasRemoteCommand,
@@ -88,6 +89,7 @@ export default function (pi: ExtensionAPI) {
 	const event = (kind: string, data: unknown) => {
 		if (visible() && registered) send({ type: "event", kind, data });
 	};
+	const progress = new SubagentProgress((block) => event("tool_progress", block));
 	const ack = (id: string, status: CommandStatus, error?: string) => {
 		if (journal[id]?.status === "persisted") {
 			status = "persisted";
@@ -390,6 +392,7 @@ export default function (pi: ExtensionAPI) {
 						for (const [id, entry] of Object.entries(journal))
 							send({ type: "ack", commandId: id, status: entry.status });
 						event("snapshot", ctx.sessionManager.buildSessionProjection().messages);
+						progress.replay();
 					}
 					if (value.type === "command") {
 						queued++;
@@ -431,6 +434,7 @@ export default function (pi: ExtensionAPI) {
 	const heartbeat = setInterval(() => {
 		if (!ctx) return;
 		if (!visible()) {
+			progress.clear();
 			if (registered) {
 				send({ type: "unregister" });
 				registered = false;
@@ -449,12 +453,14 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", (_e, next) => {
 		ctx = next;
 		settled = true;
+		progress.clear();
 		configurePrompts({ publish: (prompt) => event("prompt", prompt), expire });
 		if (!socket) connect();
 		else register();
 	});
 	pi.on("session_before_switch", () => {
 		if (operations || inFlight.size) return { cancel: true };
+		progress.clear();
 		if (registered) {
 			send({ type: "unregister" });
 			registered = false;
@@ -462,6 +468,7 @@ export default function (pi: ExtensionAPI) {
 	});
 	pi.on("session_before_fork", () => {
 		if (operations || inFlight.size) return { cancel: true };
+		progress.clear();
 		if (registered) {
 			send({ type: "unregister" });
 			registered = false;
@@ -475,11 +482,13 @@ export default function (pi: ExtensionAPI) {
 	pi.on("agent_start", (_e, next) => {
 		ctx = next;
 		settled = false;
+		progress.clear();
 		event("agent_start", null);
 	});
 	pi.on("agent_settled", (_e, next) => {
 		ctx = next;
 		settled = true;
+		progress.clear();
 		persisted();
 		event("agent_settled", null);
 		event("snapshot", next.sessionManager.buildSessionProjection().messages);
@@ -500,9 +509,18 @@ export default function (pi: ExtensionAPI) {
 	pi.on("tool_execution_start", (e) =>
 		event("tool_execution_start", { toolCallId: e.toolCallId, name: e.toolName }),
 	);
-	pi.on("tool_execution_end", (e) =>
-		event("tool_execution_end", { toolCallId: e.toolCallId, name: e.toolName, isError: e.isError }),
-	);
+	pi.on("tool_execution_update", (e) => {
+		if (e.toolName !== "subagent") return;
+		if (!visible()) {
+			progress.clear();
+			return;
+		}
+		progress.update(e.toolCallId, e.args, e.partialResult, ctx.ui.theme);
+	});
+	pi.on("tool_execution_end", (e) => {
+		progress.end(e.toolCallId);
+		event("tool_execution_end", { toolCallId: e.toolCallId, name: e.toolName, isError: e.isError });
+	});
 	pi.on("session_tree", (_e, next) => {
 		ctx = next;
 		event("snapshot", next.sessionManager.buildSessionProjection().messages);
@@ -522,6 +540,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_info_changed", (e) => event("session_info_changed", e));
 	pi.on("session_shutdown", () => {
 		stopped = true;
+		progress.clear();
 		clearGuards();
 		clearRemoteCommands();
 		clearInterval(heartbeat);

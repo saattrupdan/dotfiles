@@ -68,7 +68,7 @@ export async function createBroker(
       );
     display.emit(
       windowed ? { ...event, type: "resnapshot", data: null } : event,
-      session?.cwd ?? "/",
+      session?.runtimeCwd ?? session?.cwd ?? "/",
       publish,
       session?.sessionFile ?? "",
     );
@@ -407,7 +407,12 @@ export async function createBroker(
       .parse(req.query);
     const result =
       q.window || q.before
-        ? ((await catalog?.window(session.path, session.id, session.cwd, q)) ?? {
+        ? ((await catalog?.window(
+            session.path,
+            session.id,
+            "runtimeCwd" in session ? (session.runtimeCwd ?? session.cwd) : session.cwd,
+            q,
+          )) ?? {
             messages: [],
             older: null,
             revision: "empty",
@@ -573,9 +578,16 @@ export async function createBroker(
       const device = (row.key as string).split(":")[1]!;
       if (!store.device(device)) continue;
       if (
-        [...clients.values()].some(
-          (c) => c.device === device && c.subscriptions.has(event.sessionId ?? ""),
-        )
+        [...clients.values()].some((c) => {
+          if (c.device !== device || !c.subscriptions.has(event.sessionId ?? ""))
+            return false;
+          try {
+            auth.unlocked(c.request);
+            return true;
+          } catch {
+            return false;
+          }
+        })
       )
         continue;
       try {
@@ -585,14 +597,26 @@ export async function createBroker(
             title: "Pi Remote",
             body:
               event.type === "agent_settled"
-                ? "A run finished."
+                ? (event.data as { outcome?: string } | null)?.outcome === "failed"
+                  ? "A run failed."
+                  : "A run finished."
                 : "Pi needs your attention.",
             url: `/session/${event.sessionId}`,
           }),
           { TTL: 3600, timeout: 10000 },
         );
-      } catch {
-        /* Expired endpoints are reported by doctor without conversation data. */
+      } catch (error) {
+        const status = (error as { statusCode?: number }).statusCode;
+        if (status === 404 || status === 410)
+          store.db
+            .prepare("DELETE FROM settings WHERE key=? AND value=?")
+            .run(row.key, row.value);
+        store.audit(
+          device,
+          event.sessionId ?? "",
+          "push",
+          status ? `failed_${status}` : "failed",
+        );
       }
     }
   }
@@ -653,10 +677,20 @@ export async function createBroker(
                 client.windowed && event.type === "snapshot"
                   ? { ...event, type: "resnapshot", data: null }
                   : event,
-                session.cwd,
+                session.runtimeCwd ?? session.cwd,
                 (formatted) => {
-                  if (round === client.subscriptionGeneration)
-                    deliver(socket, client, formatted);
+                  if (round !== client.subscriptionGeneration) return;
+                  if (formatted.type === "tool_progress_snapshot") {
+                    const current = store.session(sub.sessionId);
+                    if (
+                      !current ||
+                      current.instanceId !== session.instanceId ||
+                      current.epoch !== session.epoch
+                    )
+                      return;
+                    const progress = connections.progress(current);
+                    deliver(socket, client, { ...formatted, data: progress });
+                  } else deliver(socket, client, formatted);
                 },
                 session.sessionFile,
               );
@@ -682,6 +716,12 @@ export async function createBroker(
                 sequence: session.sequence,
                 data: session,
               });
+            replay({
+              version: 1,
+              type: "tool_progress_snapshot",
+              sessionId: sub.sessionId,
+              data: null,
+            });
           }
         } catch {
           socket.close(4003, "invalid_subscription");

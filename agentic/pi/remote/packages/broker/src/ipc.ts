@@ -11,9 +11,21 @@ import {
   type StreamEvent,
 } from "../../protocol/src/index.ts";
 import type { Config } from "./config.ts";
-import { inDeploymentScope, canonicalPath } from "./deployment-scope.ts";
+import {
+  inDeploymentScope,
+  canonicalPath,
+  registeredWorkingDirectory,
+} from "./deployment-scope.ts";
 import { Store, token } from "./store.ts";
+import type { ToolProgress } from "../../../../extensions/_tool-display/block-types.ts";
 export class Connections {
+  private failures = new Map<string, boolean>();
+  private previews = new Map<string, Map<string, ToolProgress>>();
+  progress(session: Session) {
+    return this.isConnected(session) && !session.idle
+      ? [...(this.previews.get(session.sessionId)?.values() ?? [])]
+      : [];
+  }
   private working = new Map<string, WorkingStatus>();
   workingMessage(session: Session) {
     return this.isConnected(session)
@@ -133,6 +145,9 @@ export class Connections {
           if (value.type === "register") {
             if (!this.allowRegistration) throw new Error("proof_mode");
             const registration = Registration.parse(value.data);
+            const directory = registeredWorkingDirectory(this.config, registration.cwd);
+            if (!directory) throw new Error("pilot_directory_scope");
+            registration.cwd = directory.cwd;
             if (!inDeploymentScope(this.config, registration))
               throw new Error("pilot_history_scope");
             registration.sessionFile = canonicalPath(registration.sessionFile);
@@ -149,6 +164,7 @@ export class Connections {
               : 1;
             const session: Session = {
               ...registration,
+              ...directory,
               sessionId: publicId,
               nativeSessionId:
                 publicId === registration.sessionId
@@ -174,6 +190,7 @@ export class Connections {
             if (current && current !== publicId) this.working.delete(current);
             if (!this.working.has(publicId) || old?.instanceId !== instance)
               this.working.set(publicId, new WorkingStatus());
+            if (old?.instanceId !== instance) this.previews.delete(publicId);
             this.store.save(session);
             current = publicId;
             this.activeSessions.set(instance, current);
@@ -205,6 +222,7 @@ export class Connections {
               session.prompt,
             ]);
             session.idle = state.idle;
+            if (state.idle) this.previews.delete(session.sessionId);
             if (state.idle)
               this.working.get(session.sessionId)?.update("agent_settled", null);
             session.loop = state.loop;
@@ -229,6 +247,7 @@ export class Connections {
           if (value.type === "unregister" || value.type === "private") {
             // Saved-history tombstones retain epoch and cursor across owner changes.
             this.working.delete(session.sessionId);
+            this.previews.delete(session.sessionId);
             session.state = "stopped";
             session.prompt = undefined;
             this.store.save(session);
@@ -270,6 +289,7 @@ export class Connections {
             if (
               ![
                 "working_override",
+                "tool_progress",
                 "message_update",
                 "message_end",
                 "tool_execution_start",
@@ -284,6 +304,63 @@ export class Connections {
               ].includes(kind)
             )
               return;
+            if (kind === "tool_progress") {
+              const data = value.data as ToolProgress;
+              if (
+                typeof data?.toolCallId !== "string" ||
+                data.toolCallId.length > 256 ||
+                typeof data.toolDisplay !== "string" ||
+                data.toolDisplay.length > 16384 ||
+                !Array.isArray(data.toolDisplayStyles) ||
+                data.toolDisplayStyles.length > 16385 ||
+                data.toolDisplayStyles.some(
+                  (style) => !["plain", "command", "added", "removed"].includes(style),
+                )
+              )
+                return;
+              let previews = this.previews.get(session.sessionId);
+              if (!previews)
+                this.previews.set(session.sessionId, (previews = new Map()));
+              previews.delete(data.toolCallId);
+              const preview = {
+                toolCallId: data.toolCallId,
+                toolDisplay: data.toolDisplay,
+                toolDisplayStyles: [...data.toolDisplayStyles],
+              };
+              value.data = preview;
+              previews.set(data.toolCallId, preview);
+              while (previews.size > 16) previews.delete(previews.keys().next().value!);
+            }
+            if (["agent_start", "agent_settled"].includes(kind))
+              this.previews.delete(session.sessionId);
+            if (kind === "tool_execution_end")
+              this.previews
+                .get(session.sessionId)
+                ?.delete((value.data as { toolCallId: string }).toolCallId);
+
+            if (kind === "agent_start") this.failures.delete(session.sessionId);
+            if (kind === "message_end" || kind === "snapshot") {
+              const messages =
+                kind === "snapshot"
+                  ? Array.isArray(value.data)
+                    ? value.data
+                    : []
+                  : [value.data];
+              for (let at = messages.length - 1; at >= 0; at--) {
+                const message = messages[at] as { role?: string; stopReason?: string };
+                if (message?.role === "assistant") {
+                  this.failures.set(
+                    session.sessionId,
+                    message.stopReason === "error" || message.stopReason === "aborted",
+                  );
+                  break;
+                }
+              }
+            }
+            if (kind === "agent_settled")
+              value.data = {
+                outcome: this.failures.get(session.sessionId) ? "failed" : "finished",
+              };
             const before = JSON.stringify([session.state, session.prompt]);
             const status = this.working.get(session.sessionId)!;
             const previousMessage = status.message(!session.idle);
@@ -344,6 +421,7 @@ export class Connections {
       this.connections.delete(socket);
       if (instance && this.sockets.get(instance) === socket) {
         this.working.delete(current);
+        this.previews.delete(current);
         this.sockets.delete(instance);
         this.activeSessions.delete(instance);
         for (const session of this.store
