@@ -5,6 +5,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { Agent, type BeforeToolCallResult } from "@earendil-works/pi-agent-core";
+import { createAssistantMessageEventStream, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import registerIsolation, { continuationArgs, isPrintMode, launchWithProgress, recoveredFromRateLimit } from "./index.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -1602,6 +1605,99 @@ test("discard preserves worktree and transcripts when another saved session is a
 	}
 });
 
+for (const toolName of ["discard_isolated_branch", "clean_up_isolated_branch"]) {
+	for (const mixed of [false, true]) {
+		test(`${toolName} ends the old run before another edit can be requested (${mixed ? "mixed retry" : "standalone"})`, async () => {
+			const { root, agentDir } = createRepo();
+			const plan = await createLaunchPlan(root, agentDir, "feat/stop-before-edit");
+			const current = path.join(sessionDirectoryForCwd(plan.childCwd, agentDir), "current.jsonl");
+			fs.writeFileSync(current, `${JSON.stringify({ type: "session", cwd: plan.childCwd })}\n`);
+			const tools = new Map<string, { execute: (...args: unknown[]) => Promise<{ content: Array<{ type: "text"; text: string }>; terminate?: boolean }> }>();
+			const handlers = new Map<string, Array<(...args: unknown[]) => unknown>>();
+			const previousToken = process.env.PI_PROFILE_RELOAD_TOKEN;
+			process.env.PI_PROFILE_RELOAD_TOKEN = "cleanup-regression";
+			try {
+				await registerIsolation({
+					registerFlag: () => undefined, registerCommand: () => undefined,
+					getFlag: () => false,
+					exec: async () => ({ code: 0, stdout: `${plan.childCwd}\n` }),
+					registerTool: (tool: { name: string; execute: (...args: unknown[]) => Promise<{ content: Array<{ type: "text"; text: string }>; terminate?: boolean }> }) => { tools.set(tool.name, tool); },
+					on: (name: string, handler: (...args: unknown[]) => unknown) => {
+						handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+					},
+					sendMessage: () => assert.fail("cleanup must not queue another turn in the old worktree"),
+				} as unknown as ExtensionAPI);
+				const ctx = { sessionManager: { getSessionFile: () => current } };
+				// A nested cleanup cannot terminate its outer codemode call either.
+				for (const handler of handlers.get("message_end") ?? []) {
+					await handler({ message: { role: "assistant", content: [{ type: "toolCall", id: "wrapper", name: "codemode", arguments: {} }] } }, ctx);
+				}
+				for (const handler of handlers.get("tool_call") ?? []) {
+					const blocked = await handler({ toolName, toolCallId: "nested-cleanup" }, ctx) as BeforeToolCallResult;
+					assert.equal(blocked.block, true);
+					assert.match(blocked.reason!, /Cleanup has not started/);
+				}
+				let requests = 0;
+				let cleanups = 0;
+				const model: Model<"openai-completions"> = {
+					id: "cleanup-test", name: "Cleanup test", api: "openai-completions", provider: "openai",
+					baseUrl: "https://example.invalid", input: ["text"], reasoning: false,
+					contextWindow: 128000, maxTokens: 1000,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				};
+				const agent = new Agent({
+					initialState: { model, tools: [
+						{ name: "read", label: "Read", description: "Read", parameters: Type.Object({}), execute: async () => ({ content: [{ type: "text", text: "read" }] }) },
+						{ name: toolName, label: toolName, description: toolName, parameters: Type.Object({}), execute: async () => {
+							cleanups++;
+							return tools.get(toolName)!.execute("cleanup", {}, undefined, undefined, ctx);
+						} },
+					] },
+					beforeToolCall: async ({ toolCall }) => {
+						for (const handler of handlers.get("tool_call") ?? []) {
+							const result = await handler({ toolName: toolCall.name, toolCallId: toolCall.id }, ctx) as BeforeToolCallResult | undefined;
+							if (result?.block) return result;
+						}
+					},
+					streamFn: () => {
+						requests++;
+						assert.ok(requests <= (mixed ? 2 : 1), "cleanup must settle before the model can request an edit");
+						if (mixed && requests === 2) assert.equal(cleanups, 0, "mixed cleanup is blocked before preparation");
+						const message: AssistantMessage = {
+							role: "assistant", api: model.api, provider: model.provider, model: model.id,
+							content: [
+								...(mixed && requests === 1 ? [{ type: "toolCall" as const, id: "read", name: "read", arguments: {} }] : []),
+								{ type: "toolCall", id: "cleanup", name: toolName, arguments: {} },
+							],
+							stopReason: "toolUse", timestamp: Date.now(),
+							usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+						};
+						const stream = createAssistantMessageEventStream();
+						stream.push({ type: "done", reason: "toolUse", message });
+						stream.end();
+						return stream;
+					},
+				});
+				agent.subscribe(async (event) => {
+					for (const handler of handlers.get(event.type) ?? []) await handler(event, ctx);
+				});
+				await agent.prompt("Discard or clean up, then continue on main.");
+				assert.equal(requests, mixed ? 2 : 1);
+				assert.equal(cleanups, 1);
+				assert.equal(agent.state.errorMessage, undefined);
+				const results = agent.state.messages.filter((message) => message.role === "toolResult");
+				assert.equal(results.filter((result) => result.isError).length, mixed ? 1 : 0);
+				assert.doesNotMatch(JSON.stringify(results), /Branch cleanup is already in progress/);
+				assert.equal(fs.existsSync(plan.childCwd), true, "removal waits for the persisted result and agent settlement");
+				assert.ok(handlers.get("agent_settled")?.length, "the stopped run must still hand off to main");
+			} finally {
+				if (previousToken === undefined) delete process.env.PI_PROFILE_RELOAD_TOKEN;
+				else process.env.PI_PROFILE_RELOAD_TOKEN = previousToken;
+			}
+		});
+	}
+}
+
 test("discard tool queues removal after its result and blocks later tool calls and finalization", async () => {
 	const { root, agentDir } = createRepo();
 	const plan = await createLaunchPlan(root, agentDir, "feat/discard-tool");
@@ -1720,7 +1816,7 @@ test("cleanup retires a legacy managed worktree whose target branch was deleted"
 	fs.mkdirSync(agentDir, { recursive: true });
 	fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", cwd: plan.childCwd })}\n`);
 	const cleanupGuard = handlers.get("tool_call")?.at(-1);
-	assert.equal(cleanupGuard?.(), undefined);
+	assert.equal(cleanupGuard?.({ toolName: "edit", toolCallId: "before-cleanup" }), undefined);
 	let aborted = false;
 	const result = await tools.get("clean_up_isolated_branch")!.execute("call", {}, undefined, undefined, {
 		sessionManager: { getSessionFile: () => sessionFile },
