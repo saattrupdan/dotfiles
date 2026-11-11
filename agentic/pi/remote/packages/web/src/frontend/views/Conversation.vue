@@ -158,11 +158,21 @@ function nearBottom() {
     document.documentElement.scrollHeight - window.innerHeight - window.scrollY < 80
   );
 }
+function stopFollowing() {
+  following = false;
+  automaticUntil = 0;
+  smoothPending = false;
+  if (scrollFrame !== undefined) {
+    cancelAnimationFrame(scrollFrame);
+    scrollFrame = undefined;
+  }
+}
 function userScroll(event?: Event) {
+  if (event?.target instanceof Element && event.target.closest(".composer")) return;
   automaticUntil = 0;
   heldAnchor = undefined;
-  if (event instanceof WheelEvent && event.deltaY < 0) {
-    following = false;
+  if (event?.type === "wheel" && (!(event instanceof WheelEvent) || event.deltaY < 0)) {
+    stopFollowing();
     upwardIntent = true;
     maybeOlder();
   }
@@ -174,27 +184,45 @@ function userScroll(event?: Event) {
     touchY = event.touches[0].clientY;
 }
 function touchMoved(event: TouchEvent) {
+  if (event.target instanceof Element && event.target.closest(".composer")) return;
   if (event.touches[0] && event.touches[0].clientY - touchY > 8) {
-    following = false;
+    stopFollowing();
     upwardIntent = true;
     maybeOlder();
   }
+}
+function keyScrolled(event: KeyboardEvent) {
+  if (
+    !["ArrowUp", "PageUp", "Home"].includes(event.key) ||
+    (event.target instanceof Element &&
+      event.target.closest("input,textarea,select,[contenteditable=true]"))
+  )
+    return;
+  stopFollowing();
+  upwardIntent = true;
+  maybeOlder();
 }
 function scrolled() {
   const height = document.documentElement.scrollHeight;
   // Layout-driven scroll events must not replace the reader's anchor.
   const layoutChanged = height !== lastHeight;
-  const movedUp = window.scrollY < lastScroll - 2;
   const moved = Math.abs(window.scrollY - lastScroll) > 2;
-  if (movedUp && !layoutChanged && !opening.value && !paging.value) upwardIntent = true;
   lastScroll = window.scrollY;
   lastHeight = height;
   if (!paging.value && nearBottom()) {
     following = true;
+    upwardIntent = false;
     heldAnchor = undefined;
-  } else if (Date.now() >= automaticUntil && !paging.value && !layoutChanged && moved) {
-    following = nearBottom() || (following && !movedUp);
-    heldAnchor = following ? undefined : captureAnchor();
+    // Focus and layout shifts are not reader gestures.
+  } else if (
+    upwardIntent &&
+    Date.now() >= automaticUntil &&
+    !paging.value &&
+    !layoutChanged &&
+    moved
+  ) {
+    following = false;
+    heldAnchor = captureAnchor();
   }
   maybeOlder();
 }
@@ -207,6 +235,14 @@ function scrollBottom(smooth = false) {
   if (scrollFrame !== undefined) return;
   scrollFrame = requestAnimationFrame(() => {
     scrollFrame = undefined;
+    if (
+      disposed ||
+      paging.value ||
+      !auth.unlocked ||
+      !auth.visible ||
+      (!opening.value && !following)
+    )
+      return;
     const animate =
       smoothPending &&
       !opening.value &&
@@ -265,6 +301,7 @@ onMounted(() => {
   if (content.value) resize.observe(content.value);
   window.addEventListener("scroll", scrolled, { passive: true });
   window.addEventListener("wheel", userScroll, { passive: true });
+  window.addEventListener("keydown", keyScrolled);
   window.addEventListener("touchstart", userScroll, { passive: true });
   window.addEventListener("touchmove", touchMoved, { passive: true });
   window.addEventListener("resize", resized);
@@ -285,6 +322,7 @@ onUnmounted(() => {
   resize?.disconnect();
   window.removeEventListener("scroll", scrolled);
   window.removeEventListener("wheel", userScroll);
+  window.removeEventListener("keydown", keyScrolled);
   window.removeEventListener("touchstart", userScroll);
   window.removeEventListener("touchmove", touchMoved);
   window.removeEventListener("resize", resized);
@@ -626,6 +664,14 @@ async function upload(event: Event) {
       </button>
     </div>
     <div class="composer">
+      <div
+        v-if="session?.workingMessage"
+        class="working-status"
+        role="status"
+        aria-live="polite"
+      >
+        <Icon name="spinner" /><span>{{ session.workingMessage }}</span>
+      </div>
       <p
         v-if="error"
         class="error"
@@ -758,6 +804,20 @@ async function upload(event: Event) {
   </section>
 </template>
 <style scoped>
+.working-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  padding: 4px 6px 10px;
+}
+.working-status :deep(svg) {
+  width: 16px;
+  height: 16px;
+  color: var(--accent);
+}
+
 .conversation {
   overflow-anchor: none;
 }

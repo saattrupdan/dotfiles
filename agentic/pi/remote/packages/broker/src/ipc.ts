@@ -1,3 +1,4 @@
+import { WorkingStatus } from "../../../../extensions/_working-status/status.ts";
 import { sessionReference } from "./session-reference.ts";
 import net from "node:net";
 import fs from "node:fs";
@@ -13,6 +14,12 @@ import type { Config } from "./config.ts";
 import { inDeploymentScope, canonicalPath } from "./deployment-scope.ts";
 import { Store, token } from "./store.ts";
 export class Connections {
+  private working = new Map<string, WorkingStatus>();
+  workingMessage(session: Session) {
+    return this.isConnected(session)
+      ? this.working.get(session.sessionId)?.message(!session.idle)
+      : undefined;
+  }
   sockets = new Map<string, net.Socket>();
   connections = new Set<net.Socket>();
   lastSeen = new Map<string, number>();
@@ -164,6 +171,9 @@ export class Connections {
             };
             const existing = this.sockets.get(instance);
             if (existing && existing !== socket) existing.destroy();
+            if (current && current !== publicId) this.working.delete(current);
+            if (!this.working.has(publicId) || old?.instanceId !== instance)
+              this.working.set(publicId, new WorkingStatus());
             this.store.save(session);
             current = publicId;
             this.activeSessions.set(instance, current);
@@ -195,6 +205,8 @@ export class Connections {
               session.prompt,
             ]);
             session.idle = state.idle;
+            if (state.idle)
+              this.working.get(session.sessionId)?.update("agent_settled", null);
             session.loop = state.loop;
             session.prompt =
               state.prompt ??
@@ -216,6 +228,7 @@ export class Connections {
           }
           if (value.type === "unregister" || value.type === "private") {
             // Saved-history tombstones retain epoch and cursor across owner changes.
+            this.working.delete(session.sessionId);
             session.state = "stopped";
             session.prompt = undefined;
             this.store.save(session);
@@ -256,6 +269,7 @@ export class Connections {
             const kind = String(value.kind);
             if (
               ![
+                "working_override",
                 "message_update",
                 "message_end",
                 "tool_execution_start",
@@ -271,6 +285,9 @@ export class Connections {
             )
               return;
             const before = JSON.stringify([session.state, session.prompt]);
+            const status = this.working.get(session.sessionId)!;
+            const previousMessage = status.message(!session.idle);
+            status.update(kind, value.data);
             if (kind === "agent_start") {
               session.idle = false;
               session.state = "running";
@@ -309,6 +326,13 @@ export class Connections {
             this.store.save(session);
             if (before !== JSON.stringify([session.state, session.prompt]))
               this.emit({ version: 1, type: "sessions.changed", data: session });
+            const message = status.message(!session.idle);
+            if (message !== previousMessage) {
+              const changed = this.store.event(session.sessionId, "working_status", {
+                message: message ?? null,
+              });
+              if (changed) this.emit(changed);
+            }
             const event = this.store.event(session.sessionId, kind, value.data);
             if (event) this.emit(event);
           }
@@ -319,6 +343,7 @@ export class Connections {
     socket.on("close", () => {
       this.connections.delete(socket);
       if (instance && this.sockets.get(instance) === socket) {
+        this.working.delete(current);
         this.sockets.delete(instance);
         this.activeSessions.delete(instance);
         for (const session of this.store

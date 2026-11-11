@@ -1,3 +1,4 @@
+import type { ToolLineStyle } from "../../../../../../extensions/_tool-display/block-types.ts";
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import type {
@@ -25,11 +26,13 @@ export interface Message {
         name?: string;
         arguments?: unknown;
         toolDisplay?: string;
+        toolDisplayStyles?: ToolLineStyle[];
       }>;
   toolCallId?: string;
   toolName?: string;
   isError?: boolean;
   toolDisplay?: string;
+  toolDisplayStyles?: ToolLineStyle[];
   remotePersisted?: boolean;
   timestamp?: number;
   customType?: string;
@@ -42,6 +45,11 @@ export const useSessions = defineStore("sessions", () => {
   const listing = ref<Session[]>([]);
   const homeListing = ref<Session[]>([]);
   const homeLoaded = ref(false);
+  const homePosition = ref<{
+    top: number;
+    search: string;
+    anchor?: { key: string; offset: number };
+  }>();
   const folder = ref<string>();
   let currentFolder: string | undefined;
   let foldersRequest = 0;
@@ -107,7 +115,16 @@ export const useSessions = defineStore("sessions", () => {
   let socket: WebSocket | undefined;
   let retry: ReturnType<typeof setTimeout> | undefined;
   let selected = "";
+  let metadataRequest = 0;
+  let activityGeneration = 0;
+  const acceptedMetadata = new Map<string, number>();
+  function clearActivity() {
+    activityGeneration++;
+    for (const row of [...sessions.value, ...listing.value, ...homeListing.value])
+      row.workingMessage = undefined;
+  }
   function disconnect(clearSelection = false) {
+    clearActivity();
     if (clearSelection) selected = "";
     socket?.close();
     socket = undefined;
@@ -120,10 +137,12 @@ export const useSessions = defineStore("sessions", () => {
     outgoing.value = {};
     commandSessions.value = {};
     sessions.value = [];
+    acceptedMetadata.clear();
     folders.value = [];
     listing.value = [];
     homeListing.value = [];
     homeLoaded.value = false;
+    homePosition.value = undefined;
     currentFolder = undefined;
     folder.value = undefined;
     messages.value = {};
@@ -156,17 +175,44 @@ export const useSessions = defineStore("sessions", () => {
       homeLoaded.value = true;
     }
   }
-  function merge(rows: Session[]) {
+  function merge(
+    rows: Session[],
+    request = ++metadataRequest,
+    activity = activityGeneration,
+  ) {
+    const accepted: Session[] = [];
     const known = new Map(
       sessions.value.map((session) => [session.sessionId, session]),
     );
-    for (const row of rows) known.set(row.sessionId, row);
+    for (const row of rows) {
+      const previous = known.get(row.sessionId);
+      if ((acceptedMetadata.get(row.sessionId) ?? 0) > request) {
+        if (previous) accepted.push(previous);
+        continue;
+      }
+      acceptedMetadata.set(row.sessionId, request);
+      if (
+        previous &&
+        previous.epoch === row.epoch &&
+        previous.sequence > row.sequence &&
+        !["stopped", "interrupted", "disconnected"].includes(row.state)
+      ) {
+        row.workingMessage = previous.workingMessage;
+        row.sequence = previous.sequence;
+      }
+      if (activity !== activityGeneration) row.workingMessage = undefined;
+      known.set(row.sessionId, row);
+      accepted.push(row);
+    }
     sessions.value = [...known.values()];
+    return accepted;
   }
   async function refresh(folder = currentFolder) {
     currentFolder = folder;
     const expected = generation;
     const request = ++listingRequest;
+    const metadata = ++metadataRequest;
+    const activity = activityGeneration;
     const result = await auth.request<Session[]>(
       folder === undefined
         ? "/sessions"
@@ -178,15 +224,17 @@ export const useSessions = defineStore("sessions", () => {
       currentFolder === folder &&
       request === listingRequest
     ) {
-      listing.value = result;
-      if (folder === undefined) homeListing.value = result;
-      merge(result);
+      const rows = merge(result, metadata, activity);
+      listing.value = rows;
+      if (folder === undefined) homeListing.value = rows;
     }
   }
   async function detail(id: string) {
     const expected = generation;
+    const request = ++metadataRequest;
+    const activity = activityGeneration;
     const result = await auth.request<Session>(`/sessions/${id}`);
-    if (expected === generation && auth.unlocked) merge([result]);
+    if (expected === generation && auth.unlocked) merge([result], request, activity);
   }
   function persistHistory(id: string, records: Message[]) {
     for (const message of records) {
@@ -363,7 +411,15 @@ export const useSessions = defineStore("sessions", () => {
       }
       if (!sid) return;
       const session = sessions.value.find((s) => s.sessionId === sid);
-      if (session && event.sequence) session.sequence = event.sequence;
+      const staleStatus =
+        session && event.sequence !== undefined && event.sequence < session.sequence;
+      if (session && event.sequence)
+        session.sequence = Math.max(session.sequence, event.sequence);
+      if (event.type === "working_status" && session && !staleStatus) {
+        const data = event.data as { message?: unknown };
+        session.workingMessage =
+          typeof data?.message === "string" ? data.message : undefined;
+      }
       if (event.type === "resnapshot") {
         void history(sid).catch(() => {});
         void refresh().catch(() => {});
@@ -419,6 +475,7 @@ export const useSessions = defineStore("sessions", () => {
     };
     ws.onclose = (event) => {
       if (socket !== ws) return;
+      clearActivity();
       socket = undefined;
       if (event.code === 4001 || event.code === 4003) {
         auth.clear();
@@ -557,6 +614,7 @@ export const useSessions = defineStore("sessions", () => {
     listing,
     homeListing,
     homeLoaded,
+    homePosition,
     loadFolders,
     detail,
     resume,

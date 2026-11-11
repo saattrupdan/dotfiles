@@ -93,6 +93,39 @@ for (const nativeId of [randomUUID(), "nvim-native-session-fixture"])
       await new Promise((r) => setTimeout(r, 30));
       assert.equal(store.session(sessionId)!.state, "running");
       assert.equal(store.session(sessionId)!.prompt, undefined);
+      const phase = async (kind: string, data: unknown, label: string | undefined) => {
+        send({ type: "event", kind, data });
+        for (let i = 0; i < 100; i++) {
+          if (connections.workingMessage(store.session(sessionId)!) === label) return;
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+        assert.equal(connections.workingMessage(store.session(sessionId)!), label);
+      };
+      assert.equal(connections.workingMessage(store.session(sessionId)!), "Working...");
+      await phase(
+        "message_update",
+        { role: "assistant", content: [{ type: "thinking", thinking: "fixture" }] },
+        "Thinking...",
+      );
+      await phase(
+        "tool_execution_start",
+        { toolCallId: "b", name: "bash" },
+        "Bashing...",
+      );
+      await phase(
+        "tool_execution_start",
+        { toolCallId: "m", name: "store_memory" },
+        "Storing to memory…",
+      );
+      await phase("tool_execution_end", { toolCallId: "m" }, "Bashing...");
+      await phase(
+        "working_override",
+        { label: "Preparing worktree..." },
+        "Preparing worktree...",
+      );
+      await phase("working_override", {}, "Bashing...");
+      await phase("agent_settled", null, undefined);
+      await phase("agent_start", null, "Working...");
       store.event(sessionId, "agent_settled", null);
       const cursor = store.session(sessionId)!.sequence;
       send({ type: "unregister" });

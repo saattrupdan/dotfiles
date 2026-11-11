@@ -34,13 +34,16 @@ const preventZoom = (event: Event) => event.preventDefault();
 const preventPinch = (event: TouchEvent) => {
   if (event.touches.length > 1) event.preventDefault();
 };
+const previousRestoration = window.history.scrollRestoration;
 onMounted(() => {
+  window.history.scrollRestoration = "manual";
   void auth.initialize();
   document.addEventListener("gesturestart", preventZoom, { passive: false });
   document.addEventListener("gesturechange", preventZoom, { passive: false });
   document.addEventListener("touchmove", preventPinch, { passive: false });
 });
 onUnmounted(() => {
+  window.history.scrollRestoration = previousRestoration;
   document.removeEventListener("gesturestart", preventZoom);
   document.removeEventListener("gesturechange", preventZoom);
   document.removeEventListener("touchmove", preventPinch);
@@ -78,7 +81,6 @@ watch(
           width="44"
           height="44"
         />
-        <span v-if="!headerTitle">Pi</span>
       </RouterLink>
       <span
         v-if="auth.unlocked && auth.visible"
@@ -264,7 +266,8 @@ header {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  margin-left: -11px;
+  margin-left: 0;
+  padding-left: 4px;
   text-decoration: none;
   font-size: 18px;
   font-weight: 600;

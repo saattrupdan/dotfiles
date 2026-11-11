@@ -485,6 +485,11 @@ export default function (pi: ExtensionAPI) {
 		event("snapshot", next.sessionManager.buildSessionProjection().messages);
 		drain();
 	});
+	pi.events.on("thinking-status:override", (data) => {
+		const label =
+			data && typeof data === "object" ? (data as { label?: unknown }).label : undefined;
+		event("working_override", { label: typeof label === "string" ? label : null });
+	});
 	pi.on("message_update", (eventData) => event("message_update", eventData.message));
 	pi.on("message_end", (eventData) => {
 		event("message_end", eventData.message);

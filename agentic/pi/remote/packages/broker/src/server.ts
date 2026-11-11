@@ -214,6 +214,7 @@ export async function createBroker(
     const connected = connections.isConnected(session);
     return {
       ...session,
+      workingMessage: connections.workingMessage(session),
       lastActivity: lastActivity(session),
       state: connected ? session.state : "stopped",
       controlBlockedReason:

@@ -491,3 +491,80 @@ test("historical edit display never reads the current target for a preview", asy
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("native edit colours and multiline shell command styling survive history and streamed delivery", async () => {
+  const display = new ToolDisplay(agentDir);
+  const originals = [
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "toolCall",
+          id: "shell",
+          name: "bash",
+          arguments: { command: "printf first\n\nprintf second" },
+        },
+        {
+          type: "toolCall",
+          id: "diff",
+          name: "edit",
+          arguments: { path: "file.ts", oldText: "OLD", newText: "NEW" },
+        },
+      ],
+    },
+    {
+      role: "toolResult",
+      toolCallId: "shell",
+      toolName: "bash",
+      ...result("firstsecond"),
+    },
+    {
+      role: "toolResult",
+      toolCallId: "diff",
+      toolName: "edit",
+      ...result("Edited", {
+        diff: '-1 const OLD = "<img src=x onerror=alert(1)>";\n+1 const NEW = "safe";\n 2 unchanged',
+      }),
+    },
+  ];
+  const before = JSON.stringify(originals);
+  type Styled = { toolDisplay: string; toolDisplayStyles: string[] };
+  const rows = (await display.messages(originals, cwd, "styled")) as Styled[];
+  const shell = rows[1]!;
+  const lines = shell.toolDisplay.split("\n");
+  for (const needle of ["$ printf first", "printf second"]) {
+    const line = lines.findIndex((value) => value.includes(needle));
+    assert(line >= 0);
+    assert.equal(shell.toolDisplayStyles[line], "command");
+  }
+  const diff = rows[2]!;
+  const edits = diff.toolDisplay.split("\n");
+  assert.equal(
+    diff.toolDisplayStyles[edits.findIndex((line) => line.startsWith("-"))],
+    "removed",
+  );
+  assert.equal(
+    diff.toolDisplayStyles[edits.findIndex((line) => line.startsWith("+"))],
+    "added",
+  );
+  assert.equal(
+    diff.toolDisplayStyles[edits.findIndex((line) => line.includes("unchanged"))],
+    "plain",
+  );
+  assert.equal(diff.toolDisplayStyles.length, edits.length);
+  assert.equal(JSON.stringify(originals), before);
+  const replay = (await display.messages([originals[2]], cwd, "styled")) as Styled[];
+  assert.deepEqual(replay[0], diff);
+  const events: StreamEvent[] = [];
+  display.emit(
+    { version: 1, type: "message_end", sessionId: "styled", data: originals[2] },
+    cwd,
+    (event) => events.push(event),
+    "styled",
+  );
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(events[0]!.data, diff);
+  shell.toolDisplayStyles[0] = "removed";
+  const again = (await display.messages([originals[1]], cwd, "styled")) as Styled[];
+  assert.equal(again[0]!.toolDisplayStyles[0], "command");
+});

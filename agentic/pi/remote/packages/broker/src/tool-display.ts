@@ -7,6 +7,8 @@ import { createHash } from "node:crypto";
 import { resolvePiPackage } from "../../../../profile/pi-runtime.mjs";
 import type { StreamEvent } from "../../protocol/src/index.ts";
 
+import type { ToolBlock } from "../../../../extensions/_tool-display/block.ts";
+
 type RecordValue = Record<string, unknown>;
 type Present = (
   name: string,
@@ -14,7 +16,7 @@ type Present = (
   result: unknown,
   id: string,
   cwd: string,
-) => string;
+) => ToolBlock;
 function record(value: unknown): value is RecordValue {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
@@ -24,7 +26,7 @@ export class ToolDisplay {
   private load?: Promise<Present | undefined>;
   private calls = new Map<string, { name: string; args: unknown; bytes: number }>();
   private callBytes = 0;
-  private rendered = new Map<string, string>();
+  private rendered = new Map<string, ToolBlock>();
   private queues = new Map<string, Promise<void>>();
   constructor(private agentDir: string) {}
   private renderer() {
@@ -46,7 +48,7 @@ export class ToolDisplay {
         },
       });
       const module = await jiti.import(file);
-      return module.toolPresentation as Present;
+      return module.toolPresentationBlock as Present;
     })().catch(() => undefined));
   }
   private remember(key: string, name: string, args: unknown) {
@@ -89,17 +91,24 @@ export class ToolDisplay {
       }
     }
     const text = (name: string, args: unknown, result: unknown, id: string) => {
-      if (!present) return `${name}\nTool display unavailable. Expand for full output.`;
+      if (!present)
+        return {
+          text: `${name}\nTool display unavailable. Expand for full output.`,
+          styles: [],
+        };
       const key = createHash("sha256")
         .update(JSON.stringify([name, args, result, id, cwd]))
         .digest("hex");
       const cached = this.rendered.get(key);
       if (cached !== undefined) return cached;
-      let output: string;
+      let output: ToolBlock;
       try {
         output = present(name, args, result, id, cwd);
       } catch {
-        output = `${name}\nTool display unavailable. Expand for full output.`;
+        output = {
+          text: `${name}\nTool display unavailable. Expand for full output.`,
+          styles: [],
+        };
       }
       this.rendered.set(key, output);
       if (this.rendered.size > 256)
@@ -115,9 +124,11 @@ export class ToolDisplay {
           typeof message.toolName === "string"
             ? message.toolName
             : (call?.name ?? "tool");
+        const block = text(name, call?.args, message, id);
         return {
           ...message,
-          toolDisplay: text(name, call?.args, message, id),
+          toolDisplay: block.text,
+          toolDisplayStyles: [...block.styles],
         };
       }
       if (message.role !== "assistant" || !Array.isArray(message.content))
@@ -131,14 +142,16 @@ export class ToolDisplay {
             typeof part.name !== "string"
           )
             return part;
+          const block = text(
+            part.name,
+            part.arguments,
+            undefined,
+            String(part.id ?? ""),
+          );
           return {
             ...part,
-            toolDisplay: text(
-              part.name,
-              part.arguments,
-              undefined,
-              String(part.id ?? ""),
-            ),
+            toolDisplay: block.text,
+            toolDisplayStyles: [...block.styles],
           };
         }),
       };

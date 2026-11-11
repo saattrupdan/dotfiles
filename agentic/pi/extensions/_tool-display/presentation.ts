@@ -8,7 +8,7 @@ import {
 	ToolExecutionComponent,
 	type ToolRenderers,
 } from "@earendil-works/pi-coding-agent";
-import { stripVTControlCharacters } from "node:util";
+import { displayBlock, type ToolBlock, type ToolLineStyle } from "./block.ts";
 import { makeRenderCall, makeRenderResult } from "../mcp-collapse/display.ts";
 import { collapseAutoloadResult } from "../skill/types.ts";
 import { createSubagentRenderers } from "../subagent/display.ts";
@@ -66,13 +66,13 @@ const custom = {
 let initialized = false;
 
 /** The returned text is the laptop's collapsed tool block, without terminal styling. */
-export function toolPresentation(
+export function toolPresentationBlock(
 	name: string,
 	args: unknown,
 	result: Result | undefined,
 	id: string,
 	cwd: string,
-): string {
+): ToolBlock {
 	if (!initialized) {
 		initTheme("dark");
 		initialized = true;
@@ -112,6 +112,20 @@ export function toolPresentation(
 	if (branchRenderers[name]) renderers = branchRenderers[name]!;
 	const bounded = boundedToolArguments(args);
 	const details = result?.details ? boundedToolArguments(result.details) : undefined;
+	const colors: Partial<Record<Exclude<ToolLineStyle, "plain">, string>> = {};
+	const call = (renderers as ToolRenderers).renderCall;
+	if (call)
+		renderers = {
+			...renderers,
+			renderCall: ((args, theme, context) => {
+				colors.command = theme.getFgAnsi("toolTitle");
+				if (!result?.isError && typeof result?.details?.diff === "string") {
+					colors.added = theme.getFgAnsi("toolDiffAdded");
+					colors.removed = theme.getFgAnsi("toolDiffRemoved");
+				}
+				return call(args, theme, context);
+			}) as ToolRenderers["renderCall"],
+		};
 	const row = new ToolExecutionComponent(
 		name,
 		id,
@@ -131,10 +145,10 @@ export function toolPresentation(
 			),
 			details: details?.args,
 		} as never);
-	const text = row
-		.render(2048)
-		.map((line) => stripVTControlCharacters(line).trimEnd())
-		.join("\n")
-		.trim();
-	return text.slice(0, 16384);
+	return displayBlock(row.render(2048), name, colors);
+}
+
+/** The same native text for consumers that do not need line styling. */
+export function toolPresentation(...args: Parameters<typeof toolPresentationBlock>): string {
+	return toolPresentationBlock(...args).text;
 }

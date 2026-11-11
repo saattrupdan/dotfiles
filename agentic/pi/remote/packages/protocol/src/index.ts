@@ -91,6 +91,7 @@ export const Registration = z.object({
 });
 export type Registration = z.infer<typeof Registration>;
 export interface Session extends Registration {
+  workingMessage?: string;
   nativeSessionId?: string;
   controlBlockedReason?: string;
   recoveryBlockedReason?: string;

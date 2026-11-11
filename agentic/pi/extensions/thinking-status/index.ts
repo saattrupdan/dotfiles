@@ -34,123 +34,48 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 // Tool name -> working indicator label. Unmapped tools use pi's default "Working...".
-const TOOL_LABELS: Record<string, string> = {
-	// built-in tools
-	read: "Reading...",
-	write: "Writing...",
-	edit: "Editing...",
-	bash: "Bashing...",
-	// extension tools
-	search: "Searching...",
-	code_tree: "Mapping...",
-	generate_image: "Generating image...",
-	generate_video: "Generating video...",
-	skill: "Upskilling...",
-	question: "Questioning...",
-	web_browse: "Browsing...",
-	web_search: "Searching...",
-	subagent: "Whipping the subagents...",
-	store_memory: "Storing to memory…",
-	recall_memory: "Recalling from memory…",
-	read_concept: "Reading concept…",
-	isolated_new_branch: "Creating branch...",
-	discard_isolated_branch: "Discarding branch...",
-	clean_up_isolated_branch: "Cleaning up branch...",
-};
+import { WorkingStatus } from "../_working-status/status.ts";
 
 export default function (pi: ExtensionAPI) {
-	// --- 1. Relabel the inline hidden-thinking marker ------------------------
-	// Pi resets the label to its default ("Thinking...") on reload and session
-	// switches (resetExtensionUI), so re-apply our marker on the events that
-	// precede any render the user would see.
-	const HIDDEN_LABEL = "(...)";
-
-	// Track ctx for event-bus handlers (they receive no ctx)
-	type CtxWithUI = { ui: Pick<ExtensionContext["ui"], "setWorkingMessage" | "setWorkingVisible" | "theme"> };
-	let lastCtx: CtxWithUI | undefined;
-
-	pi.on("session_start", (_event, ctx) => {
-		lastCtx = ctx as CtxWithUI;
-		ctx.ui.setHiddenThinkingLabel(HIDDEN_LABEL);
-	});
-	pi.on("agent_start", (_event, ctx) => {
-		lastCtx = ctx as CtxWithUI;
-		ctx.ui.setHiddenThinkingLabel(HIDDEN_LABEL);
-	});
-
-	// --- 2. Phase-specific footer spinner ------------------------------------
-	// Label from the current streaming block (thinking / tool-call arg generation).
-	let streamLabel: string | undefined;
-	// toolCallId -> label for tools currently executing (handles overlap; most
-	// recently started wins). Execution takes precedence over streaming.
-	const activeTools = new Map<string, string>();
-	// Highest-precedence override label (set via pi.events by other extensions).
-	let overrideLabel: string | undefined;
-
-	// undefined restores pi's default working message ("Working...").
-	const currentLabel = (): string | undefined => {
-		if (overrideLabel !== undefined) return overrideLabel;
-		if (activeTools.size > 0) return [...activeTools.values()].at(-1);
-		return streamLabel;
+	const status = new WorkingStatus();
+	type Context = {
+		ui: {
+			theme: ExtensionContext["ui"]["theme"];
+			setWorkingMessage(message?: string): void;
+			setWorkingVisible(visible: boolean): void;
+			setHiddenThinkingLabel(label: string): void;
+		};
 	};
-	const apply = (ctx: CtxWithUI) => {
-		lastCtx = ctx;
-		const label = currentLabel();
+	let lastCtx: Context | undefined;
+	const apply = (ctx: Context) => {
+		const label = status.label;
 		// Embedded indicators inherit the editor's thinking-level color. Keep
 		// activity text neutral; the border and spinner still show that level.
 		ctx.ui.setWorkingMessage(label === undefined ? undefined : ctx.ui.theme.fg("muted", label));
 	};
-
-	// --- 3. Event-bus override channel ---------------------------------------
-	// Allows other extensions to temporarily override the footer label for
-	// long-running non-streaming operations.
+	const update = (kind: string, data: unknown, ctx: Context) => {
+		lastCtx = ctx;
+		if (status.update(kind, data)) apply(ctx);
+	};
+	pi.on("session_start", (_event, ctx) => {
+		lastCtx = ctx;
+		status.update("session_start", null);
+		ctx.ui.setHiddenThinkingLabel("(...)");
+	});
+	pi.on("agent_start", (_event, ctx) => {
+		lastCtx = ctx;
+		ctx.ui.setHiddenThinkingLabel("(...)");
+		update("agent_start", null, ctx);
+	});
 	pi.events.on("thinking-status:override", (data) => {
-		const label = (data as { label?: string | undefined }).label;
 		if (!lastCtx) return;
-		if (label !== undefined && label !== "") {
-			overrideLabel = label;
-			lastCtx.ui.setWorkingVisible(true);
-			apply(lastCtx);
-		} else {
-			overrideLabel = undefined;
-			apply(lastCtx);
-		}
+		status.update("working_override", data);
+		if (status.message(false) !== undefined) lastCtx.ui.setWorkingVisible(true);
+		apply(lastCtx);
 	});
-
-	pi.on("message_update", (event, ctx) => {
-		// `AgentMessage` is a union (user/assistant/tool/custom); only some members
-		// carry `content`, so read it structurally and key off the block's `type`.
-		const content = (event.message as { content?: unknown } | undefined)?.content;
-		const blocks = Array.isArray(content) ? content : undefined;
-		const last = blocks ? blocks[blocks.length - 1] : undefined;
-		let next: string | undefined;
-		if (last?.type === "thinking") next = "Thinking...";
-		else if (last?.type === "toolCall") next = TOOL_LABELS[last.name];
-		if (next === streamLabel) return;
-		streamLabel = next;
-		apply(ctx);
-	});
-
-	pi.on("tool_execution_start", (event, ctx) => {
-		const label = TOOL_LABELS[event.toolName];
-		if (!label) return; // leave the default for unmapped tools
-		activeTools.set(event.toolCallId, label);
-		apply(ctx);
-	});
-	pi.on("tool_execution_end", (event, ctx) => {
-		if (!activeTools.delete(event.toolCallId)) return;
-		apply(ctx);
-	});
-
-	// Reset so nothing lingers past the streaming phase or the turn.
-	pi.on("message_end", (_event, ctx) => {
-		if (streamLabel === undefined) return;
-		streamLabel = undefined;
-		apply(ctx);
-	});
-	pi.on("agent_end", (_event, ctx) => {
-		streamLabel = undefined;
-		activeTools.clear();
-		apply(ctx);
-	});
+	pi.on("message_update", (event, ctx) => update("message_update", event.message, ctx));
+	pi.on("tool_execution_start", (event, ctx) => update("tool_execution_start", event, ctx));
+	pi.on("tool_execution_end", (event, ctx) => update("tool_execution_end", event, ctx));
+	pi.on("message_end", (_event, ctx) => update("message_end", null, ctx));
+	pi.on("agent_end", (_event, ctx) => update("agent_end", null, ctx));
 }

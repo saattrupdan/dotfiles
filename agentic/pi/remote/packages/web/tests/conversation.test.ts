@@ -96,6 +96,8 @@ test(
       const commandIds: string[] = [];
       let actionStatus = "persisted";
       let extraSessions: unknown[] = [];
+      let extraFolders: unknown[] = [];
+      let extraHistory: unknown[] = [];
       let historyGate: Promise<void> | undefined;
       let homeGate: Promise<void> | undefined;
       let pagedHistory = false;
@@ -170,6 +172,7 @@ test(
         else if (url.pathname === "/api/v1/session-folders")
           body = [
             { cwd: "/Users/fixture", count: 1, lastActivity: 1000 },
+            ...extraFolders,
             { cwd: "/private/fixture", count: 1, lastActivity: 1000 },
             { cwd: "/tmp/fixture", count: 1, lastActivity: 1000 },
           ];
@@ -177,7 +180,9 @@ test(
           url.pathname === "/api/v1/devices" ||
           url.pathname === "/api/v1/favorites"
         )
-          body = [];
+          body = url.pathname.endsWith("/devices")
+            ? [{ id: "fixture-phone", name: "Dan’s iPhone", created: 1000 }]
+            : [];
         else if (url.pathname === "/api/v1/directories") {
           const current = url.searchParams.get("path") || "/Users/you";
           body = {
@@ -294,7 +299,7 @@ test(
         }
         if (body && typeof body === "object" && "messages" in body)
           body.messages = await toolDisplay.messages(
-            body.messages,
+            [...body.messages, ...extraHistory],
             "/Users/fixture",
             id,
           );
@@ -547,6 +552,22 @@ test(
               ),
             )
             .toBeLessThan(3);
+          // A browser restoring focus scroll is not a gesture to read older messages.
+          await page.evaluate(() => {
+            window.scrollTo({ top: window.scrollY - 185, behavior: "instant" });
+            window.dispatchEvent(new Event("scroll"));
+            window.dispatchEvent(new Event("resize"));
+          });
+          await expect
+            .poll(() =>
+              page.evaluate(
+                () =>
+                  document.documentElement.scrollHeight -
+                  window.scrollY -
+                  window.innerHeight,
+              ),
+            )
+            .toBeLessThan(3);
           const beforeScroll = await panel.evaluate((element) => ({
             documentY: window.scrollY,
             height: element.clientHeight,
@@ -672,6 +693,32 @@ test(
           actionStatus = "persisted";
         },
       );
+      await t.test(
+        "live working status matches laptop wording and clears when finished",
+        async () => {
+          for (const message of ["Thinking...", "Storing to memory…", "Bashing..."]) {
+            socket!.send(
+              JSON.stringify({
+                version: 1,
+                type: "working_status",
+                sessionId: id,
+                data: { message },
+              }),
+            );
+            await expect(page.locator(".working-status")).toHaveText(message);
+            await expect(page.locator(".working-status svg.spinning")).toHaveCount(1);
+          }
+          socket!.send(
+            JSON.stringify({
+              version: 1,
+              type: "working_status",
+              sessionId: id,
+              data: { message: null },
+            }),
+          );
+          await expect(page.locator(".working-status")).toHaveCount(0);
+        },
+      );
       await t.test("home separates active sessions from folder history", async () => {
         await page.setViewportSize({ width: 402, height: 874 });
         await publish(undefined);
@@ -780,6 +827,60 @@ test(
         ).toHaveCount(0);
         assert.equal(folderRequests.length, 0);
       });
+      await t.test(
+        "Home groups status before recency and alphabetizes folder names without case",
+        async () => {
+          extraSessions = [
+            {
+              ...session(),
+              sessionId: "00000000-0000-4000-8000-000000000041",
+              name: "Newest idle",
+              state: "idle",
+              lastActivity: 9000,
+            },
+            {
+              ...session(),
+              sessionId: "00000000-0000-4000-8000-000000000042",
+              name: "Older running",
+              state: "running",
+              lastActivity: 1,
+            },
+            {
+              ...session(),
+              sessionId: "00000000-0000-4000-8000-000000000043",
+              name: "Answer needed",
+              state: "answer_needed",
+              lastActivity: 8000,
+            },
+          ];
+          extraFolders = [
+            { cwd: "/Users/fixture/Zebra", count: 1, lastActivity: 2000 },
+            { cwd: "/Users/fixture/apple", count: 1, lastActivity: 1 },
+            { cwd: "/Users/fixture/Banana", count: 1, lastActivity: 3000 },
+          ];
+          await page.waitForLoadState("networkidle");
+          await page.reload();
+          await page.getByRole("link", { name: "Pi Remote", exact: true }).click();
+          const active = page.getByRole("region", { name: "Active sessions" });
+          await expect(active.locator("h3")).toHaveText([
+            "Older running",
+            "Answer needed",
+            "Newest idle",
+            "Phone layout fixture",
+          ]);
+          await expect(page.locator("button.folder h3")).toHaveText([
+            "apple",
+            "Banana",
+            "fixture",
+            "Zebra",
+          ]);
+          extraSessions = [];
+          extraFolders = [];
+          await page.waitForLoadState("networkidle");
+          await page.reload();
+          await page.getByRole("link", { name: "Pi Remote", exact: true }).click();
+        },
+      );
       await t.test(
         "opening a conversation shows an immediate spinner until the transcript is ready",
         async () => {
@@ -926,10 +1027,54 @@ test(
             await expect(page.locator(".message")).toHaveCount(10);
             await expect(page.locator(".opening-indicator")).toHaveCount(0);
             assert.equal(olderFetches, 0);
+            await page.evaluate(() => {
+              const host = window as Window & {
+                queuedFrames?: Map<number, () => void>;
+                releaseFrames?: () => void;
+              };
+              const request = window.requestAnimationFrame.bind(window),
+                cancel = window.cancelAnimationFrame.bind(window);
+              const queued = new Map<number, () => void>();
+              host.queuedFrames = queued;
+              window.requestAnimationFrame = (callback) => {
+                const frame = request((time) =>
+                  queued.set(frame, () => callback(time)),
+                );
+                return frame;
+              };
+              window.cancelAnimationFrame = (frame) => {
+                queued.delete(frame);
+                cancel(frame);
+              };
+              host.releaseFrames = () => {
+                window.requestAnimationFrame = request;
+                window.cancelAnimationFrame = cancel;
+                for (const callback of queued.values()) callback();
+                queued.clear();
+              };
+            });
+            socket!.send(
+              JSON.stringify({
+                version: 1,
+                type: "working_status",
+                sessionId: id,
+                data: { message: "Thinking..." },
+              }),
+            );
+            await expect
+              .poll(() =>
+                page.evaluate(
+                  () =>
+                    (window as Window & { queuedFrames?: Map<number, () => void> })
+                      .queuedFrames?.size ?? 0,
+                ),
+              )
+              .toBeGreaterThan(0);
             olderGate = new Promise((resolve) => (release = resolve));
             await page.evaluate(() => {
               window.dispatchEvent(new WheelEvent("wheel", { deltaY: -600 }));
               window.scrollTo({ top: 600, behavior: "instant" });
+              (window as Window & { releaseFrames?: () => void }).releaseFrames?.();
             });
             await expect.poll(() => olderFetches).toBe(1);
             await expect(
@@ -1005,6 +1150,173 @@ test(
         },
       );
       await t.test(
+        "edit diffs retain native colours and every shell command line has one format",
+        async () => {
+          extraHistory = [
+            {
+              role: "assistant",
+              content: [
+                {
+                  type: "toolCall",
+                  id: "styled-shell",
+                  name: "bash",
+                  arguments: { command: "printf first\n\nprintf second" },
+                },
+                {
+                  type: "toolCall",
+                  id: "styled-edit",
+                  name: "edit",
+                  arguments: { path: "styles.ts", oldText: "OLD", newText: "NEW" },
+                },
+              ],
+            },
+            {
+              role: "toolResult",
+              toolCallId: "styled-shell",
+              toolName: "bash",
+              content: [{ type: "text", text: "firstsecond" }],
+            },
+            {
+              role: "toolResult",
+              toolCallId: "styled-edit",
+              toolName: "edit",
+              content: [{ type: "text", text: "Edited" }],
+              details: {
+                diff: '-1 const OLD = "<img src=x onerror=alert(1)>";\n+1 const NEW = "safe";\n 2 unchanged',
+              },
+            },
+          ];
+          try {
+            await page.reload();
+            await expect(page.locator(".opening-indicator")).toHaveCount(0);
+            const shell = page.locator(".tool-entry.shell");
+            await expect(shell).toContainText("printf second");
+            const styles = await shell
+              .locator(".tool-name,.tool-line.command")
+              .evaluateAll((elements) =>
+                elements.map((element) => {
+                  const css = getComputedStyle(element);
+                  return {
+                    font: css.fontFamily,
+                    size: css.fontSize,
+                    color: css.color,
+                    whiteSpace: css.whiteSpace,
+                  };
+                }),
+              );
+            assert(styles.length >= 2);
+            for (const style of styles) assert.deepEqual(style, styles[0]);
+            await expect(page.locator(".tool-line.removed")).toHaveCSS(
+              "color",
+              "rgb(255, 181, 168)",
+            );
+            await expect(page.locator(".tool-line.added")).toHaveCSS(
+              "color",
+              "rgb(143, 219, 171)",
+            );
+            await expect(page.locator(".tool-entry.edit")).toContainText(
+              "<img src=x onerror=alert(1)>",
+            );
+            await expect(page.locator(".tool-entry.edit img")).toHaveCount(0);
+          } finally {
+            extraHistory = [];
+            await page.waitForLoadState("networkidle");
+            await page.reload();
+          }
+        },
+      );
+      await t.test(
+        "Back restores Home independently, anchors after refresh, and respects a new scroll",
+        async () => {
+          let release: (() => void) | undefined;
+          extraSessions = Array.from({ length: 40 }, (_, index) => ({
+            ...session(),
+            sessionId: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+            name: `Earlier session ${index}`,
+            lastActivity: 2000 + index,
+          }));
+          extraFolders = Array.from({ length: 15 }, (_, index) => ({
+            cwd: `/Users/more-${index}`,
+            count: 1,
+            lastActivity: 1000,
+          }));
+          const active = page
+            .locator(".home .session")
+            .filter({ hasText: session().name });
+          try {
+            await page.getByRole("link", { name: "Pi Remote", exact: true }).click();
+            await expect(page.locator(".home .session")).toHaveCount(41);
+            await active.evaluate((element) =>
+              window.scrollTo({
+                top: window.scrollY + element.getBoundingClientRect().top - 200,
+                behavior: "instant",
+              }),
+            );
+            const originalY = (await active.boundingBox())!.y;
+            assert(originalY > 190 && originalY < 210);
+            assert((await page.evaluate(() => window.scrollY)) > 1000);
+            await active.click();
+            await expect(page.locator(".opening-indicator")).toHaveCount(0);
+            await expect
+              .poll(() =>
+                page.evaluate(
+                  () =>
+                    document.documentElement.scrollHeight -
+                    window.innerHeight -
+                    window.scrollY,
+                ),
+              )
+              .toBeLessThan(3);
+            homeGate = new Promise((resolve) => (release = resolve));
+            await page.getByRole("button", { name: "Go back", exact: true }).click();
+            await expect(active).toBeVisible();
+            await expect
+              .poll(async () => Math.abs((await active.boundingBox())!.y - originalY))
+              .toBeLessThan(2);
+            extraSessions.push({
+              ...session(),
+              sessionId: "00000000-0000-4000-8000-999999999999",
+              name: "New top session",
+              lastActivity: 5000,
+              state: "running",
+            });
+            homeGate = undefined;
+            release();
+            await expect(page.locator(".home .session")).toHaveCount(42);
+            await expect(page.locator("main > section")).toHaveAttribute(
+              "aria-busy",
+              "false",
+            );
+            await expect
+              .poll(async () => Math.abs((await active.boundingBox())!.y - originalY))
+              .toBeLessThan(2);
+            await active.click();
+            await expect(page.locator(".opening-indicator")).toHaveCount(0);
+            homeGate = new Promise((resolve) => (release = resolve));
+            await page.getByRole("button", { name: "Go back", exact: true }).click();
+            await expect(active).toBeVisible();
+            await page.evaluate(() => {
+              window.dispatchEvent(new WheelEvent("wheel", { deltaY: -500 }));
+              window.scrollTo({ top: 0, behavior: "instant" });
+            });
+            homeGate = undefined;
+            release();
+            await expect(page.locator("main > section")).toHaveAttribute(
+              "aria-busy",
+              "false",
+            );
+            await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+          } finally {
+            homeGate = undefined;
+            release?.();
+            extraSessions = [];
+            extraFolders = [];
+            await page.waitForLoadState("networkidle");
+            await page.reload();
+          }
+        },
+      );
+      await t.test(
         "minimal navigation keeps the cog accessible and mobile screens usable",
         async () => {
           await page.setViewportSize({ width: 402, height: 874 });
@@ -1020,6 +1332,16 @@ test(
           await expect(
             page.getByRole("heading", { name: "Settings", exact: true }),
           ).toBeVisible();
+          await expect(page.getByText("Privacy", { exact: true })).toHaveCount(0);
+          await expect(page.locator("details")).toHaveCount(0);
+          await expect(
+            page.getByRole("heading", { name: "Notifications", exact: true }),
+          ).toBeVisible();
+          await expect(page.getByText("Dan’s iPhone", { exact: true })).toBeVisible();
+          const revokeBounds = await page
+            .getByRole("button", { name: "Revoke", exact: true })
+            .boundingBox();
+          assert(revokeBounds && revokeBounds.height >= 44);
           if (screenshots)
             await page.screenshot({
               path: path.join(screenshots, "settings.png"),
@@ -1030,6 +1352,13 @@ test(
             page.getByRole("heading", { name: "Conversations", exact: true }),
           ).toBeVisible();
           assert.equal(folderRequests.length, 0);
+          await expect(page.locator("header .brand")).toHaveText("");
+          assert.equal(
+            await page
+              .locator("header .brand")
+              .evaluate((el) => getComputedStyle(el).paddingLeft),
+            "4px",
+          );
           await expect(page.locator("button.folder")).toHaveCount(1);
           await expect(page.getByText("/private/fixture", { exact: true })).toHaveCount(
             0,

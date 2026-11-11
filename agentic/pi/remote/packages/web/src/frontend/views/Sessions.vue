@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { RouterLink } from "vue-router";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { RouterLink, onBeforeRouteLeave } from "vue-router";
 import { isUsersDirectory } from "../lib/session-paths.ts";
 import LoadingIndicator from "../components/LoadingIndicator.vue";
 import { isUntitled } from "../lib/conversation-name.ts";
@@ -12,6 +12,48 @@ const search = ref("");
 const filter = ref("all");
 const error = ref("");
 const loading = ref(false);
+const root = ref<HTMLElement>();
+let restoring: typeof store.homePosition;
+function captureHome() {
+  if (folder.value !== undefined || !store.homeLoaded) return;
+  const edge = document.querySelector("header")?.getBoundingClientRect().bottom ?? 0;
+  const row = Array.from(
+    root.value?.querySelectorAll<HTMLElement>("[data-home-key]") ?? [],
+  ).find((row) => row.getBoundingClientRect().bottom > edge);
+  store.homePosition = {
+    top: window.scrollY,
+    search: search.value,
+    anchor: row
+      ? { key: row.dataset.homeKey!, offset: row.getBoundingClientRect().top }
+      : undefined,
+  };
+}
+function restoreHome() {
+  if (!restoring || folder.value !== undefined || !store.homeLoaded) return;
+  const anchor = restoring.anchor;
+  const row =
+    anchor &&
+    Array.from(root.value?.querySelectorAll<HTMLElement>("[data-home-key]") ?? []).find(
+      (row) => row.dataset.homeKey === anchor.key,
+    );
+  const top =
+    row && anchor
+      ? window.scrollY + row.getBoundingClientRect().top - anchor.offset
+      : restoring.top;
+  window.scrollTo({ top: Math.max(0, top), behavior: "instant" });
+}
+function cancelRestore() {
+  restoring = undefined;
+}
+function openFolder(cwd: string) {
+  captureHome();
+  cancelRestore();
+  store.folder = cwd;
+}
+onBeforeRouteLeave(() => {
+  captureHome();
+  cancelRestore();
+});
 let navigation = 0;
 async function browse(cwd?: string) {
   const expected = ++navigation;
@@ -20,34 +62,67 @@ async function browse(cwd?: string) {
     return;
   }
 
-  search.value = "";
+  restoring = cwd === undefined ? store.homePosition : undefined;
+  search.value = restoring?.search ?? "";
   filter.value = "all";
   error.value = "";
   loading.value = true;
+  await nextTick();
+  if (expected !== navigation) return;
+  if (restoring) restoreHome();
+  else window.scrollTo({ top: 0, behavior: "instant" });
   try {
     if (cwd === undefined) await store.loadFolders();
     else await store.refresh(cwd);
   } catch (e) {
     if (expected === navigation) error.value = (e as Error).message;
   } finally {
-    if (expected === navigation) loading.value = false;
+    if (expected === navigation) {
+      loading.value = false;
+      await nextTick();
+      if (expected === navigation) {
+        restoreHome();
+        cancelRestore();
+      }
+    }
   }
 }
 onMounted(() => {
   store.connect("");
+  restoreHome();
+  window.addEventListener("wheel", cancelRestore, { passive: true });
+  window.addEventListener("touchmove", cancelRestore, { passive: true });
+  window.addEventListener("keydown", cancelRestore);
 });
 watch(folder, browse, { immediate: true });
 onUnmounted(() => {
   navigation++;
+  cancelRestore();
+  window.removeEventListener("wheel", cancelRestore);
+  window.removeEventListener("touchmove", cancelRestore);
+  window.removeEventListener("keydown", cancelRestore);
   store.disconnect(true);
 });
 const folders = computed(() =>
-  store.folders.filter(
-    (entry) =>
-      isUsersDirectory(entry.cwd) &&
-      entry.cwd.toLowerCase().includes(search.value.toLowerCase()),
-  ),
+  store.folders
+    .filter(
+      (entry) =>
+        isUsersDirectory(entry.cwd) &&
+        entry.cwd.toLowerCase().includes(search.value.toLowerCase()),
+    )
+    .sort(
+      (a, b) =>
+        basename(a.cwd).localeCompare(basename(b.cwd), undefined, {
+          sensitivity: "base",
+        }) || a.cwd.localeCompare(b.cwd, undefined, { sensitivity: "base" }),
+    ),
 );
+const statusOrder: Record<string, number> = {
+  running: 0,
+  answer_needed: 1,
+  waiting: 2,
+  idle: 3,
+};
 const activeStates = new Set(["idle", "running", "waiting", "answer_needed"]);
 const showListing = computed(
   () => !loading.value || (folder.value === undefined && store.homeLoaded),
@@ -65,7 +140,7 @@ const filtered = computed(() =>
     )
     .sort(
       (a, b) =>
-        Number(activeStates.has(b.state)) - Number(activeStates.has(a.state)) ||
+        (statusOrder[a.state] ?? 4) - (statusOrder[b.state] ?? 4) ||
         b.lastActivity - a.lastActivity,
     ),
 );
@@ -77,7 +152,10 @@ const active = computed(() =>
 const basename = (cwd: string) => cwd.split("/").filter(Boolean).at(-1) || cwd;
 </script>
 <template>
-  <section :aria-busy="loading">
+  <section
+    ref="root"
+    :aria-busy="loading"
+  >
     <div class="row heading">
       <h1>Conversations</h1>
       <RouterLink
@@ -114,6 +192,7 @@ const basename = (cwd: string) => cwd.split("/").filter(Boolean).at(-1) || cwd;
           folder === undefined ? 'Search sessions and folders' : 'Search conversations'
         "
         placeholder="Search"
+        @input="cancelRestore"
       />
       <select
         v-if="folder !== undefined"
@@ -164,6 +243,7 @@ const basename = (cwd: string) => cwd.split("/").filter(Boolean).at(-1) || cwd;
             :key="session.sessionId"
             :to="`/session/${session.sessionId}`"
             class="session"
+            :data-home-key="'session:' + session.sessionId"
           >
             <div class="row">
               <span :class="['dot', session.state]" />
@@ -194,7 +274,8 @@ const basename = (cwd: string) => cwd.split("/").filter(Boolean).at(-1) || cwd;
             v-for="entry in folders"
             :key="entry.cwd"
             class="folder"
-            @click="store.folder = entry.cwd"
+            :data-home-key="'folder:' + entry.cwd"
+            @click="openFolder(entry.cwd)"
           >
             <div class="row">
               <h3>{{ basename(entry.cwd) }}</h3>

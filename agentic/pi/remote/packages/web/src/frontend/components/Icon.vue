@@ -1,6 +1,10 @@
 <script setup lang="ts">
 defineProps<{ name: string }>();
 const paths: Record<string, string> = {
+  phone:
+    "M7 2h10a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1ZM11 18h2",
+  bell: "M18 8a6 6 0 0 0-12 0c0 7-3 7-3 8h18c0-1-3-1-3-8M10 20h4",
+  exit: "M10 4H4v16h6m4-13 5 5-5 5m-5-5h12",
   connection:
     "m3 3 18 18M2 8.5a16 16 0 0 1 3-2m4-2a16 16 0 0 1 13 4M5 12a11 11 0 0 1 4-2m5 0a11 11 0 0 1 5 2M8.5 15.5a5 5 0 0 1 7 0M12 19h.01",
   back: "m14 6-6 6 6 6M8 12h13",

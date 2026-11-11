@@ -422,3 +422,130 @@ test("older paging waits for an in-flight provenance refresh instead of prependi
     ["Canonical older", "Current"],
   );
 });
+
+test("newer working status survives older metadata and lock clears it", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
+  Object.assign(globalThis, {
+    document: { visibilityState: "visible", addEventListener() {} },
+    window: { addEventListener() {} },
+    location: { protocol: "https:", host: "fixture" },
+    WebSocket: Socket,
+  });
+  setActivePinia(createPinia());
+  const auth = useAuth();
+  auth.unlocked = true;
+  auth.visible = true;
+  const store = useSessions();
+  const saved = {
+    sessionId: "session",
+    epoch: 1,
+    sequence: 1,
+    state: "running",
+    workingMessage: "Thinking...",
+  } as Session;
+  store.sessions = [saved];
+  let finish!: (value: unknown) => void;
+  auth.request = (() =>
+    new Promise((resolve) => (finish = resolve))) as typeof auth.request;
+  store.connect("session");
+  const pending = store.detail("session");
+  Socket.latest.onmessage?.({
+    data: JSON.stringify({
+      type: "working_status",
+      sessionId: "session",
+      sequence: 3,
+      data: { message: "Bashing..." },
+    }),
+  });
+  finish({ ...saved, sequence: 2, workingMessage: "Thinking..." });
+  await pending;
+  assert.equal(store.sessions[0]!.workingMessage, "Bashing...");
+  Socket.latest.onmessage?.({
+    data: JSON.stringify({
+      type: "working_status",
+      sessionId: "session",
+      sequence: 4,
+      data: { message: null },
+    }),
+  });
+  assert.equal(store.sessions[0]!.workingMessage, undefined);
+  store.homePosition = {
+    top: 850,
+    search: "private",
+    anchor: { key: "private-row", offset: 120 },
+  };
+  auth.clear();
+  assert.equal(store.homePosition, undefined);
+  assert.deepEqual(store.sessions, []);
+});
+
+test("disconnect clears activity without losing drafts or history; delayed metadata cannot restore it", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
+  Object.assign(globalThis, {
+    document: { visibilityState: "visible", addEventListener() {} },
+    window: { addEventListener() {} },
+    location: { protocol: "https:", host: "fixture" },
+    WebSocket: Socket,
+  });
+  setActivePinia(createPinia());
+  const auth = useAuth();
+  auth.unlocked = true;
+  auth.visible = true;
+  const store = useSessions();
+  const saved = {
+    sessionId: "session",
+    epoch: 1,
+    sequence: 4,
+    state: "running",
+    workingMessage: "Thinking...",
+  } as Session;
+  store.sessions = [{ ...saved }];
+  store.drafts.session = "Keep draft";
+  store.messages.session = [{ role: "user", content: "Keep history" }];
+  store.disconnect();
+  assert.equal(store.sessions[0]!.workingMessage, undefined);
+  assert.equal(store.drafts.session, "Keep draft");
+  assert.equal(store.messages.session![0]!.content, "Keep history");
+  store.connect("session");
+  store.sessions[0]!.workingMessage = "Bashing...";
+  let finish!: (value: unknown) => void;
+  auth.request = (() =>
+    new Promise((resolve) => (finish = resolve))) as typeof auth.request;
+  const pending = store.detail("session");
+  Socket.latest.onclose?.({ code: 1006 });
+  assert.equal(store.sessions[0]!.workingMessage, undefined);
+  finish(saved);
+  await pending;
+  assert.equal(store.sessions[0]!.workingMessage, undefined);
+  assert.equal(store.drafts.session, "Keep draft");
+});
+test("a delayed equal-sequence detail cannot resurrect stopped activity", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
+  Object.assign(globalThis, {
+    document: { visibilityState: "visible", addEventListener() {} },
+    window: { addEventListener() {} },
+  });
+  setActivePinia(createPinia());
+  const auth = useAuth();
+  auth.unlocked = true;
+  const store = useSessions();
+  const saved = {
+    sessionId: "session",
+    epoch: 1,
+    sequence: 4,
+    state: "running",
+    workingMessage: "Bashing...",
+  } as Session;
+  store.sessions = [saved];
+  const responses: ((value: unknown) => void)[] = [];
+  auth.request = (() =>
+    new Promise((resolve) => responses.push(resolve))) as typeof auth.request;
+  const older = store.detail("session");
+  const newer = store.detail("session");
+  responses[1]!({ ...saved, state: "stopped", workingMessage: undefined });
+  await newer;
+  responses[0]!(saved);
+  await older;
+  assert.equal(store.sessions[0]!.state, "stopped");
+  assert.equal(store.sessions[0]!.workingMessage, undefined);
+});

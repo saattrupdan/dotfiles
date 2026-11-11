@@ -5,6 +5,7 @@ import Icon from "./Icon.vue";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { messageReceipt, receiptLabel } from "../lib/receipts.ts";
+import type { ToolLineStyle } from "../../../../../../extensions/_tool-display/block-types.ts";
 import type { Message } from "../stores/sessions.ts";
 const props = defineProps<{
   messages: Message[];
@@ -52,6 +53,7 @@ type Tool = {
   result?: Message;
   args?: unknown;
   display?: string;
+  styles?: ToolLineStyle[];
 };
 type Row = (
   Tool | { kind: "message"; message: Message } | { kind: "thinking"; text: string }
@@ -87,6 +89,7 @@ const rows = computed<Row[]>(() => {
           name: message.toolName || calls.get(message.toolCallId || "")?.name || "tool",
           result: message,
           display: message.toolDisplay,
+          styles: message.toolDisplayStyles,
           args: calls.get(message.toolCallId || "")?.arguments,
         },
       ];
@@ -114,6 +117,7 @@ const rows = computed<Row[]>(() => {
           name: part.name || "tool",
           args: part.arguments,
           display: part.toolDisplay,
+          styles: part.toolDisplayStyles,
         });
     }
     return rows;
@@ -123,10 +127,13 @@ function callText(row: Tool) {
   return row.display?.split("\n")[0] || row.name;
 }
 function preview(row: Tool) {
-  return (
-    row.display?.split("\n").slice(1).join("\n").trim() ??
-    "Tool display unavailable. Expand for full output."
-  );
+  const lines = row.display?.split("\n").slice(1) ?? [
+    "Tool display unavailable. Expand for full output.",
+  ];
+  return lines.map((text, index) => ({
+    text,
+    style: row.styles?.[index + 1] ?? "plain",
+  }));
 }
 </script>
 <template>
@@ -142,16 +149,25 @@ function preview(row: Tool) {
       <article
         v-if="row.kind === 'tool'"
         class="tool-entry"
+        :class="{
+          shell: ['bash', 'powershell'].includes(row.name),
+          edit: row.name === 'edit',
+        }"
         :data-history-row="row.key"
       >
         <div class="tool-name">{{ callText(row) }}</div>
-        <p
-          v-if="preview(row)"
+        <div
+          v-if="preview(row).length"
           class="tool-preview"
           :class="{ error: row.result?.isError }"
         >
-          <span>{{ preview(row) }}</span>
-        </p>
+          <span
+            v-for="(line, index) in preview(row)"
+            :key="index"
+            :class="['tool-line', line.style]"
+            >{{ line.text || "​" }}</span
+          >
+        </div>
         <div
           v-if="toolsExpanded"
           class="tool-output"
@@ -300,6 +316,28 @@ function preview(row: Tool) {
   margin: 5px 0;
   font-size: 13px;
   color: var(--muted);
+}
+.tool-line {
+  display: block;
+}
+.tool-line.command {
+  color: #e9edef;
+  font-family: ui-monospace, monospace;
+}
+.shell .tool-preview,
+.edit .tool-preview {
+  font-family: ui-monospace, monospace;
+}
+.shell .tool-preview {
+  margin-top: 0;
+}
+.tool-line.added {
+  color: #8fdbab;
+  background: #25d36612;
+}
+.tool-line.removed {
+  color: #ffb5a8;
+  background: #ff6b6b12;
 }
 .tool-preview :deep(svg) {
   width: 14px;

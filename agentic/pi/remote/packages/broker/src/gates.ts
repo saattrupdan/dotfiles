@@ -40,6 +40,8 @@ export function sourceDigest(root: string) {
     "agents/main.md",
     "extensions/_remote_bridge",
     "extensions/_tool-display",
+    "extensions/_working-status",
+    "extensions/thinking-status",
     "extensions/mcp-collapse/display.ts",
     "extensions/skill/types.ts",
     "extensions/subagent/display.ts",
