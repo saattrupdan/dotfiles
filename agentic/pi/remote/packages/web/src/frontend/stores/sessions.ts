@@ -348,10 +348,19 @@ export const useSessions = defineStore("sessions", () => {
       !session.epoch ||
       ["stopped", "crashed", "interrupted"].includes(session.state)
     ) {
-      const result = await auth.request<Session>(`/sessions/${id}/recover`, {
-        method: "POST",
-        body: "{}",
-      });
+      let result: Session;
+      try {
+        result = await auth.request<Session>(`/sessions/${id}/recover`, {
+          method: "POST",
+          body: "{}",
+        });
+      } catch (error) {
+        if (error instanceof Error && error.message === "session_still_running")
+          throw new Error(
+            "Pi is still running on your Mac. Wait for it to reconnect before sending.",
+          );
+        throw error;
+      }
       if (expected !== generation || !auth.unlocked) throw new Error("Session locked.");
       merge([result]);
       session = result;

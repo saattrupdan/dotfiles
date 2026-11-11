@@ -1,4 +1,3 @@
-import { Id } from "../../protocol/src/index.ts";
 import { ToolDisplay } from "./tool-display.ts";
 import Fastify from "fastify";
 import cookie from "@fastify/cookie";
@@ -204,13 +203,10 @@ export async function createBroker(
       ...session,
       lastActivity: lastActivity(session),
       state: connected ? session.state : "stopped",
-      controlBlockedReason: session.nativeSessionId
-        ? !connected
-          ? "Resume this session on the Mac to reconnect phone control."
-          : session.nativeSessionEnvelope !== 1
-            ? "Phone control needs /reload in this session on the Mac."
-            : undefined
-        : undefined,
+      controlBlockedReason:
+        connected && session.nativeSessionId && session.nativeSessionEnvelope !== 1
+          ? "Phone control needs /reload in this session on the Mac."
+          : undefined,
     };
   };
   const nativeSummary = (n: NonNullable<Awaited<ReturnType<History["byId"]>>>) => ({
@@ -222,10 +218,6 @@ export async function createBroker(
     sequence: 0,
     epoch: 0,
     recoveryBlockedReason: n.ambiguous ? "ambiguous_session_id" : undefined,
-    controlBlockedReason:
-      !n.ambiguous && !Id.safeParse(n.nativeId).success
-        ? "Resume this session on the Mac to reconnect phone control."
-        : undefined,
   });
   const find = async (id: string) => {
     const live = store.session(id);
@@ -416,8 +408,6 @@ export async function createBroker(
     const native = await find(id);
     if ("ambiguous" in native && native.ambiguous)
       throw new RemoteError("ambiguous_session_id", 409);
-    if (!Id.safeParse(native.id).success)
-      throw new RemoteError("native_session_resume_required", 409);
     const claimed = recovering.get(id);
     if (claimed) return claimed;
     const pending = processes.launch(native.cwd, native);

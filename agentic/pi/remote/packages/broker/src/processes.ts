@@ -1,3 +1,4 @@
+import { sessionReference } from "./session-reference.ts";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -21,7 +22,44 @@ export class Processes {
     cwd = homeDirectory(cwd, this.config.home);
     if (!visibleWorkingDirectory(this.config, cwd))
       throw new RemoteError("invalid_directory", 403);
-    const id = saved?.id ?? randomUUID();
+    const id = saved ? sessionReference(saved.path, saved.id) : randomUUID();
+    const previous = this.connections.store.session(id);
+    if (previous && this.connections.isConnected(previous)) return previous;
+    const switched =
+      previous &&
+      this.connections.store
+        .sessions()
+        .some(
+          (session) =>
+            session.pid === previous.pid &&
+            session.instanceId === previous.instanceId &&
+            session.sessionId !== id &&
+            session.sessionFile !== previous.sessionFile &&
+            this.connections.isConnected(session),
+        );
+    if (previous && !switched) {
+      let identity = "";
+      try {
+        identity = execFileSync(
+          "ps",
+          ["-p", String(previous.pid), "-o", "uid=,comm="],
+          {
+            encoding: "utf8",
+            env: { ...process.env, LC_ALL: "C" },
+            stdio: ["ignore", "pipe", "ignore"],
+          },
+        ).trim();
+      } catch (error) {
+        if ((error as { status?: number }).status !== 1) throw error;
+      }
+      const [uid, ...command] = identity.split(/\s+/);
+      // A disconnected socket is not evidence that the registered Pi exited.
+      if (
+        Number(uid) === process.getuid?.() &&
+        path.basename(command.join(" ")) === "pi"
+      )
+        throw new RemoteError("session_still_running", 409);
+    }
     const name = `pi-remote-${randomUUID()}`;
     const launches = path.join(this.config.dataDir, "launches");
     fs.mkdirSync(launches, { recursive: true, mode: 0o700 });

@@ -98,8 +98,12 @@ test(
         recoveries = 0,
         starts = 0;
       let createError = false;
+      let native = false;
+      let recoveryError = false;
+      const deliveryOrder: string[] = [];
       const session = () => ({
         sessionId: id,
+        nativeSessionId: native ? "nvim-phone-resume-fixture" : undefined,
         name: "Phone layout fixture",
         cwd: "/Users/fixture",
         epoch: stopped ? 0 : 1,
@@ -129,6 +133,14 @@ test(
           body = session();
         } else if (url.pathname.endsWith("/recover")) {
           recoveries++;
+          deliveryOrder.push("recover");
+          if (recoveryError) {
+            await route.fulfill({
+              status: 504,
+              json: { error: "launch_timeout_check_mac" },
+            });
+            return;
+          }
           stopped = false;
           body = session();
         } else if (url.pathname === "/api/v1/sessions") {
@@ -239,6 +251,7 @@ test(
             next: null,
           };
         else if (url.pathname.endsWith("/actions")) {
+          deliveryOrder.push("send");
           submissions.push(route.request().postDataJSON().command);
           commandIds.push(route.request().postDataJSON().commandId);
           body = { status: actionStatus };
@@ -708,6 +721,52 @@ test(
         ).toHaveCount(0);
         assert.equal(folderRequests.length, 0);
       });
+      await t.test(
+        "Send starts a stopped native conversation before dispatch and preserves failed drafts",
+        async () => {
+          await publish(undefined);
+          native = true;
+          stopped = true;
+          recoveries = 0;
+          deliveryOrder.length = 0;
+          await page.goto(`http://127.0.0.1:${address.port}/`);
+          const message = page.getByRole("textbox", { name: "Message Pi" });
+          await message.fill("Resume my native conversation");
+          await expect(
+            page.getByRole("button", { name: "Send message" }),
+          ).toBeEnabled();
+          await page.getByRole("button", { name: "Send message" }).click();
+          await expect
+            .poll(
+              () =>
+                submissions.filter(
+                  (command) => command.text === "Resume my native conversation",
+                ).length,
+            )
+            .toBe(1);
+          assert.deepEqual(deliveryOrder, ["recover", "send"]);
+          assert.equal(recoveries, 1);
+          stopped = true;
+          recoveryError = true;
+          deliveryOrder.length = 0;
+          await page.waitForLoadState("networkidle");
+          await page.reload();
+          await message.fill("Keep my unsent draft");
+          await page.getByRole("button", { name: "Send message" }).click();
+          await expect(page.getByRole("alert")).toBeVisible();
+          await expect(message).toHaveValue("Keep my unsent draft");
+          assert.deepEqual(deliveryOrder, ["recover"]);
+          assert.equal(
+            submissions.filter((command) => command.text === "Keep my unsent draft")
+              .length,
+            0,
+          );
+          native = false;
+          stopped = false;
+          recoveryError = false;
+          recoveries = 0;
+        },
+      );
       await t.test(
         "minimal navigation keeps the cog accessible and mobile screens usable",
         async () => {

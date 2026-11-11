@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import net from "node:net";
+import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { Id } from "../../protocol/src/index.ts";
 import { sessionReference } from "../src/session-reference.ts";
@@ -589,7 +590,7 @@ function liveSession(
   };
 }
 
-test("native Neovim IDs share one public reference for live metadata and archived history", async () => {
+test("native Neovim IDs share one public reference for live metadata and archived history", async (t) => {
   const f = fixture();
   const saved = f.seed(
     path.join(f.config.agentDir, "sessions/project"),
@@ -670,9 +671,24 @@ test("native Neovim IDs share one public reference for live metadata and archive
       i++
     )
       await new Promise((r) => setTimeout(r, 10));
+    let launches = 0;
+    t.mock.method(
+      Processes.prototype,
+      "launch",
+      async (cwd: string, native: { id: string; path: string }) => {
+        launches++;
+        assert.equal(cwd, f.root);
+        assert.equal(native.id, saved.id);
+        assert.equal(native.path, saved.file);
+        return { ...broker.store.session(publicId)!, state: "idle", epoch: 2 };
+      },
+    );
     const stopped = await request(`/api/v1/sessions/${publicId}/recover`, "POST", {});
-    assert.equal(stopped.statusCode, 409);
-    assert.equal(stopped.json().error, "native_session_resume_required");
+    assert.equal(stopped.statusCode, 200, stopped.body);
+    assert.equal(stopped.json().sessionId, publicId);
+    assert.equal(launches, 1);
+    const archivedDetail = (await request(`/api/v1/sessions/${publicId}`)).json();
+    assert.equal(archivedDetail.controlBlockedReason, undefined);
     assert.deepEqual(fs.readFileSync(saved.file), original);
     const archived = (await new History(f.config).byId(publicId))!;
     assert.equal(archived.nativeId, saved.id);
@@ -684,3 +700,77 @@ test("native Neovim IDs share one public reference for live metadata and archive
     f.close();
   }
 });
+
+test(
+  "recovery distinguishes disconnected writers from switched-away histories",
+  { timeout: 10000 },
+  async (t) => {
+    const f = fixture();
+    const saved = f.seed(
+      path.join(f.config.agentDir, "sessions/project"),
+      "nvim-disconnected-fixture",
+    );
+    const broker = await createBroker(f.config);
+    const child = spawn(
+      process.execPath,
+      [
+        "-e",
+        "process.title='pi';process.stdout.write('READY');setInterval(()=>{},1000)",
+      ],
+      { stdio: ["ignore", "pipe", "ignore"] },
+    );
+    try {
+      await once(child.stdout!, "data");
+      const session = {
+        ...liveSession(saved, f.root),
+        sessionId: sessionReference(saved.file, saved.id),
+        nativeSessionId: saved.id,
+        pid: child.pid!,
+        state: "disconnected",
+      };
+      broker.store.save(session);
+      const tmux = t.mock.method(Processes.prototype, "tmux", () => {
+        throw new Error("Launch reached");
+      });
+      const response = await broker.app.inject({
+        method: "POST",
+        url: `/api/v1/sessions/${session.sessionId}/recover`,
+        headers: authentication(broker, f.config.origin),
+        payload: {},
+      });
+      assert.equal(response.statusCode, 409, response.body);
+      assert.equal(response.json().error, "session_still_running");
+      assert.equal(tmux.mock.callCount(), 0);
+      const other = f.seed(path.join(f.config.agentDir, "sessions/project"));
+      const switched = {
+        ...liveSession(other, f.root),
+        instanceId: session.instanceId,
+        pid: session.pid,
+      };
+      broker.store.save(switched);
+      t.mock.method(
+        broker.connections,
+        "isConnected",
+        (row: Session) => row.sessionId === switched.sessionId,
+      );
+      await assert.rejects(
+        new Processes(f.config, broker.connections).launch(f.root, {
+          id: saved.id,
+          path: saved.file,
+        }),
+        /Launch reached/,
+      );
+      assert.equal(
+        tmux.mock.callCount(),
+        1,
+        "Switched-away history must reach the launcher",
+      );
+    } finally {
+      const exited = once(child, "exit");
+      child.kill("SIGTERM");
+      await exited;
+      await broker.app.close();
+      f.close();
+    }
+  },
+);
