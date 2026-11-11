@@ -2,6 +2,8 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
 import { isUsersDirectory } from "../lib/session-paths.ts";
+import LoadingIndicator from "../components/LoadingIndicator.vue";
+import { isUntitled } from "../lib/conversation-name.ts";
 import Icon from "../components/Icon.vue";
 import { useSessions } from "../stores/sessions.ts";
 const store = useSessions();
@@ -51,6 +53,8 @@ const filtered = computed(() =>
   store.listing
     .filter(
       (session) =>
+        !isUntitled(session.name) &&
+        isUsersDirectory(session.cwd) &&
         (filter.value === "all" || session.state === filter.value) &&
         `${session.name} ${session.sessionId} ${session.cwd}`
           .toLowerCase()
@@ -130,13 +134,16 @@ const basename = (cwd: string) => cwd.split("/").filter(Boolean).at(-1) || cwd;
     >
       {{ error }}
     </p>
-    <p
-      v-if="loading"
-      class="small muted"
-      role="status"
+    <button
+      v-if="error"
+      @click="browse(folder)"
     >
-      Loading...
-    </p>
+      Try again
+    </button>
+    <LoadingIndicator
+      v-if="loading"
+      label="Loading conversations"
+    />
     <div
       v-else-if="folder === undefined"
       class="home"

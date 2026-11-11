@@ -417,6 +417,7 @@ export const useSessions = defineStore("sessions", () => {
       } catch {
         /* Never re-inject a command after an uncertain response. */
       }
+      if (statuses.value[commandId] === "persisted") return commandId;
       if (pending.value[commandId])
         pending.value[commandId]!.status = statuses.value[commandId]!;
       throw e;

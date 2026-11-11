@@ -14,6 +14,8 @@ const STATIC = [
   "/favicon-32x32.png",
   "/favicon.ico",
   "/fonts.css",
+  "/startup.css",
+  "/startup.js",
 ];
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(STATIC)));
@@ -30,6 +32,42 @@ self.addEventListener("activate", (event) =>
       ),
   ),
 );
+async function navigation(request) {
+  const controller = new AbortController();
+  let timeout;
+  try {
+    return await Promise.race([
+      fetch(request, { signal: controller.signal }).then(async (response) => {
+        if (!response.ok) throw new Error("Unable to load public shell");
+        const body = await response.arrayBuffer();
+        const headers = new Headers(response.headers);
+        headers.delete("Content-Length");
+        headers.delete("Content-Encoding");
+        return new Response(body, {
+          status: response.status,
+          statusText: response.statusText,
+          headers,
+        });
+      }),
+      new Promise((_resolve, reject) => {
+        timeout = setTimeout(() => {
+          controller.abort();
+          reject(new Error("Connection timed out"));
+        }, 3000);
+      }),
+    ]);
+  } catch {
+    return (
+      (await caches.match("/")) ||
+      new Response("Pi Remote is offline. Reconnect to the internet and try again.", {
+        status: 503,
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      })
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   if (
@@ -39,7 +77,7 @@ self.addEventListener("fetch", (event) => {
   )
     return;
   if (event.request.mode === "navigate") {
-    event.respondWith(fetch(event.request).catch(() => caches.match("/")));
+    event.respondWith(navigation(event.request));
     return;
   }
   if (

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 defineProps<{ name: string }>();
 const paths: Record<string, string> = {
+  connection:
+    "m3 3 18 18M2 8.5a16 16 0 0 1 3-2m4-2a16 16 0 0 1 13 4M5 12a11 11 0 0 1 4-2m5 0a11 11 0 0 1 5 2M8.5 15.5a5 5 0 0 1 7 0M12 19h.01",
   back: "m14 6-6 6 6 6M8 12h13",
   send: "m5 12 7-7 7 7M12 5v15",
   image:

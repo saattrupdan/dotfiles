@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
+import LoadingIndicator from "./components/LoadingIndicator.vue";
+import { isUntitled } from "./lib/conversation-name.ts";
 import Icon from "./components/Icon.vue";
 import { useAuth } from "./stores/auth.ts";
 import { useSessions } from "./stores/sessions.ts";
@@ -14,11 +16,19 @@ const current = computed(() =>
   sessions.sessions.find((s) => s.sessionId === route.params.id),
 );
 const headerTitle = computed(() =>
-  route.path.startsWith("/session/") ? current.value?.name : "",
+  route.path.startsWith("/session/")
+    ? isUntitled(current.value?.name)
+      ? "New conversation"
+      : current.value?.name
+    : "",
 );
 function back() {
   sessions.folder = undefined;
   void router.push("/");
+}
+async function retryConnection() {
+  await auth.reconnect();
+  if (auth.unlocked && auth.online) await sessions.resume();
 }
 const preventZoom = (event: Event) => event.preventDefault();
 const preventPinch = (event: TouchEvent) => {
@@ -75,6 +85,11 @@ watch(
         class="header-title"
         >{{ headerTitle }}</span
       >
+      <LoadingIndicator
+        v-if="auth.pending && !auth.initializing && !auth.verifying && auth.visible"
+        compact
+        label="Loading"
+      />
       <RouterLink
         v-if="auth.unlocked && auth.visible"
         to="/settings"
@@ -102,13 +117,32 @@ watch(
         </svg>
       </RouterLink>
     </header>
-    <div
-      v-if="!auth.online"
-      class="offline"
-      role="status"
+    <section
+      v-if="auth.connectionFailed && !auth.initializing && auth.visible"
+      class="connection-error"
+      :class="{ compact: auth.unlocked }"
+      role="alert"
     >
-      Mac offline. Check Tailscale.
-    </div>
+      <div
+        class="connection-symbol"
+        aria-hidden="true"
+      >
+        <Icon name="connection" />
+      </div>
+      <h1>{{ auth.networkAvailable ? "Can't reach your Mac" : "You're offline" }}</h1>
+      <p>Check your internet and Tailscale connection, then try again.</p>
+      <button
+        class="primary"
+        :disabled="auth.reconnecting"
+        :aria-busy="auth.reconnecting"
+        @click="retryConnection"
+      >
+        <Icon
+          v-if="auth.reconnecting"
+          name="spinner"
+        />{{ auth.reconnecting ? "Connecting..." : "Try again" }}
+      </button>
+    </section>
     <main
       v-if="auth.unlocked"
       v-show="auth.visible"
@@ -117,7 +151,10 @@ watch(
       <RouterView />
     </main>
     <main
-      v-if="!auth.unlocked || !auth.visible"
+      v-if="
+        (!auth.unlocked || !auth.visible) &&
+        (!auth.connectionFailed || auth.initializing || !auth.visible)
+      "
       class="unlock"
     >
       <img
@@ -128,7 +165,11 @@ watch(
         height="160"
       />
       <h1>{{ auth.visible ? "Pi Remote" : "Locked" }}</h1>
-      <template v-if="auth.visible">
+      <LoadingIndicator
+        v-if="auth.initializing"
+        label="Connecting to your Mac"
+      />
+      <template v-if="auth.visible && !auth.initializing">
         <template v-if="pairing">
           <label
             >Device name<input
@@ -137,9 +178,14 @@ watch(
           /></label>
           <button
             class="primary"
+            :disabled="auth.pairingBusy"
+            :aria-busy="auth.pairingBusy"
             @click="auth.pair(pairing, deviceName)"
           >
-            Pair iPhone
+            <Icon
+              v-if="auth.pairingBusy"
+              name="spinner"
+            />{{ auth.pairingBusy ? "Pairing..." : "Pair iPhone" }}
           </button>
         </template>
         <button
@@ -150,7 +196,10 @@ watch(
           :aria-busy="auth.verifying"
           @click="auth.unlock"
         >
-          {{ auth.verifying ? "Verifying…" : "Unlock" }}
+          <Icon
+            v-if="auth.verifying"
+            name="spinner"
+          />{{ auth.verifying ? "Verifying…" : "Unlock" }}
         </button>
         <details v-if="!auth.paired">
           <summary>Pair a device</summary>
@@ -252,10 +301,54 @@ header {
 .unlock details {
   margin-top: 24px;
 }
-.offline {
-  margin-top: 16px;
+.connection-error {
+  margin: 10dvh auto 24px;
+  max-width: 390px;
+  padding: 32px 24px;
+  text-align: center;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: radial-gradient(ellipse at top, #25d36613, transparent 75%), var(--panel);
+  box-shadow: 0 16px 56px #0002;
+}
+.connection-symbol {
+  display: inline-flex;
+  padding: 16px;
+  color: var(--accent);
+  background: #25d36612;
+  border-radius: 20px;
+}
+.connection-symbol :deep(svg) {
+  width: 30px;
+  height: 30px;
+}
+.connection-error h1 {
+  margin: 20px 0 8px;
+  font-size: 23px;
+  letter-spacing: -0.03em;
+}
+.connection-error p {
   color: var(--muted);
-  font-size: 13px;
+  line-height: 1.6;
+  font-size: 14px;
+}
+.connection-error button,
+.unlock .primary {
+  display: inline-flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+}
+.connection-error.compact {
+  margin: 16px auto;
+  padding: 16px;
+}
+.compact .connection-symbol {
+  display: none;
+}
+.compact h1 {
+  margin-top: 0;
+  font-size: 18px;
 }
 main.chat {
   padding: 0;

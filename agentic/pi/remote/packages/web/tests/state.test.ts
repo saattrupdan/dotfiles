@@ -196,3 +196,34 @@ test("read-only native sessions preserve drafts and never recover or submit comm
   assert.deepEqual(store.pending, {});
   assert.deepEqual(store.statuses, {});
 });
+
+test("a failed command response with confirmed persistence remains successful", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
+  Object.assign(globalThis, {
+    document: { visibilityState: "visible", addEventListener() {} },
+    window: { addEventListener() {} },
+  });
+  setActivePinia(createPinia());
+  const auth = useAuth();
+  const store = useSessions();
+  auth.unlocked = true;
+  const id = "c2d90aba-4820-494b-978d-1991e3e820cf";
+  let submissions = 0;
+  store.sessions = [{ sessionId: id, epoch: 1, state: "idle" } as Session];
+  auth.request = (async (url: string) => {
+    if (url.endsWith("/actions")) {
+      submissions++;
+      throw new Error("Connection timed out");
+    }
+    if (url.startsWith("/commands/")) return { status: "persisted" };
+    throw new Error("Unexpected request");
+  }) as typeof auth.request;
+  const commandId = await store.command(id, {
+    action: "message",
+    text: "Send only once",
+    images: [],
+  });
+  assert.equal(submissions, 1);
+  assert.equal(store.statuses[commandId], "persisted");
+  assert.equal(store.pending[commandId], undefined);
+});

@@ -4,6 +4,8 @@ import { useRoute } from "vue-router";
 import { useAuth } from "../stores/auth.ts";
 import { useSessions } from "../stores/sessions.ts";
 import Transcript from "../components/Transcript.vue";
+import LoadingIndicator from "../components/LoadingIndicator.vue";
+import { isUntitled } from "../lib/conversation-name.ts";
 import Icon from "../components/Icon.vue";
 import { remoteCommandId, receiptLabel } from "../lib/receipts.ts";
 import type { Command } from "../../../../protocol/src/index.ts";
@@ -50,6 +52,9 @@ const warnings = computed(() =>
 );
 const error = ref("");
 const sending = ref(false);
+const acting = ref(false);
+const uploading = ref(false);
+const loadError = ref("");
 const images = ref<string[]>([]);
 const previews = ref<string[]>([]);
 const answer = ref("");
@@ -119,13 +124,14 @@ async function load(initial = true) {
   if (initial) {
     opening.value = true;
     following = true;
+    loadError.value = "";
   }
   try {
     await store.detail(target);
     await store.history(target);
     if (disposed || expected !== loadGeneration || target !== id.value) return;
     store.connect(target);
-    name.value = session.value?.name ?? "";
+    name.value = isUntitled(session.value?.name) ? "" : (session.value?.name ?? "");
     const parts = (session.value?.model ?? "").split("/");
     provider.value = parts.shift() ?? "";
     model.value = parts.join("/");
@@ -135,7 +141,8 @@ async function load(initial = true) {
       if (!disposed && expected === loadGeneration) opening.value = false;
     });
   } catch (e) {
-    if (!disposed && expected === loadGeneration) error.value = (e as Error).message;
+    if (!disposed && expected === loadGeneration)
+      loadError.value = (e as Error).message;
     if (expected === loadGeneration) opening.value = false;
   }
 }
@@ -182,19 +189,23 @@ function growComposer(event: Event) {
   input.style.height = `${Math.min(input.scrollHeight, 140)}px`;
 }
 async function action(command: Command) {
+  if (acting.value) return;
   if (recoveryReason.value) {
     error.value = recoveryReason.value;
     return;
   }
   error.value = "";
+  acting.value = true;
   try {
     return await store.command(id.value, command);
   } catch (e) {
     error.value = (e as Error).message;
+  } finally {
+    acting.value = false;
   }
 }
 async function send() {
-  if (sending.value) return;
+  if (sending.value || uploading.value || acting.value || opening.value) return;
   if (recoveryReason.value) {
     error.value = recoveryReason.value;
     return;
@@ -240,31 +251,63 @@ async function send() {
 }
 async function upload(event: Event) {
   const input = event.target as HTMLInputElement;
+  if (uploading.value) return;
+  uploading.value = true;
+  const target = id.value;
   error.value = "";
-  for (const file of Array.from(input.files ?? [])) {
-    try {
-      const form = new FormData();
-      form.append("image", file);
-      const result = await auth.request<{ id: string }>(
-        `/uploads?sessionId=${id.value}`,
-        { method: "POST", body: form },
-      );
-      images.value.push(result.id);
-      previews.value.push(URL.createObjectURL(file));
-    } catch (e) {
-      error.value = (e as Error).message;
+  try {
+    for (const file of Array.from(input.files ?? [])) {
+      try {
+        const form = new FormData();
+        form.append("image", file);
+        const result = await auth.request<{ id: string }>(
+          `/uploads?sessionId=${target}`,
+          { method: "POST", body: form },
+        );
+        if (disposed || !auth.unlocked || id.value !== target) return;
+        images.value.push(result.id);
+        previews.value.push(URL.createObjectURL(file));
+      } catch (e) {
+        if (!disposed && auth.unlocked && id.value === target)
+          error.value = (e as Error).message;
+      }
     }
+  } finally {
+    uploading.value = false;
+    input.value = "";
   }
-  input.value = "";
 }
 </script>
 <template>
   <section
     ref="content"
     class="conversation"
+    :aria-busy="opening"
     :class="{ positioning: opening }"
   >
-    <h1 class="sr-only">{{ session?.name || "Conversation" }}</h1>
+    <div
+      v-if="opening"
+      class="opening-indicator"
+    >
+      <LoadingIndicator label="Opening conversation" />
+    </div>
+    <div
+      v-if="loadError"
+      class="card"
+      role="alert"
+    >
+      <p>{{ loadError }}</p>
+      <button @click="load()">Try again</button>
+    </div>
+    <h1 class="sr-only">
+      {{
+        isUntitled(session?.name) ? "New conversation" : session?.name || "Conversation"
+      }}
+    </h1>
+    <LoadingIndicator
+      v-if="acting && !sending"
+      label="Applying change"
+    />
     <div class="row conversation-toolbar">
       <button
         class="icon-button"
@@ -287,7 +330,7 @@ async function upload(event: Event) {
       <button
         v-if="session?.state === 'running'"
         class="icon-button danger"
-        :disabled="Boolean(recoveryReason)"
+        :disabled="acting || opening || Boolean(recoveryReason)"
         aria-label="Stop run"
         title="Stop run"
         @click="action({ action: 'stop_run' })"
@@ -302,7 +345,10 @@ async function upload(event: Event) {
         >
           <Icon name="sliders" /><span class="sr-only">Conversation settings</span>
         </summary>
-        <div class="card">
+        <fieldset
+          class="card"
+          :disabled="acting || opening"
+        >
           <label>Name<input v-model="name" /></label
           ><button @click="action({ action: 'rename', name })">Rename</button
           ><label>Provider<input v-model="provider" /></label
@@ -357,7 +403,7 @@ async function upload(event: Event) {
           >
             Run command
           </button>
-        </div>
+        </fieldset>
       </details>
     </div>
     <p
@@ -543,9 +589,9 @@ async function upload(event: Event) {
             class="image-button icon-button"
             aria-label="Attach image"
             title="Attach image"
-            ><Icon name="image" /><input
+            ><Icon :name="uploading ? 'spinner' : 'image'" /><input
               type="file"
-              :disabled="sending"
+              :disabled="sending || uploading"
               accept="image/png,image/jpeg,image/webp,image/heic,image/heif"
               multiple
               @change="upload" /></label
@@ -554,7 +600,12 @@ async function upload(event: Event) {
             aria-label="Send message"
             title="Send message"
             :disabled="
-              sending || Boolean(recoveryReason) || (!draft.trim() && !images.length)
+              sending ||
+              acting ||
+              uploading ||
+              opening ||
+              Boolean(recoveryReason) ||
+              (!draft.trim() && !images.length)
             "
             type="submit"
           >
@@ -566,6 +617,18 @@ async function upload(event: Event) {
   </section>
 </template>
 <style scoped>
+.opening-indicator {
+  position: fixed;
+  inset: var(--header-height) 0 0;
+  display: grid;
+  place-content: center;
+  pointer-events: none;
+  z-index: 30;
+}
+.conversation-settings fieldset {
+  min-width: 0;
+  margin: 0;
+}
 .conversation-toolbar {
   position: sticky;
   top: calc(var(--header-height) + env(safe-area-inset-top));

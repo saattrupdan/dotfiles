@@ -1,0 +1,71 @@
+html {
+  color-scheme: dark;
+  background: #0b141a;
+}
+body {
+  margin: 0;
+}
+.startup {
+  min-height: 100dvh;
+  box-sizing: border-box;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  padding: 32px;
+  text-align: center;
+  color: #e9edef;
+  font:
+    16px/1.6 system-ui,
+    sans-serif;
+  background: radial-gradient(ellipse at 50% 25%, #17352f 0, #0b141a 65%);
+}
+.startup img {
+  width: 128px;
+  height: 128px;
+}
+.startup h1 {
+  font-size: 24px;
+  letter-spacing: -0.04em;
+  margin: 12px 0 8px;
+}
+.startup p {
+  color: #a5b1b8;
+  max-width: 320px;
+  margin: 0 0 24px;
+}
+.startup button {
+  font: inherit;
+  background: #25d366;
+  color: #0b141a;
+  border: 0;
+  border-radius: 14px;
+  min-height: 48px;
+  padding: 10px 28px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.startup button:focus-visible {
+  outline: 3px solid #e9edef;
+  outline-offset: 4px;
+}
+.startup [hidden] {
+  display: none;
+}
+.startup-spinner {
+  width: 26px;
+  height: 26px;
+  border: 2px solid #25d36633;
+  border-top-color: #25d366;
+  border-radius: 50%;
+  animation: startup-spin 0.9s linear infinite;
+}
+@keyframes startup-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .startup-spinner {
+    animation: none;
+  }
+}

@@ -51,6 +51,7 @@ function select() {
   <li
     role="treeitem"
     :aria-expanded="expanded"
+    :aria-busy="loading"
     :aria-selected="selected === path"
   >
     <div
@@ -59,7 +60,8 @@ function select() {
     >
       <button
         class="icon-button expand"
-        :class="{ expanded }"
+        :class="{ expanded: expanded && !loading }"
+        :disabled="loading"
         :aria-label="`${expanded ? 'Collapse' : 'Expand'} ${name}`"
         @click="toggle"
       >

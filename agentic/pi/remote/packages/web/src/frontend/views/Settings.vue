@@ -1,28 +1,43 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
+import LoadingIndicator from "../components/LoadingIndicator.vue";
+import Icon from "../components/Icon.vue";
 import { useAuth } from "../stores/auth.ts";
 const auth = useAuth();
 const devices = ref<{ id: string; name: string; created: number }[]>([]);
 const error = ref("");
 const note = ref("");
+const loading = ref(true);
+const notifying = ref(false);
+const revoking = ref("");
 const notificationsSupported =
   typeof Notification !== "undefined" &&
   typeof PushManager !== "undefined" &&
   typeof navigator !== "undefined" &&
   "serviceWorker" in navigator;
 async function refresh() {
-  devices.value = await auth.request("/devices");
+  loading.value = true;
+  try {
+    devices.value = await auth.request("/devices");
+  } finally {
+    loading.value = false;
+  }
 }
 onMounted(() => refresh().catch((e) => (error.value = e.message)));
 async function revoke(id: string) {
+  if (revoking.value) return;
+  revoking.value = id;
   try {
     await auth.request(`/devices/${id}`, { method: "DELETE" });
     await refresh();
   } catch (e) {
     error.value = (e as Error).message;
+  } finally {
+    revoking.value = "";
   }
 }
 async function notifications() {
+  if (notifying.value) return;
   error.value = "";
   note.value = "";
   if (!notificationsSupported) {
@@ -31,6 +46,7 @@ async function notifications() {
       "from its Home Screen icon.";
     return;
   }
+  notifying.value = true;
   try {
     const permission = await Notification.requestPermission();
     if (permission !== "granted")
@@ -50,6 +66,8 @@ async function notifications() {
     note.value = "Generic completion and attention notifications enabled.";
   } catch (e) {
     error.value = (e as Error).message;
+  } finally {
+    notifying.value = false;
   }
 }
 </script>
@@ -66,10 +84,14 @@ async function notifications() {
         </p>
       </details>
       <button
-        :disabled="!notificationsSupported"
+        :disabled="!notificationsSupported || notifying"
+        :aria-busy="notifying"
         @click="notifications"
       >
-        Enable notifications
+        <Icon
+          v-if="notifying"
+          name="spinner"
+        />{{ notifying ? "Enabling..." : "Enable notifications" }}
       </button>
       <p
         v-if="!notificationsSupported"
@@ -87,6 +109,10 @@ async function notifications() {
       </p>
     </div>
     <h2>Devices</h2>
+    <LoadingIndicator
+      v-if="loading"
+      label="Loading devices"
+    />
     <div
       v-for="device in devices"
       :key="device.id"
@@ -100,9 +126,14 @@ async function notifications() {
       </div>
       <button
         class="danger"
+        :disabled="Boolean(revoking)"
+        :aria-busy="revoking === device.id"
         @click="revoke(device.id)"
       >
-        Revoke
+        <Icon
+          v-if="revoking === device.id"
+          name="spinner"
+        />{{ revoking === device.id ? "Revoking..." : "Revoke" }}
       </button>
     </div>
     <p class="muted small">Revoke removes access immediately. Pair again to return.</p>

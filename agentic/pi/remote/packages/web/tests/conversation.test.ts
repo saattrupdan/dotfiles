@@ -27,6 +27,7 @@ import '/src/frontend/assets/main.css';
 const pinia = createPinia();
 const auth = useAuth(pinia);
 auth.initialize = async () => {};
+auth.initializing = false;
 auth.unlocked = true;
 auth.visible = true;
 const router = createRouter({ history: createMemoryHistory(), routes: [
@@ -94,6 +95,7 @@ test(
       const commandIds: string[] = [];
       let actionStatus = "persisted";
       let extraSessions: unknown[] = [];
+      let historyGate: Promise<void> | undefined;
       let stopped = false,
         recoveries = 0,
         starts = 0;
@@ -117,6 +119,7 @@ test(
       });
       await page.route("**/api/v1/**", async (route) => {
         const url = new URL(route.request().url());
+        if (url.pathname.endsWith("/history") && historyGate) await historyGate;
         let body: unknown = {};
         if (
           url.pathname === "/api/v1/sessions" &&
@@ -146,9 +149,7 @@ test(
         } else if (url.pathname === "/api/v1/sessions") {
           if (url.searchParams.has("folder"))
             folderRequests.push(url.searchParams.get("folder")!);
-          body = url.searchParams.has("folder")
-            ? [session()]
-            : [session(), ...extraSessions];
+          body = [session(), ...extraSessions];
         } else if (url.pathname === `/api/v1/sessions/${id}`) body = session();
         else if (url.pathname === "/api/v1/session-folders")
           body = [
@@ -661,6 +662,12 @@ test(
           cwd: "/private/fixture",
           state: "running",
         });
+        for (const [index, name] of ["Untitled", " untitled ", "UNTITLED"].entries())
+          extraSessions.push({
+            ...session(),
+            sessionId: `00000000-0000-4000-8000-00000000001${index}`,
+            name,
+          });
         await page.getByRole("link", { name: "Pi Remote", exact: true }).click();
         const active = page.getByRole("region", {
           name: "Active sessions",
@@ -668,6 +675,7 @@ test(
         });
         const folders = page.getByRole("region", { name: "Folders", exact: true });
         await expect(active.getByRole("link")).toHaveCount(5);
+        await expect(active.getByRole("link", { name: /untitled/i })).toHaveCount(0);
         for (const state of ["running", "idle", "waiting", "answer_needed"])
           await expect(
             active.getByRole("link", { name: new RegExp(`Home ${state} fixture`) }),
@@ -721,6 +729,48 @@ test(
         ).toHaveCount(0);
         assert.equal(folderRequests.length, 0);
       });
+      await t.test(
+        "opening a conversation shows an immediate spinner until the transcript is ready",
+        async () => {
+          let release!: () => void;
+          historyGate = new Promise((resolve) => (release = resolve));
+          try {
+            await page
+              .getByRole("region", { name: "Active sessions", exact: true })
+              .getByRole("link", { name: /Phone layout fixture/ })
+              .click();
+            await expect(
+              page.getByRole("status").filter({ hasText: "Opening conversation" }),
+            ).toBeVisible();
+            await expect(page.locator(".transcript")).toBeHidden();
+            const screenshots = process.env.PI_REMOTE_VISUAL_PROOF_DIR;
+            if (screenshots)
+              await page.screenshot({
+                path: path.join(screenshots, "opening-conversation.png"),
+              });
+            release();
+            await expect(
+              page.getByRole("status").filter({ hasText: "Opening conversation" }),
+            ).toHaveCount(0);
+            await expect(
+              page.getByRole("textbox", { name: "Message Pi" }),
+            ).toBeVisible();
+            await expect
+              .poll(() =>
+                page.evaluate(
+                  () =>
+                    document.documentElement.scrollHeight -
+                    window.scrollY -
+                    window.innerHeight,
+                ),
+              )
+              .toBeLessThan(3);
+          } finally {
+            release();
+            historyGate = undefined;
+          }
+        },
+      );
       await t.test(
         "Send starts a stopped native conversation before dispatch and preserves failed drafts",
         async () => {
@@ -798,7 +848,16 @@ test(
             0,
           );
           await expect(page.getByText("/tmp/fixture", { exact: true })).toHaveCount(0);
+          extraSessions = [
+            {
+              ...session(),
+              sessionId: "00000000-0000-4000-8000-000000000022",
+              name: "Untitled",
+            },
+          ];
           await page.locator("button.folder").click();
+          await expect(page.getByRole("link", { name: /untitled/i })).toHaveCount(0);
+          extraSessions = [];
           await expect(
             page.getByRole("link", { name: /Phone layout fixture/ }),
           ).toBeVisible();

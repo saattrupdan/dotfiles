@@ -1,4 +1,5 @@
 import test from "node:test";
+import vm from "node:vm";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -155,4 +156,97 @@ test("phone stores do not persist sensitive state", () => {
   const auth = fs.readFileSync(path.join(root, "src/frontend/stores/auth.ts"), "utf8");
   assert(auth.includes("120000"));
   assert(auth.includes('window.addEventListener("pagehide"'));
+});
+
+test("service worker bounds stalled navigation and falls back to the public shell only", async () => {
+  const handlers: Record<string, (event: unknown) => void> = {};
+  let timeout: (() => void) | undefined;
+  let response: Promise<Response> | undefined;
+  const matched: string[] = [];
+  let fetched = 0;
+  let signal: AbortSignal | undefined;
+  vm.runInNewContext(fs.readFileSync(path.join(root, "public/sw.js"), "utf8"), {
+    self: {
+      location: { origin: "https://fixture.test" },
+      navigator: { onLine: true },
+      addEventListener: (name: string, fn: (typeof handlers)[string]) =>
+        (handlers[name] = fn),
+    },
+    caches: {
+      match: async (key: string) => {
+        matched.push(key);
+        return new Response("PUBLIC_SHELL");
+      },
+    },
+    fetch: (_request: unknown, options?: RequestInit) => {
+      fetched++;
+      signal = options?.signal ?? undefined;
+      return new Promise(() => {});
+    },
+    URL,
+    Response,
+    Headers,
+    AbortController,
+    setTimeout: (fn: () => void) => {
+      timeout = fn;
+      return 1;
+    },
+    clearTimeout() {},
+  });
+  const request = { url: "https://fixture.test/", mode: "navigate", method: "GET" };
+  handlers.fetch!({
+    request,
+    respondWith: (result: Promise<Response>) => (response = result),
+  });
+  assert(timeout, "Offline navigation needs a deadline");
+  timeout();
+  assert.equal(await (await response!).text(), "PUBLIC_SHELL");
+  assert.equal(signal?.aborted, true);
+  assert.deepEqual(matched, ["/"]);
+  handlers.fetch!({
+    request: { ...request, url: "https://fixture.test/api/v1/sessions" },
+    respondWith() {
+      throw new Error("Private requests must bypass shell cache");
+    },
+  });
+  assert.equal(fetched, 1);
+});
+
+test("navigation deadline includes a stalled HTML body after headers arrive", async () => {
+  const handlers: Record<string, (event: unknown) => void> = {};
+  let timeout!: () => void;
+  let navigation!: Promise<Response>;
+  const upstream = new Response(
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("<!doctype html>"));
+      },
+    }),
+  );
+  vm.runInNewContext(fs.readFileSync(path.join(root, "public/sw.js"), "utf8"), {
+    self: {
+      location: { origin: "https://fixture.test" },
+      addEventListener: (name: string, fn: (typeof handlers)[string]) =>
+        (handlers[name] = fn),
+    },
+    caches: { match: async () => new Response("CACHED_PUBLIC_SHELL") },
+    fetch: async () => upstream,
+    URL,
+    Response,
+    Headers,
+    AbortController,
+    setTimeout: (fn: () => void) => {
+      timeout = fn;
+      return 1;
+    },
+    clearTimeout() {},
+  });
+  handlers.fetch!({
+    request: { url: "https://fixture.test/", mode: "navigate", method: "GET" },
+    respondWith: (response: Promise<Response>) => (navigation = response),
+  });
+  await Promise.resolve();
+  assert(upstream.body!.locked, "The deadline must cover the HTML body read");
+  timeout();
+  assert.equal(await (await navigation).text(), "CACHED_PUBLIC_SHELL");
 });

@@ -35,10 +35,46 @@
       sizes="180x180"
       href="/apple-touch-icon.png"
     />
+    <link
+      rel="stylesheet"
+      href="/startup.css"
+    />
+    <script
+      src="/startup.js"
+      defer
+    ></script>
     <title>Pi Remote</title>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <section
+        id="startup"
+        class="startup"
+        role="status"
+        aria-live="polite"
+      >
+        <img
+          src="/icons/pi.svg"
+          alt="Pi"
+          width="128"
+          height="128"
+        />
+        <h1 id="startup-title">Opening Pi Remote</h1>
+        <p id="startup-message">Connecting to your Mac.</p>
+        <span
+          id="startup-spinner"
+          class="startup-spinner"
+          aria-hidden="true"
+        ></span>
+        <button
+          id="startup-retry"
+          type="button"
+          hidden
+        >
+          Try again
+        </button>
+      </section>
+    </div>
     <script
       type="module"
       src="/src/frontend/main.ts"

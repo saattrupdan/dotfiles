@@ -18,7 +18,7 @@ const credential = () => ({
   },
 });
 function fixture(get: () => Promise<unknown> = async () => credential()) {
-  mock.timers.enable({ apis: ["setInterval"] });
+  mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
   const documentEvents: Record<string, () => void> = {};
   const windowEvents: Record<string, () => void> = {};
   const doc = {
@@ -179,6 +179,92 @@ test("foreground queues one fresh verification behind an invalidated ceremony", 
     assert.equal(prompts, 2);
     assert(f.auth.unlocked);
     assert.equal(f.calls.filter((url) => url.endsWith("/auth/assert")).length, 1);
+  } finally {
+    f.close();
+  }
+});
+
+test("a stalled startup becomes a retryable connection error instead of hanging", async () => {
+  const f = fixture();
+  mock.method(
+    globalThis,
+    "fetch",
+    async (_url: string, options: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        options.signal!.addEventListener(
+          "abort",
+          () => reject(options.signal!.reason),
+          { once: true },
+        );
+      }),
+  );
+  const initialization = f.auth.initialize();
+  try {
+    mock.timers.tick(10001);
+    await flush();
+    assert.equal(f.auth.initializing, false);
+    assert.equal(f.auth.online, false);
+    assert.match(f.auth.error, /connect|unreachable|offline/i);
+    assert.equal(f.auth.unlocked, false);
+  } finally {
+    f.auth.clear();
+    await initialization;
+    f.close();
+  }
+});
+
+test("offline startup fails immediately without making requests or prompting for a passkey", async () => {
+  const f = fixture();
+  Object.assign(navigator, { onLine: false });
+  try {
+    await f.auth.initialize();
+    assert.equal(f.auth.online, false);
+    assert.equal(f.auth.initializing, false);
+    assert.equal(f.auth.unlocked, false);
+    assert.deepEqual(f.calls, []);
+  } finally {
+    f.close();
+  }
+});
+
+test("timed out writes release their spinner without automatically submitting again", async () => {
+  const f = fixture();
+  let posts = 0;
+  mock.method(globalThis, "fetch", async (_url: string, options: RequestInit) => {
+    posts++;
+    return new Promise((_resolve, reject) =>
+      options.signal!.addEventListener("abort", () => reject(options.signal!.reason), {
+        once: true,
+      }),
+    );
+  });
+  try {
+    const result = f.auth.request("/sessions/fixture/actions", {
+      method: "POST",
+      body: "{}",
+    });
+    const rejected = assert.rejects(result, /connect/i);
+    assert.equal(f.auth.pending, 1);
+    mock.timers.tick(30001);
+    await rejected;
+    assert.equal(posts, 1);
+    assert.equal(f.auth.pending, 0);
+    assert.equal(f.auth.online, false);
+  } finally {
+    f.close();
+  }
+});
+
+test("an already cancelled request never starts a fetch or leaves a spinner", async () => {
+  const f = fixture();
+  const controller = new AbortController();
+  controller.abort();
+  try {
+    await assert.rejects(
+      f.auth.request("/sessions", { method: "POST", signal: controller.signal }),
+    );
+    assert.equal(f.auth.pending, 0);
+    assert.deepEqual(f.calls, []);
   } finally {
     f.close();
   }
