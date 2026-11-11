@@ -7,6 +7,8 @@ import type {
   StreamEvent,
 } from "../../../../protocol/src/index.ts";
 import { CommandStatus } from "../../../../protocol/src/index.ts";
+import { mergeHistory, sameMessage, windowProof } from "../lib/history-window.ts";
+import type { HistoryPage } from "../../../../protocol/src/index.ts";
 import { remoteCommandId } from "../lib/receipts.ts";
 import { useAuth, onLock } from "./auth.ts";
 export interface Message {
@@ -47,6 +49,15 @@ export const useSessions = defineStore("sessions", () => {
   const messages = ref<Record<string, Message[]>>({});
   const streaming = ref<Record<string, Message | undefined>>({});
   const historyLimited = ref<Record<string, boolean>>({});
+  const historyPages = ref<
+    Record<
+      string,
+      { older: string | null; revision: string; loading: boolean; error: string }
+    >
+  >({});
+  const historyRequests = new Map<string, number>();
+  const olderRequests = new Map<string, Promise<void>>();
+  const latestRequests = new Map<string, Promise<void>>();
   const statuses = ref<Record<string, string>>({});
   const commandSessions = ref<Record<string, string>>({});
   const drafts = ref<Record<string, string>>({});
@@ -118,6 +129,10 @@ export const useSessions = defineStore("sessions", () => {
     messages.value = {};
     streaming.value = {};
     historyLimited.value = {};
+    historyPages.value = {};
+    historyRequests.clear();
+    olderRequests.clear();
+    latestRequests.clear();
     statuses.value = {};
     drafts.value = {};
     prompt.value = {};
@@ -173,44 +188,139 @@ export const useSessions = defineStore("sessions", () => {
     const result = await auth.request<Session>(`/sessions/${id}`);
     if (expected === generation && auth.unlocked) merge([result]);
   }
-  async function history(id: string) {
+  function persistHistory(id: string, records: Message[]) {
+    for (const message of records) {
+      const commandId = remoteCommandId(message);
+      if (
+        commandId &&
+        commandSessions.value[commandId] === id &&
+        statuses.value[commandId] !== "rejected"
+      )
+        updateStatus(commandId, "persisted");
+    }
+    retireOutgoing(records);
+  }
+  function history(id: string, reset = false): Promise<void> {
+    const task = readHistory(id, reset).finally(() => {
+      if (latestRequests.get(id) === task) latestRequests.delete(id);
+    });
+    latestRequests.set(id, task);
+    return task;
+  }
+  async function readHistory(id: string, reset: boolean) {
     const expected = generation;
-    let offset = 0;
-    const all: Message[] = [];
-    let limited = false;
-    for (;;) {
-      const page = await auth.request<{
-        messages: Message[];
-        next: number | null;
-        truncated?: boolean;
-      }>(`/sessions/${id}/history?offset=${offset}&limit=200`);
-      all.push(...page.messages);
-      limited ||= Boolean(page.truncated);
-      if (page.next === null) break;
-      offset = page.next;
-    }
-    if (expected === generation && auth.unlocked) {
-      messages.value[id] = all.map((message) => ({
-        ...message,
-        remotePersisted: true,
-      }));
-      for (const message of all) {
-        const commandId = remoteCommandId(message);
-        if (
-          commandId &&
-          commandSessions.value[commandId] === id &&
-          statuses.value[commandId] !== "rejected"
-        )
-          updateStatus(commandId, "persisted");
+    const request = (historyRequests.get(id) ?? 0) + 1;
+    historyRequests.set(id, request);
+    const previous = [...(messages.value[id] ?? [])];
+    const baseline = new Set(previous);
+    const proof =
+      !reset && previous.some((message) => typeof message.remoteHistoryKey === "string")
+        ? await windowProof(previous)
+        : "";
+    if (
+      expected !== generation ||
+      !auth.unlocked ||
+      historyRequests.get(id) !== request
+    )
+      return;
+    const page = await auth.request<HistoryPage>(
+      `/sessions/${id}/history?window=latest${proof}`,
+    );
+    if (
+      expected !== generation ||
+      !auth.unlocked ||
+      historyRequests.get(id) !== request
+    )
+      return;
+    const incoming = page.messages.map((message) => ({
+      ...message,
+      remotePersisted: true,
+    }));
+    const live = (messages.value[id] ?? []).filter(
+      (message) => !message.remoteHistoryKey && !baseline.has(message),
+    );
+    const keep =
+      !reset &&
+      page.anchorFound === true &&
+      incoming.length > 0 &&
+      previous.some((message) => sameMessage(message, incoming[0]!));
+    messages.value[id] = mergeHistory(previous, incoming, keep, live);
+    persistHistory(id, incoming);
+    historyLimited.value[id] = Boolean(page.truncated);
+    historyPages.value[id] = {
+      revision: page.revision,
+      older: keep ? (page.anchoredOlder ?? null) : (page.older ?? null),
+      loading: false,
+      error: "",
+    };
+  }
+  function loadOlder(id: string): Promise<void> {
+    const running = olderRequests.get(id);
+    if (running) return running;
+    const expected = generation;
+    const task = (async () => {
+      try {
+        while (latestRequests.has(id)) await latestRequests.get(id);
+      } catch (error) {
+        if (expected === generation && historyPages.value[id])
+          historyPages.value[id]!.error = (error as Error).message;
+        return;
       }
-      retireOutgoing(all);
-      historyLimited.value[id] = limited;
-    }
+      if (expected !== generation || !auth.unlocked) return;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const state = historyPages.value[id];
+        if (!state?.older) return;
+        const request = historyRequests.get(id);
+        state.loading = true;
+        state.error = "";
+        try {
+          const page = await auth.request<HistoryPage>(
+            `/sessions/${id}/history?before=${encodeURIComponent(state.older)}`,
+          );
+          if (
+            expected !== generation ||
+            !auth.unlocked ||
+            request !== historyRequests.get(id) ||
+            historyPages.value[id]?.revision !== page.revision
+          )
+            return;
+          const incoming = page.messages.map((message) => ({
+            ...message,
+            remotePersisted: true,
+          }));
+          const current = messages.value[id] ?? [];
+          messages.value[id] = [
+            ...incoming.filter(
+              (message) => !current.some((row) => sameMessage(row, message)),
+            ),
+            ...current,
+          ];
+          state.older = page.older;
+          persistHistory(id, incoming);
+          return;
+        } catch (error) {
+          if (expected !== generation || !auth.unlocked) return;
+          if (attempt === 0 && (error as Error).message === "history_cursor_expired") {
+            await history(id);
+            continue;
+          }
+          state.error = (error as Error).message;
+          return;
+        } finally {
+          state.loading = false;
+        }
+      }
+    })().finally(() => {
+      if (olderRequests.get(id) === task) olderRequests.delete(id);
+    });
+    olderRequests.set(id, task);
+    return task;
   }
   function subscribe() {
     if (socket?.readyState === WebSocket.OPEN && selected)
       socket.send(
         JSON.stringify({
+          historyWindow: true,
           subscriptions: [
             {
               sessionId: selected,
@@ -259,8 +369,7 @@ export const useSessions = defineStore("sessions", () => {
         void refresh().catch(() => {});
       }
       if (event.type === "snapshot") {
-        messages.value[sid] = event.data as Message[];
-        retireOutgoing(messages.value[sid]!);
+        void history(sid, true).catch(() => {});
         streaming.value[sid] = undefined;
       }
       if (event.type === "message_update") streaming.value[sid] = event.data as Message;
@@ -292,6 +401,8 @@ export const useSessions = defineStore("sessions", () => {
         if (prompt.value[sid]) prompt.value[sid]!.state = "expired";
       }
       if (event.type === "session.hidden") {
+        historyRequests.set(sid, (historyRequests.get(sid) ?? 0) + 1);
+        delete historyPages.value[sid];
         homeListing.value = homeListing.value.filter((row) => row.sessionId !== sid);
         delete messages.value[sid];
         delete drafts.value[sid];
@@ -440,6 +551,8 @@ export const useSessions = defineStore("sessions", () => {
     commandSessions,
     ensureOwner,
     historyLimited,
+    historyPages,
+    loadOlder,
     folders,
     listing,
     homeListing,

@@ -6,7 +6,7 @@ import type { Config } from "./config.ts";
 export const REQUIRED = [
   "automated",
   "session-controls-tui",
-  "iphone-webauthn",
+  "iphone-pairing",
   "iphone-push",
   "sleep-wake",
   "tailnet-acl",

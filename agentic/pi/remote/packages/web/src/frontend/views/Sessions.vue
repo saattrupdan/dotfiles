@@ -294,10 +294,6 @@ const basename = (cwd: string) => cwd.split("/").filter(Boolean).at(-1) || cwd;
   color: var(--fg);
   width: 100%;
 }
-.session:hover,
-.folder:hover {
-  border-color: var(--accent);
-}
 h2,
 h3 {
   font-size: 18px;

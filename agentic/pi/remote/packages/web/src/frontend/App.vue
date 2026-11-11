@@ -164,12 +164,12 @@ watch(
         width="160"
         height="160"
       />
-      <h1>{{ auth.visible ? "Pi Remote" : "Locked" }}</h1>
+      <h1>Pi Remote</h1>
       <LoadingIndicator
-        v-if="auth.initializing"
+        v-if="auth.initializing || auth.verifying"
         label="Connecting to your Mac"
       />
-      <template v-if="auth.visible && !auth.initializing">
+      <template v-if="auth.visible && !auth.initializing && !auth.verifying">
         <template v-if="pairing">
           <label
             >Device name<input
@@ -189,9 +189,9 @@ watch(
           </button>
         </template>
         <button
-          v-else
+          v-else-if="auth.paired"
           class="primary"
-          aria-label="Unlock with passkey"
+          aria-label="Open sessions"
           :disabled="auth.verifying || auth.initializing"
           :aria-busy="auth.verifying"
           @click="auth.unlock"
@@ -199,7 +199,7 @@ watch(
           <Icon
             v-if="auth.verifying"
             name="spinner"
-          />{{ auth.verifying ? "Verifying…" : "Unlock" }}
+          />{{ auth.verifying ? "Opening..." : "Open sessions" }}
         </button>
         <details v-if="!auth.paired">
           <summary>Pair a device</summary>

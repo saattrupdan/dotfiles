@@ -1,6 +1,7 @@
 import test, { mock } from "node:test";
 import assert from "node:assert/strict";
 import { createPinia, setActivePinia } from "pinia";
+import { useSessions } from "../src/frontend/stores/sessions.ts";
 import { useAuth } from "../src/frontend/stores/auth.ts";
 
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
@@ -86,84 +87,85 @@ function fixture(get: () => Promise<unknown> = async () => credential()) {
   };
 }
 
-test("a paired app starts passkey verification without pressing Unlock and foreground retries once", async () => {
+test("a paired app opens and resumes without calling biometric browser APIs", async () => {
   let prompts = 0;
   const f = fixture(async () => {
     prompts++;
-    return credential();
+    throw new Error("No biometrics");
   });
   try {
     await f.auth.initialize();
-    assert.equal(prompts, 1);
     assert(f.auth.unlocked);
-    assert(!f.auth.verifying);
-    assert.equal(f.calls.filter((url) => url.endsWith("/auth/assert")).length, 1);
+    assert.equal(prompts, 0);
+    assert.equal(f.calls.filter((url) => url.endsWith("/auth/unlock")).length, 1);
     f.windowEvents.pagehide!();
-    assert(!f.auth.unlocked);
     f.documentEvents.visibilitychange!();
     await flush();
     await flush();
-    assert.equal(prompts, 2);
     assert(f.auth.unlocked);
+    assert.equal(prompts, 0);
+    assert.equal(f.calls.filter((url) => url.endsWith("/auth/unlock")).length, 2);
+    assert(!f.calls.some((url) => /auth\/(options|assert)/.test(url)));
   } finally {
     f.close();
   }
 });
 
-test("automatic unlock deduplicates prompts and an abandoned assertion cannot unlock the app", async () => {
-  let finish!: (value: unknown) => void;
-  let prompts = 0;
-  const f = fixture(() => {
-    prompts++;
-    return new Promise((resolve) => (finish = resolve));
+test("automatic opening is single-flight and abandoned responses cannot reopen private data", async () => {
+  const f = fixture();
+  const original = globalThis.fetch;
+  let finish!: (response: Response) => void;
+  let opens = 0;
+  mock.method(globalThis, "fetch", (url: string, options: RequestInit) => {
+    if (url.endsWith("/auth/unlock")) {
+      opens++;
+      return new Promise((resolve) => (finish = resolve));
+    }
+    return original(url, options);
   });
   try {
     const first = f.auth.initialize();
     await flush();
     const second = f.auth.unlock();
-    f.documentEvents.visibilitychange!();
-    await flush();
-    assert.equal(prompts, 1);
+    assert.equal(opens, 1);
     f.auth.clear();
-    finish(credential());
+    finish(new Response(JSON.stringify({ unlocked: true })));
     await first;
     await second;
     assert(!f.auth.unlocked);
     assert(!f.auth.verifying);
-    assert.equal(f.calls.filter((url) => url.endsWith("/auth/assert")).length, 0);
   } finally {
     f.close();
   }
 });
 
-test("a browser gesture requirement keeps a manual fallback without a prompt loop", async () => {
-  let prompts = 0;
+test("unpaired opening never asks for biometrics or activates a device", async () => {
   const f = fixture(async () => {
-    prompts++;
-    throw new DOMException("gesture required", "NotAllowedError");
+    throw new Error("No biometric calls");
+  });
+  mock.method(globalThis, "fetch", async (url: string) => {
+    f.calls.push(url);
+    return new Response(JSON.stringify({ paired: false }));
   });
   try {
     await f.auth.initialize();
-    assert.equal(prompts, 1);
     assert(!f.auth.unlocked);
-    assert(!f.auth.verifying);
-    assert.match(f.auth.error, /Tap Unlock/);
-    await flush();
-    assert.equal(prompts, 1);
-    await f.auth.unlock();
-    assert.equal(prompts, 2);
+    assert(!f.auth.paired);
+    assert.deepEqual(f.calls, ["/api/v1/me"]);
   } finally {
     f.close();
   }
 });
 
-test("foreground queues one fresh verification behind an invalidated ceremony", async () => {
-  let finish!: (value: unknown) => void;
-  let prompts = 0;
-  const f = fixture(() => {
-    prompts++;
-    if (prompts === 1) return new Promise((resolve) => (finish = resolve));
-    return Promise.resolve(credential());
+test("foreground queues a fresh paired-device opening after an invalidated request", async () => {
+  const f = fixture();
+  const original = globalThis.fetch;
+  let finish!: (response: Response) => void;
+  let opens = 0;
+  mock.method(globalThis, "fetch", (url: string, options: RequestInit) => {
+    if (url.endsWith("/auth/unlock") && ++opens === 1)
+      return new Promise((resolve) => (finish = resolve));
+    return original(url, options);
   });
   try {
     const first = f.auth.initialize();
@@ -171,14 +173,12 @@ test("foreground queues one fresh verification behind an invalidated ceremony", 
     f.windowEvents.pagehide!();
     f.documentEvents.visibilitychange!();
     f.documentEvents.visibilitychange!();
-    await flush();
-    assert.equal(prompts, 1);
-    finish(credential());
     await first;
     await flush();
-    assert.equal(prompts, 2);
+    finish(new Response(JSON.stringify({ unlocked: true })));
+    await flush();
+    assert.equal(opens, 2);
     assert(f.auth.unlocked);
-    assert.equal(f.calls.filter((url) => url.endsWith("/auth/assert")).length, 1);
   } finally {
     f.close();
   }
@@ -265,6 +265,33 @@ test("an already cancelled request never starts a fetch or leaves a spinner", as
     );
     assert.equal(f.auth.pending, 0);
     assert.deepEqual(f.calls, []);
+  } finally {
+    f.close();
+  }
+});
+
+test("a completed foreground return clears its old background deadline and preserves drafts", async () => {
+  const f = fixture();
+  let now = Date.now();
+  mock.method(Date, "now", () => now);
+  try {
+    await f.auth.initialize();
+    const store = useSessions();
+    store.drafts.fixture = "Keep this draft";
+    f.doc.visibilityState = "hidden";
+    f.documentEvents.visibilitychange!();
+    await flush();
+    now += 1000;
+    f.doc.visibilityState = "visible";
+    f.documentEvents.visibilitychange!();
+    await flush();
+    now += 180000;
+    mock.timers.tick(15000);
+    await flush();
+    await flush();
+    assert.equal(store.drafts.fixture, "Keep this draft");
+    assert.equal(f.calls.filter((url) => url.endsWith("/auth/unlock")).length, 1);
+    assert(f.auth.unlocked);
   } finally {
     f.close();
   }

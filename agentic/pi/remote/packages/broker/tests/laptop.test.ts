@@ -774,3 +774,87 @@ test(
     }
   },
 );
+
+test("history pages recheck revocation after asynchronous projection", async (t) => {
+  const f = fixture();
+  const saved = f.seed(path.join(f.config.agentDir, "sessions/project"));
+  const broker = await createBroker(f.config, { ipc: false });
+  const headers = authentication(broker, f.config.origin);
+  let release!: (value: Awaited<ReturnType<History["window"]>>) => void;
+  let entered!: () => void;
+  const ready = new Promise<void>((resolve) => (entered = resolve));
+  t.mock.method(History.prototype, "window", () => {
+    entered();
+    return new Promise((resolve) => (release = resolve));
+  });
+  try {
+    const pending = broker.app.inject({
+      url: `/api/v1/sessions/${saved.id}/history?window=latest`,
+      headers,
+    });
+    await ready;
+    const device = (
+      broker.store.db.prepare("SELECT id FROM devices").get() as { id: string }
+    ).id;
+    broker.auth.revoke(device);
+    release({
+      messages: [{ role: "user", content: "NEVER_RETURN_REVOKED_HISTORY" }],
+      revision: randomUUID(),
+      older: null,
+      total: 1,
+      truncated: false,
+      anchorFound: false,
+      anchoredOlder: null,
+    });
+    const result = await pending;
+    assert.equal(result.statusCode, 401);
+    assert(!result.payload.includes("NEVER_RETURN_REVOKED_HISTORY"));
+  } finally {
+    await broker.app.close();
+    f.close();
+  }
+});
+
+test(
+  "windowed websocket replay requests a page instead of sending the full snapshot",
+  { timeout: 10000 },
+  async () => {
+    const f = fixture();
+    const saved = f.seed(path.join(f.config.agentDir, "sessions/project"));
+    const b = await createBroker(f.config, { ipc: false, history: false });
+    const headers = authentication(b, f.config.origin);
+    let socket: WebSocket | undefined;
+    try {
+      b.store.save(liveSession(saved, f.root));
+      b.store.event(saved.id, "snapshot", [
+        { role: "user", content: "FULL_SNAPSHOT_MUST_NOT_TRAVEL" },
+      ]);
+      await b.app.listen({ host: "127.0.0.1", port: 0 });
+      const address = b.app.server.address();
+      assert(address && typeof address !== "string");
+      socket = new WebSocket(`ws://127.0.0.1:${address.port}/api/v1/events`, {
+        headers,
+      });
+      await once(socket, "open");
+      const message = once(socket, "message");
+      socket.send(
+        JSON.stringify({
+          historyWindow: true,
+          subscriptions: [{ sessionId: saved.id, sequence: 0 }],
+        }),
+      );
+      const [raw] = await message;
+      const event = JSON.parse(raw.toString());
+      assert.equal(event.type, "resnapshot");
+      assert.equal(event.sequence, 1);
+      assert(!raw.toString().includes("FULL_SNAPSHOT_MUST_NOT_TRAVEL"));
+    } finally {
+      if (socket) {
+        socket.close();
+        await once(socket, "close");
+      }
+      await b.app.close();
+      f.close();
+    }
+  },
+);

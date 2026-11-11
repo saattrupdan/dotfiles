@@ -68,10 +68,10 @@ test("pilot approval is separate from full release and still requires automated 
       gates(f.config).missing,
       REQUIRED.filter((n) => n !== "automated" && n !== "session-controls-tui"),
     );
-    assert.throws(() => assertRelease(f.config), /iphone-webauthn/);
+    assert.throws(() => assertRelease(f.config), /iphone-pairing/);
     assert.throws(
       () => assertDeployment({ ...f.config, deploymentPolicy: "release" }),
-      /iphone-webauthn/,
+      /iphone-pairing/,
     );
     assert.throws(() => assertDeployment(f.config, true), /pilot-proof-conflict/);
   } finally {
@@ -88,7 +88,8 @@ test("local Pi upgrades do not invalidate unchanged Remote source evidence", () 
     process.env.PI_CLI_PACKAGE = runtime;
     const manifest = path.join(runtime, "package.json");
     fs.writeFileSync(manifest, JSON.stringify({ version: "1.5.0" }));
-    for (const name of ["automated", "session-controls-tui"]) attest(f.config, name, f.evidence);
+    for (const name of ["automated", "session-controls-tui"])
+      attest(f.config, name, f.evidence);
     approvePilot(f.config, f.evidence);
     fs.writeFileSync(manifest, JSON.stringify({ version: "1.6.0" }));
     assertDeployment(f.config);

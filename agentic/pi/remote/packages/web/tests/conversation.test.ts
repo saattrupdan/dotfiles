@@ -29,6 +29,7 @@ const auth = useAuth(pinia);
 auth.initialize = async () => {};
 auth.initializing = false;
 auth.unlocked = true;
+auth.paired = true;
 auth.visible = true;
 const router = createRouter({ history: createMemoryHistory(), routes: [
   { path: '/session/:id', component: Conversation },
@@ -97,6 +98,15 @@ test(
       let extraSessions: unknown[] = [];
       let historyGate: Promise<void> | undefined;
       let homeGate: Promise<void> | undefined;
+      let pagedHistory = false;
+      let olderGate: Promise<void> | undefined;
+      let olderFetches = 0;
+      const pagingRows = Array.from({ length: 60 }, (_, index) => ({
+        role: index % 2 ? "assistant" : "user",
+        content: `Paged message ${index}. ` + "Readable history text. ".repeat(35),
+        timestamp: 2000 + index,
+        remoteHistoryKey: index.toString(16).padStart(64, "0"),
+      }));
       let stopped = false,
         recoveries = 0,
         starts = 0;
@@ -262,6 +272,25 @@ test(
           submissions.push(route.request().postDataJSON().command);
           commandIds.push(route.request().postDataJSON().commandId);
           body = { status: actionStatus };
+        }
+        if (pagedHistory && url.pathname.endsWith("/history")) {
+          const before = url.searchParams.get("before");
+          if (before) {
+            olderFetches++;
+            if (olderGate) await olderGate;
+          }
+          const end = before ? Number(before) : pagingRows.length;
+          const start = Math.max(0, end - 10);
+          const anchor = pagingRows.findIndex(
+            (row) => row.remoteHistoryKey === url.searchParams.get("anchor"),
+          );
+          body = {
+            messages: pagingRows.slice(start, end),
+            revision: "paging-fixture",
+            older: start ? String(start) : null,
+            anchorFound: anchor >= 0,
+            anchoredOlder: anchor > 0 ? String(anchor) : null,
+          };
         }
         if (body && typeof body === "object" && "messages" in body)
           body.messages = await toolDisplay.messages(
@@ -681,6 +710,22 @@ test(
         });
         const folders = page.getByRole("region", { name: "Folders", exact: true });
         await expect(active.getByRole("link")).toHaveCount(5);
+        const row = active.getByRole("link").first();
+        await page.mouse.move(0, 0);
+        const border = await row.evaluate(
+          (el) => getComputedStyle(el).borderBottomColor,
+        );
+        await row.hover();
+        const box = await row.boundingBox();
+        assert(box);
+        await page.mouse.down();
+        await page.mouse.move(box.x + 30, box.y + 35);
+        await page.mouse.up();
+        assert.equal(
+          await row.evaluate((el) => getComputedStyle(el).borderBottomColor),
+          border,
+          "Dragging list rows must not create a green border",
+        );
         await expect(active.getByRole("link", { name: /untitled/i })).toHaveCount(0);
         for (const state of ["running", "idle", "waiting", "answer_needed"])
           await expect(
@@ -869,6 +914,97 @@ test(
         },
       );
       await t.test(
+        "history opens five turns and prefetches before the top without moving the reader",
+        async () => {
+          await publish(undefined);
+          pagedHistory = true;
+          olderFetches = 0;
+          let release!: () => void;
+          try {
+            await page.waitForLoadState("networkidle");
+            await page.reload();
+            await expect(page.locator(".message")).toHaveCount(10);
+            await expect(page.locator(".opening-indicator")).toHaveCount(0);
+            assert.equal(olderFetches, 0);
+            olderGate = new Promise((resolve) => (release = resolve));
+            await page.evaluate(() => {
+              window.dispatchEvent(new WheelEvent("wheel", { deltaY: -600 }));
+              window.scrollTo({ top: 600, behavior: "instant" });
+            });
+            await expect.poll(() => olderFetches).toBe(1);
+            await expect(
+              page.getByText("Loading earlier messages", { exact: true }),
+            ).toHaveCount(1);
+            assert(
+              await page.evaluate(() => window.scrollY > 100),
+              "Prefetch must start before the top",
+            );
+            socket!.send(
+              JSON.stringify({
+                version: 1,
+                type: "message_end",
+                sessionId: id,
+                data: {
+                  role: "assistant",
+                  content: "Concurrent live message",
+                  timestamp: 9000,
+                },
+              }),
+            );
+            await expect(
+              page.getByText("Concurrent live message", { exact: true }),
+            ).toHaveCount(1);
+            const anchor = await page.evaluate(() =>
+              [...document.querySelectorAll<HTMLElement>("[data-history-row]")]
+                .map((el) => ({
+                  key: el.dataset.historyRow!,
+                  top: el.getBoundingClientRect().top,
+                  bottom: el.getBoundingClientRect().bottom,
+                }))
+                .find((row) => row.bottom > 130 && row.top < innerHeight)!,
+            );
+            release();
+            olderGate = undefined;
+            await expect(page.locator(".message")).toHaveCount(21);
+            const top = await page.evaluate(
+              (key) =>
+                [...document.querySelectorAll<HTMLElement>("[data-history-row]")]
+                  .find((el) => el.dataset.historyRow === key)!
+                  .getBoundingClientRect().top,
+              anchor.key,
+            );
+            assert(
+              Math.abs(top - anchor.top) < 3,
+              `Reader moved ${top - anchor.top}px after prepend`,
+            );
+            assert.equal(olderFetches, 1);
+            await page.evaluate(() => {
+              (document.querySelector(".message") as HTMLElement).style.height =
+                "1200px";
+            });
+            await expect
+              .poll(async () =>
+                Math.abs(
+                  (await page.evaluate(
+                    (key) =>
+                      [...document.querySelectorAll<HTMLElement>("[data-history-row]")]
+                        .find((el) => el.dataset.historyRow === key)!
+                        .getBoundingClientRect().top,
+                    anchor.key,
+                  )) - anchor.top,
+                ),
+              )
+              .toBeLessThan(3);
+          } finally {
+            release?.();
+            olderGate = undefined;
+            pagedHistory = false;
+            await page.waitForLoadState("networkidle");
+            await page.reload();
+          }
+        },
+      );
+      await t.test(
         "minimal navigation keeps the cog accessible and mobile screens usable",
         async () => {
           await page.setViewportSize({ width: 402, height: 874 });
@@ -996,9 +1132,11 @@ test(
             ),
           );
           await settings.click();
-          await page.getByRole("button", { name: "Lock", exact: true }).click();
+          await page
+            .getByRole("button", { name: "Close sessions", exact: true })
+            .click();
           await expect(
-            page.getByRole("button", { name: "Unlock with passkey", exact: true }),
+            page.getByRole("button", { name: "Open sessions", exact: true }),
           ).toBeVisible();
           await expect(settings).toHaveCount(0);
           if (screenshots)

@@ -53,8 +53,16 @@ type Tool = {
   args?: unknown;
   display?: string;
 };
-type Row =
-  Tool | { kind: "message"; message: Message } | { kind: "thinking"; text: string };
+type Row = (
+  Tool | { kind: "message"; message: Message } | { kind: "thinking"; text: string }
+) & { key: string };
+const identities = new WeakMap<Message, number>();
+let identity = 0;
+function key(message: Message) {
+  if (typeof message.remoteHistoryKey === "string") return message.remoteHistoryKey;
+  if (!identities.has(message)) identities.set(message, ++identity);
+  return `live:${identities.get(message)}`;
+}
 const rows = computed<Row[]>(() => {
   const all = [...props.messages, ...(props.streaming ? [props.streaming] : [])];
   const results = new Set(
@@ -65,6 +73,7 @@ const rows = computed<Row[]>(() => {
     for (const part of parts(message))
       if (part.type === "toolCall" && part.id) calls.set(part.id, part);
   return all.flatMap((message): Row[] => {
+    const base = key(message);
     if (
       message.role === "system" ||
       (message.role === "custom" && message.display !== true)
@@ -74,6 +83,7 @@ const rows = computed<Row[]>(() => {
       return [
         {
           kind: "tool",
+          key: message.toolCallId ? `tool:${message.toolCallId}` : base,
           name: message.toolName || calls.get(message.toolCallId || "")?.name || "tool",
           result: message,
           display: message.toolDisplay,
@@ -85,13 +95,22 @@ const rows = computed<Row[]>(() => {
     );
     const rows: Row[] = [];
     if (normal.length)
-      rows.push({ kind: "message", message: { ...message, content: normal } });
-    for (const part of parts(message)) {
+      rows.push({
+        key: `${base}:message`,
+        kind: "message",
+        message: { ...message, content: normal },
+      });
+    for (const [index, part] of parts(message).entries()) {
       if (part.type === "thinking")
-        rows.push({ kind: "thinking", text: part.thinking || "" });
+        rows.push({
+          key: `${base}:thinking:${index}`,
+          kind: "thinking",
+          text: part.thinking || "",
+        });
       if (part.type === "toolCall" && (!part.id || !results.has(part.id)))
         rows.push({
           kind: "tool",
+          key: part.id ? `tool:${part.id}` : `${base}:tool:${index}`,
           name: part.name || "tool",
           args: part.arguments,
           display: part.toolDisplay,
@@ -117,12 +136,13 @@ function preview(row: Tool) {
     aria-live="polite"
   >
     <template
-      v-for="(row, index) in rows"
-      :key="index"
+      v-for="row in rows"
+      :key="row.key"
     >
       <article
         v-if="row.kind === 'tool'"
         class="tool-entry"
+        :data-history-row="row.key"
       >
         <div class="tool-name">{{ callText(row) }}</div>
         <p
@@ -164,12 +184,14 @@ function preview(row: Tool) {
         v-else-if="row.kind === 'thinking'"
         v-show="thinkingExpanded"
         class="thinking"
+        :data-history-row="row.key"
       >
         {{ row.text }}
       </div>
       <article
         v-else-if="row.kind === 'message'"
         :class="['message', row.message.role]"
+        :data-history-row="row.key"
       >
         <template
           v-for="(part, p) in parts(row.message)"

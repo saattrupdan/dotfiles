@@ -257,11 +257,11 @@ for (const deploymentPolicy of ["release", "pilot"] as const)
       broker.store.db
         .prepare("UPDATE auth SET verified=?,seen=?,unlocked=1,background=NULL")
         .run(Date.now() - 901000, Date.now());
-      assert.equal((await request("GET", "/api/v1/sessions", headers)).statusCode, 423);
+      assert.equal((await request("GET", "/api/v1/sessions", headers)).statusCode, 200);
       assert.equal(
         (await request("POST", "/api/v1/auth/presence", headers, { foreground: true }))
           .statusCode,
-        423,
+        200,
       );
       broker.auth.revoke(id);
       assert.equal((await request("GET", "/api/v1/sessions", headers)).statusCode, 401);
@@ -279,7 +279,10 @@ test("pair links last ten minutes and remain single-use; passkey ceremonies stay
     { ipc: false, history: false },
   );
   const pair = async () =>
-    (await broker.connections.onAdmin!("pair", {})) as { url: string; expiresAt: number };
+    (await broker.connections.onAdmin!("pair", {})) as {
+      url: string;
+      expiresAt: number;
+    };
   const request = (url: string, payload: Record<string, string>) =>
     broker.app.inject({
       method: "POST",
@@ -341,6 +344,84 @@ test("pairing challenges expire and are consumed atomically", () => {
     assert.equal(store.take(expired, "pair"), undefined);
   } finally {
     store.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("paired-cookie activation needs CSRF, renews access without biometrics and respects revocation", async () => {
+  const dir = fixture();
+  const b = await createBroker(
+    ConfigSchema.parse({ origin, dataDir: dir, home: dir }),
+    { ipc: false, history: false },
+  );
+  const req = (
+    url: string,
+    payload: Record<string, unknown> = {},
+    headers: Record<string, string> = {},
+  ) =>
+    b.app.inject({
+      method: "POST",
+      url,
+      headers: { host: new URL(origin).host, origin, ...headers },
+      payload,
+    });
+  try {
+    assert.equal((await req("/api/v1/auth/unlock")).statusCode, 401);
+    const link = (await b.connections.onAdmin!("pair", {})) as { url: string };
+    const secret = new URL(link.url).hash.slice(1);
+    assert.equal(
+      (
+        await req(
+          "/api/v1/pairing/claim",
+          { token: secret, name: "Cookie phone" },
+          { origin: "https://evil.example" },
+        )
+      ).statusCode,
+      403,
+    );
+    const claimed = await req("/api/v1/pairing/claim", {
+      token: secret,
+      name: "Cookie phone",
+    });
+    assert.equal(claimed.statusCode, 200);
+    const cookie = String(claimed.headers["set-cookie"]).split(";")[0]!;
+    const me = (
+      await b.app.inject({
+        url: "/api/v1/me",
+        headers: { host: new URL(origin).host, cookie },
+      })
+    ).json();
+    const headers = { cookie, "x-pi-csrf": me.csrf };
+    assert.equal(
+      (await req("/api/v1/pairing/claim", { token: secret, name: "Reuse" })).statusCode,
+      401,
+    );
+    assert.equal((await req("/api/v1/auth/unlock", {}, { cookie })).statusCode, 403);
+    assert.equal(
+      (
+        await req(
+          "/api/v1/auth/unlock",
+          {},
+          { ...headers, origin: "https://evil.example" },
+        )
+      ).statusCode,
+      403,
+    );
+    b.store.db
+      .prepare("UPDATE auth SET seen=?,verified=?,unlocked=0,background=?")
+      .run(0, 0, 0);
+    const opened = await req("/api/v1/auth/unlock", {}, headers);
+    assert.equal(opened.statusCode, 200);
+    assert.equal(opened.json().unlocked, true);
+    assert.match(String(opened.headers["set-cookie"]), /HttpOnly/);
+    assert.match(String(opened.headers["set-cookie"]), /Secure/);
+    assert.match(String(opened.headers["set-cookie"]), /SameSite=Strict/i);
+    const id = (b.store.db.prepare("SELECT id FROM devices").get() as { id: string })
+      .id;
+    b.auth.revoke(id);
+    assert.equal((await req("/api/v1/auth/unlock", {}, headers)).statusCode, 401);
+  } finally {
+    await b.app.close();
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

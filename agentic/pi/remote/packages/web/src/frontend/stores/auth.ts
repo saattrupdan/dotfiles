@@ -1,6 +1,5 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
-import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 class ConnectionError extends Error {}
 const pendingRequests = new Set<AbortController>();
 const resets = new Set<() => void>();
@@ -29,7 +28,6 @@ export const useAuth = defineStore("auth", () => {
   let unlockGeneration = -1;
   let queuedGeneration: number | undefined;
   const name = ref("");
-  let verifiedAt = 0;
   let background = 0;
   let lastPresence = 0;
   function clear() {
@@ -103,6 +101,11 @@ export const useAuth = defineStore("auth", () => {
         connectionFailed.value = false;
         if (!result.ok) {
           if (result.status === 423 || result.status === 401) {
+            if (result.status === 401) {
+              paired.value = false;
+              csrf.value = "";
+              name.value = "";
+            }
             pendingRequests.delete(controller);
             clear();
           }
@@ -144,7 +147,6 @@ export const useAuth = defineStore("auth", () => {
     error.value = "";
     try {
       await me();
-      if (paired.value) await request("/auth/lock", { method: "POST" });
       connected = true;
     } catch (e) {
       error.value = e instanceof Error ? e.message : "Can't connect to your Mac.";
@@ -159,34 +161,16 @@ export const useAuth = defineStore("auth", () => {
     let submitted = false;
     error.value = "";
     try {
-      const data = await request<{
-        ceremony: string;
-        options: Parameters<typeof startAuthentication>[0]["optionsJSON"];
-      }>("/auth/options", { method: "POST", body: "{}" });
-      if (expected !== authGeneration || document.visibilityState !== "visible") return;
-      const response = await startAuthentication({ optionsJSON: data.options });
-      if (expected !== authGeneration || document.visibilityState !== "visible") return;
       submitted = true;
-      await request("/auth/assert", {
-        method: "POST",
-        body: JSON.stringify({ ceremony: data.ceremony, response }),
-      });
-      await me();
+      await request("/auth/unlock", { method: "POST", body: "{}" });
       if (expected !== authGeneration || document.visibilityState !== "visible") return;
       unlocked.value = true;
       visible.value = true;
-      verifiedAt = Date.now();
+      background = 0;
       lastPresence = Date.now();
     } catch (e) {
       if (expected === authGeneration && !unlocked.value)
-        error.value =
-          e instanceof Error &&
-          (e.name === "NotAllowedError" ||
-            (e.cause as Error | undefined)?.name === "NotAllowedError")
-            ? "Tap Unlock to verify with your passkey."
-            : e instanceof Error
-              ? e.message
-              : "Verification failed";
+        error.value = e instanceof Error ? e.message : "Couldn't open sessions";
     } finally {
       if (
         submitted &&
@@ -230,17 +214,9 @@ export const useAuth = defineStore("auth", () => {
     pairingBusy.value = true;
     error.value = "";
     try {
-      const data = await request<{
-        ceremony: string;
-        options: Parameters<typeof startRegistration>[0]["optionsJSON"];
-      }>("/pairing/options", {
+      await request("/pairing/claim", {
         method: "POST",
         body: JSON.stringify({ token: secret, name: deviceName }),
-      });
-      const response = await startRegistration({ optionsJSON: data.options });
-      await request("/pairing/finish", {
-        method: "POST",
-        body: JSON.stringify({ ceremony: data.ceremony, response }),
       });
       history.replaceState(null, "", "/");
       await me();
@@ -281,17 +257,16 @@ export const useAuth = defineStore("auth", () => {
     }
   }
   async function resumeForeground() {
-    if (
-      Date.now() - verifiedAt >= 15 * 60 * 1000 ||
-      (background && Date.now() - background >= 120000)
-    ) {
+    if (background && Date.now() - background >= 120000) {
       clear();
       await autoUnlock();
       return;
     }
     const authorized = await presence(true);
-    if (authorized && unlocked.value && document.visibilityState === "visible")
+    if (authorized && unlocked.value && document.visibilityState === "visible") {
       visible.value = true;
+      background = 0;
+    } else if (!unlocked.value && !connectionFailed.value) await autoUnlock();
   }
   function backgroundChanged() {
     if (document.visibilityState !== "visible") {
@@ -322,14 +297,10 @@ export const useAuth = defineStore("auth", () => {
   });
   setInterval(() => {
     if (!unlocked.value) return;
-    if (Date.now() - verifiedAt >= 15 * 60 * 1000) {
-      clear();
-      return;
-    }
     if (!visible.value) {
       if (Date.now() - background >= 120000) clear();
       else if (document.visibilityState === "visible") void resumeForeground();
-    } else void presence(true);
+    } else void resumeForeground();
   }, 15000);
   return {
     paired,

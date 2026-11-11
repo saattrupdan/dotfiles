@@ -76,17 +76,13 @@ test(
         return route.fulfill({ json: { paired: false } });
       });
       await page.goto(url);
-      await expect(
-        page.getByRole("button", { name: "Unlock with passkey" }),
-      ).toBeVisible();
+      await expect(page.getByText("Pair a device", { exact: true })).toBeVisible();
       await page.evaluate(() => navigator.serviceWorker.ready.then(() => true));
       await page.waitForLoadState("networkidle");
       stallNavigation = true;
       const started = Date.now();
       await page.reload({ waitUntil: "domcontentloaded" });
-      await expect(
-        page.getByRole("button", { name: "Unlock with passkey" }),
-      ).toBeVisible();
+      await expect(page.getByText("Pair a device", { exact: true })).toBeVisible();
       assert(
         Date.now() - started < 8000,
         "Stalled HTML body must fall back to the cached shell",
@@ -139,14 +135,49 @@ test(
       assert.equal(calls.length, previous);
       await context.setOffline(false);
       await page.getByRole("button", { name: "Try again", exact: true }).click();
-      await expect(
-        page.getByRole("button", { name: "Unlock with passkey" }),
-      ).toBeVisible();
+      await expect(page.getByText("Pair a device", { exact: true })).toBeVisible();
       assert(
         calls.slice(previous).every((call) => call.endsWith("/me")),
         "Connection retry must not resend mutations",
       );
       await context.close();
+      const paired = await browser.newContext({ serviceWorkers: "block" });
+      const direct = await paired.newPage();
+      const openingCalls: string[] = [];
+      await direct.addInitScript(() => {
+        Object.defineProperty(navigator, "credentials", {
+          value: {
+            get() {
+              throw new Error("Unexpected biometric prompt");
+            },
+            create() {
+              throw new Error("Unexpected passkey registration");
+            },
+          },
+        });
+      });
+      await direct.routeWebSocket("**/api/v1/events", () => {});
+      await direct.route("**/api/v1/**", (route) => {
+        const pathname = new URL(route.request().url()).pathname;
+        openingCalls.push(pathname);
+        return route.fulfill({
+          json: pathname.endsWith("/me")
+            ? { paired: true, csrf: "fixture", device: "Paired phone" }
+            : pathname.endsWith("/sessions") || pathname.endsWith("/session-folders")
+              ? []
+              : { unlocked: true },
+        });
+      });
+      await direct.goto(url);
+      await expect(
+        direct.getByRole("heading", { name: "Conversations", exact: true }),
+      ).toBeVisible();
+      assert(openingCalls.includes("/api/v1/auth/unlock"));
+      assert(!openingCalls.some((call) => /auth\/(options|assert)|pairing/.test(call)));
+      await expect(direct.getByRole("button", { name: "Open sessions" })).toHaveCount(
+        0,
+      );
+      await paired.close();
       const fallback = await browser.newContext({
         viewport: { width: 402, height: 874 },
         serviceWorkers: "block",

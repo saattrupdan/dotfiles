@@ -238,3 +238,187 @@ test("a failed command response with confirmed persistence remains successful", 
   assert.equal(store.statuses[commandId], "persisted");
   assert.equal(store.pending[commandId], undefined);
 });
+
+test("history fetches one latest window, single-flights older pages and fences late paging after lock", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
+  Object.assign(globalThis, {
+    document: { visibilityState: "visible", addEventListener() {} },
+    window: { addEventListener() {} },
+    location: { protocol: "https:", host: "fixture" },
+    WebSocket: Socket,
+  });
+  setActivePinia(createPinia());
+  const auth = useAuth();
+  const store = useSessions();
+  auth.unlocked = true;
+  let submitted = () => {};
+  const requests: { url: string; resolve: (value: unknown) => void }[] = [];
+  auth.request = ((url: string) =>
+    new Promise((resolve) => {
+      requests.push({ url, resolve });
+      submitted();
+    })) as typeof auth.request;
+  const latest = store.history("session");
+  assert.equal(requests.length, 1);
+  assert.match(requests[0]!.url, /window=latest/);
+  const fresh = {
+    role: "user",
+    content: "Latest",
+    timestamp: 2,
+    remoteHistoryKey: "b".repeat(64),
+  };
+  requests[0]!.resolve({ messages: [fresh], revision: "revision", older: "cursor" });
+  await latest;
+  const older = store.loadOlder("session");
+  const duplicate = store.loadOlder("session");
+  assert.equal(requests.length, 2);
+  store.messages.session!.push({ role: "assistant", content: "Live", timestamp: 3 });
+  requests[1]!.resolve({
+    messages: [
+      {
+        role: "user",
+        content: "Older",
+        timestamp: 1,
+        remoteHistoryKey: "a".repeat(64),
+      },
+    ],
+    revision: "revision",
+    older: "earlier",
+  });
+  await older;
+  await duplicate;
+  assert.deepEqual(
+    store.messages.session!.map((row) => row.content),
+    ["Older", "Latest", "Live"],
+  );
+  const posted = new Promise<void>((resolve) => (submitted = resolve));
+  const refresh = store.history("session");
+  await posted;
+  assert.match(requests[2]!.url, /anchor=a{64}/);
+  requests[2]!.resolve({
+    messages: [
+      fresh,
+      {
+        role: "assistant",
+        content: "Live",
+        timestamp: 3,
+        remoteHistoryKey: "c".repeat(64),
+      },
+    ],
+    revision: "new",
+    older: "duplicate-cursor",
+    anchorFound: true,
+    anchoredOlder: "correct-earlier",
+  });
+  await refresh;
+  assert.deepEqual(
+    store.messages.session!.map((row) => row.content),
+    ["Older", "Latest", "Live"],
+  );
+  assert.equal(store.historyPages.session!.older, "correct-earlier");
+  const pending = store.loadOlder("session");
+  auth.clear();
+  requests[3]!.resolve({
+    messages: [{ role: "user", content: "Private late page" }],
+    revision: "new",
+    older: null,
+  });
+  await pending;
+  assert.deepEqual(store.messages, {});
+  assert.deepEqual(store.historyPages, {});
+});
+
+test("live arrivals are retained when an older latest-history response finishes", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
+  Object.assign(globalThis, {
+    document: { visibilityState: "visible", addEventListener() {} },
+    window: { addEventListener() {} },
+  });
+  setActivePinia(createPinia());
+  const auth = useAuth();
+  auth.unlocked = true;
+  const store = useSessions();
+  let finish!: (value: unknown) => void;
+  auth.request = (() =>
+    new Promise((resolve) => (finish = resolve))) as typeof auth.request;
+  const loading = store.history("session");
+  store.messages.session = [
+    { role: "assistant", content: "New live message", timestamp: 2 },
+  ];
+  finish({
+    messages: [{ role: "user", content: "Older saved message", timestamp: 1 }],
+    revision: "r",
+    older: null,
+  });
+  await loading;
+  assert.deepEqual(
+    store.messages.session!.map((row) => row.content),
+    ["Older saved message", "New live message"],
+  );
+});
+
+test("older paging waits for an in-flight provenance refresh instead of prepending an obsolete snapshot", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
+  Object.assign(globalThis, {
+    document: { visibilityState: "visible", addEventListener() {} },
+    window: { addEventListener() {} },
+  });
+  setActivePinia(createPinia());
+  const auth = useAuth();
+  auth.unlocked = true;
+  const store = useSessions();
+  const message = {
+    role: "user",
+    content: "Current",
+    timestamp: 1,
+    remoteHistoryKey: "a".repeat(64),
+  };
+  store.messages.session = [message];
+  store.historyPages.session = {
+    revision: "old",
+    older: "old-cursor",
+    loading: false,
+    error: "",
+  };
+  let finish!: (value: unknown) => void;
+  let posted!: () => void;
+  const ready = new Promise<void>((resolve) => (posted = resolve));
+  const calls: string[] = [];
+  auth.request = ((url: string) => {
+    calls.push(url);
+    if (url.includes("window=latest")) {
+      posted();
+      return new Promise((resolve) => (finish = resolve));
+    }
+    return Promise.resolve({
+      messages: [
+        {
+          role: "user",
+          content: url.includes("new-cursor") ? "Canonical older" : "Obsolete older",
+          remoteHistoryKey: "b".repeat(64),
+        },
+      ],
+      revision: url.includes("new-cursor") ? "new" : "old",
+      older: null,
+    });
+  }) as typeof auth.request;
+  const refresh = store.history("session");
+  await ready;
+  const older = store.loadOlder("session");
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const before = calls.filter((url) => url.includes("before="));
+  finish({
+    messages: [message],
+    revision: "new",
+    older: "new-cursor",
+    anchorFound: true,
+    anchoredOlder: "new-cursor",
+  });
+  await refresh;
+  await older;
+  assert.deepEqual(before, [], "No old snapshot request may start during refresh");
+  assert.deepEqual(
+    store.messages.session!.map((row) => row.content),
+    ["Canonical older", "Current"],
+  );
+});

@@ -126,3 +126,12 @@ export class RemoteError extends Error {
     this.statusCode = statusCode;
   }
 }
+
+export interface HistoryPage {
+  anchorFound?: boolean;
+  anchoredOlder?: string | null;
+  messages: Record<string, unknown>[];
+  revision: string;
+  older: string | null;
+  truncated?: boolean;
+}

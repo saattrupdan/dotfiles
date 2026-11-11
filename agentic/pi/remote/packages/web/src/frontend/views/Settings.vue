@@ -143,7 +143,7 @@ async function notifications() {
         auth.request('/auth/lock', { method: 'POST' }).catch(() => {});
       "
     >
-      Lock
+      Close sessions
     </button>
   </section>
 </template>

@@ -1,4 +1,5 @@
 import { pathReference, sessionReference } from "./session-reference.ts";
+import { HistoryPages, historyKey, type HistoryWindow } from "./history-pages.ts";
 import { ToolDisplay } from "./tool-display.ts";
 import fs from "node:fs";
 import path from "node:path";
@@ -39,7 +40,10 @@ interface NativeModule {
   buildSessionProjection: (
     entries: NativeEntry[],
     leaf?: string | null,
-  ) => { messages: unknown[] };
+  ) => {
+    messages: unknown[];
+    entries?: { sourceEntry: NativeEntry; messages: unknown[] }[];
+  };
 }
 function stamp(stats: fs.Stats) {
   return `${stats.dev}:${stats.ino}:${stats.mtimeMs}:${stats.ctimeMs}:${stats.size}`;
@@ -48,6 +52,44 @@ function stamp(stats: fs.Stats) {
 /** Discovery reads bounded metadata; transcript projection occurs only on selection. */
 export class History {
   module: Promise<NativeModule>;
+  private pages = new HistoryPages(async (file, nativeId) => {
+    const api = await this.module;
+    const { entries, truncated } = await this.readEntries(file);
+    const header = entries.find((entry) => entry.type === "session");
+    if (entries.length && header?.id !== nativeId)
+      throw new RemoteError("session_changed", 409);
+    const projection = api.buildSessionProjection(
+      entries.filter((entry) => entry.type !== "session"),
+    );
+    const records =
+      projection.entries?.flatMap((entry) =>
+        entry.messages.map((message, index) => ({
+          message,
+          key: historyKey(entry.sourceEntry.id ?? "", index, message),
+        })),
+      ) ??
+      projection.messages.map((message, index) => ({
+        message,
+        key: historyKey("fallback", index, message),
+      }));
+    return {
+      truncated,
+      messages: records.map(({ message, key }) => ({
+        ...(message as Record<string, unknown>),
+        remoteHistoryKey: key,
+      })),
+    };
+  });
+  async window(
+    file: string,
+    nativeId: string,
+    cwd: string,
+    options: HistoryWindow = {},
+  ) {
+    const page = await this.pages.read(file, nativeId, options);
+    return { ...page, messages: await this.display.messages(page.messages, cwd, file) };
+  }
+
   private headers = new Map<string, { stamp: string; row: NativeSession }>();
   private names = new Map<
     string,

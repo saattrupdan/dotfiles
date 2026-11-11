@@ -79,6 +79,77 @@ watch(
 const time = setInterval(() => (now.value = Date.now()), 1000);
 let following = true;
 const opening = ref(true);
+const paging = ref(false);
+let pagingOperation = 0;
+const page = computed(() => store.historyPages[id.value]);
+let upwardIntent = false;
+let lastScroll = 0;
+let lastHeight = 0;
+let touchY = 0;
+type Anchor = { key: string; offset: number };
+let heldAnchor: Anchor | undefined;
+let prependAnchor: Anchor | undefined;
+function captureAnchor(): Anchor | undefined {
+  const rows = content.value?.querySelectorAll<HTMLElement>("[data-history-row]");
+  for (const row of rows ?? []) {
+    const box = row.getBoundingClientRect();
+    if (box.height > 0 && box.bottom > 130 && box.top < window.innerHeight)
+      return { key: row.dataset.historyRow!, offset: box.top };
+  }
+}
+function restoreAnchor(anchor?: Anchor) {
+  if (!anchor) return;
+  const row = [
+    ...(content.value?.querySelectorAll<HTMLElement>("[data-history-row]") ?? []),
+  ].find((row) => row.dataset.historyRow === anchor.key);
+  if (row)
+    window.scrollBy({
+      top: row.getBoundingClientRect().top - anchor.offset,
+      behavior: "instant",
+    });
+}
+async function older() {
+  if (
+    paging.value ||
+    opening.value ||
+    !page.value?.older ||
+    !auth.unlocked ||
+    !auth.visible
+  )
+    return;
+  const target = id.value;
+  const expected = loadGeneration;
+  const operation = ++pagingOperation;
+  paging.value = true;
+  prependAnchor = undefined;
+  try {
+    await store.loadOlder(target);
+    await nextTick();
+    if (!disposed && expected === loadGeneration && target === id.value) {
+      restoreAnchor(prependAnchor);
+      heldAnchor = captureAnchor();
+    }
+  } catch (e) {
+    if (!disposed) error.value = (e as Error).message;
+  } finally {
+    if (operation === pagingOperation) paging.value = false;
+  }
+  requestAnimationFrame(() => {
+    if (!disposed && target === id.value) maybeOlder();
+  });
+}
+function maybeOlder() {
+  if (upwardIntent && window.scrollY < window.innerHeight * 1.5 && !page.value?.error)
+    void older();
+}
+watch(
+  () => store.messages[id.value],
+  (next, previous) => {
+    if (paging.value && previous?.length && next?.[0] !== previous[0])
+      prependAnchor = captureAnchor();
+  },
+  { flush: "pre" },
+);
 const composerInput = ref<HTMLTextAreaElement>();
 let automaticUntil = 0;
 let loadGeneration = 0;
@@ -87,15 +158,50 @@ function nearBottom() {
     document.documentElement.scrollHeight - window.innerHeight - window.scrollY < 80
   );
 }
-function userScroll() {
+function userScroll(event?: Event) {
   automaticUntil = 0;
+  heldAnchor = undefined;
+  if (event instanceof WheelEvent && event.deltaY < 0) {
+    following = false;
+    upwardIntent = true;
+    maybeOlder();
+  }
+  if (
+    typeof TouchEvent !== "undefined" &&
+    event instanceof TouchEvent &&
+    event.touches[0]
+  )
+    touchY = event.touches[0].clientY;
+}
+function touchMoved(event: TouchEvent) {
+  if (event.touches[0] && event.touches[0].clientY - touchY > 8) {
+    following = false;
+    upwardIntent = true;
+    maybeOlder();
+  }
 }
 function scrolled() {
-  if (Date.now() >= automaticUntil) following = nearBottom();
+  const height = document.documentElement.scrollHeight;
+  // Layout-driven scroll events must not replace the reader's anchor.
+  const layoutChanged = height !== lastHeight;
+  const movedUp = window.scrollY < lastScroll - 2;
+  const moved = Math.abs(window.scrollY - lastScroll) > 2;
+  if (movedUp && !layoutChanged && !opening.value && !paging.value) upwardIntent = true;
+  lastScroll = window.scrollY;
+  lastHeight = height;
+  if (!paging.value && nearBottom()) {
+    following = true;
+    heldAnchor = undefined;
+  } else if (Date.now() >= automaticUntil && !paging.value && !layoutChanged && moved) {
+    following = nearBottom() || (following && !movedUp);
+    heldAnchor = following ? undefined : captureAnchor();
+  }
+  maybeOlder();
 }
 let smoothPending = false;
 function scrollBottom(smooth = false) {
-  if (!auth.unlocked || !auth.visible || (!opening.value && !following)) return;
+  if (paging.value || !auth.unlocked || !auth.visible || (!opening.value && !following))
+    return;
   if (opening.value) smoothPending = false;
   else smoothPending ||= smooth;
   if (scrollFrame !== undefined) return;
@@ -122,13 +228,17 @@ async function load(initial = true) {
   const expected = ++loadGeneration;
   const target = id.value;
   if (initial) {
+    pagingOperation++;
+    paging.value = false;
     opening.value = true;
     following = true;
+    upwardIntent = false;
+    heldAnchor = undefined;
     loadError.value = "";
   }
   try {
     await store.detail(target);
-    await store.history(target);
+    await store.history(target, initial);
     if (disposed || expected !== loadGeneration || target !== id.value) return;
     store.connect(target);
     name.value = isUntitled(session.value?.name) ? "" : (session.value?.name ?? "");
@@ -147,11 +257,16 @@ async function load(initial = true) {
   }
 }
 onMounted(() => {
-  resize = new ResizeObserver(() => scrollBottom());
+  resize = new ResizeObserver(() => {
+    if (paging.value) return;
+    if (!following) restoreAnchor(heldAnchor);
+    else scrollBottom();
+  });
   if (content.value) resize.observe(content.value);
   window.addEventListener("scroll", scrolled, { passive: true });
   window.addEventListener("wheel", userScroll, { passive: true });
   window.addEventListener("touchstart", userScroll, { passive: true });
+  window.addEventListener("touchmove", touchMoved, { passive: true });
   window.addEventListener("resize", resized);
   window.visualViewport?.addEventListener("resize", resized);
   void load();
@@ -171,6 +286,7 @@ onUnmounted(() => {
   window.removeEventListener("scroll", scrolled);
   window.removeEventListener("wheel", userScroll);
   window.removeEventListener("touchstart", userScroll);
+  window.removeEventListener("touchmove", touchMoved);
   window.removeEventListener("resize", resized);
   window.visualViewport?.removeEventListener("resize", resized);
   if (scrollFrame !== undefined) cancelAnimationFrame(scrollFrame);
@@ -420,6 +536,31 @@ async function upload(event: Event) {
     >
       Showing the latest saved messages from this large conversation.
     </p>
+    <div
+      v-if="page?.older || page?.loading || page?.error"
+      class="older-history"
+    >
+      <LoadingIndicator
+        v-if="paging || page.loading"
+        label="Loading earlier messages"
+        compact
+      />
+      <button
+        v-else
+        @click="older"
+      >
+        {{
+          page.error ? "Try loading earlier messages again" : "Load earlier messages"
+        }}
+      </button>
+      <p
+        v-if="page.error"
+        class="error small"
+        role="alert"
+      >
+        {{ page.error }}
+      </p>
+    </div>
     <Transcript
       :messages="store.messages[id] || []"
       :streaming="store.streaming[id]"
@@ -617,6 +758,20 @@ async function upload(event: Event) {
   </section>
 </template>
 <style scoped>
+.conversation {
+  overflow-anchor: none;
+}
+.older-history {
+  min-height: 44px;
+  display: grid;
+  place-items: center;
+  margin: 12px 0;
+}
+.older-history button {
+  border: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
 .opening-indicator {
   position: fixed;
   inset: var(--header-height) 0 0;

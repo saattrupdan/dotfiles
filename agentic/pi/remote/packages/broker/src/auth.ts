@@ -19,7 +19,14 @@ export const PAIRING_LINK_TTL_MS = 10 * 60 * 1000;
 const COOKIE = "__Host-pi-remote";
 const GRACE = 120000;
 const LEASE = 45000;
-const MAX_VERIFIED = 15 * 60 * 1000;
+const COOKIE_AGE = 30 * 86400;
+const COOKIE_OPTIONS = {
+  path: "/",
+  httpOnly: true,
+  secure: true,
+  sameSite: "strict" as const,
+  maxAge: COOKIE_AGE,
+};
 export class Auth {
   constructor(
     readonly store: Store,
@@ -43,12 +50,7 @@ export class Auth {
   unlocked(req: FastifyRequest) {
     const row = this.paired(req);
     const now = Date.now();
-    if (
-      !row.unlocked ||
-      Date.now() - row.verified > MAX_VERIFIED ||
-      row.background !== null ||
-      now - row.seen > LEASE
-    )
+    if (!row.unlocked || row.background !== null || now - row.seen > LEASE)
       throw new RemoteError("locked", 423);
     return row;
   }
@@ -66,13 +68,7 @@ export class Auth {
         Date.now() + 30 * 86400000,
         unlocked ? 1 : 0,
       );
-    reply.setCookie(COOKIE, raw, {
-      path: "/",
-      httpOnly: true,
-      secure: true,
-      sameSite: "strict",
-      maxAge: 30 * 86400,
-    });
+    reply.setCookie(COOKIE, raw, COOKIE_OPTIONS);
   }
   revoke(device: string) {
     this.store.db.prepare("UPDATE devices SET revoked=1 WHERE id=?").run(device);
@@ -97,6 +93,31 @@ export class Auth {
         return { paired: false };
       }
     });
+    app.post("/api/v1/auth/unlock", async (req, reply) => {
+      const a = this.csrf(req);
+      const now = Date.now();
+      this.store.db
+        .prepare(
+          "UPDATE auth SET unlocked=1,verified=?,seen=?,background=NULL,expires=? WHERE hash=?",
+        )
+        .run(now, now, now + COOKIE_AGE * 1000, a.hash);
+      reply.setCookie(COOKIE, req.cookies[COOKIE]!, COOKIE_OPTIONS);
+      return { unlocked: true };
+    });
+    app.post("/api/v1/pairing/claim", async (req, reply) => {
+      const b = z
+        .object({ token: z.string().min(32).max(100), name: DeviceName })
+        .parse(req.body);
+      if (!this.store.take(digest(b.token), "pair"))
+        throw new RemoteError("pairing_expired", 401);
+      const id = randomUUID();
+      this.store.db
+        .prepare("INSERT INTO devices VALUES (?,?,?,0,?)")
+        .run(id, b.name, JSON.stringify({ kind: "paired-cookie" }), Date.now());
+      this.issue(reply, id);
+      this.store.audit(id, "", "pair", "paired");
+      return { paired: true };
+    });
     app.post("/api/v1/auth/lock", async (req) => {
       const a = this.csrf(req);
       this.store.db.prepare("UPDATE auth SET unlocked=0 WHERE hash=?").run(a.hash);
@@ -109,7 +130,6 @@ export class Auth {
       const now = Date.now();
       if (
         !a.unlocked ||
-        now - a.verified > MAX_VERIFIED ||
         (a.background === null && now - a.seen > LEASE) ||
         (a.background !== null && now - a.background >= GRACE)
       ) {
@@ -193,7 +213,7 @@ export class Auth {
       const options = await generateAuthenticationOptions({
         rpID,
         userVerification: "required",
-        allowCredentials: credential
+        allowCredentials: credential?.id
           ? [{ id: credential.id, transports: credential.transports }]
           : undefined,
       });
@@ -221,6 +241,8 @@ export class Auth {
             .get(response.id) as unknown as ReturnType<Store["device"]>);
       if (!row) throw new RemoteError("verification_failed", 401);
       const saved = JSON.parse(row.credential);
+      if (!saved.id || !saved.publicKey)
+        throw new RemoteError("verification_failed", 401);
       const credential: WebAuthnCredential = {
         ...saved,
         publicKey: Buffer.from(saved.publicKey, "base64url"),

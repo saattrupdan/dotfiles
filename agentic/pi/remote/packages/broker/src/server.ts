@@ -48,6 +48,7 @@ export async function createBroker(
     subscriptions: Set<string>;
     minimumLiveSequence: Map<string, number>;
     subscriptionGeneration: number;
+    windowed: boolean;
   };
   const clients = new Map<WebSocket, Client>();
   const display = new ToolDisplay(config.agentDir);
@@ -60,7 +61,17 @@ export async function createBroker(
       (!session || !inDeploymentScope(config, session) || !recent(session))
     )
       return;
-    display.emit(event, session?.cwd ?? "/", publish, session?.sessionFile ?? "");
+    const windowed =
+      event.type === "snapshot" &&
+      ![...clients.values()].some(
+        (client) => !client.windowed && client.subscriptions.has(event.sessionId ?? ""),
+      );
+    display.emit(
+      windowed ? { ...event, type: "resnapshot", data: null } : event,
+      session?.cwd ?? "/",
+      publish,
+      session?.sessionFile ?? "",
+    );
   };
   function deliver(socket: WebSocket, client: Client, event: StreamEvent) {
     if (event.type.startsWith("sessions.")) event = { ...event, data: null };
@@ -85,6 +96,8 @@ export async function createBroker(
       socket.close(4002, "resnapshot_required");
       return;
     }
+    if (client.windowed && event.type === "snapshot")
+      event = { ...event, type: "resnapshot", data: null };
     socket.send(JSON.stringify(event));
   }
   const publish = (event: StreamEvent) => {
@@ -378,14 +391,36 @@ export async function createBroker(
       .object({
         offset: z.coerce.number().int().min(0).default(0),
         limit: z.coerce.number().int().min(1).max(200).default(100),
+        window: z.literal("latest").optional(),
+        before: z.string().max(64).optional(),
+        count: z.coerce.number().int().min(1).max(100000).optional(),
+        proof: z
+          .string()
+          .regex(/^[0-9a-f]{64}$/)
+          .optional(),
+        anchor: z
+          .string()
+          .regex(/^[0-9a-f]{64}$/)
+          .optional(),
       })
       .parse(req.query);
-    return (
-      (await catalog?.messages(session.path, q.offset, q.limit, session.id)) ?? {
-        messages: [],
-        next: null,
-      }
-    );
+    const result =
+      q.window || q.before
+        ? ((await catalog?.window(session.path, session.id, session.cwd, q)) ?? {
+            messages: [],
+            older: null,
+            revision: "empty",
+          })
+        : ((await catalog?.messages(session.path, q.offset, q.limit, session.id)) ?? {
+            messages: [],
+            next: null,
+          });
+    read(req);
+    const current = await find(sessionId(req));
+    read(req);
+    if (current.path !== session.path || current.id !== session.id)
+      throw new RemoteError("session_changed", 409);
+    return result;
   });
   app.post("/api/v1/sessions", async (req) => {
     const a = mutate(req);
@@ -582,6 +617,7 @@ export async function createBroker(
         subscriptions: new Set<string>(),
         minimumLiveSequence: new Map<string, number>(),
         subscriptionGeneration: 0,
+        windowed: false,
       };
       clients.set(socket, client);
       socket.on("message", (raw) => {
@@ -589,6 +625,7 @@ export async function createBroker(
           read(req);
           const b = z
             .object({
+              historyWindow: z.boolean().optional(),
               subscriptions: z
                 .array(
                   z.object({
@@ -599,6 +636,7 @@ export async function createBroker(
                 .max(100),
             })
             .parse(JSON.parse(raw.toString()));
+          client.windowed = b.historyWindow === true;
           client.subscriptions = new Set<string>();
           client.minimumLiveSequence.clear();
           const round = ++client.subscriptionGeneration;
@@ -611,7 +649,9 @@ export async function createBroker(
             client.minimumLiveSequence.set(sub.sessionId, session.sequence);
             const replay = (event: StreamEvent) =>
               display.emit(
-                event,
+                client.windowed && event.type === "snapshot"
+                  ? { ...event, type: "resnapshot", data: null }
+                  : event,
                 session.cwd,
                 (formatted) => {
                   if (round === client.subscriptionGeneration)
