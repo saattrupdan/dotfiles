@@ -15,6 +15,7 @@ await jiti.import(path.join(root, "codemode-collapse", "index.test.ts"), { defau
 await jiti.import(path.join(root, "_tool-display", "expanded-call.test.ts"), { default: false });
 await jiti.import(path.join(root, "generate-image", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "generate-video", "index.test.ts"), { default: false });
+await jiti.import(path.join(root, "generate-video", "lifecycle.test.ts"), { default: false });
 await jiti.import(path.join(root, "incognito", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "fast", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "context-limit", "index.test.ts"), { default: false });

@@ -21,7 +21,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "generate_video",
 		label: "generate video",
-		description: "Generate one video with native audio using MiniMaxAI/MiniMax-H3 with the installed model_download LoRA on Sparkie. Provide a complete prompt, an explicit duration estimated from its action and dialogue, and optionally a local starting-frame image; no prompt-enhancement model is called. Duration is required (4–15 seconds), with no default. Defaults: 16:9, 24 fps, 50 steps. Returns a local MP4 file URL in a unique directory under /tmp/media. Polls for up to one hour and cancels the remote job on abort or timeout. The router is shared and unauthenticated: do not submit private images, briefs or sensitive input.",
+		description: "Generate one video with native audio using MiniMaxAI/MiniMax-H3 with the installed model_download LoRA on Sparkie. Provide a complete prompt, an explicit duration estimated from its action and dialogue, and optionally a local starting-frame image; no prompt-enhancement model is called. Duration is required (4–15 seconds), with no default. Defaults: 16:9, 24 fps, 50 steps. Returns a local MP4 file URL in a unique directory under /tmp/media. Starts MiniMax-H3 on demand and stops it after use when no other jobs are active. Polls for up to one hour and cancels the remote job on abort or timeout. The router is shared and unauthenticated: do not submit private images, briefs or sensitive input.",
 		parameters: Params,
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			if (running) return { content: [{ type: "text", text: "A video is already being generated." }], isError: true, details: undefined };
@@ -30,7 +30,7 @@ export default function (pi: ExtensionAPI) {
 				onUpdate?.({ content: [], details: undefined });
 				const output = await generateVideo(params, { signal, onProgress: (label) => ctx.ui.setWorkingMessage(label) });
 				return {
-					content: [{ type: "text", text: `Prompt:\n${params.prompt}\n\nVideo: ${pathToFileURL(output.path).href}\nJob: ${output.jobId}` }],
+					content: [{ type: "text", text: `Prompt:\n${params.prompt}\n\nVideo: ${pathToFileURL(output.path).href}\nJob: ${output.jobId}${output.warnings.length ? `\n${output.warnings.join("\n")}` : ""}` }],
 					details: output,
 				};
 			} catch (error) {

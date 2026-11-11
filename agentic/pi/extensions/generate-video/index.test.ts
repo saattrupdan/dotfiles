@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, truncate, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { pathToFileURL } from "node:url";
 import path from "node:path";
-import { test } from "node:test";
+import { afterEach, beforeEach, test } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import registerVideo from "./index.ts";
 import { generateVideo, type VideoInput } from "./video.ts";
@@ -13,6 +13,16 @@ type Tool = Parameters<ExtensionAPI["registerTool"]>[0];
 const mp4 = Buffer.from([0, 0, 0, 24, ...Buffer.from("ftypisom"), 0, 0, 0, 0]);
 const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
 const job = (status: string, extra = {}) => json({ id: "video_test", status, ...extra });
+
+let savedEndpoint: string | undefined;
+beforeEach(() => {
+	savedEndpoint = process.env.VIDEO_GENERATION_URL;
+	process.env.VIDEO_GENERATION_URL = "http://test-router";
+});
+afterEach(() => {
+	if (savedEndpoint === undefined) delete process.env.VIDEO_GENERATION_URL;
+	else process.env.VIDEO_GENERATION_URL = savedEndpoint;
+});
 
 function setup() {
 	let tool: Tool | undefined;
@@ -51,6 +61,79 @@ test("submits multipart MiniMax-H3 settings, polls and downloads one local MP4",
 		assert.deepEqual(phases, ["Submitting video to Sparkie...", "Video queued on Sparkie...", "Generating video (42%)...", "Downloading video..."]);
 	} finally {
 		await rm(path.dirname(output.path), { recursive: true, force: true });
+	}
+});
+
+test("releases Sparkie after saving the completed video", async () => {
+	const events: string[] = [];
+	let outputPath: string | undefined;
+	const output = await generateVideo({ seconds: 5, prompt: "A cat" }, {
+		endpoint: "http://router",
+		acquire: async () => {
+			events.push("acquire");
+			return async () => {
+				events.push("release");
+				assert.ok(outputPath);
+			};
+		},
+		fetch: async (_url, init) => {
+			events.push(init?.method ?? "download");
+			if (init?.method === "POST") return job("completed");
+			outputPath = "downloaded";
+			return new Response(mp4);
+		},
+	});
+	try {
+		assert.deepEqual(events, ["acquire", "POST", "download", "release"]);
+		assert.deepEqual(await readFile(output.path), mp4);
+	} finally {
+		await rm(path.dirname(output.path), { recursive: true, force: true });
+	}
+});
+
+test("lifecycle cleanup runs after failure and cancellation without masking either", async () => {
+	for (const outcome of ["failed", "cancelled", "unknown", "http", "download"] as const) {
+		const controller = new AbortController();
+		const events: string[] = [];
+		await assert.rejects(generateVideo({ seconds: 5, prompt: "A cat" }, {
+			signal: controller.signal,
+			acquire: async () => async (preserve) => {
+				events.push(`release:${preserve}`);
+				assert.equal(controller.signal.aborted, outcome === "cancelled");
+				throw new Error("shutdown problem");
+			},
+			fetch: async (_url, init) => {
+				if (init?.method === "DELETE") { events.push("delete"); return json({ deleted: true }); }
+				if (outcome === "unknown") throw new Error("connection lost");
+				if (outcome === "http") return new Response("offline", { status: 503 });
+				if (outcome === "cancelled") controller.abort();
+				if (outcome === "download") return init?.method === "POST" ? job("completed") : new Response("bad MP4");
+				return job("failed", { error: "model failed" });
+			},
+		}), outcome === "failed" ? /model failed.*shutdown problem/
+			: outcome === "cancelled" ? /cancelled.*Remote job deleted.*shutdown problem/
+				: outcome === "unknown" ? /outcome is unknown.*shutdown problem/
+					: outcome === "http" ? /HTTP 503.*shutdown problem/ : /MP4.*shutdown problem/);
+		assert.deepEqual(events, outcome === "cancelled" ? ["delete", "release:false"] : [`release:${outcome === "unknown"}`]);
+	}
+});
+
+test("shutdown warnings preserve a successfully downloaded video", async () => {
+	const output = await generateVideo({ seconds: 5, prompt: "A cat" }, {
+		acquire: async () => async () => ["Other jobs are active; H3 left running."],
+		fetch: async (_url, init) => init?.method === "POST" ? job("completed") : new Response(mp4),
+	});
+	try {
+		assert.deepEqual(output.warnings, ["Other jobs are active; H3 left running."]);
+		assert.deepEqual(await readFile(output.path), mp4);
+	} finally { await rm(path.dirname(output.path), { recursive: true, force: true }); }
+});
+
+test("pre-aborted calls and invalid images never acquire the model", async () => {
+	for (const input of [{ signal: AbortSignal.abort() }, { image: "https://example.com/image.png" }]) {
+		await assert.rejects(generateVideo({ seconds: 5, prompt: "A cat", image: input.image }, {
+			signal: input.signal, acquire: async () => { assert.fail("must not acquire"); },
+		}));
 	}
 });
 

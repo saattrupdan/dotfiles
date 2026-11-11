@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { acquireSparkie, SPARKIE_VIDEO_ENDPOINT, type AcquireVideoServer, type ReleaseVideoServer } from "./lifecycle.ts";
 
 export interface VideoInput {
 	prompt: string;
@@ -29,6 +30,7 @@ interface VideoOptions {
 	fetch?: typeof fetch;
 	pollMs?: number;
 	timeoutMs?: number;
+	acquire?: AcquireVideoServer;
 }
 
 const SIZES = { "16:9": "960x544", "9:16": "544x960", "1:1": "544x544" };
@@ -51,7 +53,7 @@ async function checked(response: Response): Promise<Response> {
 	return response;
 }
 
-export async function generateVideo(input: VideoInput, options: VideoOptions = {}): Promise<{ path: string; jobId: string }> {
+export async function generateVideo(input: VideoInput, options: VideoOptions = {}): Promise<{ path: string; jobId: string; warnings: string[] }> {
 	const seconds = input.seconds;
 	const steps = input.steps ?? 50;
 	const aspect = input.aspect_ratio ?? "16:9";
@@ -64,7 +66,7 @@ export async function generateVideo(input: VideoInput, options: VideoOptions = {
 	}
 
 	const request = options.fetch ?? fetch;
-	const base = (options.endpoint ?? process.env.VIDEO_GENERATION_URL ?? process.env.MINIMAX_VIDEO_URL ?? "http://100.102.237.34:31000").replace(/\/+$/, "");
+	const base = (options.endpoint ?? process.env.VIDEO_GENERATION_URL ?? process.env.MINIMAX_VIDEO_URL ?? SPARKIE_VIDEO_ENDPOINT).replace(/\/+$/, "");
 	const signal = AbortSignal.any([options.signal ?? new AbortController().signal, AbortSignal.timeout(options.timeoutMs ?? 3_600_000)]);
 	const form = new FormData();
 	for (const [key, value] of Object.entries({
@@ -76,6 +78,9 @@ export async function generateVideo(input: VideoInput, options: VideoOptions = {
 	let jobId: string | undefined;
 	let directory: string | undefined;
 	let submitting = false;
+	let release: ReleaseVideoServer | undefined;
+	let failure: Error | undefined;
+	const warnings: string[] = [];
 	try {
 		signal.throwIfAborted();
 		if (input.image !== undefined) {
@@ -92,6 +97,12 @@ export async function generateVideo(input: VideoInput, options: VideoOptions = {
 			if (!kind) throw new Error("image must be JPEG, PNG, or WebP.");
 			form.set("input_reference", new Blob([new Uint8Array(bytes)], { type: `image/${kind}` }), `reference.${kind}`);
 		}
+		const acquire = options.acquire ?? (base === SPARKIE_VIDEO_ENDPOINT ? acquireSparkie : undefined);
+		if (acquire) {
+			options.onProgress?.("Starting MiniMax-H3 on Sparkie...");
+			release = await acquire(signal);
+		}
+		signal.throwIfAborted();
 		options.onProgress?.("Submitting video to Sparkie...");
 		// Recover the ID even if the caller aborts after the router accepts the POST.
 		// This signal covers both response headers and the JSON body, but is independent
@@ -123,9 +134,12 @@ export async function generateVideo(input: VideoInput, options: VideoOptions = {
 		directory = await mkdtemp("/tmp/media/pi-video-");
 		const output = path.join(directory, "video.mp4");
 		await writeFile(output, bytes, { signal });
-		return { path: output, jobId };
+		return { path: output, jobId, warnings };
 	} catch (error) {
-		if (directory) await rm(directory, { recursive: true, force: true });
+		if (directory) {
+			try { await rm(directory, { recursive: true, force: true }); }
+			catch (cleanupError) { warnings.push(`Could not remove partial video: ${String(cleanupError)}`); }
+		}
 		let message = signal.aborted
 			? (options.signal?.aborted ? "Video generation cancelled." : "Video generation timed out after one hour.")
 			: error instanceof Error ? error.message : String(error);
@@ -143,6 +157,17 @@ export async function generateVideo(input: VideoInput, options: VideoOptions = {
 				message += ` Status/content: ${base}/v1/videos/${encodeURIComponent(jobId)}`;
 			}
 		}
-		throw new Error(message, { cause: error });
+		failure = new Error(message, { cause: error });
+		throw failure;
+	} finally {
+		if (release) {
+			try {
+				options.onProgress?.("Stopping MiniMax-H3 on Sparkie...");
+				warnings.push(...await release(submitting));
+			} catch (cleanupError) {
+				warnings.push(`MiniMax-H3 shutdown failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+			}
+		}
+		if (failure && warnings.length) failure.message += ` ${warnings.join(" ")}`;
 	}
 }
