@@ -19,7 +19,7 @@ function setup() {
 	const working: (string | undefined)[] = [];
 	registerVideo({ registerTool: (value: Tool) => { tool = value; } } as ExtensionAPI);
 	assert.ok(tool);
-	const ctx = { ui: { setWorkingMessage: (label?: string) => working.push(label) } } as ExtensionContext;
+	const ctx = { ui: { theme: { fg: (_color: string, text: string) => text }, setWorkingMessage: (label?: string) => working.push(label) } } as ExtensionContext;
 	return { tool, ctx, working };
 }
 

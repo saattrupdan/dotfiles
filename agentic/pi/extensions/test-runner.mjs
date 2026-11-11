@@ -8,6 +8,7 @@ const { createJiti } = require("jiti");
 const jiti = createJiti(import.meta.url, { moduleCache: false });
 
 await jiti.import(path.join(root, "_outliner", "outliner.test.ts"), { default: false });
+await jiti.import(path.join(root, "_working-status", "status.test.ts"), { default: false });
 await jiti.import(path.join(root, "conversation-name", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "codemode-collapse", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "_tool-display", "expanded-call.test.ts"), { default: false });
@@ -46,6 +47,7 @@ await jiti.import(path.join(root, "read", "heic.test.ts"), { default: false });
 await jiti.import(path.join(root, "read", "size-guard.test.ts"), { default: false });
 await jiti.import(path.join(root, "subagent", "session-label.test.ts"), { default: false });
 await jiti.import(path.join(root, "subagent", "compact-result.test.ts"), { default: false });
+await import(path.join(root, "thinking-status", "index.test.mjs"));
 await jiti.import(path.join(root, "statusline", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "web-search", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "web-browse", "index.test.ts"), { default: false });

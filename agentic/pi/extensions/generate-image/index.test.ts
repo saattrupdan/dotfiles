@@ -151,6 +151,7 @@ test("tool activity uses the working indicator, not the footer", () => {
 	} as unknown as ExtensionAPI;
 	const ctx = {
 		ui: {
+			theme: { fg: (_color: string, text: string) => text },
 			setWorkingMessage: (message?: string) => working.push(message),
 			setStatus: (_key: string, message: string) => footer.push(message),
 		},

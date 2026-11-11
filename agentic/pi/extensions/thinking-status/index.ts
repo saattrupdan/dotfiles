@@ -31,7 +31,7 @@
  *    label is always live and never lingers in the chat.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 // Tool name -> working indicator label. Unmapped tools use pi's default "Working...".
 const TOOL_LABELS: Record<string, string> = {
@@ -66,7 +66,7 @@ export default function (pi: ExtensionAPI) {
 	const HIDDEN_LABEL = "(...)";
 
 	// Track ctx for event-bus handlers (they receive no ctx)
-	type CtxWithUI = { ui: { setWorkingMessage(message?: string): void; setWorkingVisible(visible: boolean): void } };
+	type CtxWithUI = { ui: Pick<ExtensionContext["ui"], "setWorkingMessage" | "setWorkingVisible" | "theme"> };
 	let lastCtx: CtxWithUI | undefined;
 
 	pi.on("session_start", (_event, ctx) => {
@@ -95,7 +95,10 @@ export default function (pi: ExtensionAPI) {
 	};
 	const apply = (ctx: CtxWithUI) => {
 		lastCtx = ctx;
-		ctx.ui.setWorkingMessage(currentLabel());
+		const label = currentLabel();
+		// Embedded indicators inherit the editor's thinking-level color. Keep
+		// activity text neutral; the border and spinner still show that level.
+		ctx.ui.setWorkingMessage(label === undefined ? undefined : ctx.ui.theme.fg("muted", label));
 	};
 
 	// --- 3. Event-bus override channel ---------------------------------------
@@ -107,10 +110,10 @@ export default function (pi: ExtensionAPI) {
 		if (label !== undefined && label !== "") {
 			overrideLabel = label;
 			lastCtx.ui.setWorkingVisible(true);
-			lastCtx.ui.setWorkingMessage(currentLabel());
+			apply(lastCtx);
 		} else {
 			overrideLabel = undefined;
-			lastCtx.ui.setWorkingMessage(currentLabel());
+			apply(lastCtx);
 		}
 	});
 

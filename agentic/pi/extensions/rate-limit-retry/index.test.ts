@@ -295,6 +295,7 @@ test("retry replaces the working spinner even when reasoning resumes", async () 
 	const ctx = {
 		signal: new AbortController().signal,
 		ui: {
+			theme: { fg: (_color: string, text: string) => text },
 			setHiddenThinkingLabel: (_label: string) => {},
 			setWorkingVisible: (value: boolean) => { visible = value; },
 			setWorkingMessage: (value?: string) => { label = value; },
