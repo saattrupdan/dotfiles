@@ -54,12 +54,24 @@ const preventZoom = (event: Event) => event.preventDefault();
 const preventPinch = (event: TouchEvent) => {
   if (event.touches.length > 1) event.preventDefault();
 };
+
+function openNotification(event: MessageEvent) {
+  if (
+    event.origin !== location.origin ||
+    event.data?.type !== "notification-open" ||
+    typeof event.data.url !== "string" ||
+    !/^\/session\/[0-9a-f-]{36}$/.test(event.data.url)
+  )
+    return;
+  void router.push(event.data.url);
+}
 const previousRestoration = window.history.scrollRestoration;
 onMounted(() => {
   window.history.scrollRestoration = "manual";
   void auth.initialize();
   window.addEventListener("focus", syncNotifications);
   navigator.serviceWorker?.addEventListener("controllerchange", syncNotifications);
+  navigator.serviceWorker?.addEventListener("message", openNotification);
   document.addEventListener("gesturestart", preventZoom, { passive: false });
   document.addEventListener("gesturechange", preventZoom, { passive: false });
   document.addEventListener("touchmove", preventPinch, { passive: false });
@@ -68,6 +80,7 @@ onUnmounted(() => {
   window.history.scrollRestoration = previousRestoration;
   window.removeEventListener("focus", syncNotifications);
   navigator.serviceWorker?.removeEventListener("controllerchange", syncNotifications);
+  navigator.serviceWorker?.removeEventListener("message", openNotification);
   document.removeEventListener("gesturestart", preventZoom);
   document.removeEventListener("gesturechange", preventZoom);
   document.removeEventListener("touchmove", preventPinch);

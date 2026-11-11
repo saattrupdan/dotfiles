@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { runInNewContext } from "node:vm";
+import { parse, compileScript } from "vue/compiler-sfc";
+import { transformSync } from "esbuild";
 import { activateNotifications } from "../src/frontend/lib/notifications.ts";
 
 for (const permission of ["granted", "default", "denied"]) {
@@ -118,8 +120,11 @@ test("worker shows generic failed notifications and focuses the existing app", a
         matchAll: async () => [
           {
             url: "https://fixture.test.ts.net/",
-            navigate: async (url: string) => {
-              navigated = url;
+            navigate: async () => {
+              throw new Error("Must not reload an existing app and lose drafts");
+            },
+            postMessage: (data: { url: string }) => {
+              navigated = data.url;
             },
             focus: async () => {
               focused++;
@@ -153,4 +158,40 @@ test("worker shows generic failed notifications and focuses the existing app", a
   assert.equal(opened, 0);
   assert.equal(closed, 2);
   assert.match(navigated, /^\/session\//);
+});
+
+test("notification links route within the app without reloading or accepting foreign URLs", () => {
+  const source = fs.readFileSync(
+    new URL("../src/frontend/App.vue", import.meta.url),
+    "utf8",
+  );
+  const { descriptor } = parse(source),
+    ast = compileScript(descriptor, { id: "notification-link-test" }).scriptSetupAst!;
+  const handler = ast.find(
+    (node) =>
+      node.type === "FunctionDeclaration" && node.id?.name === "openNotification",
+  )!;
+  const paths: string[] = [];
+  const context = {
+    router: { push: (path: string) => paths.push(path) },
+    location: { origin: "https://fixture.test.ts.net" },
+    route: undefined as unknown,
+  };
+  runInNewContext(
+    transformSync(
+      descriptor.scriptSetup!.content.slice(handler.start!, handler.end!) +
+        "\nglobalThis.route=openNotification;",
+      { loader: "ts" },
+    ).code,
+    context,
+  );
+  const route = context.route as (event: unknown) => void;
+  const url = "/session/c2d90aba-4820-494b-978d-1991e3e820cf";
+  route({ origin: "https://other.test", data: { type: "notification-open", url } });
+  route({
+    origin: context.location.origin,
+    data: { type: "notification-open", url: "https://other.test" },
+  });
+  route({ origin: context.location.origin, data: { type: "notification-open", url } });
+  assert.deepEqual(paths, [url]);
 });
