@@ -23,10 +23,12 @@ import Sessions from '/src/frontend/views/Sessions.vue';
 import Settings from '/src/frontend/views/Settings.vue';
 import NewSession from '/src/frontend/views/NewSession.vue';
 import { useAuth } from '/src/frontend/stores/auth.ts';
+import { useSessions } from '/src/frontend/stores/sessions.ts';
 import '/src/frontend/assets/main.css';
 const pinia = createPinia();
 const auth = useAuth(pinia);
 window.__connectionAuth=auth;
+window.__homeSessions=useSessions(pinia);
 auth.initialize = async () => {};
 auth.initializing = false;
 auth.unlocked = true;
@@ -102,6 +104,7 @@ test(
       let historyGate: Promise<void> | undefined;
       let emptyHistory = false;
       let homeGate: Promise<void> | undefined;
+      let emptyHomeListing = false;
       let pagedHistory = false;
       let olderGate: Promise<void> | undefined;
       let olderFetches = 0;
@@ -169,7 +172,10 @@ test(
         } else if (url.pathname === "/api/v1/sessions") {
           if (url.searchParams.has("folder"))
             folderRequests.push(url.searchParams.get("folder")!);
-          body = [session(), ...extraSessions];
+          body =
+            emptyHomeListing && !url.searchParams.has("folder")
+              ? []
+              : [session(), ...extraSessions];
         } else if (url.pathname === `/api/v1/sessions/${id}`) body = session();
         else if (url.pathname === "/api/v1/session-folders")
           body = [
@@ -1086,6 +1092,73 @@ test(
           } finally {
             emptyHistory = false;
             await page.setViewportSize({ width: 402, height: 874 });
+            await page.waitForLoadState("networkidle");
+            await page.reload();
+          }
+        },
+      );
+
+      await t.test(
+        "Home shows loading instead of empty claims until requests settle",
+        async () => {
+          await page.waitForLoadState("networkidle");
+          let release!: () => void;
+          const failListing = (route: Route) =>
+            route.fulfill({ status: 503, json: { error: "session_list_unavailable" } });
+          homeGate = new Promise((resolve) => (release = resolve));
+          try {
+            await page.evaluate(
+              "window.__homeSessions.homeListing=[];window.__homeSessions.folders=[];window.__homeSessions.homeLoaded=true",
+            );
+            await page.getByRole("link", { name: "Pi Remote", exact: true }).click();
+            const active = page.getByRole("region", {
+              name: "Active sessions",
+              exact: true,
+            });
+            await expect(
+              active.getByRole("status").filter({ hasText: "Loading active sessions" }),
+            ).toBeVisible();
+            await expect(
+              page.getByText("No active sessions", { exact: true }),
+            ).toHaveCount(0);
+            await expect(
+              page.getByText("No conversations in the last 7 days", { exact: true }),
+            ).toHaveCount(0);
+            release();
+            await expect(
+              active.getByRole("link", { name: /Phone layout fixture/ }),
+            ).toBeVisible();
+            await expect(active.getByRole("status")).toHaveCount(0);
+            await active.getByRole("link", { name: /Phone layout fixture/ }).click();
+            emptyHomeListing = true;
+            homeGate = new Promise((resolve) => (release = resolve));
+            await page.evaluate("window.__homeSessions.homeListing=[]");
+            await page.getByRole("link", { name: "Pi Remote", exact: true }).click();
+            await expect(
+              active.getByRole("status").filter({ hasText: "Loading active sessions" }),
+            ).toBeVisible();
+            await expect(
+              page.getByText("No active sessions", { exact: true }),
+            ).toHaveCount(0);
+            release();
+            await expect(
+              page.getByText("No active sessions", { exact: true }),
+            ).toBeVisible();
+            homeGate = undefined;
+            await page.getByRole("link", { name: "Settings", exact: true }).click();
+            await page.route("**/api/v1/sessions", failListing);
+            await page.getByRole("link", { name: "Pi Remote", exact: true }).click();
+            await expect(page.getByRole("alert")).toHaveText(
+              "session_list_unavailable",
+            );
+            await expect(
+              page.getByText("No active sessions", { exact: true }),
+            ).toHaveCount(0);
+          } finally {
+            await page.unroute("**/api/v1/sessions", failListing);
+            release();
+            homeGate = undefined;
+            emptyHomeListing = false;
             await page.waitForLoadState("networkidle");
             await page.reload();
           }

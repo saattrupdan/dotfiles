@@ -254,8 +254,13 @@ const basename = (cwd: string) => cwd.split("/").filter(Boolean).at(-1) || cwd;
             <h3>{{ session.name || "Saved conversation" }}</h3>
             <p class="path">{{ session.cwd }}</p>
           </RouterLink>
+          <LoadingIndicator
+            v-if="loading && !active.length"
+            label="Loading active sessions"
+            compact
+          />
           <p
-            v-if="!active.length"
+            v-else-if="!active.length && !error"
             class="empty muted"
           >
             {{ search ? "No matches" : "No active sessions" }}
@@ -283,8 +288,13 @@ const basename = (cwd: string) => cwd.split("/").filter(Boolean).at(-1) || cwd;
             </div>
             <p class="path">{{ entry.cwd }}</p>
           </button>
+          <LoadingIndicator
+            v-if="loading && !folders.length"
+            label="Loading folders"
+            compact
+          />
           <p
-            v-if="!folders.length"
+            v-else-if="!folders.length && !error"
             class="empty muted"
           >
             {{ search ? "No matches" : "No conversations in the last 7 days" }}
@@ -313,7 +323,7 @@ const basename = (cwd: string) => cwd.split("/").filter(Boolean).at(-1) || cwd;
         <h2>{{ session.name || "Saved conversation" }}</h2>
       </RouterLink>
       <p
-        v-if="!filtered.length"
+        v-if="!filtered.length && !error"
         class="empty muted"
       >
         {{ search || filter !== "all" ? "No matches" : "No recent conversations" }}
