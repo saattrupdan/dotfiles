@@ -114,6 +114,7 @@ test(
         timestamp: 2000 + index,
         remoteHistoryKey: index.toString(16).padStart(64, "0"),
       }));
+      let promptSequence = 0;
       let stopped = false,
         recoveries = 0,
         starts = 0;
@@ -127,7 +128,7 @@ test(
         name: "Phone layout fixture",
         cwd: "/Users/fixture",
         epoch: stopped ? 0 : 1,
-        sequence: 0,
+        sequence: promptSequence,
         lastActivity: 1000,
         state: stopped ? "stopped" : prompt ? "waiting" : "idle",
         prompt,
@@ -566,7 +567,7 @@ test(
           JSON.stringify({
             version: 1,
             sessionId: id,
-            sequence: 1,
+            sequence: ++promptSequence,
             type: "prompt",
             data: next ?? null,
           }),
@@ -704,6 +705,33 @@ test(
           assert.equal(
             submissions.some((command) => command.action === "message"),
             false,
+          );
+        },
+      );
+      await t.test(
+        "a new question recovered through metadata replaces a completed question",
+        async () => {
+          await publish({ ...question, id: "completed-question", state: "resolved" });
+          await expect(page.getByRole("textbox", { name: "Answer Pi" })).toHaveCount(0);
+          promptSequence++;
+          prompt = {
+            ...question,
+            id: "next-question",
+            title: "Choose the next decision",
+            options: ["Next choice", "Other choice"],
+          };
+          socket!.send(
+            JSON.stringify({ version: 1, type: "sessions.changed", data: null }),
+          );
+          await expect(
+            page.getByRole("button", { name: "Next choice", exact: true }),
+          ).toBeVisible();
+          await expect(
+            page.getByText("Choose the next decision", { exact: true }),
+          ).toBeVisible();
+          await publish(undefined);
+          await expect(page.getByRole("textbox", { name: "Message Pi" })).toHaveValue(
+            "Keep this draft",
           );
         },
       );
@@ -1864,6 +1892,41 @@ test(
           await expect
             .poll(() => page.evaluate("window.__notificationAcks"))
             .toEqual([{ type: "notification-opened", id: 7 }]);
+        },
+      );
+      await t.test(
+        "hiding the current private session clears it and returns Home without clearing other drafts",
+        async () => {
+          await page.evaluate(
+            "window.__homeSessions.drafts['other-public']='Keep the other draft'",
+          );
+          socket!.send(
+            JSON.stringify({
+              version: 1,
+              type: "session.hidden",
+              sessionId: id,
+              data: null,
+            }),
+          );
+          await expect(
+            page.getByRole("heading", { name: "Active sessions", exact: true }),
+          ).toBeVisible();
+          await expect(
+            page.getByRole("link", { name: /Phone layout fixture/ }),
+          ).toHaveCount(0);
+          await expect
+            .poll(() =>
+              page.evaluate(
+                `window.__homeSessions.messages['${id}']===undefined&&window.__homeSessions.prompt['${id}']===undefined&&window.__homeSessions.drafts['${id}']===undefined`,
+              ),
+            )
+            .toBe(true);
+          assert.equal(
+            await page.evaluate("window.__homeSessions.drafts['other-public']"),
+            "Keep the other draft",
+          );
+          await page.reload();
+          await expect(page.getByRole("textbox", { name: "Message Pi" })).toBeVisible();
         },
       );
       await t.test(

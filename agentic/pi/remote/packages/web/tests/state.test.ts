@@ -829,3 +829,139 @@ test("subagent previews update in memory, settle to final results and clear on d
     mock.timers.reset();
   }
 });
+
+test("session.hidden purges every phone cache and fences late metadata and history", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
+  Object.assign(globalThis, {
+    document: { visibilityState: "visible", addEventListener() {} },
+    window: { addEventListener() {} },
+    location: { protocol: "https:", host: "fixture" },
+    WebSocket: Socket,
+  });
+  setActivePinia(createPinia());
+  const auth = useAuth(),
+    store = useSessions();
+  auth.unlocked = true;
+  auth.visible = true;
+  const sid = "private-session",
+    other = "public-session";
+  const row = { sessionId: sid, sequence: 1, epoch: 1, state: "waiting" } as never;
+  store.sessions = [row];
+  store.listing = [row];
+  store.homeListing = [row];
+  store.drafts[sid] = "private draft";
+  store.drafts[other] = "keep public draft";
+  store.messages[sid] = [{ role: "user", content: "private history" }];
+  store.prompt[sid] = {
+    id: "question",
+    title: "private question",
+    deadline: 9999999999999,
+    state: "pending",
+  };
+  store.streaming[sid] = { content: "private live" };
+  store.historyLimited[sid] = true;
+  let metadata!: (value: unknown) => void, history!: (value: unknown) => void;
+  auth.request = ((url: string) =>
+    url === `/sessions/${sid}`
+      ? new Promise((resolve) => (metadata = resolve))
+      : url.includes("/history?")
+        ? new Promise((resolve) => (history = resolve))
+        : Promise.resolve([])) as typeof auth.request;
+  try {
+    store.connect(sid);
+    const reading = store.history(sid),
+      detail = store.detail(sid);
+    Socket.latest.onmessage?.({
+      data: JSON.stringify({
+        version: 1,
+        type: "session.hidden",
+        sessionId: sid,
+        data: null,
+      }),
+    });
+    assert(store.isHidden(sid));
+    assert.equal(store.sessions.length, 0);
+    assert.equal(store.listing.length, 0);
+    assert.equal(store.homeListing.length, 0);
+    assert.equal(store.prompt[sid], undefined);
+    assert.equal(store.drafts[sid], undefined);
+    assert.equal(store.messages[sid], undefined);
+    assert.equal(store.historyLimited[sid], undefined);
+    metadata(row);
+    history({
+      messages: [{ role: "user", content: "late private history" }],
+      revision: "late",
+      older: null,
+    });
+    await Promise.all([detail, reading]);
+    Socket.latest.onmessage?.({
+      data: JSON.stringify({
+        version: 1,
+        type: "message_end",
+        sessionId: sid,
+        data: { role: "user", content: "late private event" },
+      }),
+    });
+    assert.equal(store.sessions.length, 0);
+    assert.equal(store.messages[sid], undefined);
+    assert.equal(store.drafts[other], "keep public draft");
+    await assert.rejects(
+      store.command(sid, { action: "stop_run" }),
+      /session_not_found/,
+    );
+  } finally {
+    auth.clear();
+    t.mock.timers.reset();
+  }
+});
+
+test("live questions survive older HTTP snapshots and stale resolution or expiry", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
+  Object.assign(globalThis, {
+    document: { visibilityState: "visible", addEventListener() {} },
+    window: { addEventListener() {} },
+    location: { protocol: "https:", host: "fixture" },
+    WebSocket: Socket,
+  });
+  setActivePinia(createPinia());
+  const auth = useAuth(),
+    store = useSessions();
+  auth.unlocked = true;
+  auth.visible = true;
+  const sid = "questions";
+  store.sessions = [
+    { sessionId: sid, epoch: 1, sequence: 1, state: "running" } as never,
+  ];
+  let release!: (value: unknown) => void;
+  auth.request = ((url: string) =>
+    url === `/sessions/${sid}`
+      ? new Promise((resolve) => (release = resolve))
+      : Promise.resolve([])) as typeof auth.request;
+  try {
+    store.connect(sid);
+    const old = store.detail(sid);
+    const question = {
+      id: "new",
+      title: "Current question",
+      deadline: 9999999999999,
+      state: "pending",
+    };
+    const send = (type: string, data: unknown, sequence: number) =>
+      Socket.latest.onmessage?.({
+        data: JSON.stringify({ version: 1, type, sessionId: sid, sequence, data }),
+      });
+    send("prompt", question, 4);
+    release({ sessionId: sid, epoch: 1, sequence: 2, state: "running" });
+    await old;
+    assert.equal(store.prompt[sid]?.id, "new");
+    send("prompt", { ...question, id: "old", state: "resolved" }, 3);
+    send("prompt.expired", { id: "old" }, 3);
+    assert.equal(store.prompt[sid]?.id, "new");
+    assert.equal(store.prompt[sid]?.state, "pending");
+    send("prompt", { ...question, state: "resolved" }, 5);
+    assert.equal(store.prompt[sid], undefined);
+  } finally {
+    auth.clear();
+    t.mock.timers.reset();
+  }
+});

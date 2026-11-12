@@ -83,6 +83,51 @@ export class Store {
       )
       .run(session.sessionId, JSON.stringify(session));
   }
+  isPrivate(id: string) {
+    return this.setting(`private-session:${digest(id)}`) === "1";
+  }
+  hiddenSessions() {
+    return this.db
+      .prepare("SELECT key FROM settings WHERE key LIKE 'hidden-session:%'")
+      .all()
+      .map((row) => String(row.key).slice("hidden-session:".length));
+  }
+  privacyRevision = 0;
+  rememberReferences(rows: Iterable<{ nativeId: string; id: string }>) {
+    this.transaction(() => {
+      const insert = this.db.prepare(
+        "INSERT OR IGNORE INTO settings(key,value) VALUES (?,?)",
+      );
+      for (const row of rows)
+        if (!this.isPrivate(row.nativeId) && !this.isPrivate(row.id))
+          insert.run(`public-session:${digest(row.nativeId)}:${row.id}`, "1");
+    });
+  }
+  hideSession(nativeId: string) {
+    const prefix = `public-session:${digest(nativeId)}:`;
+    const ids = new Set(
+      this.db
+        .prepare("SELECT key FROM settings WHERE key LIKE ?")
+        .all(prefix + "%")
+        .map((row) => String(row.key).slice(prefix.length)),
+    );
+    for (const session of this.sessions())
+      if ((session.nativeSessionId ?? session.sessionId) === nativeId)
+        ids.add(session.sessionId);
+    const changed = !this.isPrivate(nativeId) || ids.size > 0;
+    this.transaction(() => {
+      this.set(`private-session:${digest(nativeId)}`, "1");
+      for (const id of ids) {
+        this.set(`private-session:${digest(id)}`, "1");
+        this.set(`hidden-session:${id}`, "1");
+        this.db.prepare("DELETE FROM events WHERE session=?").run(id);
+        this.db.prepare("DELETE FROM sessions WHERE id=?").run(id);
+      }
+      this.db.prepare("DELETE FROM settings WHERE key LIKE ?").run(prefix + "%");
+    });
+    if (changed) this.privacyRevision++;
+    return [...ids];
+  }
   event(sessionId: string, type: string, data: unknown) {
     return this.transaction(() => {
       const session = this.session(sessionId);

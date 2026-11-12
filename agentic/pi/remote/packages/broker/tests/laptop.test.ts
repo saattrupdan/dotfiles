@@ -858,3 +858,189 @@ test(
     }
   },
 );
+
+test("incognito exclusions survive saved catalog lookup, direct history and recovery", async () => {
+  const f = fixture();
+  const secret = f.seed(
+    path.join(f.config.agentDir, "sessions/project"),
+    "nvim-private-catalog-fixture",
+    "Private fixture",
+  );
+  const ordinary = f.seed(
+    path.join(f.config.agentDir, "sessions/project"),
+    randomUUID(),
+    "Public fixture",
+  );
+  const secretRef = sessionReference(secret.file, secret.id);
+  const before = fs.readFileSync(secret.file);
+  const broker = await createBroker(f.config, { ipc: false });
+  const headers = authentication(broker, f.config.origin);
+  try {
+    const url = `/api/v1/sessions?folder=${encodeURIComponent(f.root)}`;
+    assert.equal((await broker.app.inject({ url, headers })).json().length, 2);
+    broker.store.hideSession(secret.id);
+    assert(
+      broker.store.hiddenSessions().includes(secretRef),
+      "previously exposed catalog-only reference must get a reconnect tombstone",
+    );
+    const rows = (await broker.app.inject({ url, headers })).json();
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].sessionId, ordinary.id);
+    assert.equal(
+      (await broker.app.inject({ url: "/api/v1/session-folders", headers })).json()[0]
+        .count,
+      1,
+    );
+    for (const suffix of ["", "/history?window=latest"]) {
+      const response = await broker.app.inject({
+        url: `/api/v1/sessions/${secretRef}${suffix}`,
+        headers,
+      });
+      assert.equal(response.statusCode, 404);
+    }
+    const recovery = await broker.app.inject({
+      method: "POST",
+      url: `/api/v1/sessions/${secretRef}/recover`,
+      headers,
+      payload: {},
+    });
+    assert.equal(recovery.statusCode, 404);
+    const history = new History(
+      f.config,
+      undefined,
+      (id) => !broker.store.isPrivate(id),
+    );
+    assert.equal(await history.byId(secretRef), undefined);
+    await assert.rejects(
+      history.window(secret.file, secret.id, f.root),
+      /session_not_found/,
+    );
+    assert.deepEqual(fs.readFileSync(secret.file), before);
+    assert(broker.store.isPrivate(secret.id));
+  } finally {
+    await broker.app.close();
+    f.close();
+  }
+});
+
+test("listing rechecks hidden live rows after asynchronous saved catalog lookup", async () => {
+  const f = fixture();
+  const saved = f.seed(path.join(f.config.agentDir, "sessions/project"));
+  const broker = await createBroker(f.config, { ipc: false });
+  const headers = authentication(broker, f.config.origin);
+  broker.store.save({
+    version: 1,
+    sessionId: saved.id,
+    sessionFile: saved.file,
+    instanceId: randomUUID(),
+    cwd: f.root,
+    name: "Private live fixture",
+    pid: process.pid,
+    managed: false,
+    model: "fixture/model",
+    thinking: "off",
+    capabilities: [],
+    idle: true,
+    loop: false,
+    epoch: 1,
+    sequence: 0,
+    state: "idle",
+    lastActivity: Date.now(),
+  });
+  const original = History.prototype.catalog;
+  let release!: () => void, started!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve)),
+    ready = new Promise<void>((resolve) => (started = resolve));
+  History.prototype.catalog = async function (cwd) {
+    const rows = await original.call(this, cwd);
+    started();
+    await gate;
+    return rows;
+  };
+  try {
+    const listing = broker.app
+      .inject({ url: `/api/v1/sessions?folder=${encodeURIComponent(f.root)}`, headers })
+      .then((response) => response);
+    await ready;
+    broker.store.hideSession(saved.id);
+    release();
+    const response = await listing;
+    assert.equal(
+      response.json().length,
+      0,
+      "hidden metadata captured before await must not be returned",
+    );
+  } finally {
+    release();
+    History.prototype.catalog = original;
+    await broker.app.close();
+    f.close();
+  }
+});
+test("hidden session attachments are denied under release policy", async () => {
+  const f = fixture();
+  f.config.deploymentPolicy = "release";
+  const broker = await createBroker(f.config, { ipc: false });
+  const headers = authentication(broker, f.config.origin);
+  const session = randomUUID(),
+    id = randomUUID(),
+    file = path.join(f.root, "private-image.png");
+  fs.writeFileSync(file, "private fixture image");
+  broker.store.db
+    .prepare(
+      "INSERT INTO uploads(id,session,device,file,mime,hash,size,created,referenced) VALUES (?,?,?,?,?,?,?,?,?)",
+    )
+    .run(id, session, "fixture", file, "image/png", "hash", 21, Date.now(), 0);
+  try {
+    broker.store.hideSession(session);
+    const response = await broker.app.inject({
+      url: `/api/v1/attachments/${id}`,
+      headers,
+    });
+    assert.equal(
+      response.statusCode,
+      404,
+      "hidden image must never stream under release policy",
+    );
+  } finally {
+    await broker.app.close();
+    f.close();
+  }
+});
+
+test("folder counts retry an archive snapshot invalidated by privacy", async () => {
+  const f = fixture();
+  const secret = f.seed(path.join(f.config.agentDir, "sessions/project"));
+  f.seed(path.join(f.config.agentDir, "sessions/project"));
+  const broker = await createBroker(f.config, { ipc: false });
+  const headers = authentication(broker, f.config.origin);
+  const original = History.prototype.folders;
+  let release!: () => void, started!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve)),
+    ready = new Promise<void>((resolve) => (started = resolve));
+  History.prototype.folders = async function (excluded) {
+    const rows = await original.call(this, excluded);
+    started();
+    await gate;
+    return rows;
+  };
+  try {
+    const listing = broker.app
+      .inject({ url: "/api/v1/session-folders", headers })
+      .then((response) => response);
+    await ready;
+    broker.store.hideSession(secret.id);
+    release();
+    const response = await listing;
+    assert.equal(
+      response.json()[0].count,
+      1,
+      "pre-hide folder counts must not reveal a hidden session",
+    );
+  } finally {
+    release();
+    History.prototype.folders = original;
+    await broker.app.close();
+    f.close();
+  }
+});

@@ -7,6 +7,7 @@ import { randomUUID, timingSafeEqual } from "node:crypto";
 import {
   Envelope,
   Registration,
+  NativeSessionId,
   type Session,
   type StreamEvent,
 } from "../../protocol/src/index.ts";
@@ -145,6 +146,8 @@ export class Connections {
           if (value.type === "register") {
             if (!this.allowRegistration) throw new Error("proof_mode");
             const registration = Registration.parse(value.data);
+            if (this.store.isPrivate(registration.sessionId))
+              throw new Error("private_session");
             const directory = registeredWorkingDirectory(this.config, registration.cwd);
             if (!directory) throw new Error("pilot_directory_scope");
             registration.cwd = directory.cwd;
@@ -200,6 +203,32 @@ export class Connections {
             this.emit({ version: 1, type: "sessions.changed", data: session });
             return;
           }
+          if (value.type === "private") {
+            const nativeId = NativeSessionId.parse(
+              value.sessionId ??
+                (current
+                  ? (this.store.session(current)?.nativeSessionId ?? current)
+                  : undefined),
+            );
+            for (const id of this.store.hideSession(nativeId)) {
+              this.working.delete(id);
+              this.previews.delete(id);
+              for (const [owner, active] of this.activeSessions)
+                if (active === id) {
+                  this.activeSessions.delete(owner);
+                  this.sockets.delete(owner);
+                }
+              if (current === id) current = "";
+              this.emit({
+                version: 1,
+                type: "session.hidden",
+                sessionId: id,
+                data: null,
+              });
+            }
+            this.emit({ version: 1, type: "sessions.changed", data: null });
+            return;
+          }
           if (!instance) throw new Error("registration_required");
           this.lastSeen.set(instance, Date.now());
           const session = current ? this.store.session(current) : undefined;
@@ -244,7 +273,7 @@ export class Connections {
               this.emit({ version: 1, type: "sessions.changed", data: session });
             return;
           }
-          if (value.type === "unregister" || value.type === "private") {
+          if (value.type === "unregister") {
             // Saved-history tombstones retain epoch and cursor across owner changes.
             this.working.delete(session.sessionId);
             this.previews.delete(session.sessionId);

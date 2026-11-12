@@ -48,6 +48,31 @@ export const useSessions = defineStore("sessions", () => {
   const listing = ref<Session[]>([]);
   const homeListing = ref<Session[]>([]);
   const homeLoaded = ref(false);
+  const hiddenSessions = ref(new Set<string>());
+  const isHidden = (id: string) => hiddenSessions.value.has(id);
+  function hideSession(id: string) {
+    hiddenSessions.value.add(id);
+    if (homePosition.value?.anchor?.key === id) homePosition.value = undefined;
+    historyRequests.set(id, (historyRequests.get(id) ?? 0) + 1);
+    sessions.value = sessions.value.filter((row) => row.sessionId !== id);
+    listing.value = listing.value.filter((row) => row.sessionId !== id);
+    homeListing.value = homeListing.value.filter((row) => row.sessionId !== id);
+    delete historyPages.value[id];
+    delete historyLimited.value[id];
+    delete messages.value[id];
+    delete drafts.value[id];
+    delete prompt.value[id];
+    delete streaming.value[id];
+    delete toolProgress.value[id];
+    for (const [commandId, sid] of Object.entries(commandSessions.value))
+      if (sid === id) {
+        delete outgoing.value[commandId];
+        delete pending.value[commandId];
+        delete statuses.value[commandId];
+        delete commandSessions.value[commandId];
+      }
+  }
+
   const homeLoading = ref(false);
   const homeListingError = ref("");
   const homeFoldersError = ref("");
@@ -88,20 +113,7 @@ export const useSessions = defineStore("sessions", () => {
   const statuses = ref<Record<string, string>>({});
   const commandSessions = ref<Record<string, string>>({});
   const drafts = ref<Record<string, string>>({});
-  const prompt = ref<
-    Record<
-      string,
-      | {
-          id: string;
-          title: string;
-          options?: string[];
-          multiSelect?: boolean;
-          deadline: number;
-          state: string;
-        }
-      | undefined
-    >
-  >({});
+  const prompt = ref<Record<string, Session["prompt"]>>({});
   const pending = ref<
     Record<
       string,
@@ -165,6 +177,7 @@ export const useSessions = defineStore("sessions", () => {
     listing.value = [];
     homeListing.value = [];
     homeLoaded.value = false;
+    hiddenSessions.value.clear();
     homeRequests.clear();
     homeLoading.value = false;
     homeListingError.value = "";
@@ -231,6 +244,7 @@ export const useSessions = defineStore("sessions", () => {
       sessions.value.map((session) => [session.sessionId, session]),
     );
     for (const row of rows) {
+      if (isHidden(row.sessionId)) continue;
       const previous = known.get(row.sessionId);
       if ((acceptedMetadata.get(row.sessionId) ?? 0) > request) {
         if (previous) accepted.push(previous);
@@ -249,9 +263,11 @@ export const useSessions = defineStore("sessions", () => {
         !["stopped", "interrupted", "disconnected"].includes(row.state)
       ) {
         row.workingMessage = previous.workingMessage;
+        row.prompt = previous.prompt;
         row.sequence = previous.sequence;
       }
       if (activity !== activityGeneration) row.workingMessage = undefined;
+      prompt.value[row.sessionId] = row.prompt;
       known.set(row.sessionId, row);
       accepted.push(row);
     }
@@ -302,10 +318,22 @@ export const useSessions = defineStore("sessions", () => {
     }
   }
   async function detail(id: string) {
+    if (isHidden(id)) throw new Error("session_not_found");
     const expected = generation;
     const request = ++metadataRequest;
     const activity = activityGeneration;
-    const result = await auth.request<Session>(`/sessions/${id}`);
+    let result: Session;
+    try {
+      result = await auth.request<Session>(`/sessions/${id}`);
+    } catch (error) {
+      if (
+        expected === generation &&
+        error instanceof Error &&
+        error.message === "session_not_found"
+      )
+        hideSession(id);
+      throw error;
+    }
     if (expected === generation && auth.unlocked) merge([result], request, activity);
   }
   function persistHistory(id: string, records: Message[]) {
@@ -328,6 +356,7 @@ export const useSessions = defineStore("sessions", () => {
     return task;
   }
   async function readHistory(id: string, reset: boolean) {
+    if (isHidden(id)) throw new Error("session_not_found");
     const expected = generation;
     const request = (historyRequests.get(id) ?? 0) + 1;
     historyRequests.set(id, request);
@@ -488,6 +517,14 @@ export const useSessions = defineStore("sessions", () => {
         return;
       }
       if (!sid) return;
+      if (event.type === "session.hidden") {
+        hideSession(sid);
+        void (
+          currentFolder === undefined && !selected ? loadFolders() : refresh()
+        ).catch(() => {});
+        return;
+      }
+      if (isHidden(sid)) return;
       const session = sessions.value.find((s) => s.sessionId === sid);
       const staleStatus =
         session && event.sequence !== undefined && event.sequence < session.sequence;
@@ -561,21 +598,16 @@ export const useSessions = defineStore("sessions", () => {
         void refresh().catch(() => {});
       }
       if (event.type === "prompt") {
-        prompt.value[sid] = event.data as (typeof prompt.value)[string];
+        if (!staleStatus) {
+          const next = event.data as (typeof prompt.value)[string];
+          prompt.value[sid] = next?.state === "resolved" ? undefined : next;
+          if (session) session.prompt = prompt.value[sid];
+        }
         void refresh().catch(() => {});
       }
-      if (event.type === "prompt.expired") {
-        if (prompt.value[sid]) prompt.value[sid]!.state = "expired";
-      }
-      if (event.type === "session.hidden") {
-        historyRequests.set(sid, (historyRequests.get(sid) ?? 0) + 1);
-        delete historyPages.value[sid];
-        homeListing.value = homeListing.value.filter((row) => row.sessionId !== sid);
-        delete messages.value[sid];
-        delete drafts.value[sid];
-        delete streaming.value[sid];
-        delete toolProgress.value[sid];
-        void refresh().catch(() => {});
+      if (event.type === "prompt.expired" && !staleStatus) {
+        const expired = event.data as { id?: string };
+        if (prompt.value[sid]?.id === expired.id) prompt.value[sid]!.state = "expired";
       }
       if (event.type === "command.status") {
         const data = event.data as { id: string; status: string };
@@ -624,6 +656,7 @@ export const useSessions = defineStore("sessions", () => {
     }
   }
   async function ensureOwner(id: string) {
+    if (isHidden(id)) throw new Error("session_not_found");
     const expected = generation;
     let session = sessions.value.find((s) => s.sessionId === id);
     if (!session) {
@@ -654,6 +687,7 @@ export const useSessions = defineStore("sessions", () => {
         throw error;
       }
       if (expected !== generation || !auth.unlocked) throw new Error("Session locked.");
+      if (isHidden(id)) throw new Error("session_not_found");
       merge([result]);
       session = result;
       connect(id);
@@ -663,6 +697,7 @@ export const useSessions = defineStore("sessions", () => {
     return session;
   }
   async function command(id: string, command: Command, retryOf?: string) {
+    if (isHidden(id)) throw new Error("session_not_found");
     const expected = generation;
     if (command.action === "message") await ensureOwner(id);
     if (expected !== generation || !auth.unlocked) throw new Error("Session locked.");
@@ -698,13 +733,14 @@ export const useSessions = defineStore("sessions", () => {
         }),
       });
       if (expected !== generation || !auth.unlocked) throw new Error("Session locked.");
+      if (isHidden(id)) throw new Error("session_not_found");
       updateStatus(commandId, CommandStatus.parse(result.status));
     } catch (e) {
-      if (expected !== generation || !auth.unlocked) throw e;
+      if (expected !== generation || !auth.unlocked || isHidden(id)) throw e;
       updateStatus(commandId, "delivery_unknown");
       try {
         const known = await auth.request<{ status: string }>(`/commands/${commandId}`);
-        if (expected !== generation || !auth.unlocked) throw e;
+        if (expected !== generation || !auth.unlocked || isHidden(id)) throw e;
         updateStatus(commandId, CommandStatus.parse(known.status));
       } catch {
         /* Never re-inject a command after an uncertain response. */
@@ -730,6 +766,7 @@ export const useSessions = defineStore("sessions", () => {
     listing,
     homeListing,
     homeLoaded,
+    isHidden,
     homeLoading,
     homeError,
     homePosition,

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { useAuth } from "../stores/auth.ts";
 import { useSessions } from "../stores/sessions.ts";
 import Transcript from "../components/Transcript.vue";
@@ -18,9 +18,16 @@ const composerHeight = ref(80);
 let scrollFrame: number | undefined;
 let resize: ResizeObserver | undefined;
 const route = useRoute();
+const router = useRouter();
 const auth = useAuth();
 const store = useSessions();
 const id = computed(() => String(route.params.id));
+watch(
+  () => store.isHidden(id.value),
+  (hidden) => {
+    if (hidden) void router.replace("/");
+  },
+);
 const session = computed(() => store.sessions.find((s) => s.sessionId === id.value));
 const question = computed(() => store.prompt[id.value] ?? session.value?.prompt);
 const recoveryReason = computed(

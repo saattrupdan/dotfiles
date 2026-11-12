@@ -86,10 +86,18 @@ export class History {
     cwd: string,
     options: HistoryWindow = {},
   ) {
+    this.assertVisible(file, nativeId);
     const page = await this.pages.read(file, nativeId, options);
-    return { ...page, messages: await this.display.messages(page.messages, cwd, file) };
+    this.assertVisible(file, nativeId);
+    const messages = await this.display.messages(page.messages, cwd, file);
+    this.assertVisible(file, nativeId);
+    return { ...page, messages };
   }
 
+  private assertVisible(file: string, nativeId: string) {
+    if (!this.visible(nativeId) || !this.visible(sessionReference(file, nativeId)))
+      throw new RemoteError("session_not_found", 404);
+  }
   private headers = new Map<string, { stamp: string; row: NativeSession }>();
   private names = new Map<
     string,
@@ -99,6 +107,7 @@ export class History {
   constructor(
     readonly config: Config,
     readonly display = new ToolDisplay(config.agentDir),
+    readonly visible: (id: string) => boolean = () => true,
   ) {
     this.module = import(
       pathToFileURL(path.join(resolvePiPackage(), "dist/core/session-manager.js")).href
@@ -150,7 +159,8 @@ export class History {
         const cached = this.headers.get(file);
         if (cached?.stamp === stamp(stats)) {
           if (!visibleWorkingDirectory(this.config, cached.row.cwd)) continue;
-          rows.push(cached.row);
+          if (this.visible(cached.row.nativeId) && this.visible(cached.row.id))
+            rows.push(cached.row);
           continue;
         }
         const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
@@ -180,7 +190,7 @@ export class History {
             ambiguous: false,
           };
           this.headers.set(file, { stamp: stamp(stats), row });
-          rows.push(row);
+          if (this.visible(row.nativeId) && this.visible(row.id)) rows.push(row);
         } finally {
           fs.closeSync(fd);
         }
@@ -303,11 +313,13 @@ export class History {
       );
       result.push(...batch.filter((row): row is NativeSession => !!row));
     }
-    return result;
+    return result.filter((row) => this.visible(row.nativeId) && this.visible(row.id));
   }
   async byId(id: string) {
     const row = this.index().find((session) => session.id === id);
-    return row ? this.named(row) : undefined;
+    if (!row) return undefined;
+    const named = await this.named(row);
+    return this.visible(row.nativeId) && this.visible(row.id) ? named : undefined;
   }
   private async readEntries(
     file: string,
@@ -349,6 +361,7 @@ export class History {
     return (await this.readEntries(file)).entries;
   }
   async messages(file: string, offset = 0, limit = 100, expectedId?: string) {
+    if (expectedId) this.assertVisible(file, expectedId);
     const api = await this.module;
     const { entries: all, truncated } = await this.readEntries(file);
     if (
@@ -357,15 +370,18 @@ export class History {
       all.find((entry) => entry.type === "session")?.id !== expectedId
     )
       throw new RemoteError("session_changed", 409);
+    if (expectedId) this.assertVisible(file, expectedId);
     const projection = api.buildSessionProjection(
       all.filter((entry) => entry.type !== "session"),
     );
+    const messages = await this.display.messages(
+      projection.messages.slice(offset, offset + limit),
+      String(all.find((entry) => entry.type === "session")?.cwd ?? "/"),
+      file,
+    );
+    if (expectedId) this.assertVisible(file, expectedId);
     return {
-      messages: await this.display.messages(
-        projection.messages.slice(offset, offset + limit),
-        String(all.find((entry) => entry.type === "session")?.cwd ?? "/"),
-        file,
-      ),
+      messages,
       ...(truncated ? { truncated: true } : {}),
       offset,
       next: offset + limit < projection.messages.length ? offset + limit : null,

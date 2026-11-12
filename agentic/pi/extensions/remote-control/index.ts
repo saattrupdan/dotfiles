@@ -44,6 +44,7 @@ export default function (pi: ExtensionAPI) {
 	let settled = true;
 	let retries = 0;
 	let registered = false;
+	let privateSession = "";
 	const dir = dataDirectory();
 	const journalDir = path.join(dir, "commands");
 	fs.mkdirSync(journalDir, { recursive: true, mode: 0o700 });
@@ -144,7 +145,17 @@ export default function (pi: ExtensionAPI) {
 	};
 	const register = () => {
 		registered = false;
-		if (!visible()) return;
+		if (!visible()) {
+			if (
+				ctx && isIncognito(ctx.sessionManager) &&
+				privateSession !== ctx.sessionManager.getSessionId()
+			) {
+				privateSession = ctx.sessionManager.getSessionId();
+				send({ type: "private", sessionId: privateSession });
+			}
+			return;
+		}
+		privateSession = "";
 		const missing = missingGuards(required);
 		if (missing.length) {
 			ctx.ui.setStatus("remote-control", `Remote disabled: missing ${missing.join(", ")}`);
@@ -382,6 +393,7 @@ export default function (pi: ExtensionAPI) {
 					const value = JSON.parse(line);
 					if (value.type === "ready") {
 						retries = 0;
+						privateSession = "";
 						register();
 					}
 					if (value.type === "registered") {
@@ -439,6 +451,7 @@ export default function (pi: ExtensionAPI) {
 				send({ type: "unregister" });
 				registered = false;
 			}
+			register();
 			return;
 		}
 		if (socket && !socket.destroyed && !registered) register();

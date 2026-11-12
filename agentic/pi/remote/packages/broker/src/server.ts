@@ -135,7 +135,10 @@ export async function createBroker(
         );
   });
   const connections = new Connections(config, store, emit);
-  const catalog = history && !proof ? new History(config, display) : undefined;
+  const catalog =
+    history && !proof
+      ? new History(config, display, (id) => !store.isPrivate(id))
+      : undefined;
   connections.allowRegistration = !proof;
   const processes = new Processes(config, connections);
   await app.register(cookie);
@@ -216,7 +219,12 @@ export async function createBroker(
   const visibleLive = () =>
     store
       .sessions()
-      .filter((session) => inDeploymentScope(config, session) && recent(session));
+      .filter(
+        (session) =>
+          !store.isPrivate(session.nativeSessionId ?? session.sessionId) &&
+          inDeploymentScope(config, session) &&
+          recent(session),
+      );
   const liveSummary = (session: Session) => {
     const connected = connections.isConnected(session);
     return {
@@ -241,9 +249,12 @@ export async function createBroker(
     recoveryBlockedReason: n.ambiguous ? "ambiguous_session_id" : undefined,
   });
   const find = async (id: string) => {
+    if (store.isPrivate(id)) throw new RemoteError("session_not_found", 404);
     const live = store.session(id);
     if (live && inDeploymentScope(config, live) && recent(live)) {
       const named = discoverLaptop ? await catalog?.byId(id) : undefined;
+      if (store.isPrivate(id) || store.isPrivate(live.nativeSessionId ?? id))
+        throw new RemoteError("session_not_found", 404);
       return {
         ...liveSummary(live),
         name: named?.name || live.name,
@@ -254,6 +265,7 @@ export async function createBroker(
     if (!discoverLaptop) throw new RemoteError("session_not_found", 404);
     const native = await catalog?.byId(id);
     if (!native) throw new RemoteError("session_not_found", 404);
+    store.rememberReferences([native]);
     return {
       ...nativeSummary(native),
       id: native.nativeId,
@@ -333,14 +345,25 @@ export async function createBroker(
   app.get("/api/v1/session-folders", async (req) => {
     read(req);
     const live = visibleLive();
-    const groups = new Map<string, SessionFolder>(
-      (discoverLaptop
+    let archived: SessionFolder[];
+    let revision: number;
+    do {
+      revision = store.privacyRevision;
+      archived = discoverLaptop
         ? ((await catalog?.folders(live.map((s) => canonicalPath(s.sessionFile)))) ??
           [])
-        : []
-      ).map((folder) => [folder.cwd, folder]),
+        : [];
+      read(req);
+    } while (revision !== store.privacyRevision);
+    const groups = new Map<string, SessionFolder>(
+      archived.map((folder) => [folder.cwd, folder]),
     );
     for (const session of live) {
+      if (
+        store.isPrivate(session.nativeSessionId ?? session.sessionId) ||
+        store.isPrivate(session.sessionId)
+      )
+        continue;
       const group = groups.get(session.cwd) ?? {
         cwd: session.cwd,
         count: 0,
@@ -362,20 +385,31 @@ export async function createBroker(
       .filter((s) => folder === undefined || s.cwd === folder)
       .map(liveSummary);
     // No archive labels or transcripts are read until a folder is selected.
-    const native =
+    const discovered =
       discoverLaptop && folder !== undefined
         ? ((await catalog?.catalog(folder)) ?? [])
         : [];
+    read(req);
+    const native = discovered.filter(
+      (row) => !store.isPrivate(row.nativeId) && !store.isPrivate(row.id),
+    );
+    store.rememberReferences(native);
     return [
-      ...live.map((session) => ({
-        ...session,
-        name:
-          native.find(
-            (row) =>
-              row.nativeId === (session.nativeSessionId ?? session.sessionId) &&
-              row.path === canonicalPath(session.sessionFile),
-          )?.name || session.name,
-      })),
+      ...live
+        .filter(
+          (session) =>
+            !store.isPrivate(session.nativeSessionId ?? session.sessionId) &&
+            !store.isPrivate(session.sessionId),
+        )
+        .map((session) => ({
+          ...session,
+          name:
+            native.find(
+              (row) =>
+                row.nativeId === (session.nativeSessionId ?? session.sessionId) &&
+                row.path === canonicalPath(session.sessionFile),
+            )?.name || session.name,
+        })),
       ...native
         .filter(
           (n) =>
@@ -528,7 +562,12 @@ export async function createBroker(
       .get(sessionId(req)) as
       { file: string; mime: string; session: string } | undefined;
     if (!row) throw new RemoteError("attachment_not_found", 404);
+    if (store.isPrivate(row.session))
+      throw new RemoteError("attachment_not_found", 404);
     if (config.deploymentPolicy === "pilot") await find(row.session);
+    read(req);
+    if (store.isPrivate(row.session))
+      throw new RemoteError("attachment_not_found", 404);
     return reply
       .header("Content-Disposition", "inline")
       .type(row.mime)
@@ -658,6 +697,13 @@ export async function createBroker(
         windowed: false,
       };
       clients.set(socket, client);
+      for (const id of store.hiddenSessions())
+        deliver(socket, client, {
+          version: 1,
+          type: "session.hidden",
+          sessionId: id,
+          data: null,
+        });
       socket.on("message", (raw) => {
         try {
           read(req);

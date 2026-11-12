@@ -171,3 +171,119 @@ for (const nativeId of [randomUUID(), "nvim-native-session-fixture"])
       fs.rmSync(f.root, { recursive: true, force: true });
     }
   });
+
+test("private native sessions are removed rather than retained as visible saved tombstones", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-private-registration-"));
+  const store = new Store(root);
+  const config = ConfigSchema.parse({
+    origin: "https://fixture.test.ts.net",
+    dataDir: root,
+    home: root,
+  });
+  const emitted: { type: string; sessionId?: string }[] = [];
+  const connections = new Connections(config, store, (event) => emitted.push(event));
+  await connections.listen();
+  const socket = net.connect(path.join(root, "broker.sock"));
+  socket.setEncoding("utf8");
+  let buffer = "";
+  const queue: Record<string, unknown>[] = [];
+  socket.on("data", (chunk) => {
+    buffer += chunk;
+    let n;
+    while ((n = buffer.indexOf("\n")) >= 0) {
+      queue.push(JSON.parse(buffer.slice(0, n)));
+      buffer = buffer.slice(n + 1);
+    }
+  });
+  const wait = async (type: string) => {
+    for (let i = 0; i < 100; i++) {
+      const at = queue.findIndex((row) => row.type === type);
+      if (at >= 0) return queue.splice(at, 1)[0]!;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    throw new Error(`Missing ${type}`);
+  };
+  const send = (value: unknown) => socket.write(JSON.stringify(value) + "\n");
+  try {
+    const nativeId = randomUUID();
+    const file = path.join(root, "private.jsonl");
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ type: "session", id: nativeId, cwd: root }) + "\n",
+    );
+    send({ secret: connections.secret });
+    await wait("ready");
+    send({
+      type: "register",
+      data: {
+        version: 1,
+        instanceId: randomUUID(),
+        sessionId: nativeId,
+        sessionFile: file,
+        cwd: root,
+        name: "Private fixture",
+        pid: process.pid,
+        managed: false,
+        model: "fixture/model",
+        thinking: "off",
+        capabilities: [],
+        idle: true,
+        loop: false,
+      },
+    });
+    await wait("registered");
+    store.event(nativeId, "message_end", {
+      role: "assistant",
+      content: "private fixture",
+    });
+    send({ type: "private", sessionId: nativeId });
+    for (
+      let i = 0;
+      i < 100 && !emitted.some((event) => event.type === "session.hidden");
+      i++
+    )
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(
+      store.session(nativeId),
+      undefined,
+      "incognito must not remain discoverable as a stopped saved row",
+    );
+    assert(
+      emitted.some(
+        (event) => event.type === "session.hidden" && event.sessionId === nativeId,
+      ),
+    );
+    assert.equal(
+      store.db
+        .prepare("SELECT count(*) AS n FROM events WHERE session=?")
+        .get(nativeId)!.n,
+      0,
+    );
+    assert(fs.existsSync(file), "hiding from phone must not delete local history");
+    const catalogNative = "nvim-private-catalog-only",
+      publicId = randomUUID();
+    store.rememberReferences([{ nativeId: catalogNative, id: publicId }]);
+    send({ type: "private", sessionId: catalogNative });
+    for (
+      let i = 0;
+      i < 100 &&
+      !emitted.some(
+        (event) => event.type === "session.hidden" && event.sessionId === publicId,
+      );
+      i++
+    )
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    assert(
+      emitted.some(
+        (event) => event.type === "session.hidden" && event.sessionId === publicId,
+      ),
+      "catalog-only public reference must invalidate connected phone caches",
+    );
+    assert(store.hiddenSessions().includes(publicId));
+  } finally {
+    socket.destroy();
+    await connections.close();
+    store.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
