@@ -58,7 +58,7 @@ const custom = {
 	generate_image: generateImageRenderers,
 	generate_video: generateVideoRenderers,
 	question: questionRenderers,
-	run_python_code: pythonCodeRenderers,
+	python: pythonCodeRenderers,
 	recall_memory: recallMemoryRenderers,
 	search: searchRenderers,
 	skill: skillRenderers,
@@ -147,7 +147,7 @@ export function toolPresentationBlock(
 	);
 	// argsComplete stays false: historical rows must never compute previews from live files.
 	row.markExecutionStarted();
-	if (!result && name === "run_python_code")
+	if (!result && name === "python")
 		row.updateResult({ content: [], details: undefined, isError: false }, true);
 	if (result)
 		row.updateResult({

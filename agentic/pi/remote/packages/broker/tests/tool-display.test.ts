@@ -587,7 +587,7 @@ test("write and Python completed previews match native quiet summaries without c
         {
           type: "toolCall",
           id: "python-quiet",
-          name: "run_python_code",
+          name: "python",
           arguments: { code: "print('original')" },
         },
       ],
@@ -602,7 +602,7 @@ test("write and Python completed previews match native quiet summaries without c
     {
       role: "toolResult",
       toolCallId: "python-quiet",
-      toolName: "run_python_code",
+      toolName: "python",
       content: [{ type: "text", text: "Original Python stdout" }],
       isError: false,
     },

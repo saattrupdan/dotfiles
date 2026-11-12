@@ -33,7 +33,7 @@ with TemporaryDirectory(prefix="pi-python-") as directory:
         [sys.executable, "-u", "-c",
          "import sys; from pathlib import Path; "
          "exec(compile(Path(sys.argv.pop()).read_text(encoding='utf-8'), "
-         "'<run_python_code>', 'exec'))", str(script)], stdin=subprocess.DEVNULL,
+         "'<python>', 'exec'))", str(script)], stdin=subprocess.DEVNULL,
         start_new_session=True,
     )
 

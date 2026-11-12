@@ -170,7 +170,10 @@ exec /bin/sh -c "$last"
 });
 
 test("tool requires a single-line description of one to five words", () => {
-	const schema = tool().parameters;
+	const registered = tool();
+	assert.equal(registered.name, "python");
+	assert.equal(registered.label, "python");
+	const schema = registered.parameters;
 	assert.ok(schema.required?.includes("description"));
 	const description = schema.properties.description;
 	assert.equal(description.type, "string");
@@ -196,13 +199,13 @@ test("tool emits running state, preserves arguments when expanded and reports fa
 	const args = { description: "Checking the API validation", code: multiline, ssh_alias: "server" };
 	for (const expanded of [false, true]) {
 		const call = render(registered.renderCall!(args, theme as never, { expanded } as never));
-		assert.equal(call.split("\n")[0], "run_python_code Checking the API validation");
+		assert.equal(call.split("\n")[0], "python Checking the API validation");
 		assert.equal(call.includes(multiline.trimEnd()), expanded);
 		if (expanded) assert.ok(call.includes("ssh_alias: server"));
 	}
 	for (const args of [{}, { code: multiline }, { description: "" }]) {
 		for (const expanded of [false, true])
-			assert.equal(render(registered.renderCall!(args, theme as never, { expanded } as never)).split("\n")[0], "run_python_code");
+			assert.equal(render(registered.renderCall!(args, theme as never, { expanded } as never)).split("\n")[0], "python");
 	}
 	for (const [isPartial, isError, expected] of [
 		[true, false, "⋯ Python code running"], [false, false, "✓ Python code executed"], [false, true, "✗ Python code failed"],
@@ -215,8 +218,8 @@ test("tool emits running state, preserves arguments when expanded and reports fa
 test("native replay uses the same compact Python display for Remote and history", () => {
 	const result = { content: [{ type: "text", text: "private output" }] };
 	for (const [value, expected] of [[undefined, "⋯ Python code running"], [result, "✓ Python code executed"], [{ ...result, isError: true }, "✗ Python code failed"]] as const) {
-		const display = toolPresentation("run_python_code", { description: "Checking the API validation", code: multiline }, value, "python-replay", os.tmpdir());
-		assert.ok(display.includes("run_python_code Checking the API validation"), display);
+		const display = toolPresentation("python", { description: "Checking the API validation", code: multiline }, value, "python-replay", os.tmpdir());
+		assert.ok(display.includes("python Checking the API validation"), display);
 		assert.ok(display.includes(expected), display);
 		assert.ok(!display.includes("private output"));
 		assert.ok(!display.includes(multiline));

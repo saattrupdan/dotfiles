@@ -6,8 +6,8 @@ import { runPythonCode } from "./runner.ts";
 
 export default function (pi: ExtensionAPI) {
 	pi.registerTool({
-		name: "run_python_code",
-		label: "run_python_code",
+		name: "python",
+		label: "python",
 		description: "Run multiline Python source locally or on an SSH config alias. Prefer this tool over bash Python heredocs, python -c, and shell-quoted Python snippets. Pass code as plain source with normal newlines, indentation, quotes, and Unicode; no shell escaping or heredoc delimiters. Uses uv run with the selected Python interpreter and project environment. Returns stdout/stderr, exit code, and a full-output file; output is limited to the last 2000 lines/50 KiB. Execution is cancelled on abort or timeout (default 120 seconds). SSH uses non-interactive authentication and requires uv on the remote PATH. Code runs with the same permissions as bash; respect the current agent's read-only or write restrictions.",
 		parameters: Type.Object({
 			description: Type.String({ description: "Very brief description of what the code does (1–5 words), for example Checking the API validation.", pattern: "^(?![\\s\\S]*[\\x00-\\x1F\\x7F-\\x9F])\\S+(?: \\S+){0,4}$" }),

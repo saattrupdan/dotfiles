@@ -142,9 +142,9 @@ export const pythonCodeRenderers: DisplayRenderers = {
 	renderCall(args, theme, context) {
 		const description = typeof args?.description === "string" ? args.description.trim() : "";
 		if (context?.expanded)
-			return renderExpandedCall(`run_python_code${description ? ` ${description}` : ""}`, args, theme);
+			return renderExpandedCall(`python${description ? ` ${description}` : ""}`, args, theme);
 		return new Text(
-			theme.fg("toolTitle", theme.bold("run_python_code")) +
+			theme.fg("toolTitle", theme.bold("python")) +
 				(description ? ` ${theme.fg("accent", description)}` : ""),
 			0,
 			0,

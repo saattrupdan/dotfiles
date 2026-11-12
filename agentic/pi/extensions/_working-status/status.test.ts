@@ -13,7 +13,7 @@ test("working labels match native spelling during streaming and execution", () =
 		write: "Writing...",
 		edit: "Editing...",
 		bash: "Bashing...",
-		run_python_code: "Handling the Python...",
+		python: "Python charming...",
 		store_memory: "Storing to memory…",
 		recall_memory: "Recalling from memory…",
 		subagent: "Whipping the subagents...",

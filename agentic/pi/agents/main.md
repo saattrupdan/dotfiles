@@ -4,7 +4,7 @@ description: Primary Pi coding agent.
 subagent: false
 tools:
   - bash
-  - run_python_code
+  - python
   - clean_up_isolated_branch
   - discard_isolated_branch
   - codemode
@@ -153,7 +153,7 @@ pages). Use `web_browse` only for interactive/JS-heavy pages.
 
 ## Running Python
 
-Use `run_python_code` for inline or throwaway Python, not `bash` heredocs,
+Use `python` for inline or throwaway Python, not `bash` heredocs,
 `python -c`, or shell-quoted Python. Pass multiline source directly in `code`,
 including normal newlines and indentation. Set `ssh_alias` to execute on an SSH
 server and `cwd` for its working directory. The tool uses `uv run`; use `python`
