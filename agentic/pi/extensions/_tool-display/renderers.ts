@@ -140,8 +140,15 @@ export const writeRenderers: DisplayRenderers = {
 
 export const pythonCodeRenderers: DisplayRenderers = {
 	renderCall(args, theme, context) {
-		if (context?.expanded) return renderExpandedCall("run_python_code", args, theme);
-		return new Text(theme.fg("toolTitle", theme.bold("run_python_code")), 0, 0);
+		const description = typeof args?.description === "string" ? args.description.trim() : "";
+		if (context?.expanded)
+			return renderExpandedCall(`run_python_code${description ? ` ${description}` : ""}`, args, theme);
+		return new Text(
+			theme.fg("toolTitle", theme.bold("run_python_code")) +
+				(description ? ` ${theme.fg("accent", description)}` : ""),
+			0,
+			0,
+		);
 	},
 	renderResult(result, options, theme, context) {
 		if (options.expanded) return new Text(textContent(result.content) || "(no output)", 0, 0);

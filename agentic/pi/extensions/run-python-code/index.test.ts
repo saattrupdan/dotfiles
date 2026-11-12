@@ -169,21 +169,41 @@ exec /bin/sh -c "$last"
 	}
 });
 
+test("tool requires a single-line description of one to five words", () => {
+	const schema = tool().parameters;
+	assert.ok(schema.required?.includes("description"));
+	const description = schema.properties.description;
+	assert.equal(description.type, "string");
+	const pattern = new RegExp(description.pattern);
+	for (const value of ["Checking", "Checking the API validation", "One two three four five", "Tjekker æøå 🐍"])
+		assert.ok(pattern.test(value), value);
+	for (const value of ["", " ", "One two three four five six", "Checking\nthe API", "Checking\rthe API", "Checking\tthe API", "Checking\x1bthe API"])
+		assert.ok(!pattern.test(value), JSON.stringify(value));
+});
+
 test("tool emits running state, preserves arguments when expanded and reports failures", async () => {
 	const registered = tool();
 	const updates: unknown[] = [];
-	const result = await registered.execute("test", { code: "print('ready')" }, undefined,
+	const result = await registered.execute("test", { description: "Checking the API validation", code: "print('ready')" }, undefined,
 		(update) => updates.push(update), { cwd: os.tmpdir() } as never);
 	outputs.push(path.dirname((result.details as PythonResult).outputPath));
 	assert.equal(result.isError, false);
 	assert.equal(updates.length, 1);
 	assert.match(JSON.stringify(result.content), /ready/);
-	const error = await registered.execute("test", { code: "" }, undefined, undefined, { cwd: os.tmpdir() } as never);
+	const error = await registered.execute("test", { description: "Checking empty code", code: "" }, undefined, undefined, { cwd: os.tmpdir() } as never);
 	assert.equal(error.isError, true);
 	const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text };
-	const args = { code: multiline, ssh_alias: "server" };
-	assert.equal(render(registered.renderCall!(args, theme as never, { expanded: false } as never)), "run_python_code");
-	assert.ok(render(registered.renderCall!(args, theme as never, { expanded: true } as never)).includes(multiline.trimEnd()));
+	const args = { description: "Checking the API validation", code: multiline, ssh_alias: "server" };
+	for (const expanded of [false, true]) {
+		const call = render(registered.renderCall!(args, theme as never, { expanded } as never));
+		assert.equal(call.split("\n")[0], "run_python_code Checking the API validation");
+		assert.equal(call.includes(multiline.trimEnd()), expanded);
+		if (expanded) assert.ok(call.includes("ssh_alias: server"));
+	}
+	for (const args of [{}, { code: multiline }, { description: "" }]) {
+		for (const expanded of [false, true])
+			assert.equal(render(registered.renderCall!(args, theme as never, { expanded } as never)).split("\n")[0], "run_python_code");
+	}
 	for (const [isPartial, isError, expected] of [
 		[true, false, "⋯ Python code running"], [false, false, "✓ Python code executed"], [false, true, "✗ Python code failed"],
 	] as const) {
@@ -195,8 +215,8 @@ test("tool emits running state, preserves arguments when expanded and reports fa
 test("native replay uses the same compact Python display for Remote and history", () => {
 	const result = { content: [{ type: "text", text: "private output" }] };
 	for (const [value, expected] of [[undefined, "⋯ Python code running"], [result, "✓ Python code executed"], [{ ...result, isError: true }, "✗ Python code failed"]] as const) {
-		const display = toolPresentation("run_python_code", { code: multiline }, value, "python-replay", os.tmpdir());
-		assert.ok(display.includes("run_python_code"), display);
+		const display = toolPresentation("run_python_code", { description: "Checking the API validation", code: multiline }, value, "python-replay", os.tmpdir());
+		assert.ok(display.includes("run_python_code Checking the API validation"), display);
 		assert.ok(display.includes(expected), display);
 		assert.ok(!display.includes("private output"));
 		assert.ok(!display.includes(multiline));
