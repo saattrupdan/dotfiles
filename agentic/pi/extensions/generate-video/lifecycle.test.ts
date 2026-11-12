@@ -18,7 +18,10 @@ async function fixture() {
 	await writeFile(path.join(home, "jobs"), JSON.stringify({ has_more: false, data: [{ status: "completed" }] }));
 	const commands = {
 		flock: '[[ ${LOCKED:-0} != 1 ]]',
-		docker: `case $1 in
+		docker: `if [[ $1 == inspect && \${RACING_START:-0} == 1 && ! -f $HOME/first-inspect ]]; then
+  touch "$HOME/first-inspect"; exit 1
+fi
+case $1 in
 inspect)
   [[ -f $HOME/container ]] || exit 1
   if [[ $* == *Config.Image* ]]; then echo minimax-h3-lora:test
@@ -55,43 +58,38 @@ cat "$HOME/jobs"`,
 	};
 }
 
-test("remote lease stops the captured container on release and EOF", async () => {
+test("remote lease leaves ready servers to their built-in idle timer on release and EOF", async () => {
 	for (const action of ["release", ""]) {
 		const state = await fixture();
 		try {
 			const result = await state.run(action);
 			assert.equal(result.code, 0, result.stderr);
-			assert.match(result.stdout, /READY\nSTOPPED/);
-			assert.equal(await readFile(path.join(state.home, "stopped"), "utf8"), "stop --time 20 original\n");
-		} finally { await state.close(); }
-	}
-});
-
-test("remote lease preserves active, unknown, truncated and malformed job lists", async () => {
-	for (const jobs of [
-		{ has_more: false, data: [{ status: "in_progress" }] },
-		{ has_more: false, data: [{ status: "queued" }] },
-		{ has_more: false, data: [{ status: "unknown" }] },
-		{ has_more: true, data: [] }, {}, "malformed",
-	]) {
-		const state = await fixture();
-		try {
-			await writeFile(path.join(state.home, "jobs"), typeof jobs === "string" ? jobs : JSON.stringify(jobs));
-			const result = await state.run();
-			assert.equal(result.code, 0);
-			assert.match(result.stdout, /WARNING/);
+			assert.match(result.stdout, /READY/);
+			assert.doesNotMatch(result.stdout, /STOPPED/);
 			assert.equal(await readFile(path.join(state.home, "container"), "utf8"), "original\n");
+			await assert.rejects(readFile(path.join(state.home, "stopped")));
 		} finally { await state.close(); }
 	}
 });
 
-test("remote lease checks jobs and stops an idle server when loading is cancelled", async () => {
+test("remote lease does not stop an adopted server when loading is cancelled", async () => {
 	const state = await fixture();
 	try {
 		const result = await state.run("release", { LOADING: "1" });
 		assert.equal(result.code, 0);
-		assert.doesNotMatch(result.stdout, /READY/);
-		assert.match(result.stdout, /STOPPED/);
+		assert.doesNotMatch(result.stdout, /READY|STOPPED/);
+		assert.equal(await readFile(path.join(state.home, "container"), "utf8"), "original\n");
+	} finally { await state.close(); }
+});
+
+test("a racing external startup is never mistaken for Pi-owned cleanup", async () => {
+	const state = await fixture();
+	try {
+		await writeFile(path.join(state.home, "model-servers/minimax-h3/start.sh"), "#!/bin/bash\nexit 1\n");
+		const result = await state.run("release", { LOADING: "1", RACING_START: "1" });
+		assert.doesNotMatch(result.stdout, /STOPPED/);
+		assert.equal(await readFile(path.join(state.home, "container"), "utf8"), "original\n");
+		await assert.rejects(readFile(path.join(state.home, "stopped")));
 	} finally { await state.close(); }
 });
 
@@ -133,20 +131,17 @@ test("SSH lease cancellation during startup waits for remote cleanup", async () 
 	}
 });
 
-test("remote lease reports preservation, inspection failure, stop failure and contention", async () => {
+test("remote lease reports preservation and contention without stopping a ready server", async () => {
 	for (const [action, env, pattern, code] of [
 		["preserve", {}, /submission outcome is unknown/, 0],
-		["release", { INSPECT_FAILS: "1" }, /Cannot inspect/, 0],
-		["release", { STOP_FAILS: "1" }, /Failed to stop/, 0],
 		["release", { LOCKED: "1" }, /Another Pi session/, 1],
-		["release", { REPLACED: "1" }, /container changed/, 0],
 	] as const) {
 		const state = await fixture();
 		try {
 			const result = await state.run(action, env);
 			assert.equal(result.code, code);
 			assert.match(result.stdout + result.stderr, pattern);
-			assert.equal(await readFile(path.join(state.home, "container"), "utf8"), "REPLACED" in env ? "replacement\n" : "original\n");
+			assert.equal(await readFile(path.join(state.home, "container"), "utf8"), "original\n");
 		} finally { await state.close(); }
 	}
 });

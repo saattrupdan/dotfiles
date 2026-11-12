@@ -1,4 +1,4 @@
-/** SSH-owned H3 lease: coordinate Pi sessions and release GPU/RAM after use. */
+/** SSH-owned H3 lease: coordinate Pi sessions; server code owns idle expiration. */
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
