@@ -165,6 +165,209 @@ test("home loads folders and live summaries; newer snapshots win and lock purges
   }
 });
 
+test("Home waits for the newest socket refresh before claiming a loaded empty listing", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
+  Object.assign(globalThis, {
+    document: { visibilityState: "visible", addEventListener() {} },
+    window: { addEventListener() {} },
+    location: { protocol: "https:", host: "fixture" },
+    WebSocket: Socket,
+  });
+  setActivePinia(createPinia());
+  const auth = useAuth(),
+    store = useSessions();
+  auth.unlocked = true;
+  auth.visible = true;
+  const requests: { url: string; resolve: (value: unknown) => void }[] = [];
+  auth.request = ((url: string) =>
+    new Promise((resolve) => requests.push({ url, resolve }))) as typeof auth.request;
+  try {
+    const initial = store.loadFolders();
+    store.connect("");
+    Socket.latest.onopen?.();
+    assert.deepEqual(
+      requests.map((request) => request.url),
+      ["/session-folders", "/sessions", "/sessions"],
+    );
+    requests[1]!.resolve([]);
+    requests[0]!.resolve([]);
+    await initial;
+    assert.equal(
+      store.homeLoaded,
+      false,
+      "discarded initial response cannot declare latest Home loaded",
+    );
+    assert.equal(
+      store.homeLoading,
+      true,
+      "socket refresh must keep Home loading after browse returns",
+    );
+    requests[2]!.resolve([{ sessionId: "live", state: "running" }]);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(store.homeLoaded, true);
+    assert.equal(store.homeLoading, false);
+    assert.equal(store.homeListing[0]?.sessionId, "live");
+    const old = store.refresh();
+    assert.equal(store.homeLoading, true);
+    auth.clear();
+    assert.equal(store.homeLoading, false);
+    assert.equal(store.homeError, "");
+    auth.unlocked = true;
+    const fresh = store.loadFolders();
+    requests[3]!.resolve([]);
+    await old;
+    assert.equal(
+      store.homeLoading,
+      true,
+      "late pre-lock work cannot settle the new load",
+    );
+    requests[4]!.resolve([]);
+    requests[5]!.resolve([]);
+    await fresh;
+    assert.equal(store.homeLoading, false);
+    assert.equal(store.homeLoaded, true);
+  } finally {
+    auth.clear();
+    t.mock.timers.reset();
+  }
+});
+
+test("background Home invalidation owns loading and errors without a mounted browse", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
+  Object.assign(globalThis, {
+    document: { visibilityState: "visible", addEventListener() {} },
+    window: { addEventListener() {} },
+    location: { protocol: "https:", host: "fixture" },
+    WebSocket: Socket,
+  });
+  setActivePinia(createPinia());
+  const auth = useAuth(),
+    store = useSessions();
+  auth.unlocked = true;
+  auth.visible = true;
+  auth.request = (async () => []) as typeof auth.request;
+  try {
+    await store.loadFolders();
+    store.connect("");
+    Socket.latest.onopen?.();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(store.homeLoaded, true);
+    assert.equal(store.homeLoading, false);
+    let fail!: (error: Error) => void;
+    auth.request = ((url: string) =>
+      url === "/session-folders"
+        ? Promise.resolve([])
+        : new Promise((_resolve, reject) => (fail = reject))) as typeof auth.request;
+    Socket.latest.onmessage?.({
+      data: JSON.stringify({ version: 1, type: "sessions.changed" }),
+    });
+    assert.equal(store.homeLoading, true);
+    fail(new Error("listing unavailable"));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(store.homeLoading, false);
+    assert.equal(store.homeError, "listing unavailable");
+  } finally {
+    auth.clear();
+    t.mock.timers.reset();
+  }
+});
+
+test("initial live connection keeps a completed empty HTTP snapshot loading until socket sync", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
+  Object.assign(globalThis, {
+    document: { visibilityState: "visible", addEventListener() {} },
+    window: { addEventListener() {} },
+    location: { protocol: "https:", host: "fixture" },
+    WebSocket: Socket,
+  });
+  setActivePinia(createPinia());
+  const auth = useAuth(),
+    store = useSessions();
+  auth.unlocked = true;
+  auth.visible = true;
+  auth.request = (async () => []) as typeof auth.request;
+  try {
+    store.connect("");
+    await store.loadFolders();
+    assert.equal(
+      store.homeLoading,
+      true,
+      "HTTP completion cannot settle a connecting live catalog",
+    );
+    let release!: (rows: unknown) => void;
+    auth.request = (() =>
+      new Promise((resolve) => (release = resolve))) as typeof auth.request;
+    Socket.latest.onopen?.();
+    assert.equal(store.homeLoading, true);
+    release([{ sessionId: "live", state: "running" }]);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(store.homeLoading, false);
+    assert.equal(store.homeListing[0]?.sessionId, "live");
+    store.disconnect();
+    store.connect("");
+    Socket.latest.onclose?.({ code: 1006 });
+    assert.equal(store.homeLoading, false);
+    assert.match(store.homeError, /Could not connect to live sessions/);
+  } finally {
+    auth.clear();
+    t.mock.timers.reset();
+  }
+});
+
+for (const foldersFirst of [true, false]) {
+  test(`superseded root failure cannot discard independent folders (${foldersFirst ? "folders first" : "folders last"})`, async (t) => {
+    t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
+    Object.assign(globalThis, {
+      document: { visibilityState: "visible", addEventListener() {} },
+      window: { addEventListener() {} },
+      location: { protocol: "https:", host: "fixture" },
+      WebSocket: Socket,
+    });
+    setActivePinia(createPinia());
+    const auth = useAuth(),
+      store = useSessions();
+    auth.unlocked = true;
+    auth.visible = true;
+    const requests: {
+      url: string;
+      resolve: (value: unknown) => void;
+      reject: (error: Error) => void;
+    }[] = [];
+    auth.request = ((url: string) =>
+      new Promise((resolve, reject) =>
+        requests.push({ url, resolve, reject }),
+      )) as typeof auth.request;
+    try {
+      const initial = store.loadFolders();
+      const failed = assert.rejects(initial, /superseded request failed/);
+      const latest = store.refresh();
+      const folders = [{ cwd: "/Users/fixture", count: 1, lastActivity: 1000 }];
+      if (foldersFirst) requests[0]!.resolve(folders);
+      requests[2]!.resolve([{ sessionId: "live", state: "running" }]);
+      await latest;
+      requests[1]!.reject(new Error("superseded request failed"));
+      await failed;
+      if (!foldersFirst) {
+        assert.equal(
+          store.homeLoading,
+          true,
+          "independent folder request remains loading after paired root failure",
+        );
+        requests[0]!.resolve(folders);
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      assert.equal(store.folders[0]?.cwd, "/Users/fixture");
+      assert.equal(store.homeListing[0]?.sessionId, "live");
+      assert.equal(store.homeLoaded, true);
+      assert.equal(store.homeLoading, false);
+      assert.equal(store.homeError, "");
+    } finally {
+      auth.clear();
+      t.mock.timers.reset();
+    }
+  });
+}
+
 test("read-only native sessions preserve drafts and never recover or submit commands", async (t) => {
   t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
   Object.assign(globalThis, {

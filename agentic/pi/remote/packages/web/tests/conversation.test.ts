@@ -1099,6 +1099,106 @@ test(
       );
 
       await t.test(
+        "Home waits for newer live refresh after its browse request has finished",
+        async () => {
+          await page.waitForLoadState("networkidle");
+          const requests: Route[] = [];
+          const pending = new Set<Route>();
+          const intercept = (route: Route) => {
+            requests.push(route);
+            pending.add(route);
+          };
+          let release!: () => void;
+          homeGate = new Promise((resolve) => (release = resolve));
+          await page.route("**/api/v1/sessions", intercept);
+          try {
+            await page.evaluate(
+              "window.__homeSessions.homeListing=[];window.__homeSessions.folders=[];window.__homeSessions.homeLoaded=true",
+            );
+            await page.getByRole("link", { name: "Pi Remote", exact: true }).click();
+            await expect.poll(() => requests.length).toBe(2);
+            const first = requests[0]!;
+            pending.delete(first);
+            await first.fulfill({ json: [] });
+            release();
+            homeGate = undefined;
+            await expect
+              .poll(() => page.evaluate("window.__connectionAuth.pending"))
+              .toBe(1);
+            await page.evaluate(
+              () =>
+                new Promise((resolve) =>
+                  requestAnimationFrame(() =>
+                    requestAnimationFrame(() => resolve(null)),
+                  ),
+                ),
+            );
+            const active = page.getByRole("region", {
+              name: "Active sessions",
+              exact: true,
+            });
+            await expect(
+              active.getByRole("status").filter({ hasText: "Loading active sessions" }),
+            ).toBeVisible();
+            await expect(
+              page.getByText("No active sessions", { exact: true }),
+            ).toHaveCount(0);
+            const latest = requests[1]!;
+            pending.delete(latest);
+            await latest.fulfill({ json: [session()] });
+            await expect(
+              active.getByRole("link", { name: /Phone layout fixture/ }),
+            ).toBeVisible();
+          } finally {
+            release();
+            homeGate = undefined;
+            await page.unroute("**/api/v1/sessions", intercept);
+            for (const route of pending) await route.fulfill({ json: [] });
+            await page.waitForLoadState("networkidle");
+            await page.reload();
+          }
+        },
+      );
+      await t.test(
+        "background session invalidation shows loading without a new browse",
+        async () => {
+          await page.waitForLoadState("networkidle");
+          emptyHomeListing = true;
+          let release = () => {};
+          try {
+            await page.getByRole("link", { name: "Pi Remote", exact: true }).click();
+            await expect(
+              page.getByText("No active sessions", { exact: true }),
+            ).toBeVisible();
+            homeGate = new Promise((resolve) => (release = resolve));
+            emptyHomeListing = false;
+            socket!.send(
+              JSON.stringify({ version: 1, type: "sessions.changed", data: null }),
+            );
+            const active = page.getByRole("region", {
+              name: "Active sessions",
+              exact: true,
+            });
+            await expect(
+              active.getByRole("status").filter({ hasText: "Loading active sessions" }),
+            ).toBeVisible();
+            await expect(
+              page.getByText("No active sessions", { exact: true }),
+            ).toHaveCount(0);
+            release();
+            await expect(
+              active.getByRole("link", { name: /Phone layout fixture/ }),
+            ).toBeVisible();
+          } finally {
+            release();
+            homeGate = undefined;
+            emptyHomeListing = false;
+            await page.waitForLoadState("networkidle");
+            await page.reload();
+          }
+        },
+      );
+      await t.test(
         "Home shows loading instead of empty claims until requests settle",
         async () => {
           await page.waitForLoadState("networkidle");

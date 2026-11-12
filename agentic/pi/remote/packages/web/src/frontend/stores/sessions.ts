@@ -3,7 +3,7 @@ import type {
   ToolProgress,
 } from "../../../../../../extensions/_tool-display/block-types.ts";
 import { defineStore } from "pinia";
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import type {
   Session,
   SessionFolder,
@@ -48,6 +48,21 @@ export const useSessions = defineStore("sessions", () => {
   const listing = ref<Session[]>([]);
   const homeListing = ref<Session[]>([]);
   const homeLoaded = ref(false);
+  const homeLoading = ref(false);
+  const homeListingError = ref("");
+  const homeFoldersError = ref("");
+  const homeError = computed(() => homeListingError.value || homeFoldersError.value);
+  const homeRequests = new Set<symbol>();
+  let homeSessionsReady = false,
+    homeFoldersReady = false;
+  function beginHomeLoading() {
+    const ticket = Symbol();
+    homeRequests.add(ticket);
+    homeLoading.value = true;
+    return () => {
+      if (homeRequests.delete(ticket)) homeLoading.value = homeRequests.size > 0;
+    };
+  }
   const homePosition = ref<{
     top: number;
     search: string;
@@ -117,6 +132,7 @@ export const useSessions = defineStore("sessions", () => {
   }
   let generation = 0;
   let socket: WebSocket | undefined;
+  let finishConnection: (() => void) | undefined;
   let retry: ReturnType<typeof setTimeout> | undefined;
   let selected = "";
   let metadataRequest = 0;
@@ -131,6 +147,8 @@ export const useSessions = defineStore("sessions", () => {
   function disconnect(clearSelection = false) {
     clearActivity();
     if (clearSelection) selected = "";
+    finishConnection?.();
+    finishConnection = undefined;
     socket?.close();
     socket = undefined;
     if (retry) clearTimeout(retry);
@@ -147,6 +165,12 @@ export const useSessions = defineStore("sessions", () => {
     listing.value = [];
     homeListing.value = [];
     homeLoaded.value = false;
+    homeRequests.clear();
+    homeLoading.value = false;
+    homeListingError.value = "";
+    homeFoldersError.value = "";
+    homeSessionsReady = false;
+    homeFoldersReady = false;
     homePosition.value = undefined;
     currentFolder = undefined;
     folder.value = undefined;
@@ -166,19 +190,36 @@ export const useSessions = defineStore("sessions", () => {
     currentFolder = undefined;
     const expected = generation;
     const request = ++foldersRequest;
-    const [result] = await Promise.all([
-      auth.request<SessionFolder[]>("/session-folders"),
-      refresh(),
-    ]);
-    if (
-      expected === generation &&
-      auth.unlocked &&
-      currentFolder === undefined &&
-      request === foldersRequest
-    ) {
-      folders.value = result;
-      homeLoaded.value = true;
-    }
+    const finish = beginHomeLoading();
+    homeFoldersError.value = "";
+    const readFolders = async () => {
+      try {
+        const result = await auth.request<SessionFolder[]>("/session-folders");
+        if (
+          expected === generation &&
+          auth.unlocked &&
+          currentFolder === undefined &&
+          request === foldersRequest
+        ) {
+          folders.value = result;
+          homeFoldersReady = true;
+          homeLoaded.value = homeSessionsReady;
+        }
+      } catch (error) {
+        if (
+          expected === generation &&
+          auth.unlocked &&
+          currentFolder === undefined &&
+          request === foldersRequest
+        )
+          homeFoldersError.value =
+            error instanceof Error ? error.message : "Could not load folders";
+        throw error;
+      } finally {
+        finish();
+      }
+    };
+    await Promise.all([readFolders(), refresh()]);
   }
   function merge(
     rows: Session[],
@@ -223,20 +264,41 @@ export const useSessions = defineStore("sessions", () => {
     const request = ++listingRequest;
     const metadata = ++metadataRequest;
     const activity = activityGeneration;
-    const result = await auth.request<Session[]>(
-      folder === undefined
-        ? "/sessions"
-        : `/sessions?folder=${encodeURIComponent(folder)}`,
-    );
-    if (
-      expected === generation &&
-      auth.unlocked &&
-      currentFolder === folder &&
-      request === listingRequest
-    ) {
-      const rows = merge(result, metadata, activity);
-      listing.value = rows;
-      if (folder === undefined) homeListing.value = rows;
+    const finish = folder === undefined ? beginHomeLoading() : () => {};
+    if (folder === undefined) homeListingError.value = "";
+    try {
+      const result = await auth.request<Session[]>(
+        folder === undefined
+          ? "/sessions"
+          : `/sessions?folder=${encodeURIComponent(folder)}`,
+      );
+      if (
+        expected === generation &&
+        auth.unlocked &&
+        currentFolder === folder &&
+        request === listingRequest
+      ) {
+        const rows = merge(result, metadata, activity);
+        listing.value = rows;
+        if (folder === undefined) {
+          homeListing.value = rows;
+          homeSessionsReady = true;
+          homeLoaded.value = homeFoldersReady;
+        }
+      }
+    } catch (error) {
+      if (
+        folder === undefined &&
+        expected === generation &&
+        auth.unlocked &&
+        currentFolder === folder &&
+        request === listingRequest
+      )
+        homeListingError.value =
+          error instanceof Error ? error.message : "Could not load active sessions";
+      throw error;
+    } finally {
+      finish();
     }
   }
   async function detail(id: string) {
@@ -402,10 +464,16 @@ export const useSessions = defineStore("sessions", () => {
       `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/v1/events`,
     );
     socket = ws;
+    const connected = beginHomeLoading();
+    finishConnection = connected;
+    let opened = false;
     ws.onopen = () => {
       if (socket !== ws) return;
+      opened = true;
       subscribe();
       void refresh().catch(() => {});
+      connected();
+      if (finishConnection === connected) finishConnection = undefined;
       void reconcile();
     };
     ws.onmessage = (e) => {
@@ -519,6 +587,10 @@ export const useSessions = defineStore("sessions", () => {
     };
     ws.onclose = (event) => {
       if (socket !== ws) return;
+      connected();
+      if (finishConnection === connected) finishConnection = undefined;
+      if (!opened && auth.unlocked && auth.visible && currentFolder === undefined)
+        homeListingError.value = "Could not connect to live sessions. Try again.";
       clearActivity();
       socket = undefined;
       if (event.code === 4001 || event.code === 4003) {
@@ -658,6 +730,8 @@ export const useSessions = defineStore("sessions", () => {
     listing,
     homeListing,
     homeLoaded,
+    homeLoading,
+    homeError,
     homePosition,
     loadFolders,
     detail,

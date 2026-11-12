@@ -10,8 +10,14 @@ const store = useSessions();
 const folder = computed(() => store.folder);
 const search = ref("");
 const filter = ref("all");
-const error = ref("");
-const loading = ref(false);
+const browseError = ref("");
+const browsing = ref(false);
+const error = computed(() =>
+  folder.value === undefined ? store.homeError : browseError.value,
+);
+const loading = computed(
+  () => browsing.value || (folder.value === undefined && store.homeLoading),
+);
 const root = ref<HTMLElement>();
 let restoring: typeof store.homePosition;
 function captureHome() {
@@ -65,8 +71,8 @@ async function browse(cwd?: string) {
   restoring = cwd === undefined ? store.homePosition : undefined;
   search.value = restoring?.search ?? "";
   filter.value = "all";
-  error.value = "";
-  loading.value = true;
+  browseError.value = "";
+  browsing.value = true;
   await nextTick();
   if (expected !== navigation) return;
   if (restoring) restoreHome();
@@ -75,10 +81,10 @@ async function browse(cwd?: string) {
     if (cwd === undefined) await store.loadFolders();
     else await store.refresh(cwd);
   } catch (e) {
-    if (expected === navigation) error.value = (e as Error).message;
+    if (expected === navigation) browseError.value = (e as Error).message;
   } finally {
     if (expected === navigation) {
-      loading.value = false;
+      browsing.value = false;
       await nextTick();
       if (expected === navigation) {
         restoreHome();
