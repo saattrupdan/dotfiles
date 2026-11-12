@@ -15,7 +15,7 @@
  *      - "Thinking..."  while reasoning tokens stream
  *      - "Reading..." / "Writing..." / "Editing..." / "Bashing..."  for the
  *        read / write / edit / bash tools
- *    Any other tool / phase falls back to pi's default "Working...".
+ *    Any other tool / phase uses the same neutral styling for "Working...".
  *
  *    A tool's elapsed time splits across two phases, and the label must cover
  *    both or it barely shows:
@@ -33,7 +33,7 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-// Tool name -> working indicator label. Unmapped tools use pi's default "Working...".
+// Share phase labels with Remote; terminal coloring stays in this adapter.
 import { WorkingStatus } from "../_working-status/status.ts";
 
 export default function (pi: ExtensionAPI) {
@@ -48,19 +48,21 @@ export default function (pi: ExtensionAPI) {
 	};
 	let lastCtx: Context | undefined;
 	const apply = (ctx: Context) => {
-		const label = status.label;
+		const label = status.label ?? "Working...";
 		// Embedded indicators inherit the editor's thinking-level color. Keep
 		// activity text neutral; the border and spinner still show that level.
-		ctx.ui.setWorkingMessage(label === undefined ? undefined : ctx.ui.theme.fg("muted", label));
+		ctx.ui.setWorkingMessage(ctx.ui.theme.fg("muted", label));
 	};
 	const update = (kind: string, data: unknown, ctx: Context) => {
 		lastCtx = ctx;
-		if (status.update(kind, data)) apply(ctx);
+		status.update(kind, data);
+		apply(ctx);
 	};
 	pi.on("session_start", (_event, ctx) => {
 		lastCtx = ctx;
 		status.update("session_start", null);
 		ctx.ui.setHiddenThinkingLabel("(...)");
+		apply(ctx);
 	});
 	pi.on("agent_start", (_event, ctx) => {
 		lastCtx = ctx;

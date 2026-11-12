@@ -48,7 +48,7 @@ test("overrides win, latest overlapping tool restores prior work and completed t
 	s.update("agent_end", null);
 	assert.equal(s.label, undefined);
 });
-test("laptop UI uses the shared status and keeps unknown tools on the native default", () => {
+test("laptop UI uses the shared status and keeps unknown tools on the styled fallback", () => {
 	type UI = {
 		setWorkingMessage: (label?: string) => void;
 		setWorkingVisible: (visible: boolean) => void;
@@ -82,7 +82,7 @@ test("laptop UI uses the shared status and keeps unknown tools on the native def
 	override({});
 	assert.equal(label, "Storing to memory…");
 	hooks.get("agent_end")!({}, ctx);
-	assert.equal(label, undefined);
+	assert.equal(label, "Working...");
 	hooks.get("tool_execution_start")!({ toolName: "unknown", toolCallId: "?" }, ctx);
-	assert.equal(label, undefined);
+	assert.equal(label, "Working...");
 });

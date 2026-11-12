@@ -325,7 +325,7 @@ test("retry replaces the working spinner even when reasoning resumes", async () 
 	await emit("message_update", { message: { role: "assistant", content: [{ type: "thinking" }] }, assistantMessageEvent: { type: "thinking_delta" } });
 	assert.equal(label, "Thinking...", "the phase label returns on the first streamed output");
 	await emit("message_update", { message: { role: "assistant", content: [{ type: "text" }] }, assistantMessageEvent: { type: "text_delta" } });
-	assert.equal(label, undefined, "the normal working label returns for text streaming");
+	assert.equal(label, "Working...", "the styled fallback returns for text streaming");
 	await emit("message_end", success());
-	assert.equal(label, undefined);
+	assert.equal(label, "Working...");
 });

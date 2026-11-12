@@ -160,6 +160,6 @@ test("tool activity uses the working indicator, not the footer", () => {
 	handlers.get("tool_execution_start")?.({ toolName: "generate_image", toolCallId: "image-1" }, ctx);
 	assert.deepEqual(working, ["Generating image..."]);
 	handlers.get("tool_execution_end")?.({ toolCallId: "image-1" }, ctx);
-	assert.deepEqual(working, ["Generating image...", undefined]);
+	assert.deepEqual(working, ["Generating image...", "Working..."]);
 	assert.deepEqual(footer, []);
 });

@@ -60,6 +60,28 @@ function foregroundAt(line, text) {
 	return [...line.slice(0, index).matchAll(/\x1b\[([\d;]*)m/g)].at(-1)?.[0];
 }
 
+test("the default Working label stays neutral from startup through fallback transitions", () => {
+	const h = harness();
+	h.setBorderColor("thinkingHigh");
+	assert.equal(foregroundAt(h.render(), "Working..."), theme.getFgAnsi("muted"));
+	h.mode.workingMessage = undefined;
+	h.mode.activeStatusIndicator.setMessage("Working...");
+	h.emit("agent_start");
+	assert.equal(foregroundAt(h.render(), "Working..."), theme.getFgAnsi("muted"));
+	h.mode.activeStatusIndicator.setMessage("Working...");
+	h.emit("tool_execution_start", { toolCallId: "unknown-1", toolName: "unmapped_tool" });
+	assert.equal(foregroundAt(h.render(), "Working..."), theme.getFgAnsi("muted"));
+	h.emit("message_update", { message: { content: [{ type: "thinking" }] } });
+	h.emit("message_update", { message: { content: [{ type: "text", text: "An answer" }] } });
+	assert.equal(foregroundAt(h.render(), "Working..."), theme.getFgAnsi("muted"));
+	h.emit("tool_execution_start", { toolCallId: "read-1", toolName: "read" });
+	h.emit("tool_execution_end", { toolCallId: "read-1" });
+	assert.equal(foregroundAt(h.render(), "Working..."), theme.getFgAnsi("muted"));
+	h.override("Retrying...");
+	h.override(undefined);
+	assert.equal(foregroundAt(h.render(), "Working..."), theme.getFgAnsi("muted"));
+});
+
 test("an active subagent label stays neutral when the embedded editor turns orange", () => {
 	const h = harness();
 	h.emit("tool_execution_start", { toolCallId: "subagent-1", toolName: "subagent" });
@@ -91,7 +113,7 @@ test("streaming, overlapping tools, and overrides all keep neutral activity text
 	assert.equal(foregroundAt(h.render(), "Whipping the subagents..."), theme.getFgAnsi("muted"));
 	h.emit("message_end");
 	h.emit("tool_execution_end", { toolCallId: "subagent-1" });
-	assert.equal(h.mode.workingMessage, undefined);
+	assert.equal(foregroundAt(h.render(), "Working..."), theme.getFgAnsi("muted"));
 	h.emit("agent_end");
-	assert.equal(h.mode.workingMessage, undefined);
+	assert.equal(foregroundAt(h.render(), "Working..."), theme.getFgAnsi("muted"));
 });
