@@ -13,6 +13,8 @@ const toolsExpanded = ref(false),
   thinkingExpanded = ref(false);
 let disposed = false;
 const content = ref<HTMLElement>();
+const composer = ref<HTMLElement>();
+const composerHeight = ref(80);
 let scrollFrame: number | undefined;
 let resize: ResizeObserver | undefined;
 const route = useRoute();
@@ -294,11 +296,14 @@ async function load(initial = true) {
 }
 onMounted(() => {
   resize = new ResizeObserver(() => {
+    if (composer.value)
+      composerHeight.value = composer.value.getBoundingClientRect().height;
     if (paging.value) return;
     if (!following) restoreAnchor(heldAnchor);
     else scrollBottom();
   });
   if (content.value) resize.observe(content.value);
+  if (composer.value) resize.observe(composer.value);
   window.addEventListener("scroll", scrolled, { passive: true });
   window.addEventListener("wheel", userScroll, { passive: true });
   window.addEventListener("keydown", keyScrolled);
@@ -438,6 +443,7 @@ async function upload(event: Event) {
     class="conversation"
     :aria-busy="opening"
     :class="{ positioning: opening }"
+    :style="{ '--composer-height': `${composerHeight}px` }"
   >
     <div
       v-if="opening"
@@ -664,7 +670,10 @@ async function upload(event: Event) {
         Explicitly retry
       </button>
     </div>
-    <div class="composer">
+    <div
+      ref="composer"
+      class="composer"
+    >
       <div
         v-if="session?.workingMessage"
         class="working-status"
@@ -821,6 +830,9 @@ async function upload(event: Event) {
 
 .conversation {
   overflow-anchor: none;
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100dvh - var(--header-height) - env(safe-area-inset-top));
 }
 .older-history {
   min-height: 44px;
@@ -835,7 +847,7 @@ async function upload(event: Event) {
 }
 .opening-indicator {
   position: fixed;
-  inset: var(--header-height) 0 0;
+  inset: calc(var(--header-height) + env(safe-area-inset-top)) 0 var(--composer-height);
   display: grid;
   place-content: center;
   pointer-events: none;
@@ -882,6 +894,8 @@ h1 {
   margin-bottom: 8px;
 }
 .composer {
+  flex-shrink: 0;
+  margin-top: auto;
   position: sticky;
   bottom: 0;
   max-height: calc(100dvh - env(safe-area-inset-top) - 132px);

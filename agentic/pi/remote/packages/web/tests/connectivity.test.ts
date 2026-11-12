@@ -88,8 +88,16 @@ test(
         "Stalled HTML body must fall back to the cached shell",
       );
       stallNavigation = false;
+      await page.clock.install();
       await context.setOffline(true);
       await page.reload({ waitUntil: "domcontentloaded" });
+      await expect(page.getByRole("heading", { name: "You're offline" })).toHaveCount(
+        0,
+      );
+      await expect(
+        page.getByRole("status").filter({ hasText: "Reconnecting..." }).first(),
+      ).toBeVisible();
+      await page.clock.fastForward(20001);
       await expect(page.getByRole("heading", { name: "You're offline" })).toBeVisible();
       await expect(
         page.getByRole("button", { name: "Try again", exact: true }),

@@ -100,6 +100,8 @@ test("background, locked and stale clients receive completion, failure and input
     emit("agent_settled", { outcome: "finished" });
     await tick();
     assert.equal(sent.at(-1)?.body, "A run finished.");
+    assert.equal(sent.at(-1)?.title, "Private session");
+    assert.equal(sent.at(-1)?.url, `/session/${id}`);
     broker.store.db.prepare("UPDATE auth SET background=NULL,seen=?").run(now - 46000);
     emit("agent_settled", { outcome: "failed" });
     await tick();
@@ -108,7 +110,19 @@ test("background, locked and stale clients receive completion, failure and input
     emit("prompt", { title: "Private question must not leave broker" });
     await tick();
     assert.equal(sent.at(-1)?.body, "Pi needs your attention.");
-    assert.doesNotMatch(JSON.stringify(sent), /Private/);
+    assert.doesNotMatch(JSON.stringify(sent), /Private question must not leave broker/);
+    broker.store.save({
+      ...session,
+      name: "   Named\nconversation " + "x".repeat(200),
+    });
+    emit("agent_settled", { outcome: "finished" });
+    await tick();
+    assert.equal((sent.at(-1)?.title as string).length, 160);
+    assert.match(sent.at(-1)?.title as string, /^Named conversation /);
+    broker.store.save({ ...session, name: "  " });
+    emit("agent_settled", { outcome: "finished" });
+    await tick();
+    assert.equal(sent.at(-1)?.title, "Pi Remote");
     expired = true;
     emit("agent_settled", { outcome: "finished" });
     await tick();

@@ -109,14 +109,47 @@ self.addEventListener("push", (event) => {
       ? data.url
       : "/";
   event.waitUntil(
-    self.registration.showNotification("Pi Remote", {
-      body: ["A run finished.", "A run failed."].includes(data.body)
-        ? data.body
-        : "Pi needs your attention.",
-      icon: "/icons/pi-192.png",
-      data: { url },
-    }),
+    self.registration.showNotification(
+      typeof data.title === "string"
+        ? data.title.replace(/\s+/g, " ").trim().slice(0, 160) || "Pi Remote"
+        : "Pi Remote",
+      {
+        body: ["A run finished.", "A run failed."].includes(data.body)
+          ? data.body
+          : "Pi needs your attention.",
+        icon: "/icons/pi-192.png",
+        data: { url },
+      },
+    ),
   );
+});
+let pendingNotification;
+let notificationSequence = 0;
+function finishNotification(id) {
+  if (pendingNotification?.id !== id) return;
+  const pending = pendingNotification;
+  pendingNotification = undefined;
+  clearTimeout(pending.timer);
+  pending.resolve();
+}
+function deliverNotification(client) {
+  if (pendingNotification?.clientId && pendingNotification.clientId === client.id)
+    client.postMessage({
+      type: "notification-open",
+      url: pendingNotification.url,
+      id: pendingNotification.id,
+    });
+}
+self.addEventListener("message", (event) => {
+  const client = event.source;
+  if (client?.type !== "window" || new URL(client.url).origin !== self.location.origin)
+    return;
+  if (event.data?.type === "notification-ready") deliverNotification(client);
+  else if (
+    event.data?.type === "notification-opened" &&
+    pendingNotification?.clientId === client.id
+  )
+    finishNotification(event.data.id);
 });
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
@@ -127,19 +160,46 @@ self.addEventListener("notificationclick", (event) => {
         /^\/session\/[0-9a-f-]{36}$/.test(event.notification.data.url)
           ? event.notification.data.url
           : "/";
-      const windows = await clients.matchAll({
-        type: "window",
-        includeUncontrolled: true,
-      });
-      const existing = windows.find(
-        (client) => new URL(client.url).origin === self.location.origin,
-      );
-      if (existing) {
-        existing.postMessage({ type: "notification-open", url });
-        await existing.focus();
-      } else await clients.openWindow(url);
-      for (const notification of await self.registration.getNotifications())
-        notification.close();
+      if (pendingNotification) finishNotification(pendingNotification.id);
+      const id = ++notificationSequence;
+      let delivered;
+      if (url !== "/")
+        delivered = new Promise((resolve) => {
+          pendingNotification = {
+            id,
+            url,
+            resolve,
+            timer: setTimeout(() => finishNotification(id), 30000),
+          };
+        });
+      try {
+        const windows = (
+          await clients.matchAll({ type: "window", includeUncontrolled: true })
+        ).filter((client) => new URL(client.url).origin === self.location.origin);
+        const existing =
+          windows.find((client) => client.focused) ??
+          windows.find((client) => client.visibilityState === "visible") ??
+          windows[0];
+        if (existing) {
+          const target = (await existing.focus()) ?? existing;
+          if (pendingNotification?.id === id)
+            pendingNotification.clientId = target.id;
+          deliverNotification(target);
+        } else {
+          const opened = await clients.openWindow(url);
+          if (opened) {
+            if (pendingNotification?.id === id)
+              pendingNotification.clientId = opened.id;
+            deliverNotification(opened);
+          }
+        }
+        for (const notification of await self.registration.getNotifications())
+          notification.close();
+        // Keep the volatile target alive while iOS starts the app at its manifest URL.
+        await delivered;
+      } finally {
+        finishNotification(id);
+      }
     })(),
   );
 });

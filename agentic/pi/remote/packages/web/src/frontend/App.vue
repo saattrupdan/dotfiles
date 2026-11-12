@@ -28,6 +28,26 @@ async function syncNotifications() {
   }
 }
 const sessions = useSessions();
+const connectionWarning = ref(false);
+const connectionRecovering = computed(
+  () => auth.connectionFailed && !connectionWarning.value,
+);
+let connectionWarningTimer: ReturnType<typeof setTimeout> | undefined;
+watch(
+  () => [auth.connectionFailed, auth.visible],
+  ([failed, visible]) => {
+    if (connectionWarningTimer) clearTimeout(connectionWarningTimer);
+    connectionWarningTimer = undefined;
+    connectionWarning.value = false;
+    if (failed && visible)
+      connectionWarningTimer = setTimeout(() => {
+        connectionWarningTimer = undefined;
+        connectionWarning.value = auth.connectionFailed && auth.visible;
+      }, 20000);
+  },
+  { immediate: true },
+);
+
 const pairing = ref(location.hash.slice(1));
 const deviceName = ref("My iPhone");
 const route = useRoute(),
@@ -55,7 +75,7 @@ const preventPinch = (event: TouchEvent) => {
   if (event.touches.length > 1) event.preventDefault();
 };
 
-function openNotification(event: MessageEvent) {
+async function openNotification(event: MessageEvent) {
   if (
     event.origin !== location.origin ||
     event.data?.type !== "notification-open" ||
@@ -63,20 +83,51 @@ function openNotification(event: MessageEvent) {
     !/^\/session\/[0-9a-f-]{36}$/.test(event.data.url)
   )
     return;
-  void router.push(event.data.url);
+  const url = event.data.url,
+    id = event.data.id;
+  try {
+    await router.isReady();
+    await router.push(url);
+    if (router.currentRoute.value.path === url)
+      event.source?.postMessage({ type: "notification-opened", id });
+  } catch {
+    notificationError.value = "Could not open that conversation. Open it from Home.";
+  }
+}
+let notificationListening = false;
+function notificationReady() {
+  const worker = navigator.serviceWorker;
+  if (!worker || !notificationListening) return;
+  if (worker.controller) worker.controller.postMessage({ type: "notification-ready" });
+  else
+    void worker
+      .getRegistration()
+      .then((registration) => {
+        if (notificationListening)
+          registration?.active?.postMessage({ type: "notification-ready" });
+      })
+      .catch(() => {});
 }
 const previousRestoration = window.history.scrollRestoration;
 onMounted(() => {
   window.history.scrollRestoration = "manual";
+  notificationListening = true;
+  navigator.serviceWorker?.addEventListener("message", openNotification);
+  window.addEventListener("focus", notificationReady);
+  navigator.serviceWorker?.addEventListener("controllerchange", notificationReady);
+  notificationReady();
   void auth.initialize();
   window.addEventListener("focus", syncNotifications);
   navigator.serviceWorker?.addEventListener("controllerchange", syncNotifications);
-  navigator.serviceWorker?.addEventListener("message", openNotification);
   document.addEventListener("gesturestart", preventZoom, { passive: false });
   document.addEventListener("gesturechange", preventZoom, { passive: false });
   document.addEventListener("touchmove", preventPinch, { passive: false });
 });
 onUnmounted(() => {
+  notificationListening = false;
+  window.removeEventListener("focus", notificationReady);
+  navigator.serviceWorker?.removeEventListener("controllerchange", notificationReady);
+  if (connectionWarningTimer) clearTimeout(connectionWarningTimer);
   window.history.scrollRestoration = previousRestoration;
   window.removeEventListener("focus", syncNotifications);
   navigator.serviceWorker?.removeEventListener("controllerchange", syncNotifications);
@@ -129,9 +180,14 @@ watch(
         >{{ headerTitle }}</span
       >
       <LoadingIndicator
-        v-if="auth.pending && !auth.initializing && !auth.verifying && auth.visible"
+        v-if="
+          (auth.pending || connectionRecovering) &&
+          !auth.initializing &&
+          !auth.verifying &&
+          auth.visible
+        "
         compact
-        label="Loading"
+        :label="connectionRecovering ? 'Reconnecting...' : 'Loading'"
       />
       <RouterLink
         v-if="auth.unlocked && auth.visible"
@@ -161,7 +217,7 @@ watch(
       </RouterLink>
     </header>
     <section
-      v-if="auth.connectionFailed && !auth.initializing && auth.visible"
+      v-if="connectionWarning && !auth.initializing && auth.visible"
       class="connection-error"
       :class="{ compact: auth.unlocked }"
       role="alert"
@@ -203,7 +259,7 @@ watch(
     <main
       v-if="
         (!auth.unlocked || !auth.visible) &&
-        (!auth.connectionFailed || auth.initializing || !auth.visible)
+        (!connectionWarning || auth.initializing || !auth.visible)
       "
       class="unlock"
     >
@@ -216,10 +272,14 @@ watch(
       />
       <h1>Pi Remote</h1>
       <LoadingIndicator
-        v-if="auth.initializing || auth.verifying"
-        label="Connecting to your Mac"
+        v-if="auth.initializing || auth.verifying || connectionRecovering"
+        :label="connectionRecovering ? 'Reconnecting...' : 'Connecting to your Mac'"
       />
-      <template v-if="auth.visible && !auth.initializing && !auth.verifying">
+      <template
+        v-if="
+          auth.visible && !auth.initializing && !auth.verifying && !connectionRecovering
+        "
+      >
         <template v-if="pairing">
           <label
             >Device name<input

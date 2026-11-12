@@ -6,7 +6,7 @@ import path from "node:path";
 import { createServer } from "vite";
 import vue from "@vitejs/plugin-vue";
 import { ToolDisplay } from "../../broker/src/tool-display.ts";
-import { expect, webkit, type WebSocketRoute } from "@playwright/test";
+import { expect, webkit, type WebSocketRoute, type Route } from "@playwright/test";
 
 const id = "c2d90aba-4820-494b-978d-1991e3e820cf";
 const entry = "/__conversation-fixture.ts";
@@ -26,6 +26,7 @@ import { useAuth } from '/src/frontend/stores/auth.ts';
 import '/src/frontend/assets/main.css';
 const pinia = createPinia();
 const auth = useAuth(pinia);
+window.__connectionAuth=auth;
 auth.initialize = async () => {};
 auth.initializing = false;
 auth.unlocked = true;
@@ -99,6 +100,7 @@ test(
       let extraFolders: unknown[] = [];
       let extraHistory: unknown[] = [];
       let historyGate: Promise<void> | undefined;
+      let emptyHistory = false;
       let homeGate: Promise<void> | undefined;
       let pagedHistory = false;
       let olderGate: Promise<void> | undefined;
@@ -195,7 +197,9 @@ test(
                   ? [{ name: "Nested", path: "/Users/you/Projects/Nested" }]
                   : [],
           };
-        } else if (url.pathname.endsWith("/history"))
+        } else if (url.pathname.endsWith("/history") && emptyHistory)
+          body = { messages: [] };
+        else if (url.pathname.endsWith("/history"))
           body = {
             messages: [
               ...Array.from({ length: 35 }, (_, index) => ({
@@ -988,7 +992,37 @@ test(
             await expect(
               page.getByRole("status").filter({ hasText: "Opening conversation" }),
             ).toBeVisible();
+
             await expect(page.locator(".transcript")).toBeHidden();
+            await expect
+              .poll(() =>
+                page
+                  .locator(".composer")
+                  .evaluate((el) =>
+                    Math.abs(innerHeight - el.getBoundingClientRect().bottom),
+                  ),
+              )
+              .toBeLessThan(3);
+            await expect
+              .poll(() =>
+                page.evaluate(() => {
+                  const spinner = document
+                    .querySelector(".opening-indicator .loading-indicator")!
+                    .getBoundingClientRect();
+                  const header = document
+                    .querySelector("header")!
+                    .getBoundingClientRect();
+                  const composer = document
+                    .querySelector(".composer")!
+                    .getBoundingClientRect();
+                  return Math.abs(
+                    spinner.top +
+                      spinner.height / 2 -
+                      (header.bottom + composer.top) / 2,
+                  );
+                }),
+              )
+              .toBeLessThan(3);
             const screenshots = process.env.PI_REMOTE_VISUAL_PROOF_DIR;
             if (screenshots)
               await page.screenshot({
@@ -1014,6 +1048,46 @@ test(
           } finally {
             release();
             historyGate = undefined;
+          }
+        },
+      );
+
+      await t.test(
+        "empty conversations keep the composer at the bottom through resizing and multiline drafts",
+        async () => {
+          emptyHistory = true;
+          try {
+            await page.waitForLoadState("networkidle");
+            await page.reload();
+            await expect(page.locator(".opening-indicator")).toHaveCount(0);
+            await expect
+              .poll(() =>
+                page
+                  .locator(".composer")
+                  .evaluate((el) =>
+                    Math.abs(innerHeight - el.getBoundingClientRect().bottom),
+                  ),
+              )
+              .toBeLessThan(3);
+            await page.setViewportSize({ width: 402, height: 480 });
+            await page
+              .getByRole("textbox", { name: "Message Pi" })
+              .fill("A multiline draft\n".repeat(10));
+            await expect
+              .poll(() =>
+                page
+                  .locator(".composer")
+                  .evaluate((el) =>
+                    Math.abs(innerHeight - el.getBoundingClientRect().bottom),
+                  ),
+              )
+              .toBeLessThan(3);
+            await page.getByRole("textbox", { name: "Message Pi" }).fill("");
+          } finally {
+            emptyHistory = false;
+            await page.setViewportSize({ width: 402, height: 874 });
+            await page.waitForLoadState("networkidle");
+            await page.reload();
           }
         },
       );
@@ -1572,6 +1646,97 @@ test(
               () => document.documentElement.scrollWidth <= window.innerWidth,
             ),
             true,
+          );
+        },
+      );
+
+      await t.test(
+        "notification opens its conversation from Home without losing a draft",
+        async () => {
+          await page.reload();
+          await expect(page.getByRole("textbox", { name: "Message Pi" })).toBeVisible();
+          await page
+            .getByRole("textbox", { name: "Message Pi" })
+            .fill("Draft saved before the notification");
+          await page.getByRole("link", { name: "Pi Remote", exact: true }).click();
+          await expect(
+            page.getByRole("heading", { name: "Conversations", exact: true }),
+          ).toBeVisible();
+          await page.evaluate((sessionId) => {
+            const channel = new MessageChannel();
+            const received: unknown[] = [];
+            Object.assign(window, {
+              __notificationAcks: received,
+              __notificationChannel: channel,
+            });
+            channel.port1.onmessage = (event) => received.push(event.data);
+            navigator.serviceWorker.dispatchEvent(
+              new MessageEvent("message", {
+                origin: location.origin,
+                source: channel.port2,
+                data: {
+                  type: "notification-open",
+                  url: `/session/${sessionId}`,
+                  id: 7,
+                },
+              }),
+            );
+          }, id);
+          await expect(
+            page.getByRole("heading", { name: session().name, exact: true }),
+          ).toBeVisible();
+          await expect(page.getByRole("textbox", { name: "Message Pi" })).toHaveValue(
+            "Draft saved before the notification",
+          );
+          await expect
+            .poll(() => page.evaluate("window.__notificationAcks"))
+            .toEqual([{ type: "notification-opened", id: 7 }]);
+        },
+      );
+      await t.test(
+        "brief connection failures stay quiet; sustained failures become actionable",
+        async () => {
+          await page.reload();
+          await expect(
+            page.getByRole("heading", { name: session().name }),
+          ).toBeVisible();
+          await page
+            .getByRole("textbox", { name: "Message Pi" })
+            .fill("Keep this draft through reconnects");
+          await page.clock.install();
+          const abort = (route: Route) => route.abort();
+          await page.route("**/api/v1/**", abort);
+          const failed = () =>
+            page.evaluate(
+              "window.__connectionAuth.online=false;window.__connectionAuth.connectionFailed=true",
+            );
+          const recovered = () =>
+            page.evaluate(
+              "window.__connectionAuth.online=true;window.__connectionAuth.connectionFailed=false",
+            );
+          const warning = page.getByRole("heading", {
+            name: "Can't reach your Mac",
+            exact: true,
+          });
+          await failed();
+          await page.clock.fastForward(10000);
+          await expect(warning).toHaveCount(0);
+          await page.unroute("**/api/v1/**", abort);
+          await recovered();
+          await page.clock.fastForward(25000);
+          await page.waitForLoadState("networkidle");
+          await expect(warning).toHaveCount(0);
+          await page.route("**/api/v1/**", abort);
+          await failed();
+          await page.clock.fastForward(20001);
+          await expect(warning).toBeVisible();
+          await expect(
+            page.getByRole("button", { name: "Try again", exact: true }),
+          ).toBeVisible();
+          await recovered();
+          await expect(warning).toHaveCount(0);
+          await expect(page.getByRole("textbox", { name: "Message Pi" })).toHaveValue(
+            "Keep this draft through reconnects",
           );
         },
       );

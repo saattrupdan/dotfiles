@@ -572,6 +572,11 @@ export async function createBroker(
     return { unsubscribed: true };
   });
   async function notify(event: StreamEvent) {
+    const title =
+      (store.session(event.sessionId ?? "")?.name ?? "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 160) || "Pi Remote";
     for (const row of store.db
       .prepare("SELECT key,value FROM settings WHERE key LIKE 'push:%'")
       .all()) {
@@ -594,7 +599,7 @@ export async function createBroker(
         await webpush.sendNotification(
           JSON.parse(row.value as string),
           JSON.stringify({
-            title: "Pi Remote",
+            title,
             body:
               event.type === "agent_settled"
                 ? (event.data as { outcome?: string } | null)?.outcome === "failed"
