@@ -25,6 +25,7 @@ import { History, RECENT_SESSION_MS } from "./history.ts";
 import { Processes } from "./processes.ts";
 import { browse, imageBlocks, uploadImage } from "./files.ts";
 import { prepare, type Config } from "./config.ts";
+import { phoneNotificationsAllowed as desktopAllowsPhoneNotifications } from "./desktop-presence.ts";
 import {
   inDeploymentScope,
   visibleWorkingDirectory,
@@ -37,7 +38,13 @@ export async function createBroker(
     ipc = true,
     history = true,
     proof = false,
-  }: { ipc?: boolean; history?: boolean; proof?: boolean } = {},
+    phoneNotificationsAllowed = desktopAllowsPhoneNotifications,
+  }: {
+    ipc?: boolean;
+    history?: boolean;
+    proof?: boolean;
+    phoneNotificationsAllowed?: () => Promise<boolean>;
+  } = {},
 ) {
   prepare(config);
   const app = Fastify({ logger: false, bodyLimit: 256 * 1024, requestTimeout: 60000 });
@@ -572,14 +579,15 @@ export async function createBroker(
     return { unsubscribed: true };
   });
   async function notify(event: StreamEvent) {
-    const title =
-      (store.session(event.sessionId ?? "")?.name ?? "")
-        .replace(/\s+/g, " ")
-        .trim()
-        .slice(0, 160) || "Pi Remote";
     for (const row of store.db
       .prepare("SELECT key,value FROM settings WHERE key LIKE 'push:%'")
       .all()) {
+      if (!(await phoneNotificationsAllowed())) continue;
+      if (store.setting(row.key as string) !== row.value) continue;
+      const session = event.sessionId ? store.session(event.sessionId) : undefined;
+      if (!session || !inDeploymentScope(config, session) || !recent(session)) continue;
+      const title =
+        session.name?.replace(/\s+/g, " ").trim().slice(0, 160) || "Pi Remote";
       const device = (row.key as string).split(":")[1]!;
       if (!store.device(device)) continue;
       if (
