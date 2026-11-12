@@ -34,7 +34,7 @@ while True:
 `;
 
 function fixture(options = {}) {
-	options = { ...options, worktree: options.worktree || options.legacy };
+	options = { ...options, worktree: options.worktree || options.legacy || options.feature };
 	const role = options.role || "main";
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-profile-reload-"));
 	const agentDir = path.join(root, "agent");
@@ -76,8 +76,8 @@ function fixture(options = {}) {
 			path.join(agentDir, "extensions", name, "index.ts"),
 			`import fs from 'node:fs'; export default function(pi) {
  pi.registerTool({name:'${name}_tool',label:'fixture',description:'fixture',parameters:{type:'object',properties:{}},async execute(){return {content:[{type:'text',text:'fixture'}]}}});
- pi.registerCommand('fixture-hop',{description:'Fixture continuation',handler:async(_,ctx)=>{process.send({type:'pi-profile-continuation',cwd:ctx.cwd,args:process.argv.slice(2),changes:{}});ctx.shutdown();}});
- pi.on('session_start',(_,ctx)=>fs.appendFileSync(${JSON.stringify(state)},JSON.stringify({pid:process.pid,active:pi.getActiveTools(),all:pi.getAllTools().map(t=>t.name),prompt:ctx.getSystemPrompt(),commands:pi.getCommands(),session:ctx.sessionManager.getSessionFile(),id:ctx.sessionManager.getSessionId(),model:ctx.model?.id,thinking:ctx.thinkingLevel,name:ctx.sessionManager.getSessionName()})+'\\n'));
+ pi.registerCommand('fixture-hop',{description:'Fixture continuation',handler:async(_,ctx)=>{process.send({type:'pi-profile-continuation',cwd:ctx.cwd,args:['--session',ctx.sessionManager.getSessionFile()],changes:{}});ctx.shutdown();}});
+ pi.on('session_start',(_,ctx)=>fs.appendFileSync(${JSON.stringify(state)},JSON.stringify({pid:process.pid,active:pi.getActiveTools(),all:pi.getAllTools().map(t=>t.name),prompt:ctx.getSystemPrompt(),commands:pi.getCommands(),session:ctx.sessionManager.getSessionFile(),id:ctx.sessionManager.getSessionId(),model:ctx.model?.id,thinking:ctx.thinkingLevel,name:ctx.sessionManager.getSessionName(),loop:globalThis.__piLoopState?.handoff?.()})+'\\n'));
 }`,
 		);
 	fs.writeFileSync(
@@ -90,6 +90,12 @@ function fixture(options = {}) {
 			path.join(agentDir, "extensions/git-worktree-isolation"),
 			"dir",
 		);
+	if (options.loop)
+		fs.symlinkSync(
+			fileURLToPath(new URL("../extensions/loop", import.meta.url)),
+			path.join(agentDir, "extensions/loop"),
+			"dir",
+		);
 	if (options.consume) {
 		fs.mkdirSync(path.join(agentDir, "extensions/consumer"));
 		fs.writeFileSync(
@@ -100,7 +106,7 @@ function fixture(options = {}) {
 	const profile = (name) =>
 		fs.writeFileSync(
 			path.join(agentDir, "agents", `${role}.md`),
-			`---\nname: ${role}\ndescription: Reload test\nsubagent: false\ntools: [${name}_tool]\nextensions: [${options.consume ? "consumer, " : ""}${name}${options.worktree ? ", git-worktree-isolation" : ""}]\nskills: ${name === "new" ? "[fixture]" : "[]"}\n---\nUnique ${name} system prompt.\n`,
+			`---\nname: ${role}\ndescription: Reload test\nsubagent: false\ntools: [${name}_tool]\nextensions: [${options.consume ? "consumer, " : ""}${options.loop ? "loop, " : ""}${name}${options.worktree ? ", git-worktree-isolation" : ""}]\nskills: ${name === "new" ? "[fixture]" : "[]"}\n---\nUnique ${name} system prompt.\n`,
 		);
 	profile("old");
 	const session =
@@ -109,7 +115,7 @@ function fixture(options = {}) {
 			: path.join(agentDir, "profile-sessions", role, "saved.jsonl");
 	fs.mkdirSync(path.dirname(session), { recursive: true });
 	let cwd = root;
-	if (options.legacy) {
+	if (options.legacy || options.feature) {
 		const repo = path.join(root, "repo"),
 			remote = path.join(root, "origin.git");
 		fs.mkdirSync(repo);
@@ -126,13 +132,13 @@ function fixture(options = {}) {
 		git(["commit", "-m", "chore: fixture"]);
 		git(["remote", "add", "origin", remote]);
 		git(["push", "-u", "origin", "main"]);
-		const script = `import {createRequire} from 'node:module';const require=createRequire(${JSON.stringify(fileURLToPath(new URL("../extensions/_outliner/package.json", import.meta.url)))});const {createJiti}=require('jiti');const jiti=createJiti(import.meta.url);const {createLaunchPlan}=await jiti.import(${JSON.stringify(fileURLToPath(new URL("../extensions/git-worktree-isolation/git.ts", import.meta.url)))});console.log(JSON.stringify(await createLaunchPlan(${JSON.stringify(repo)},${JSON.stringify(agentDir)})));`;
+		const script = `import {createRequire} from 'node:module';const require=createRequire(${JSON.stringify(fileURLToPath(new URL("../extensions/_outliner/package.json", import.meta.url)))});const {createJiti}=require('jiti');const jiti=createJiti(import.meta.url);const {createLaunchPlan}=await jiti.import(${JSON.stringify(fileURLToPath(new URL("../extensions/git-worktree-isolation/git.ts", import.meta.url)))});console.log(JSON.stringify(await createLaunchPlan(${JSON.stringify(repo)},${JSON.stringify(agentDir)},${JSON.stringify(options.feature ? "feat/fixture" : undefined)})));`;
 		const plan = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
 			encoding: "utf8",
 		});
 		assert.equal(plan.status, 0, plan.stderr);
 		options.plan = JSON.parse(plan.stdout);
-		assert.ok(!options.plan.manifest.createdBranch);
+		assert.equal(options.plan.manifest.createdBranch, options.feature ? "feat/fixture" : undefined);
 		cwd = options.plan.childCwd;
 	}
 	const id = randomUUID(),
@@ -190,6 +196,11 @@ function fixture(options = {}) {
 			key === "PI_LOOP_HANDOFF"
 		)
 			delete env[key];
+	if (options.loop)
+		env.PI_LOOP_HANDOFF = JSON.stringify({
+			sessionFile: session, intervalMs: 60000, prompt: "Continue the fixture task",
+			maxRuns: 3, runs: 1, phase: "running", returnToBase: false,
+		});
 	Object.assign(env, options.env);
 	if (options.plan) env.PI_WORKTREE_SESSION_MANIFEST = options.plan.manifest.manifestPath;
 	const child = spawn(
@@ -383,6 +394,37 @@ test(
 			const third = await f.wait(3);
 			assert.deepEqual(third.active, ["new_tool"]);
 			assert.notEqual(third.pid, second.pid);
+		} finally {
+			await f.close();
+		}
+	},
+);
+
+for (const cleanup of [false, true]) test(
+	`${cleanup ? "branch cleanup with an active loop" : "worktree continuation"} refreshes profile paths removed during the running session`,
+	{ timeout: 30000 },
+	async () => {
+		const f = fixture({ worktree: true, feature: cleanup, loop: cleanup });
+		try {
+			const first = await f.wait(1);
+			f.profile("new");
+			fs.renameSync(
+				path.join(f.agentDir, "extensions/old"),
+				path.join(f.agentDir, "extensions/old.removed"),
+			);
+			f.child.stdin.write(cleanup ? "/clean_up_isolated_branch\r" : "/fixture-hop\r");
+			const second = await f.wait(2);
+			assert.notEqual(second.pid, first.pid);
+			assert.deepEqual(second.active, ["new_tool"]);
+			assert.ok(!second.all.includes("old_tool"));
+			assert.match(second.prompt, /Unique new system prompt/);
+			assert.equal(second.session, f.session);
+			assert.equal(second.id, first.id);
+			if (cleanup) {
+				assert.ok(!fs.existsSync(f.cwd), "the actual branch worktree was removed");
+				assert.deepEqual(second.loop, first.loop, "cleanup preserves the current loop iteration");
+				assert.equal(second.loop.runs, 1);
+			}
 		} finally {
 			await f.close();
 		}

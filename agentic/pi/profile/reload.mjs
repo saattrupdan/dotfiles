@@ -27,6 +27,7 @@ const VALUES = new Set([
 	"--name",
 	"--models",
 	"--mode",
+	"--mcp-config",
 	"--export",
 ]);
 const PATHS = new Set([
@@ -36,6 +37,7 @@ const PATHS = new Set([
 	"--skill",
 	"--prompt-template",
 	"--theme",
+	"--mcp-config",
 ]);
 
 /** Keep persistent worktree metadata, never replay consumed startup actions. */
@@ -97,6 +99,23 @@ export function profileResumeArgs(args, state, originalCwd) {
 	);
 	if (state.name) kept.push("--name", state.name);
 	return kept;
+}
+
+/** Rebuild profile resources, not the predecessor's expanded launch arguments. */
+export function prepareProfileContinuation(identity, profile, continuation, buildProfileArgs) {
+	const [selector, sessionFile] = continuation.args;
+	if (selector !== "--session" || typeof sessionFile !== "string" || !path.isAbsolute(sessionFile))
+		throw new Error("Worktree continuation requires an absolute saved session path");
+	const cwd = fs.realpathSync(continuation.cwd);
+	const args = profileResumeArgs(identity.userArgs, { saved: true, sessionFile }, identity.cwd);
+	const built = buildProfileArgs(
+		profile,
+		identity.agentDir,
+		args,
+		cwd,
+		identity.env.PI_CODING_AGENT_SESSION_DIR,
+	);
+	return { profile, args, built, cwd };
 }
 
 export function prepareProfileReload(identity, profile, state, buildProfileArgs) {

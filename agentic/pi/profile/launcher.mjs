@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolvePiPackage } from "./pi-runtime.mjs";
 export { resolvePiPackage } from "./pi-runtime.mjs";
 import { parseAgentProfile } from "./definition.mjs";
-import { prepareProfileReload, profileReloadEnabled, profileReloadEnvironment } from "./reload.mjs";
+import { prepareProfileContinuation, prepareProfileReload, profileReloadEnabled, profileReloadEnvironment } from "./reload.mjs";
 
 const NAME = /^[a-z][a-z0-9-]*$/;
 const PROFILE_DIR = "profile-sessions";
@@ -337,10 +337,13 @@ function runCli(cli, args, env, identity) {
 						),
 					);
 				} else if (continuation && !signal && !interrupted) {
-					const cwd = fs.realpathSync(continuation.cwd),
-						nextEnv = { ...env };
+					const nextEnv = { ...env };
 					// Cleanup may have removed our previous cwd. Enter the verified successor first.
-					process.chdir(cwd);
+					process.chdir(fs.realpathSync(continuation.cwd));
+					const profile = await loadProfile(identity.profile.name, identity.agentDir, identity.pkg);
+					const plan = prepareProfileContinuation(
+						{ ...identity, env }, profile, continuation, buildProfileArgs,
+					);
 					for (const key of Object.keys(nextEnv))
 						if (key.startsWith("PI_WORKTREE_") || key === "PI_LOOP_HANDOFF") delete nextEnv[key];
 					for (const [key, value] of Object.entries(continuation.changes ?? {}))
@@ -349,7 +352,7 @@ function runCli(cli, args, env, identity) {
 							typeof value === "string"
 						)
 							nextEnv[key] = value;
-					resolve(await runCli(cli, continuation.args, nextEnv, identity));
+					resolve(await runCli(cli, plan.built, nextEnv, { ...identity, profile: plan.profile }));
 				} else
 					resolve(
 						signal || interrupted

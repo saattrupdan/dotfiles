@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import {
+	prepareProfileContinuation,
 	prepareProfileReload,
 	profileResumeArgs,
 	profileReloadEnabled,
@@ -111,6 +112,30 @@ test("reload environment discards startup actions and preserves persistent metad
 	});
 	assert.equal(original.PI_LOOP_HANDOFF, "once");
 	assert.equal(profileReloadEnabled(["--", "--no-extensions"]), true);
+});
+
+test("continuation refreshes profile resources while retaining explicit launch options", () => {
+	const plan = prepareProfileContinuation(
+		{ ...identity, userArgs: [
+			"--session-id", "old-id", "--extension", "./status.ts", "--model", "custom/model",
+			"--mcp-config", "./mcp.json", "--tui-mode", "regular", "old startup prompt", "@input.png",
+		], cwd: "/tmp/original" },
+		changed,
+		{ cwd: process.cwd(), args: ["--session", state.sessionFile, "--extension", "/removed/old", "--system-prompt", "old"] },
+		build,
+	);
+	assert.deepEqual(plan.built, [
+		"generated", "--extension", "/tmp/original/status.ts", "--model", "custom/model",
+		"--mcp-config", "/tmp/original/mcp.json", "--tui-mode", "regular", "--session", state.sessionFile,
+	]);
+	assert.equal(plan.profile, changed);
+	assert.equal(plan.cwd, fs.realpathSync(process.cwd()));
+	assert.deepEqual(prepareProfileContinuation(
+		{ ...identity, profile: changed }, changed,
+		{ cwd: process.cwd(), args: ["--session", state.sessionFile] }, build,
+	).built, ["generated", "--session", state.sessionFile]);
+	for (const args of [[], ["--session", "relative.jsonl"], ["--session-id", "id"]])
+		assert.throws(() => prepareProfileContinuation(identity, changed, { cwd: process.cwd(), args }, build), /absolute saved session/);
 });
 
 test("unchanged profiles do not require a persistent session or new flags", () => {
