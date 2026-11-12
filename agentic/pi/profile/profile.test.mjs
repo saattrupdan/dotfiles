@@ -123,6 +123,9 @@ test("loads prompt body rather than YAML and refuses delegatable top-level agent
 	const main = await loadProfile("main", dir, resolvePiPackage());
 	assert.equal(main.systemPrompt.trim(), "Main instructions.");
 	assert.deepEqual(main.extensions, ["private"]);
+	const args = buildProfileArgs(main, dir, []);
+	assert.deepEqual(args.slice(0, 2), ["--system-prompt", main.systemPrompt]);
+	assert.equal(fs.existsSync(path.join(dir, "profile-prompts")), false);
 	fs.writeFileSync(
 		path.join(dir, "agents", "builder.md"),
 		"---\nname: builder\ndescription: Builder\nsubagent: true\ntools: []\nskills: []\nextensions: [private]\n---\nBuild.\n",
@@ -245,8 +248,8 @@ test("resolves allow-listed skills from either user skills directory", () => {
 test("scopes private tools, skills, extensions and sessions before startup", () => {
 	const dir = root();
 	const args = buildProfileArgs(profile("librarian"), dir, ["--continue"]);
-	assert.deepEqual(args.slice(0, 2), ["--system-prompt", args[1]]);
-	assert.equal(fs.readFileSync(args[1], "utf8"), "Only use memory.\n");
+	assert.deepEqual(args.slice(0, 2), ["--system-prompt", "Only use memory.\n"]);
+	assert.equal(fs.existsSync(path.join(dir, "profile-prompts")), false);
 	for (const flag of [
 		"--no-extensions",
 		"--extension",

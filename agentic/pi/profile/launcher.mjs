@@ -1,7 +1,7 @@
 /* Select a top-level agent profile before Pi loads its prompt or extensions. */
 
-import { execFileSync, spawn } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -131,19 +131,6 @@ export function checkSessionPaths(args, agent, agentDir, cwd = process.cwd(), se
 	}
 }
 
-function promptFile(profile, agentDir) {
-	const dir = path.join(agentDir, "profile-prompts");
-	fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-	const hash = createHash("sha256").update(profile.systemPrompt).digest("hex");
-	const file = path.join(dir, `${profile.name}-${hash}.md`);
-	if (!fs.existsSync(file)) {
-		const temp = path.join(dir, `.${profile.name}-${process.pid}-${hash}.tmp`);
-		fs.writeFileSync(temp, profile.systemPrompt, { mode: 0o600 });
-		fs.renameSync(temp, file);
-	}
-	return file;
-}
-
 export function buildProfileArgs(profile, agentDir, args, cwd = process.cwd(), sessionEnv) {
 	if (
 		profile.subagent ||
@@ -164,7 +151,7 @@ export function buildProfileArgs(profile, agentDir, args, cwd = process.cwd(), s
 				throw new Error(`${flag} cannot override the ${profile.name} profile`);
 		}
 	}
-	const flags = ["--system-prompt", promptFile(profile, agentDir), "--no-extensions"];
+	const flags = ["--system-prompt", profile.systemPrompt, "--no-extensions"];
 	// The bootstrap is infrastructure, not an extra agent capability.
 	if (profile.name !== "main" || profileReloadEnabled(args)) {
 		flags.push("--extension", fileURLToPath(new URL("./reload-extension.mjs", import.meta.url)));

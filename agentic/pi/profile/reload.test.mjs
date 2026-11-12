@@ -257,6 +257,9 @@ test(
 		try {
 			const first = await f.wait(1);
 			assert.deepEqual(first.active, ["old_tool"]);
+			assert.match(first.prompt, /Unique old system prompt/);
+			assert.doesNotMatch(first.prompt, /description: Reload test/);
+			assert.ok(!fs.existsSync(path.join(f.agentDir, "profile-prompts")));
 			f.profile("new");
 			await new Promise((r) => setTimeout(r, 150));
 			f.child.stdin.write("/reload\r");
@@ -264,6 +267,7 @@ test(
 			assert.deepEqual(second.active, ["new_tool"]);
 			assert.ok(!second.all.includes("old_tool"));
 			assert.match(second.prompt, /Unique new system prompt/);
+			assert.ok(!fs.existsSync(path.join(f.agentDir, "profile-prompts")));
 			assert.ok(
 				second.commands.some(
 					(command) => command.source === "skill" && command.name.includes("fixture"),
