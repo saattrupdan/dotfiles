@@ -2,17 +2,17 @@
 import PackageDescription
 
 let package = Package(
-    name: "vm-runner",
+    name: "file-protector",
     platforms: [
         .macOS(.v12)
     ],
     products: [
-        .executable(name: "vm-runner", targets: ["vm-runner"])
+        .executable(name: "file-protector", targets: ["file-protector"])
     ],
     dependencies: [],
     targets: [
         .executableTarget(
-            name: "vm-runner",
+            name: "file-protector",
             dependencies: []
         )
     ]

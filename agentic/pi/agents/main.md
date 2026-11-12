@@ -87,6 +87,7 @@ extensions:
   - copy-paste
   - edit
   - fast
+  - file-protection
   - generate-image
   - generate-video
   - git-worktree-isolation
@@ -107,7 +108,6 @@ extensions:
   - statusline
   - subagent
   - thinking-status
-  - vm-isolation
   - voice-input
   - web-browse
   - web-search

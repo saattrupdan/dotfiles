@@ -20,7 +20,7 @@ import { isLoopActive, suspendLoopForHandoff } from "../_loop_state/state.ts";
 
 const MARKER = /<!-- pi-remote-command:([0-9a-f-]{36}) -->/;
 
-const required = ["vm-isolation", "caffeinate", "question", "conversation-name", "incognito"];
+const required = ["file-protection", "caffeinate", "question", "conversation-name", "incognito"];
 type Journal = Record<string, { fingerprint: string; status: CommandStatus }>;
 export default function (pi: ExtensionAPI) {
 	if (

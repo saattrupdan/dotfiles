@@ -44,8 +44,8 @@ import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-a
  * timeout on `exec` at all and merely abandoned the promise, so a stalled
  * `tmutil localsnapshot` kept running as an orphan — two of them were left
  * wedged in the volume-snapshot metadata. The child is detached into its own
- * process group and killed with the group, because vm-runner spawns tmutil
- * itself and a signal to vm-runner alone would orphan exactly that process.
+ * process group and killed with the group, because file-protector spawns tmutil
+ * itself and a signal to file-protector alone would orphan exactly that process.
  */
 const execFileAsync = (file: string, args: string[], timeoutMs = 8000) =>
 	new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
@@ -77,7 +77,7 @@ const execFileAsync = (file: string, args: string[], timeoutMs = 8000) =>
 	});
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const FILE_PROTECTOR_PATH = path.join(__dirname, 'vm-runner/.build/debug/vm-runner');
+const FILE_PROTECTOR_PATH = path.join(__dirname, 'file-protector/.build/debug/file-protector');
 
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
@@ -426,5 +426,5 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	markGuard("vm-isolation");
+	markGuard("file-protection");
 }

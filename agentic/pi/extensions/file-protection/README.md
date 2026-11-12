@@ -26,12 +26,12 @@ The blocked reason appears in the `bash` tool result, not in the footer.
 
 ## Installation
 
-The extension is auto-loaded from `~/.pi/agent/extensions/vm-isolation/`.
+The extension is auto-loaded from `~/.pi/agent/extensions/file-protection/`.
 
 ### Build the File Protector CLI
 
 ```bash
-cd ~/.pi/agent/extensions/vm-isolation/vm-runner
+cd ~/.pi/agent/extensions/file-protection/file-protector
 swift build
 ```
 
@@ -168,13 +168,13 @@ Tool result: BLOCKED: Critical pattern detected
 ### File Structure
 
 ```
-vm-isolation/
+file-protection/
 ├── index.ts           # Main extension (TypeScript)
 ├── package.json
 ├── README.md
-└── vm-runner/
+└── file-protector/
     ├── Package.swift
-    └── Sources/vm-runner/
+    └── Sources/file-protector/
         └── main.swift  # File protector CLI (Swift)
 ```
 
@@ -204,8 +204,8 @@ Check both properties after any change (the strings are only arguments, never
 evaluated — `check-command` matches and prints, it does not run):
 
 ```sh
-cd vm-runner && swift build
-B=.build/debug/vm-runner
+cd file-protector && swift build
+B=.build/debug/file-protector
 for c in 'git add .' 'grep -n "a\.b" f' 'sed -n "1,5p" f'; do $B check-command "$c"; done   # shouldBlock:false
 for c in 'rm -rf /' 'dd if=/dev/zero of=/tmp/x' 'mkfs -t apfs /dev/disk3'; do $B check-command "$c"; done  # shouldBlock:true
 ```
@@ -241,7 +241,7 @@ To see which files changed between snapshots:
 tmutil compare -d -X /2026-06-07-155927 /2026-06-07-155930
 
 # Or use the extension CLI directly
-/Users/dansmart/.pi/agent/extensions/vm-isolation/vm-runner/.build/debug/vm-runner compare 2026-06-07-155927 2026-06-07-155930
+/Users/dansmart/.pi/agent/extensions/file-protection/file-protector/.build/debug/file-protector compare 2026-06-07-155927 2026-06-07-155930
 ```
 
 ### Example Agent Workflow
@@ -271,7 +271,7 @@ The agent can easily:
 
 ### What This Does NOT Provide ❌
 
-- **VM Isolation** — Despite the name, this is NOT actual VM isolation (that's future work)
+- **VM Isolation** — Commands run on the host, not inside a virtual machine
 - **Perfect Security** — Pattern matching can be bypassed by determined actors
 - **Malicious Protection** — Designed for accidents, not adversarial attacks
 

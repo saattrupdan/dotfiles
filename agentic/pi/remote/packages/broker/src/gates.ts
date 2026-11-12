@@ -54,7 +54,7 @@ export function sourceDigest(root: string) {
     "extensions/_voice-input/ptt.ts",
     "extensions/conversation-name",
     "extensions/caffeinate",
-    "extensions/vm-isolation",
+    "extensions/file-protection",
     "extensions/incognito",
     "extensions/_incognito_state",
     "extensions/_interactive_queue",
