@@ -1,12 +1,13 @@
 import { registerRemoteCommand } from "../_remote_bridge/commands.ts";
 /** `/loop` repeats a prompt; `/implement-all-issues` starts its issue workflow. */
 
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { checkCondition, type Verdict } from "./checker.ts";
 import { ISSUE_CONDITION, listUnassignedLeafIssues } from "./issue-candidates.ts";
-import { hasLoopReturnToBase, LOOP_HANDOFF_ENV, returnLoopToBase, setLoopActive, setLoopHandoffProvider, type LoopHandoff } from "../_loop_state/state.ts";
+import { hasLoopReturnToBase, LOOP_HANDOFF_ENV, returnLoopToBase, reportLoopCompletion, setLoopActive, setLoopHandoffProvider, type LoopHandoff } from "../_loop_state/state.ts";
 import { NON_INTERACTIVE_BANNER } from "../non-interactive/prompt.ts";
 
 const STATUS_KEY = "loop";
@@ -93,6 +94,8 @@ interface Dependencies {
 	now?: () => number;
 }
 interface ActiveLoop extends LoopOptions {
+	completionId: string;
+	aborted?: boolean;
 	runs: number;
 	phase: "running" | "selecting" | "checking" | "waiting" | "complete" | "compacting" | "rate limited";
 	compacted: boolean;
@@ -126,7 +129,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 		const sessionFile = active.ctx.sessionManager.getSessionFile();
 		if (!sessionFile) return undefined;
 		return {
-			sessionFile, intervalMs: active.intervalMs, prompt: active.prompt,
+			completionId: active.completionId, sessionFile, intervalMs: active.intervalMs, prompt: active.prompt,
 			condition: active.condition, maxRuns: active.maxRuns, runs: active.runs,
 			phase: active.phase, returnToBase: active.returnToBase,
 		};
@@ -135,7 +138,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 		if (!handoff) return;
 		// The old process relinquishes the loop/power hold, but keeps its footer
 		// visible until the relaunched child restores the active loop status.
-		stop(undefined, true);
+		stop(undefined, undefined, true);
 		handoff.ctx.ui.setStatus(STATUS_KEY, `↻ ${handoff.runs} switching branches`);
 	}, restoreHandoff);
 
@@ -172,7 +175,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 		}
 		updateStatus(loop.ctx);
 	}
-	function stop(reason?: string, preserveStatus = false) {
+	function stop(reason?: string, outcome?: "finished" | "failed", preserveStatus = false) {
 		generation++;
 		if (active) clearCountdown(active);
 		if (timer !== undefined) clearTimer(timer);
@@ -190,6 +193,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 			if (!preserveStatus) updateStatus(old.ctx);
 		}
 		if (reason && old) say(reason);
+		if (old && outcome) reportLoopCompletion(old.completionId, outcome, old.ctx);
 	}
 	function hasEnoughContextToCompact(loop: ActiveLoop): boolean {
 		const tokens = loop.ctx.getContextUsage()?.tokens;
@@ -259,12 +263,12 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 							if (active !== loop || generation !== token) return;
 							if (/^(Nothing to compact \(session too small\)|Already compacted)$/.test(error.message)) resume();
 							else if (isRateLimitError(error)) retryAfterRateLimit(loop, tick);
-							else stop(`Loop stopped: compaction failed (${error.message}).`);
+							else stop(`Loop stopped: compaction failed (${error.message}).`, "failed");
 						},
 					});
 				} catch (error) {
 					if (isRateLimitError(error)) retryAfterRateLimit(loop, tick);
-					else stop(`Loop stopped: compaction failed (${String(error)}).`);
+					else stop(`Loop stopped: compaction failed (${String(error)}).`, "failed");
 				}
 				return;
 			}
@@ -289,7 +293,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 				const candidates = await listIssues(loop.ctx.cwd, controller.signal);
 				prompt += `\n\nFresh GitHub issue selection (unassigned issues with no sub-issues): ${candidates.length ? candidates.map((number) => `#${number}`).join(", ") : "none"}. Select only from these issue numbers, except a new leaf sub-issue you create from a listed issue during this run. Parents with sub-issues are excluded even when they remain open and unassigned. Verify the parent/sub-issue relationship before assigning; do not select a parent by browsing around this list.`;
 			} catch (error) {
-				if (active === loop && !controller.signal.aborted) stop(`Loop stopped: issue selection failed (${String(error)}).`);
+				if (active === loop && !controller.signal.aborted) stop(`Loop stopped: issue selection failed (${String(error)}).`, "failed");
 				return;
 			} finally {
 				if (selecting === controller) selecting = undefined;
@@ -309,12 +313,12 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 			// its error channel rather than throwing. Fail closed if no turn starts.
 			startWatchdog = setTimer(() => {
 				startWatchdog = undefined;
-				if (active === loop && loop.phase === "running") stop("Loop stopped: the next turn did not start (check Pi errors/authentication).");
+				if (active === loop && loop.phase === "running") stop("Loop stopped: the next turn did not start (check Pi errors/authentication).", "failed");
 			}, 60_000);
 			try {
 				pi.sendUserMessage(`${NON_INTERACTIVE_BANNER}\n\n${prompt}`);
 			} catch (error) {
-				stop(`Loop stopped: unable to send prompt (${String(error)}).`);
+				stop(`Loop stopped: unable to send prompt (${String(error)}).`, "failed");
 			}
 		};
 		submit();
@@ -365,7 +369,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 					return;
 				}
 			}
-			active = { ...options, runs: 0, phase: "running", compacted: false, rateLimitRetries: 0, generation: ++generation, returnToBase, ctx };
+			active = { ...options, completionId: randomUUID(), runs: 0, phase: "running", compacted: false, rateLimitRetries: 0, generation: ++generation, returnToBase, ctx };
 			setLoopActive(true, ctx);
 			void run(active);
 		},
@@ -394,16 +398,19 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 		const final = [...event.messages].reverse().find((message) => message.role === "assistant");
 		if (!final || final.role !== "assistant" || final.stopReason !== "stop") {
 			active.failed = true;
+			active.aborted = final?.role === "assistant" && final.stopReason === "aborted";
 			return;
 		}
 		// A retry can emit an error agent_end before a successful one in the same run.
 		active.failed = false;
+		active.aborted = false;
 		active.lastOutput = final.content.filter((block) => block.type === "text").map((block) => block.text).join("\n");
 	});
 	function nextOrStop(loop: ActiveLoop) {
 		if (active !== loop) return;
 		if (loop.maxRuns && loop.runs >= loop.maxRuns) {
-			stop(`Loop stopped: maximum of ${loop.maxRuns} runs reached without completion.`);
+			if (loop.condition) stop(`Loop stopped: maximum of ${loop.maxRuns} runs reached without completion.`, "failed");
+			else stop(`Loop complete after ${loop.runs} run(s).`, "finished");
 			return;
 		}
 		schedule(loop);
@@ -420,7 +427,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 					updateStatus(ctx);
 					void evaluate(loop, ctx, controller);
 				});
-			} else if (active === loop) stop(`Loop stopped: completion check failed (${String(error)}).`);
+			} else if (active === loop) stop(`Loop stopped: completion check failed (${String(error)}).`, "failed");
 			return;
 		}
 		if (checker === controller) checker = undefined;
@@ -433,10 +440,10 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 				updateStatus(ctx);
 				say(message);
 				try { await returnLoopToBase(ctx); }
-				catch (error) { stop(`Loop complete, but could not return to main (${String(error)}).`); }
+				catch (error) { if (active === loop) stop(`Loop complete, but could not return to main (${String(error)}).`, "failed"); }
 				return;
 			}
-			stop(message);
+			stop(message, "finished");
 			return;
 		}
 		if (loop.returnToBase) {
@@ -447,18 +454,24 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 			try {
 				if (await returnLoopToBase(ctx)) return;
 			} catch (error) {
-				stop(`Loop stopped: could not return to main (${String(error)}).`);
+				if (active === loop) stop(`Loop stopped: could not return to main (${String(error)}).`, "failed");
 				return;
 			}
 			if (active !== loop) return;
 		}
 		nextOrStop(loop);
 	}
-	pi.on("agent_settled", (_event, ctx) => {
+	pi.on("agent_settled", (event, ctx) => {
 		const loop = active;
 		if (!loop || loop.phase !== "running") return;
+		// Cancellation can arrive after a successful assistant message, while
+		// native finalization is still pending. It is not a completed iteration.
+		if (event.aborted) {
+			stop("Loop stopped: iteration was interrupted.");
+			return;
+		}
 		if (loop.failed || loop.lastOutput === undefined) {
-			stop("Loop stopped: iteration failed or was interrupted.");
+			stop("Loop stopped: iteration failed or was interrupted.", loop.aborted ? undefined : "failed");
 			return;
 		}
 		if (loop.condition) {
@@ -495,10 +508,14 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 			(handoff.phase !== "running" && handoff.phase !== "waiting" && handoff.phase !== "complete") ||
 			typeof handoff.returnToBase !== "boolean" ||
 			(handoff.condition !== undefined && typeof handoff.condition !== "string") ||
+			(handoff.completionId !== undefined && (typeof handoff.completionId !== "string" || !/^[0-9a-f-]{36}$/.test(handoff.completionId))) ||
 			(handoff.maxRuns !== undefined && (!Number.isSafeInteger(handoff.maxRuns) || handoff.maxRuns < 1))) return;
 		handoffRestored = true;
-		if (handoff.phase === "complete") return;
-		active = { ...handoff, compacted: false, rateLimitRetries: 0, generation: ++generation, ctx };
+		if (handoff.phase === "complete") {
+			reportLoopCompletion(handoff.completionId ?? randomUUID(), "finished", ctx);
+			return;
+		}
+		active = { ...handoff, completionId: handoff.completionId ?? randomUUID(), compacted: false, rateLimitRetries: 0, generation: ++generation, ctx };
 		setLoopActive(true, ctx);
 		if (active.phase === "waiting") schedule(active);
 		else updateStatus(ctx);

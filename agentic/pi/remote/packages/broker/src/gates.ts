@@ -60,6 +60,7 @@ export function sourceDigest(root: string) {
     "extensions/_interactive_queue",
     "extensions/_loop_state",
     "extensions/loop",
+    "extensions/notify",
     "extensions/fast",
     "extensions/context-limit",
     "extensions/subagent/index.ts",

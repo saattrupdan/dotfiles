@@ -16,7 +16,7 @@ import { dataDirectory } from "../_remote_bridge/local.ts";
 import { currentPrompt, configurePrompts, respondPrompt } from "../_remote_bridge/prompts.ts";
 import { missingGuards, clearGuards } from "../_remote_bridge/guards.ts";
 import { isIncognito, incognitoRequested } from "../_incognito_state/state.ts";
-import { isLoopActive, suspendLoopForHandoff } from "../_loop_state/state.ts";
+import { currentLoopCompletion, isLoopActive, onLoopCompletion, suspendLoopForHandoff } from "../_loop_state/state.ts";
 
 const MARKER = /<!-- pi-remote-command:([0-9a-f-]{36}) -->/;
 
@@ -42,6 +42,7 @@ export default function (pi: ExtensionAPI) {
 	let stopped = false;
 	let stopping = false;
 	let settled = true;
+	let loopIteration = false;
 	let retries = 0;
 	let registered = false;
 	let privateSession = "";
@@ -90,6 +91,12 @@ export default function (pi: ExtensionAPI) {
 	const event = (kind: string, data: unknown) => {
 		if (visible() && registered) send({ type: "event", kind, data });
 	};
+	const publishLoopCompletion = () => {
+		const completion = currentLoopCompletion();
+		if (!stopped && ctx && completion?.sessionId === ctx.sessionManager.getSessionId())
+			event("loop_completed", { id: completion.id, outcome: completion.outcome });
+	};
+	const unsubscribeCompletion = onLoopCompletion("remote-control", publishLoopCompletion);
 	const progress = new SubagentProgress((block) => event("tool_progress", block));
 	const ack = (id: string, status: CommandStatus, error?: string) => {
 		if (journal[id]?.status === "persisted") {
@@ -405,6 +412,7 @@ export default function (pi: ExtensionAPI) {
 							send({ type: "ack", commandId: id, status: entry.status });
 						event("snapshot", ctx.sessionManager.buildSessionProjection().messages);
 						progress.replay();
+						publishLoopCompletion();
 					}
 					if (value.type === "command") {
 						queued++;
@@ -466,6 +474,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", (_e, next) => {
 		ctx = next;
 		settled = true;
+		loopIteration = isLoopActive();
 		progress.clear();
 		configurePrompts({ publish: (prompt) => event("prompt", prompt), expire });
 		if (!socket) connect();
@@ -495,6 +504,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("agent_start", (_e, next) => {
 		ctx = next;
 		settled = false;
+		loopIteration = isLoopActive();
 		progress.clear();
 		event("agent_start", null);
 	});
@@ -503,7 +513,7 @@ export default function (pi: ExtensionAPI) {
 		settled = true;
 		progress.clear();
 		persisted();
-		event("agent_settled", null);
+		event("agent_settled", { loopIteration });
 		event("snapshot", next.sessionManager.buildSessionProjection().messages);
 		drain();
 	});
@@ -553,6 +563,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_info_changed", (e) => event("session_info_changed", e));
 	pi.on("session_shutdown", () => {
 		stopped = true;
+		unsubscribeCompletion();
 		progress.clear();
 		clearGuards();
 		clearRemoteCommands();

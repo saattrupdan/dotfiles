@@ -1,5 +1,6 @@
 import { WorkingStatus } from "../../../../extensions/_working-status/status.ts";
 import { sessionReference } from "./session-reference.ts";
+import { z } from "zod";
 import net from "node:net";
 import fs from "node:fs";
 import path from "node:path";
@@ -325,6 +326,7 @@ export class Connections {
                 "tool_execution_end",
                 "agent_start",
                 "agent_settled",
+                "loop_completed",
                 "session_info_changed",
                 "prompt",
                 "prompt.expired",
@@ -333,6 +335,19 @@ export class Connections {
               ].includes(kind)
             )
               return;
+            if (kind === "loop_completed") {
+              const completion = z
+                .object({
+                  id: z.string().uuid(),
+                  outcome: z.enum(["finished", "failed"]),
+                })
+                .safeParse(value.data);
+              if (!completion.success) return;
+              const key = `loop-completion:${session.sessionId}`;
+              if (this.store.setting(key) === completion.data.id) return;
+              this.store.set(key, completion.data.id);
+              value.data = completion.data;
+            }
             if (kind === "tool_progress") {
               const data = value.data as ToolProgress;
               if (
@@ -389,8 +404,17 @@ export class Connections {
             if (kind === "agent_settled")
               value.data = {
                 outcome: this.failures.get(session.sessionId) ? "failed" : "finished",
+                loopIteration:
+                  typeof (value.data as { loopIteration?: unknown } | null)
+                    ?.loopIteration === "boolean"
+                    ? (value.data as { loopIteration: boolean }).loopIteration
+                    : session.loop,
               };
-            const before = JSON.stringify([session.state, session.prompt]);
+            const before = JSON.stringify([
+              session.state,
+              session.loop,
+              session.prompt,
+            ]);
             const status = this.working.get(session.sessionId)!;
             const previousMessage = status.message(!session.idle);
             status.update(kind, value.data);
@@ -399,6 +423,7 @@ export class Connections {
               session.state = "running";
               if (session.prompt?.state === "expired") session.prompt = undefined;
             }
+            if (kind === "loop_completed") session.loop = false;
             if (kind === "agent_settled") {
               session.idle = true;
               session.state =
@@ -430,7 +455,9 @@ export class Connections {
                 (value.data as { name?: string })?.name ?? session.name,
               );
             this.store.save(session);
-            if (before !== JSON.stringify([session.state, session.prompt]))
+            if (
+              before !== JSON.stringify([session.state, session.loop, session.prompt])
+            )
               this.emit({ version: 1, type: "sessions.changed", data: session });
             const message = status.message(!session.idle);
             if (message !== previousMessage) {

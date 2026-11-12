@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import net from "node:net";
+import { once } from "node:events";
+import remoteControl from "../remote-control/index.ts";
+import { markGuard } from "../_remote_bridge/guards.ts";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,7 +11,8 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import loopExtension, { parseDuration, parseLoopArgs } from "./index.ts";
 import { loopHandoffEnv } from "../git-worktree-isolation/index.ts";
 import { parseVerdict, type Verdict } from "./checker.ts";
-import { getLoopHandoff, isLoopActive, LOOP_HANDOFF_ENV, onLoopChange, setLoopReturnToBase, suspendLoopForHandoff } from "../_loop_state/state.ts";
+import { getLoopHandoff, isLoopActive, LOOP_HANDOFF_ENV, onLoopChange, onLoopCompletion, currentLoopCompletion, setLoopReturnToBase, suspendLoopForHandoff } from "../_loop_state/state.ts";
+import notifyExtension from "../notify/index.ts";
 import { NON_INTERACTIVE_BANNER } from "../non-interactive/prompt.ts";
 
 test("duration accepts ordered h/m/s components and rejects invalid values", () => {
@@ -103,9 +108,12 @@ test("checker verdict is strict and needs evidence", () => {
 type Handler = (event: unknown, ctx: ExtensionContext) => unknown;
 function harness(
 	check?: (condition: string, output: string, ctx: ExtensionContext, signal: AbortSignal) => Promise<Verdict>,
-	options: { mode?: "tui" | "rpc" | "print"; autoStart?: boolean; compact?: "complete" | "small" | "fail" | "pending" | "rateOnce"; contextTokens?: number; cwd?: string; listIssues?: (cwd: string, signal?: AbortSignal) => Promise<number[]> } = {},
+	options: { sessionId?: string; plugins?: Array<(pi: ExtensionAPI) => void>; notifications?: string[]; mode?: "tui" | "rpc" | "print"; autoStart?: boolean; compact?: "complete" | "small" | "fail" | "pending" | "rateOnce"; contextTokens?: number; cwd?: string; listIssues?: (cwd: string, signal?: AbortSignal) => Promise<number[]> } = {},
 ) {
-	const handlers = new Map<string, Handler>();
+	const handlers = new Map<string, Handler[]>();
+	const emit = async (name: string, event: unknown = {}) => {
+		for (const callback of handlers.get(name) ?? []) await callback(event, ctx);
+	};
 	const sent: string[] = [];
 	const rawSent: string[] = [];
 	const notices: string[] = [];
@@ -120,9 +128,10 @@ function harness(
 	let finishCompaction: (() => void) | undefined;
 	const commands = new Map<string, (args: string, ctx: ExtensionContext) => Promise<void>>();
 	const ctx = {
+		hasUI: true,
 		mode: options.mode ?? "tui",
 		cwd: options.cwd ?? process.cwd(),
-		sessionManager: { getSessionFile: () => "/tmp/pi-loop-handoff-session.jsonl" },
+		sessionManager: { getSessionId: () => options.sessionId ?? "loop-fixture", getSessionFile: () => "/tmp/pi-loop-handoff-session.jsonl", buildSessionProjection: () => ({ messages: [] }) },
 		ui: { setStatus: (_key: string, value?: string) => { statuses.push(value); } },
 		isIdle: () => !busy,
 		hasPendingMessages: () => pending,
@@ -139,8 +148,12 @@ function harness(
 		},
 	} as unknown as ExtensionContext;
 	const pi = {
+		getCommands: () => [],
+		getSessionName: () => "Loop fixture",
+		getThinkingLevel: () => "off",
 		getSettings: () => ({ compaction: { keepRecentTokens: 20_000 } }),
-		on: (name: string, callback: Handler) => { handlers.set(name, callback); },
+		on: (name: string, callback: Handler) => { handlers.set(name, [...handlers.get(name) ?? [], callback]); },
+		events: { on: () => {} },
 		registerCommand: (name: string, options: { handler: (args: string, ctx: ExtensionContext) => Promise<void> }) => {
 			assert.ok(name === "loop" || name === "implement-all-issues");
 			commands.set(name, options.handler);
@@ -149,7 +162,7 @@ function harness(
 			rawSent.push(prompt);
 			sent.push(prompt.replace(`${NON_INTERACTIVE_BANNER}\n\n`, ""));
 			busy = true;
-			if (options.autoStart !== false) void handlers.get("agent_start")?.({}, ctx);
+			if (options.autoStart !== false) void emit("agent_start");
 		},
 		sendMessage: (message: { content: string }) => { notices.push(message.content); },
 	} as unknown as ExtensionAPI;
@@ -171,6 +184,8 @@ function harness(
 		clearInterval: (id) => { intervals.delete(id as unknown as number); },
 		now: () => clock,
 	});
+	for (const plugin of options.plugins ?? []) plugin(pi);
+	if (options.notifications) notifyExtension(pi, (title) => { options.notifications!.push(title); });
 	return {
 		sent, rawSent, notices, statuses, timers, intervals,
 		advance: (ms: number) => { clock += ms; for (const callback of [...intervals.values()]) callback(); },
@@ -184,17 +199,16 @@ function harness(
 			await handler(args, ctx);
 		},
 		input: async (source: "interactive" | "rpc", text: string) => {
-			await handlers.get("input")?.({ source, text }, ctx);
+			await emit("input", { source, text });
 		},
 		emit: async (name: string, event: unknown = {}) => {
-			const callback = handlers.get(name);
-			assert.ok(callback, name);
-			return callback(event, ctx);
+			assert.ok(handlers.has(name), name);
+			return emit(name, event);
 		},
 		finish: async (output = "work complete", reason = "stop") => {
 			busy = false;
-			await handlers.get("agent_end")?.({ messages: [{ role: "assistant", stopReason: reason, content: [{ type: "text", text: output }] }] }, ctx);
-			await handlers.get("agent_settled")?.({}, ctx);
+			await emit("agent_end", { messages: [{ role: "assistant", stopReason: reason, content: [{ type: "text", text: output }] }] });
+			await emit("agent_settled");
 		},
 		tick: () => {
 			const [id, timer] = [...timers][0] ?? [];
@@ -375,6 +389,8 @@ test("issue loop returns to main after a PR and starts the next issue there", as
 
 test("the final issue returns to main without scheduling another run", async () => {
 	const original = process.env[LOOP_HANDOFF_ENV];
+	const completions: string[] = [];
+	const off = onLoopCompletion("handoff-test", (completion) => { completions.push(completion.id); });
 	const branch = harness(async () => ({ done: true, evidence: "no unassigned issues" }));
 	try {
 		setLoopReturnToBase(async (ctx) => {
@@ -387,12 +403,17 @@ test("the final issue returns to main without scheduling another run", async () 
 		await branch.finish("last PR created");
 		assert.equal(isLoopActive(), false);
 		assert.match(branch.notices.at(-1) ?? "", /Loop complete after 1 run/);
+		assert.deepEqual(completions, [], "handoff itself is not completion");
+		const expectedId = JSON.parse(process.env[LOOP_HANDOFF_ENV]!).completionId;
 		const main = harness();
 		await main.emit("session_start", { reason: "startup" });
 		assert.equal(main.timers.size, 0);
 		assert.deepEqual(main.sent, []);
 		assert.equal(isLoopActive(), false);
+		assert.deepEqual(completions, [expectedId]);
+		assert.equal(currentLoopCompletion()?.outcome, "finished");
 	} finally {
+		off();
 		setLoopReturnToBase(undefined);
 		if (original === undefined) delete process.env[LOOP_HANDOFF_ENV];
 		else process.env[LOOP_HANDOFF_ENV] = original;
@@ -460,7 +481,7 @@ test("runs immediately, waits until settled, then schedules next run without dur
 	assert.deepEqual(h.sent, ["fix errors", "fix errors"]);
 	await h.finish();
 	assert.equal(h.timers.size, 0);
-	assert.match(h.notices.at(-1) ?? "", /maximum of 2/);
+	assert.match(h.notices.at(-1) ?? "", /Loop complete after 2 run/);
 });
 
 test("duration applies after settled and defers while another turn is busy", async () => {
@@ -661,7 +682,7 @@ test("a recovered provider error does not stop the loop", async () => {
 	h.tick(); // start run two
 	assert.deepEqual(h.sent, ["work", "work"]);
 	await h.finish();
-	assert.match(h.notices.at(-1) ?? "", /maximum of 2 runs/);
+	assert.match(h.notices.at(-1) ?? "", /Loop complete after 2 run/);
 });
 
 test("user messages do not stop a running or waiting loop", async () => {
@@ -742,4 +763,158 @@ test("stop during checker aborts it and cannot schedule a stale next run", async
 	resolveCheck?.({ done: false, evidence: "not yet" });
 	await settling;
 	assert.equal(h.timers.size, 0);
+});
+
+
+test("laptop notifies once only after the asynchronous until verdict completes the loop", { skip: process.platform !== "darwin" }, async () => {
+	const notifications: string[] = [];
+	let verdict!: (value: Verdict) => void;
+	const h = harness(async () => new Promise<Verdict>((resolve) => { verdict = resolve; }), { notifications, contextTokens: 2_000 });
+	try {
+		await h.command("finish the work --until all work is done");
+		await h.finish();
+		assert.deepEqual(notifications, [], "checking is not completion");
+		verdict({ done: false, evidence: "more work remains" });
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		assert.deepEqual(notifications, [], "an intermediate iteration must stay silent");
+		h.tick();
+		h.tick();
+		await h.finish();
+		assert.deepEqual(notifications, [], "the final check must settle first");
+		verdict({ done: true, evidence: "all work is done" });
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		assert.deepEqual(notifications, ["Pi finished"], "the final loop completion needs one laptop alert");
+		await h.emit("agent_settled");
+		assert.deepEqual(notifications, ["Pi finished"]);
+	} finally { await h.command("stop"); }
+});
+
+
+test("loop stops, cancellation and failures are not successful completion", async () => {
+	const outcomes: string[] = [];
+	const off = onLoopCompletion("outcome-test", (completion) => { outcomes.push(completion.outcome); });
+	try {
+		const capped = harness(async () => ({ done: false, evidence: "unfinished" }));
+		await capped.command("--max-runs 1 work --until complete");
+		await capped.finish();
+		assert.deepEqual(outcomes, ["failed"], "a cap must not certify an unmet until condition");
+		const failed = harness(async () => { throw new Error("checker unavailable"); });
+		await failed.command("work --until complete");
+		await failed.finish();
+		assert.deepEqual(outcomes, ["failed", "failed"]);
+		const stopped = harness();
+		await stopped.command("work --until complete");
+		await stopped.command("stop");
+		await stopped.finish();
+		const aborted = harness();
+		await aborted.command("work --until complete");
+		await aborted.finish("", "aborted");
+		assert.deepEqual(outcomes, ["failed", "failed"], "manual stop and abort are silent");
+		const count = harness();
+		await count.command("--max-runs 1 work");
+		await count.finish();
+		assert.deepEqual(outcomes, ["failed", "failed", "finished"]);
+	} finally { off(); }
+});
+
+test("native bridge marks iterations and replays only the terminal loop verdict on registration", async () => {
+	const root = await mkdtemp("/tmp/pi-loop-wire-");
+	const previous = { data: process.env.PI_REMOTE_DATA_DIR, child: process.env.PI_SUBAGENT_CHILD, private: process.env.PI_INCOGNITO_MODE };
+	process.env.PI_REMOTE_DATA_DIR = root;
+	delete process.env.PI_SUBAGENT_CHILD;
+	delete process.env.PI_INCOGNITO_MODE;
+	const rows: Array<{ type: string; kind?: string; data?: Record<string, unknown> }> = [];
+	let peer!: net.Socket;
+	let acknowledge = true;
+	let verdict!: (value: Verdict) => void;
+	const server = net.createServer((socket) => {
+		peer = socket;
+		let buffer = "";
+		socket.setEncoding("utf8");
+		socket.on("data", (chunk) => {
+			buffer += chunk;
+			let index: number;
+			while ((index = buffer.indexOf("\n")) >= 0) {
+				const row = JSON.parse(buffer.slice(0, index));
+				buffer = buffer.slice(index + 1);
+				rows.push(row);
+				if (row.secret) socket.write('{"type":"ready"}\n');
+				if (row.type === "register" && acknowledge) socket.write('{"type":"registered","epoch":1}\n');
+			}
+		});
+	});
+	const wait = async (ready: () => boolean) => {
+		for (let n = 0; n < 200; n++) {
+			if (ready()) return;
+			await new Promise((resolve) => setTimeout(resolve, 5));
+		}
+		assert.fail("native loop notification event did not arrive");
+	};
+	let h: ReturnType<typeof harness> | undefined;
+	try {
+		await writeFile(join(root, "ipc.key"), "fixture");
+		server.listen(join(root, "broker.sock"));
+		await once(server, "listening");
+		for (const name of ["file-protection", "caffeinate", "question", "conversation-name", "incognito"]) markGuard(name);
+		h = harness(async () => new Promise<Verdict>((resolve) => { verdict = resolve; }), { sessionId: "bridge-loop-fixture", plugins: [remoteControl], contextTokens: 2_000 });
+		await h.emit("session_start", { reason: "startup" });
+		await wait(() => rows.some((row) => row.kind === "snapshot"));
+		await h.command("work --until complete");
+		await h.finish();
+		await wait(() => rows.some((row) => row.kind === "agent_settled"));
+		assert.equal(rows.find((row) => row.kind === "agent_settled")?.data?.loopIteration, true);
+		assert.equal(rows.filter((row) => row.kind === "loop_completed").length, 0);
+		verdict({ done: false, evidence: "more work" });
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		h.tick(); h.tick();
+		// Lose registration while the final asynchronous checker is in flight.
+		acknowledge = false;
+		const registrations = rows.filter((row) => row.type === "register").length;
+		peer.write('{"type":"ready"}\n');
+		await wait(() => rows.filter((row) => row.type === "register").length > registrations);
+		await h.finish();
+		verdict({ done: true, evidence: "complete" });
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		assert.equal(rows.filter((row) => row.kind === "loop_completed").length, 0);
+		peer.write('{"type":"registered","epoch":2}\n');
+		await wait(() => rows.some((row) => row.kind === "loop_completed"));
+		const completion = rows.find((row) => row.kind === "loop_completed")!.data!;
+		assert.deepEqual(completion, { id: currentLoopCompletion()?.id, outcome: "finished" });
+		const before = rows.length;
+		peer.write('{"type":"registered","epoch":2}\n');
+		await wait(() => rows.slice(before).some((row) => row.kind === "loop_completed"));
+		assert.deepEqual(rows.filter((row) => row.kind === "loop_completed").map((row) => row.data), [completion, completion], "reconnect retains the same deduplication ID");
+		await h.command("work --until complete");
+		assert.equal(currentLoopCompletion(), undefined, "a new loop cannot replay an older completion");
+		await h.command("stop");
+	} finally {
+		await h?.emit("session_shutdown");
+		peer?.destroy();
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+		for (const [key, value] of [["PI_REMOTE_DATA_DIR", previous.data], ["PI_SUBAGENT_CHILD", previous.child], ["PI_INCOGNITO_MODE", previous.private]]) {
+			if (value === undefined) delete process.env[key!]; else process.env[key!] = value;
+		}
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+
+test("aborted settlement after successful output cannot check, continue or complete a loop", async () => {
+	const outcomes: string[] = [];
+	const off = onLoopCompletion("settlement-abort-test", (completion) => { outcomes.push(completion.outcome); });
+	try {
+		for (const args of ["work --until complete", "--max-runs 1 work", "work"]) {
+			let checks = 0;
+			const h = harness(async () => { checks++; return { done: true, evidence: "complete" }; });
+			try {
+				await h.command(args);
+				await h.emit("agent_end", { messages: [{ role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Done" }] }] });
+				await h.emit("agent_settled", { aborted: true });
+				assert.equal(checks, 0, "cancelled finalization must not run the until checker");
+				assert.deepEqual(outcomes, [], "cancellation is never completion");
+				assert.equal(isLoopActive(), false);
+				assert.equal(h.timers.size, 0);
+			} finally { await h.command("stop"); }
+		}
+	} finally { off(); }
 });

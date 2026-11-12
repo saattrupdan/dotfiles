@@ -401,7 +401,7 @@ for (const transition of ["branch", "cleanup"] as const) {
 			const handlers = new Map<string, Array<(event: unknown, ctx: ExtensionContext) => unknown>>();
 			const ctx = {
 				mode: "rpc", cwd,
-				sessionManager: { getSessionFile: () => sessionFile },
+				sessionManager: { getSessionId: () => "loop-continuation-fixture", getSessionFile: () => sessionFile },
 				ui: { setStatus: () => undefined },
 				isIdle: () => true, hasPendingMessages: () => false,
 			} as unknown as ExtensionContext;

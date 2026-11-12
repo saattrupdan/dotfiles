@@ -120,7 +120,12 @@ export async function createBroker(
       deliver(socket, client, event);
     }
     if (
-      event.type === "agent_settled" ||
+      (event.type === "agent_settled" &&
+        !(
+          (event.data as { loopIteration?: boolean } | null)?.loopIteration ??
+          store.session(event.sessionId ?? "")?.loop
+        )) ||
+      event.type === "loop_completed" ||
       event.type === "prompt" ||
       event.type === "prompt.expired"
     )
@@ -648,7 +653,7 @@ export async function createBroker(
           JSON.stringify({
             title,
             body:
-              event.type === "agent_settled"
+              event.type === "agent_settled" || event.type === "loop_completed"
                 ? (event.data as { outcome?: string } | null)?.outcome === "failed"
                   ? "A run failed."
                   : "A run finished."

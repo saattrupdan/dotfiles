@@ -226,6 +226,59 @@ test("a resumed parent inside its managed worktree registers as active during su
     send({ type: "event", kind: "agent_settled", data: null });
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(outcome(), "finished");
+    send({
+      type: "event",
+      kind: "agent_settled",
+      data: { loopIteration: true, privateText: "never copy" },
+    });
+    const completionId = randomUUID();
+    const completion = {
+      type: "event",
+      kind: "loop_completed",
+      data: { id: completionId, outcome: "finished", privateText: "never copy" },
+    };
+    send(completion);
+    send(completion);
+    send({ ...completion, data: { id: "invalid", outcome: "finished" } });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const lastSettled = store.db
+      .prepare(
+        "SELECT data FROM events WHERE session=? AND type='agent_settled' ORDER BY sequence DESC LIMIT 1",
+      )
+      .get(publicId)!;
+    assert.deepEqual(JSON.parse(lastSettled.data as string), {
+      outcome: "finished",
+      loopIteration: true,
+    });
+    const completions = store.db
+      .prepare("SELECT data FROM events WHERE session=? AND type='loop_completed'")
+      .all(publicId);
+    assert.deepEqual(
+      completions.map((entry) => JSON.parse(entry.data as string)),
+      [{ id: completionId, outcome: "finished" }],
+      "terminal notification is validated, stripped and emitted once",
+    );
+    // A normal reconnect/registration must not forget the terminal notification ID.
+    send({
+      type: "register",
+      data: {
+        ...registration,
+        instanceId: row.instanceId,
+        cwd: f.worktree,
+        pid: process.pid,
+      },
+    });
+    await wait("registered");
+    send(completion);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(
+      store.db
+        .prepare(
+          "SELECT count(*) AS count FROM events WHERE session=? AND type='loop_completed'",
+        )
+        .get(publicId)!.count,
+      1,
+    );
   } finally {
     if (!socket.destroyed) {
       const closed = once(socket, "close");

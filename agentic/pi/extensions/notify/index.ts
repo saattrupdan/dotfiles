@@ -46,7 +46,7 @@ import { spawn } from "node:child_process";
 import * as os from "node:os";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { isLoopActive } from "../_loop_state/state.ts";
+import { isLoopActive, onLoopCompletion } from "../_loop_state/state.ts";
 import { isTransientCodexError, isTransientWebSocketClosure, RETRY_STATE_EVENT } from "../rate-limit-retry/index.ts";
 
 const IS_MACOS = os.platform() === "darwin";
@@ -291,6 +291,15 @@ export default function (pi: ExtensionAPI, send = notify) {
 	if (process.env.PI_SUBAGENT_CHILD === "1") return;
 	if (!IS_MACOS) return;
 
+	const unsubscribeCompletion = onLoopCompletion("notify", (completion, ctx) => {
+		hasUI = ctx.hasUI;
+		sessionManager = ctx.sessionManager;
+		if (completion.outcome === "finished") send("Pi finished", "Ready for your next prompt.", SOUND_FINISHED);
+		else send("Pi failed", "Loop stopped before completion.", SOUND_FAILED);
+	});
+	pi.on("session_shutdown", unsubscribeCompletion);
+	let loopIteration = false;
+	pi.on("agent_start", () => { loopIteration = isLoopActive(); });
 	let retrying = false;
 	pi.events.on(RETRY_STATE_EVENT, (data) => {
 		retrying = (data as { retrying: boolean }).retrying;
@@ -302,6 +311,7 @@ export default function (pi: ExtensionAPI, send = notify) {
 		hasUI = ctx.hasUI;
 		sessionManager = ctx.sessionManager;
 		retrying = false;
+		loopIteration = isLoopActive();
 	});
 
 	pi.on("tool_call", async (event) => {
@@ -312,6 +322,8 @@ export default function (pi: ExtensionAPI, send = notify) {
 		send("Pi has a question", preview, SOUND_QUESTION);
 	});
 
+	// Normal prompts finish at agent_end. /loop completion comes from the loop
+	// owner's terminal verdict, including its asynchronous --until check.
 	// Use agent_end to notify only when the entire agent loop finishes (ready for user input).
 	// turn_end fires after every single turn, including intermediate turns in multi-step
 	// workflows (e.g., planner → builders → reviewer), which causes excessive notifications.
@@ -323,7 +335,7 @@ export default function (pi: ExtensionAPI, send = notify) {
 	pi.on("agent_end", async (event) => {
 		// A quiet retry can finish its low-level agent run before continuing.
 		// Loop iterations also end agent runs without needing user attention.
-		if (retrying || isLoopActive()) return;
+		if (retrying || loopIteration || isLoopActive()) return;
 		const msgs = event.messages ?? [];
 
 		// Skip notifications for extension-injected nudge/block loops. The retry

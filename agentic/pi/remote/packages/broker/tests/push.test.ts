@@ -118,6 +118,27 @@ test("background, locked and stale clients receive completion, failure and input
       assert.equal(sent.length, 0, "Active Mac must silence every phone alert");
     }
     desktopAllows = true;
+    broker.store.save({ ...session, loop: true });
+    emit("agent_settled", { outcome: "finished" });
+    await tick();
+    assert.equal(sent.length, 0, "a settled loop iteration must not notify the phone");
+    broker.store.save(session);
+    emit("agent_settled", { outcome: "finished", loopIteration: true });
+    await tick();
+    assert.equal(
+      sent.length,
+      0,
+      "a fast final check must not turn its iteration into a second alert",
+    );
+    emit("loop_completed", { id: randomUUID(), outcome: "finished" });
+    await tick();
+    assert.equal(
+      sent.length,
+      1,
+      "only the authoritative whole-loop completion notifies",
+    );
+    assert.equal(sent.at(-1)?.body, "A run finished.");
+    sent.length = 0;
     emit("agent_settled", { outcome: "finished" });
     await tick();
     assert.equal(sent.at(-1)?.body, "A run finished.");
