@@ -1,17 +1,20 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { setImmediate as settle } from "node:timers/promises";
 import net from "node:net";
 import { once } from "node:events";
 import remoteControl from "../remote-control/index.ts";
 import { markGuard } from "../_remote_bridge/guards.ts";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import loopExtension, { parseDuration, parseLoopArgs } from "./index.ts";
 import { loopHandoffEnv } from "../git-worktree-isolation/index.ts";
+import { createLaunchPlan, prepareBranchReturn } from "../git-worktree-isolation/git.ts";
 import { parseVerdict, type Verdict } from "./checker.ts";
-import { getLoopHandoff, isLoopActive, LOOP_HANDOFF_ENV, onLoopChange, onLoopCompletion, currentLoopCompletion, setLoopReturnToBase, suspendLoopForHandoff } from "../_loop_state/state.ts";
+import { getLoopHandoff, isLoopActive, LOOP_HANDOFF_ENV, LOOP_MAIN_DIRTY, onLoopChange, onLoopCompletion, currentLoopCompletion, setLoopReturnToBase, suspendLoopForHandoff } from "../_loop_state/state.ts";
 import notifyExtension from "../notify/index.ts";
 import { NON_INTERACTIVE_BANNER } from "../non-interactive/prompt.ts";
 
@@ -384,6 +387,124 @@ test("issue loop returns to main after a PR and starts the next issue there", as
 		if (original === undefined) delete process.env[LOOP_HANDOFF_ENV];
 		else process.env[LOOP_HANDOFF_ENV] = original;
 		await branch.command("stop");
+	}
+});
+
+for (const done of [false, true]) {
+	test(`issue loop waits for dirty main before ${done ? "final" : "next issue"} handoff`, async () => {
+		const container = await mkdtemp(join(tmpdir(), "pi-loop-dirty-main-"));
+		const root = join(container, "repo");
+		const git = (...args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
+		const h = harness(async () => ({ done, evidence: done ? "no issues remain" : "more issues remain" }));
+		let attempt: Promise<string> | undefined;
+		let returned = false;
+		try {
+			await mkdir(root);
+			git("init", "-b", "main");
+			git("config", "user.email", "pi@example.invalid");
+			git("config", "user.name", "Pi Test");
+			await writeFile(join(root, "base.txt"), "base\n");
+			git("add", ".");
+			git("commit", "-m", "chore: initial");
+			const plan = await createLaunchPlan(root, join(container, "agent"), "feat/loop-retry");
+			await writeFile(join(root, "base.txt"), "staged work\n");
+			git("add", "base.txt");
+			await writeFile(join(root, "base.txt"), "unstaged work\n");
+			await writeFile(join(root, "untracked.txt"), "untracked work\n");
+			const status = git("status", "--porcelain=v1");
+			const staged = git("diff", "--cached");
+			setLoopReturnToBase(async () => {
+				attempt = prepareBranchReturn(plan.manifest);
+				await attempt;
+				returned = true;
+				suspendLoopForHandoff();
+			});
+			await h.command("", "implement-all-issues");
+			await h.finish("PR created");
+			await attempt?.catch(() => undefined);
+			await settle();
+			assert.equal(isLoopActive(), true, "dirty main must pause, not stop, the loop");
+			assert.match(h.notices.at(-1) ?? "", /waiting.*main.*uncommitted changes/i);
+			assert.equal(returned, false);
+			assert.equal(git("status", "--porcelain=v1"), status);
+			assert.equal(git("diff", "--cached"), staged);
+			assert.equal(await readFile(join(root, "base.txt"), "utf8"), "unstaged work\n");
+			assert.equal(await readFile(join(root, "untracked.txt"), "utf8"), "untracked work\n");
+			assert.equal(getLoopHandoff("/tmp/pi-loop-handoff-session.jsonl")?.phase, done ? "complete" : "waiting");
+			assert.equal(h.sent.length, 1, "no issue may start in the feature worktree");
+			// Simulate the other session finishing its work on main.
+			git("add", ".");
+			git("commit", "-m", "chore: finish concurrent work");
+			assert.equal(h.tick(), 30_000);
+			await attempt;
+			await settle();
+			assert.equal(returned, true);
+			assert.equal(isLoopActive(), false);
+			assert.equal(h.timers.size, 0);
+			assert.equal(h.sent.length, 1);
+			assert.equal(execFileSync("git", ["branch", "--show-current"], {
+				cwd: plan.manifest.worktreeRoot, encoding: "utf8",
+			}).trim(), "feat/loop-retry", "the completed PR branch remains intact");
+		} finally {
+			await h.command("stop");
+			setLoopReturnToBase(undefined);
+			await rm(container, { recursive: true, force: true });
+		}
+	});
+}
+
+for (const cancel of ["stop", "session_shutdown"]) {
+	test(`dirty main retries remain cancellable via ${cancel}`, async () => {
+		const h = harness(async () => ({ done: false, evidence: "more issues remain" }));
+		let attempts = 0;
+		try {
+			setLoopReturnToBase(async () => {
+				attempts++;
+				throw Object.assign(new Error("main has uncommitted changes"), { code: LOOP_MAIN_DIRTY });
+			});
+			await h.command("", "implement-all-issues");
+			await h.finish();
+			await settle();
+			assert.equal(attempts, 1);
+			assert.equal(isLoopActive(), true);
+			h.setBusy(true);
+			assert.equal(h.tick(), 30_000);
+			assert.equal(attempts, 1, "do not hand off during another turn");
+			h.setBusy(false);
+			assert.equal(h.tick(), 1_000);
+			await settle();
+			assert.equal(attempts, 2);
+			assert.equal(h.timers.size, 1, "dirty main may require more than one retry");
+			assert.equal(h.sent.length, 1);
+			const staleRetry = [...h.timers.values()][0]!.callback;
+			if (cancel === "stop") await h.command("stop");
+			else await h.emit("session_shutdown");
+			assert.equal(isLoopActive(), false);
+			assert.equal(h.timers.size, 0);
+			assert.equal(h.intervals.size, 0);
+			staleRetry();
+			await settle();
+			assert.equal(attempts, 2, "a cancelled timer cannot return a stopped loop");
+		} finally {
+			await h.command("stop");
+			setLoopReturnToBase(undefined);
+		}
+	});
+}
+
+test("return errors other than dirty main stop without retrying", async () => {
+	const h = harness(async () => ({ done: false, evidence: "more issues remain" }));
+	try {
+		setLoopReturnToBase(async () => { throw new Error("The managed worktree is not clean; the feature branch was preserved."); });
+		await h.command("", "implement-all-issues");
+		await h.finish();
+		await settle();
+		assert.equal(isLoopActive(), false);
+		assert.equal(h.timers.size, 0);
+		assert.match(h.notices.at(-1) ?? "", /Loop stopped: could not return to main.*managed worktree is not clean/);
+	} finally {
+		await h.command("stop");
+		setLoopReturnToBase(undefined);
 	}
 });
 

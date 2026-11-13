@@ -10,6 +10,8 @@ export interface LoopCompletion {
 type CompletionListener = (completion: LoopCompletion, ctx: ExtensionContext) => void;
 type Listener = (active: boolean, ctx: ExtensionContext) => void;
 export const LOOP_HANDOFF_ENV = "PI_LOOP_HANDOFF";
+// A stable code survives separate extension loaders and reloads.
+export const LOOP_MAIN_DIRTY = "PI_LOOP_MAIN_DIRTY";
 
 export interface LoopHandoff {
 	completionId?: string;

@@ -6,6 +6,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
+import { LOOP_MAIN_DIRTY } from "../_loop_state/state.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -1144,7 +1145,9 @@ export async function prepareBranchReturn(manifest: SessionManifest): Promise<st
 		throw new Error("The main checkout changed; the feature branch was preserved.");
 	}
 	if (await git(mainRoot, ["status", "--porcelain=v1"])) {
-		throw new Error("The main checkout has uncommitted changes; the feature branch was preserved.");
+		throw Object.assign(new Error("The main checkout has uncommitted changes; the feature branch was preserved."), {
+			code: LOOP_MAIN_DIRTY,
+		});
 	}
 	return mainRoot;
 }

@@ -7,13 +7,14 @@ import { resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { checkCondition, type Verdict } from "./checker.ts";
 import { ISSUE_CONDITION, listUnassignedLeafIssues } from "./issue-candidates.ts";
-import { hasLoopReturnToBase, LOOP_HANDOFF_ENV, returnLoopToBase, reportLoopCompletion, setLoopActive, setLoopHandoffProvider, type LoopHandoff } from "../_loop_state/state.ts";
+import { hasLoopReturnToBase, LOOP_HANDOFF_ENV, LOOP_MAIN_DIRTY, returnLoopToBase, reportLoopCompletion, setLoopActive, setLoopHandoffProvider, type LoopHandoff } from "../_loop_state/state.ts";
 import { NON_INTERACTIVE_BANNER } from "../non-interactive/prompt.ts";
 
 const STATUS_KEY = "loop";
 const MAX_DURATION_MS = 24 * 60 * 60 * 1_000;
 const RATE_LIMIT_RETRY_MS = 60_000;
 const MAX_RATE_LIMIT_RETRY_MS = 5 * 60_000;
+const MAIN_RETURN_RETRY_MS = 30_000;
 
 function isRateLimitError(error: unknown): boolean {
 	return /rate[ -]?limit|too many requests|\b429\b/i.test(String(error));
@@ -416,6 +417,34 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 		}
 		schedule(loop);
 	}
+	async function returnToMain(loop: ActiveLoop, ctx: ExtensionContext, complete: boolean) {
+		if (active !== loop) return;
+		clearCountdown(loop);
+		try {
+			if (await returnLoopToBase(ctx)) return;
+			if (active !== loop) return;
+			if (complete) stop(undefined, "finished");
+			else nextOrStop(loop);
+		} catch (error) {
+			if (active !== loop) return;
+			if (error && typeof error === "object" && "code" in error && error.code === LOOP_MAIN_DIRTY) {
+				say("Loop waiting: main has uncommitted changes; retrying in 30s. The feature branch and main checkout are preserved. Use /loop stop to cancel.");
+				startCountdown(loop, MAIN_RETURN_RETRY_MS);
+				const retry = () => {
+					timer = undefined;
+					if (active !== loop) return;
+					if (!ctx.isIdle() || ctx.hasPendingMessages()) {
+						timer = setTimer(retry, 1_000);
+						return;
+					}
+					void returnToMain(loop, ctx, complete);
+				};
+				timer = setTimer(retry, MAIN_RETURN_RETRY_MS);
+			} else {
+				stop(`${complete ? "Loop complete, but" : "Loop stopped:"} could not return to main (${String(error)}).`, "failed");
+			}
+		}
+	}
 	async function evaluate(loop: ActiveLoop, ctx: ExtensionContext, controller: AbortController) {
 		let verdict: Verdict;
 		try {
@@ -440,8 +469,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 				loop.phase = "complete";
 				updateStatus(ctx);
 				say(message);
-				try { await returnLoopToBase(ctx); }
-				catch (error) { if (active === loop) stop(`Loop complete, but could not return to main (${String(error)}).`, "failed"); }
+				await returnToMain(loop, ctx, true);
 				return;
 			}
 			stop(message, "finished");
@@ -452,13 +480,8 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 			loop.phase = "waiting";
 			loop.compacted = false;
 			updateStatus(ctx);
-			try {
-				if (await returnLoopToBase(ctx)) return;
-			} catch (error) {
-				if (active === loop) stop(`Loop stopped: could not return to main (${String(error)}).`, "failed");
-				return;
-			}
-			if (active !== loop) return;
+			await returnToMain(loop, ctx, false);
+			return;
 		}
 		nextOrStop(loop);
 	}
