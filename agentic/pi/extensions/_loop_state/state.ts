@@ -18,6 +18,7 @@ export interface LoopHandoff {
 	sessionFile: string;
 	intervalMs: number;
 	prompt: string;
+	instruction?: string;
 	condition?: string;
 	maxRuns?: number;
 	runs: number;

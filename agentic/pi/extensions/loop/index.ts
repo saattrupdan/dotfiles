@@ -96,6 +96,7 @@ interface Dependencies {
 	now?: () => number;
 }
 interface ActiveLoop extends LoopOptions {
+	instruction?: string;
 	completionId: string;
 	aborted?: boolean;
 	runs: number;
@@ -132,7 +133,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 		if (!sessionFile) return undefined;
 		return {
 			completionId: active.completionId, sessionFile, intervalMs: active.intervalMs, prompt: active.prompt,
-			condition: active.condition, maxRuns: active.maxRuns, runs: active.runs,
+			condition: active.condition, maxRuns: active.maxRuns, runs: active.runs, instruction: active.instruction,
 			phase: active.phase, returnToBase: active.returnToBase,
 		};
 	}, () => {
@@ -301,6 +302,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 				if (selecting === controller) selecting = undefined;
 			}
 		}
+		if (loop.instruction) prompt += `\n\n${loop.instruction}`;
 		const submit = () => {
 			timer = undefined;
 			if (active !== loop || loop.runs !== runId ||
@@ -328,7 +330,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 
 	const loopCommand = {
 		description: "Repeat a prompt, optionally checking an --until condition after every run",
-		async handler(args: string, ctx: ExtensionContext, returnToBase = false) {
+		async handler(args: string, ctx: ExtensionContext, returnToBase = false, instruction?: string) {
 			if (ctx.mode !== "tui" && ctx.mode !== "rpc") {
 				console.error("/loop requires an interactive Pi (TUI or RPC) session; print/JSON mode exits before scheduled turns.");
 				return;
@@ -371,25 +373,21 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 					return;
 				}
 			}
-			active = { ...options, completionId: randomUUID(), runs: 0, phase: "running", compacted: false, rateLimitRetries: 0, generation: ++generation, returnToBase, ctx };
+			active = { ...options, instruction: instruction?.trim() || undefined, completionId: randomUUID(), runs: 0, phase: "running", compacted: false, rateLimitRetries: 0, generation: ++generation, returnToBase, ctx };
 			setLoopActive(true, ctx);
 			void run(active);
 		},
 	};
 	pi.registerCommand("loop", loopCommand);
 	registerRemoteCommand("loop",async(args,ctx)=>{if(!["stop","status"].includes(args.trim()))parseLoopArgs(args);await loopCommand.handler(args,ctx);});
-	pi.registerCommand("implement-all-issues", {
-		description: "Implement unassigned repository issues until none are left",
-		async handler(args, ctx) {
-			if (args.trim()) {
-				say("Usage: /implement-all-issues");
-				return;
-			}
-			await loopCommand.handler(`${ALL_ISSUES_PROMPT} --until ${ISSUE_CONDITION}`, ctx, true);
+	const allIssuesCommand = {
+		description: "Implement unassigned repository issues until none are left, with an optional instruction for every iteration",
+		async handler(args: string, ctx: ExtensionContext) {
+			await loopCommand.handler(`${ALL_ISSUES_PROMPT} --until ${ISSUE_CONDITION}`, ctx, true, args);
 		},
-	});
-
-	registerRemoteCommand("implement-all-issues",async(args,ctx)=>{if(args.trim())throw new Error("invalid_command_arguments");await loopCommand.handler(`${ALL_ISSUES_PROMPT} --until ${ISSUE_CONDITION}`,ctx,true);});
+	};
+	pi.registerCommand("implement-all-issues", allIssuesCommand);
+	registerRemoteCommand("implement-all-issues", allIssuesCommand.handler);
 
 	pi.on("agent_start", () => {
 		if (startWatchdog !== undefined) clearTimer(startWatchdog);
@@ -532,6 +530,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 			(handoff.phase !== "running" && handoff.phase !== "waiting" && handoff.phase !== "complete") ||
 			typeof handoff.returnToBase !== "boolean" ||
 			(handoff.condition !== undefined && typeof handoff.condition !== "string") ||
+			(handoff.instruction !== undefined && typeof handoff.instruction !== "string") ||
 			(handoff.completionId !== undefined && (typeof handoff.completionId !== "string" || !/^[0-9a-f-]{36}$/.test(handoff.completionId))) ||
 			(handoff.maxRuns !== undefined && (!Number.isSafeInteger(handoff.maxRuns) || handoff.maxRuns < 1))) return;
 		handoffRestored = true;

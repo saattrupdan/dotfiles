@@ -5,6 +5,7 @@ import net from "node:net";
 import { once } from "node:events";
 import remoteControl from "../remote-control/index.ts";
 import { markGuard } from "../_remote_bridge/guards.ts";
+import { invokeRemoteCommand } from "../_remote_bridge/commands.ts";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -201,6 +202,7 @@ function harness(
 			assert.ok(handler, name);
 			await handler(args, ctx);
 		},
+		remoteCommand: (args: string, name = "implement-all-issues") => invokeRemoteCommand(name, args, ctx),
 		input: async (source: "interactive" | "rpc", text: string) => {
 			await emit("input", { source, text });
 		},
@@ -246,6 +248,46 @@ test("implement-all-issues starts the same loop with its issue prompt and finish
 	assert.match(checks[0]!, /GitHub's parent–sub-issue relationship/);
 	assert.match(checks[0]!, /decision-blocked issues also require the repo's standard decision-blocker label or decision-blocked label/);
 	assert.match(h.notices.at(-1) ?? "", /Loop complete after 1 run/);
+});
+
+for (const remote of [false, true]) {
+	test(`implement-all-issues appends literal instructions to every ${remote ? "remote" : "local"} iteration`, async () => {
+		const instruction = "Write PR descriptions in Danish.\nKeep --until and --max-runs literal; do not merge.";
+		const checks: string[] = [];
+		const h = harness(async (condition) => {
+			checks.push(condition);
+			return { done: false, evidence: "another issue remains" };
+		}, { contextTokens: 2_000, mode: remote ? "rpc" : "tui" });
+		try {
+			if (remote) await h.remoteCommand(`  ${instruction}  `);
+			else await h.command(`  ${instruction}  `, "implement-all-issues");
+			await h.finish("PR created");
+			h.tick();
+			h.tick();
+			await Promise.resolve();
+			assert.equal(h.sent.length, 2);
+			for (const prompt of h.sent) {
+				assert.ok(prompt.endsWith(`\n\n${instruction}`));
+				assert.equal(prompt.split(instruction).length, 2);
+				assert.ok(prompt.indexOf("Fresh GitHub issue selection") < prompt.indexOf(instruction));
+			}
+			assert.match(checks[0]!, /^No actionable unassigned issues remain:/);
+			assert.ok(!checks[0]!.includes(instruction));
+		} finally {
+			await h.command("stop");
+		}
+	});
+}
+
+test("blank instructions preserve the default issue prompt", async () => {
+	const h = harness();
+	await h.command("", "implement-all-issues");
+	const prompt = h.sent[0];
+	await h.command("stop");
+	h.setBusy(false);
+	await h.command(" \n\t ", "implement-all-issues");
+	assert.equal(h.sent[1], prompt);
+	await h.command("stop");
 });
 
 test("issue selection refreshes for each iteration and never suggests a parent", async () => {
@@ -357,6 +399,7 @@ test("a branch relaunch resumes the running issue iteration, then checks complet
 test("issue loop returns to main after a PR and starts the next issue there", async () => {
 	const original = process.env[LOOP_HANDOFF_ENV];
 	let returned = false;
+	const instruction = "Write every PR description in Danish.";
 	const branch = harness(async () => ({ done: false, evidence: "more unassigned issues" }), { contextTokens: 2_000 });
 	try {
 		setLoopReturnToBase(async (ctx) => {
@@ -364,10 +407,11 @@ test("issue loop returns to main after a PR and starts the next issue there", as
 			const snapshot = getLoopHandoff(ctx.sessionManager.getSessionFile()!);
 			assert.equal(snapshot?.phase, "waiting");
 			assert.equal(snapshot?.runs, 1);
+			assert.equal(snapshot?.instruction, instruction);
 			process.env[LOOP_HANDOFF_ENV] = loopHandoffEnv(ctx.sessionManager.getSessionFile()!, true)[LOOP_HANDOFF_ENV];
 			assert.equal(isLoopActive(), false, "the previous process releases its hold");
 		});
-		await branch.command("", "implement-all-issues");
+		await branch.command(instruction, "implement-all-issues");
 		await branch.finish("PR created");
 		assert.equal(returned, true);
 		assert.equal(branch.timers.size, 0, "the branch must not start the next issue");
@@ -381,6 +425,7 @@ test("issue loop returns to main after a PR and starts the next issue there", as
 		await Promise.resolve();
 		assert.equal(main.sent.length, 1);
 		assert.match(main.sent[0] ?? "", /^Find an unassigned issue for this repo/);
+		assert.ok(main.sent[0]!.endsWith(`\n\n${instruction}`));
 		await main.command("stop");
 	} finally {
 		setLoopReturnToBase(undefined);
@@ -560,13 +605,10 @@ test("unrelated sessions ignore a handoff marker", async () => {
 	}
 });
 
-test("implement-all-issues rejects arguments and cannot replace an active loop", async () => {
+test("implement-all-issues cannot replace an active loop even with an instruction", async () => {
 	const h = harness();
-	await h.command("extra", "implement-all-issues");
-	assert.deepEqual(h.sent, []);
-	assert.match(h.notices.at(-1) ?? "", /Usage: \/implement-all-issues/);
 	await h.command("work");
-	await h.command("", "implement-all-issues");
+	await h.command("Use Danish for PR descriptions.", "implement-all-issues");
 	assert.deepEqual(h.sent, ["work"]);
 	assert.match(h.notices.at(-1) ?? "", /already active/);
 	await h.command("stop");
