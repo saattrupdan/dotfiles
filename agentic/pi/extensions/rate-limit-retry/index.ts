@@ -4,7 +4,9 @@
  * Pi renders every failed assistant message and reports when its built-in retry
  * budget expires. Mask only empty, retryable responses in message_end, then
  * continue at turn_end with an invisible context message. This keeps attempts
- * in one agent run. Partial responses and unrelated errors keep Pi's normal path.
+ * in one agent run. Opaque Codex Bad Request responses get three retries, since
+ * they can recover without changing the request. Partial responses, detailed
+ * validation errors, and persistent Bad Requests keep Pi's normal failure path.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -15,6 +17,12 @@ const CUSTOM_TYPE = "rate-limit-retry:continue";
 const PROMPT = "The previous model request failed transiently. Resume the user's task.";
 const BASE_DELAY_MS = 2_000;
 const MAX_DELAY_MS = 60_000;
+const MAX_CODEX_BAD_REQUEST_RETRIES = 3;
+
+function isOpaqueCodexBadRequest(message: { provider?: string; errorMessage?: string }): boolean {
+	return message.provider === "openai-codex" &&
+		/^\s*(?:Error:\s*)?\{\s*"detail"\s*:\s*"Bad Request"\s*\}\s*$/.test(message.errorMessage ?? "");
+}
 
 export function isTransientWebSocketClosure(error: string | undefined): boolean {
 	// 1000 is a clean close without a completed response; 1006 is a dropped connection;
@@ -74,10 +82,16 @@ export default function (pi: ExtensionAPI, wait = waitForRetry) {
 	let sessionEnabled = true;
 	let pendingRetry = false;
 	let retryCount = 0;
+	let badRequestCount = 0;
 
-	const clearRetry = () => {
+	const shouldRetry = (message: { provider?: string; errorMessage?: string }) =>
+		isRetryableError(message.errorMessage) ||
+		(badRequestCount < MAX_CODEX_BAD_REQUEST_RETRIES && isOpaqueCodexBadRequest(message));
+
+	const clearRetry = (resetBadRequestBudget = true) => {
 		pendingRetry = false;
 		retryCount = 0;
+		if (resetBadRequestBudget) badRequestCount = 0;
 		pi.events.emit(WORKING_OVERRIDE, { label: undefined });
 		pi.events.emit(RETRY_STATE_EVENT, { retrying: false });
 	};
@@ -92,14 +106,14 @@ export default function (pi: ExtensionAPI, wait = waitForRetry) {
 		if (message.role !== "assistant" || message.stopReason !== "error") return;
 		const summary = summarizeHtmlError(message.errorMessage);
 		if (summary) message.errorMessage = summary;
-		else if (sessionEnabled && isRetryableError(message.errorMessage) && hasNoOutput(message.content)) {
+		else if (sessionEnabled && shouldRetry(message) && hasNoOutput(message.content)) {
 			message.stopReason = "pending";
 			message.errorMessage = undefined;
 		}
 	});
 
 	pi.on("message_update", (event) => {
-		if (retryCount === 0 || event.message.role !== "assistant") return;
+		if ((retryCount === 0 && badRequestCount === 0) || event.message.role !== "assistant") return;
 		// A bare stream start can still be followed immediately by another 429.
 		// Restore the normal phase label once actual output starts arriving.
 		const type = event.assistantMessageEvent.type;
@@ -111,21 +125,25 @@ export default function (pi: ExtensionAPI, wait = waitForRetry) {
 		if (message.role !== "assistant") return;
 		const summary = summarizeHtmlError(message.errorMessage);
 		if (summary) {
-			if (retryCount > 0) clearRetry();
+			if (retryCount > 0) clearRetry(false);
 			return { message: { ...message, errorMessage: summary } };
 		}
 		if (
 			!sessionEnabled || message.stopReason !== "error" ||
-			!isRetryableError(message.errorMessage) || !hasNoOutput(message.content)
+			!shouldRetry(message) || !hasNoOutput(message.content)
 		) {
 			// Only empty retryable responses are masked. Leave other responses
 			// untouched, but restore the working label if recovery has ended.
-			if (retryCount > 0) clearRetry();
+			if (retryCount > 0 || badRequestCount > 0) {
+				// Exhaustion is not recovery: only real output rearms this budget.
+				clearRetry(message.stopReason === "stop" && !hasNoOutput(message.content));
+			}
 			return;
 		}
 
 		pendingRetry = true;
 		retryCount++;
+		if (isOpaqueCodexBadRequest(message)) badRequestCount++;
 		pi.events.emit(RETRY_STATE_EVENT, { retrying: true });
 		// The working spinner is shared with thinking-status; overriding it
 		// replaces "Thinking..." rather than adding a separate footer item.
@@ -153,7 +171,7 @@ export default function (pi: ExtensionAPI, wait = waitForRetry) {
 	});
 
 	pi.registerCommand("rate-limit-retry", {
-		description: "Toggle quiet retry of rate limits, server overloads, and transient model network errors",
+		description: "Toggle model error recovery, including bounded retries of opaque Codex Bad Requests",
 		handler: async (args) => {
 			const arg = args.trim().toLowerCase();
 			if (arg === "off") {
@@ -173,7 +191,7 @@ export default function (pi: ExtensionAPI, wait = waitForRetry) {
 			pi.sendMessage({
 				customType: "rate-limit-retry:status",
 				content: sessionEnabled
-					? "Model retry: armed — 429, server overload, and transient network errors retry quietly until success."
+					? "Model retry: armed — 429, server overload, and transient network errors retry quietly until success; opaque Codex Bad Requests get up to three retries."
 					: "Model retry: off for this session (`/rate-limit-retry on` to re-enable).",
 				display: true,
 			});

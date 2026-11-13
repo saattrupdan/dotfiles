@@ -17,6 +17,7 @@ import { createLaunchPlan, prepareBranchReturn } from "../git-worktree-isolation
 import { parseVerdict, type Verdict } from "./checker.ts";
 import { getLoopHandoff, isLoopActive, LOOP_HANDOFF_ENV, LOOP_MAIN_DIRTY, onLoopChange, onLoopCompletion, currentLoopCompletion, setLoopReturnToBase, suspendLoopForHandoff } from "../_loop_state/state.ts";
 import notifyExtension from "../notify/index.ts";
+import rateLimitRetry from "../rate-limit-retry/index.ts";
 import { NON_INTERACTIVE_BANNER } from "../non-interactive/prompt.ts";
 
 test("duration accepts ordered h/m/s components and rejects invalid values", () => {
@@ -150,7 +151,16 @@ function harness(
 ) {
 	const handlers = new Map<string, Handler[]>();
 	const emit = async (name: string, event: unknown = {}) => {
-		for (const callback of handlers.get(name) ?? []) await callback(event, ctx);
+		let result: unknown;
+		for (const callback of handlers.get(name) ?? []) {
+			const value = await callback(event, ctx);
+			if (value !== undefined) result = value;
+			// Pi applies message_end replacements before the agent sees the result.
+			if (name === "message_end" && value && typeof value === "object" && "message" in value) {
+				Object.assign((event as { message: object }).message, value.message);
+			}
+		}
+		return result;
 	};
 	const sent: string[] = [];
 	const rawSent: string[] = [];
@@ -191,9 +201,9 @@ function harness(
 		getThinkingLevel: () => "off",
 		getSettings: () => ({ compaction: { keepRecentTokens: 20_000 } }),
 		on: (name: string, callback: Handler) => { handlers.set(name, [...handlers.get(name) ?? [], callback]); },
-		events: { on: () => {} },
+		events: { on: () => {}, emit: () => {} },
 		registerCommand: (name: string, options: { handler: (args: string, ctx: ExtensionContext) => Promise<void> }) => {
-			assert.ok(name === "loop" || name === "implement-all-issues");
+			assert.ok(name === "loop" || name === "implement-all-issues" || name === "rate-limit-retry");
 			commands.set(name, options.handler);
 		},
 		sendUserMessage: (prompt: string) => {
@@ -259,6 +269,52 @@ function harness(
 		},
 	};
 }
+
+test("opaque Codex Bad Request recovery keeps the loop in the same iteration", async () => {
+	const delays: number[] = [];
+	const h = harness(undefined, { plugins: [(pi) => rateLimitRetry(pi, async (delay) => {
+		delays.push(delay);
+		return true;
+	})] });
+	await h.command("--max-runs 1 finish the task");
+	const failed = { message: {
+		role: "assistant", provider: "openai-codex", stopReason: "error",
+		errorMessage: '{"detail":"Bad Request"}', content: [],
+	} };
+	await h.emit("message_start", { message: { ...failed.message } });
+	await h.emit("message_end", failed);
+	assert.equal(failed.message.stopReason, "stop");
+	const continuation = await h.emit("turn_end") as { continue: boolean; entries: Array<{ display: boolean }> };
+	assert.equal(continuation.continue, true);
+	assert.equal(continuation.entries[0].display, false);
+	assert.deepEqual(delays, [2000]);
+	await h.emit("message_end", { message: {
+		role: "assistant", stopReason: "stop", content: [{ type: "text", text: "task finished" }],
+	} });
+	assert.equal(await h.emit("turn_end"), undefined);
+	await h.finish("task finished");
+	assert.deepEqual(h.sent, ["finish the task"], "recovery must not rerun the iteration prompt");
+	assert.match(h.notices.at(-1) ?? "", /Loop complete after 1 run/);
+	assert.ok(!h.notices.some((notice) => /iteration failed/.test(notice)));
+});
+
+test("persistent opaque Codex Bad Requests still stop the loop after bounded recovery", async () => {
+	const h = harness(undefined, { plugins: [(pi) => rateLimitRetry(pi, async () => true)] });
+	await h.command("finish the task");
+	for (let attempt = 0; attempt < 4; attempt++) {
+		const failed = { message: {
+			role: "assistant", provider: "openai-codex", stopReason: "error",
+			errorMessage: '{"detail":"Bad Request"}', content: [],
+		} };
+		await h.emit("message_end", failed);
+		const continuation = await h.emit("turn_end") as { continue: boolean } | undefined;
+		assert.equal(continuation?.continue, attempt < 3 ? true : undefined);
+		assert.equal(failed.message.stopReason, attempt < 3 ? "stop" : "error");
+	}
+	await h.finish("", "error");
+	assert.match(h.notices.at(-1) ?? "", /Loop stopped: iteration failed/);
+	assert.equal(h.sent.length, 1);
+});
 
 test("implement-all-issues starts the same loop with its issue prompt and finish condition", async () => {
 	const checks: string[] = [];

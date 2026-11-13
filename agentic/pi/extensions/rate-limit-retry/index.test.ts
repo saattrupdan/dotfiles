@@ -168,6 +168,80 @@ test("generic Codex processing failures retry without rendering an error", async
 	assert.equal(run.workingLabels.at(-1), undefined);
 });
 
+test("opaque Codex Bad Request retries three times, then preserves a persistent failure", async () => {
+	for (const errorMessage of ['{"detail":"Bad Request"}', 'Error: {"detail":"Bad Request"}']) {
+		const run = harness();
+		const failed = () => ({ message: {
+			role: "assistant", provider: "openai-codex", stopReason: "error", errorMessage, content: [],
+		} });
+		for (let attempt = 0; attempt < 3; attempt++) {
+			const start = failed();
+			await run.emit("message_start", start);
+			assert.equal(start.message.stopReason, "pending", "the recoverable error must not stop the loop");
+			const masked = await run.emit("message_end", failed()) as { message: { stopReason: string } };
+			assert.equal(masked.message.stopReason, "stop");
+			assert.equal((await run.emit("turn_end") as { continue: boolean }).continue, true);
+		}
+		const final = failed();
+		await run.emit("message_start", final);
+		assert.equal(final.message.stopReason, "error", "persistent failures remain visible");
+		assert.equal(await run.emit("message_end", failed()), undefined);
+		assert.equal(await run.emit("turn_end"), undefined);
+		assert.deepEqual(run.delays, [2000, 4000, 8000]);
+		assert.equal(run.retryStates.at(-1), false);
+	}
+});
+
+test("opaque Codex recovery resets its budget only after actual output or a new session", async () => {
+	const run = harness();
+	const failed = () => ({ message: {
+		role: "assistant", provider: "openai-codex", stopReason: "error",
+		errorMessage: '{"detail":"Bad Request"}', content: [],
+	} });
+	for (let attempt = 0; attempt < 3; attempt++) {
+		assert.ok(await run.emit("message_end", failed()));
+		await run.emit("turn_end");
+	}
+	await run.emit("message_update", { message: { role: "assistant" }, assistantMessageEvent: { type: "start" } });
+	assert.equal(await run.emit("message_end", failed()), undefined);
+	assert.equal(await run.emit("message_end", failed()), undefined, "exhaustion must not rearm the budget");
+	await run.emit("message_update", { message: { role: "assistant" }, assistantMessageEvent: { type: "text_delta" } });
+	assert.ok(await run.emit("message_end", failed()), "real output rearms recovery");
+	await run.emit("turn_end");
+	await run.emit("message_end", success());
+	assert.ok(await run.emit("message_end", failed()), "a successful response rearms recovery");
+	await run.emit("turn_end");
+	await run.emit("session_start");
+	assert.ok(await run.emit("message_end", failed()));
+});
+
+test("Bad Request recovery excludes other providers, detailed errors, partial output, and disabled retries", async () => {
+	const run = harness();
+	for (const message of [
+		{ provider: "openai", errorMessage: '{"detail":"Bad Request"}', content: [] },
+		{ provider: "openai-codex", errorMessage: "HTTP 400: invalid request", content: [] },
+		{ provider: "openai-codex", errorMessage: '{"detail":"Bad Request","code":"invalid_request"}', content: [] },
+		{ provider: "openai-codex", errorMessage: '{"detail":"Invalid tool call"}', content: [] },
+		...[
+			[{ type: "text", text: "partial" }],
+			[{ type: "thinking", thinking: "reasoning" }],
+			[{ type: "toolCall", name: "bash" }],
+		].map((content) => ({ provider: "openai-codex", errorMessage: '{"detail":"Bad Request"}', content })),
+	]) {
+		const failed = { message: { role: "assistant", stopReason: "error", ...message } };
+		await run.emit("message_start", failed);
+		assert.equal(failed.message.stopReason, "error");
+		assert.equal(await run.emit("message_end", failed), undefined);
+		assert.equal(await run.emit("turn_end"), undefined);
+	}
+	run.command("off");
+	assert.equal(await run.emit("message_end", { message: {
+		role: "assistant", provider: "openai-codex", stopReason: "error",
+		errorMessage: '{"detail":"Bad Request"}', content: [],
+	} }), undefined);
+	assert.deepEqual(run.delays, []);
+});
+
 test("upstream retry buffer failures recover quietly without discarding output", async () => {
 	const run = harness();
 	const failed = () => ({ message: {
