@@ -28,6 +28,7 @@ const ALL_ISSUES_PROMPT = [
 	"If the implementation is unclear for another reason, comment with the specific clarification needed, leave it unassigned, and move to another issue.",
 	"If the issue is too complex, break it into actionable sub-issues linked to the original issue as their parent. Reuse existing sub-issues rather than duplicating them, leave the parent unassigned, and choose only one actionable sub-issue for this run. In later iterations never select or implement an unassigned parent with sub-issues; continue with its unassigned leaf sub-issues instead.",
 	"Once you have one clear, decision-ready, manageable issue, assign me to it, create a feature branch where you fully implement it, ensure all checks and tests pass as well as an independent review, take screenshots or create a small video demonstrating the feature if it's visual, and create a PR on it where you assign me. Copy all GitHub labels from the issue to the PR.",
+	"After creating the PR, confirm all implementation changes are committed and pushed, return to the base checkout, and discard the task's local feature branch and worktree. Keep the remote branch and PR intact, and preserve unrelated local changes.",
 	"If no actionable unassigned issue remains, report the blockers and do not claim that blocked issues were implemented.",
 ].join(" ");
 
