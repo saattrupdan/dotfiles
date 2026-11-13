@@ -137,7 +137,7 @@ test("tool result has a live label and a concise collapsed summary", () => {
 	assert.equal(render(success, false, false, false, 3), "[success]✓ Generated 3 images");
 	assert.equal(render(success, true, false), success.content[0].text);
 	const error = { content: [{ type: "text" as const, text: "router unavailable" }] };
-	assert.equal(render(error, false, false, true), "[error]✗ image generation failed");
+	assert.equal(render(error, false, false, true), "[error]✗ router unavailable");
 	assert.equal(render(error, true, false, true), "router unavailable");
 });
 
@@ -162,4 +162,15 @@ test("tool activity uses the working indicator, not the footer", () => {
 	handlers.get("tool_execution_end")?.({ toolCallId: "image-1" }, ctx);
 	assert.deepEqual(working, ["Generating image...", "Working..."]);
 	assert.deepEqual(footer, []);
+});
+
+test("memory admission reason is returned and visible without expanding", async () => {
+    const message = "Image model needs 70 GiB available; only 54.0 GiB available";
+    const state = setup(async () => ({ code: 1, stdout: "", stderr: message, killed: false }));
+    const result = await state.tool.execute("memory", { prompt: "A teapot" }, undefined, undefined, state.ctx);
+    assert.equal(result.isError, true);
+    assert.deepEqual(result.content, [{ type: "text", text: message }]);
+    const theme = { fg: (_colour: string, text: string) => text };
+    const rendered = state.tool.renderResult!(result, { expanded: false, isPartial: false }, theme as never, { isError: true } as never).render(200).join("\n");
+    assert.ok(rendered.includes(message));
 });

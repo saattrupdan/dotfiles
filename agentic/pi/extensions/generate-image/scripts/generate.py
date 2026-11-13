@@ -38,9 +38,7 @@ def main() -> None:
     )
     parser.add_argument("--output", required=True, type=Path, help="Output PNG")
     parser.add_argument("--prompt-output", type=Path, help="Compiled prompt output")
-    parser.add_argument(
-        "--size", default="512x512", help="WIDTHxHEIGHT, e.g. 768x1024"
-    )
+    parser.add_argument("--size", default="512x512", help="WIDTHxHEIGHT, e.g. 768x1024")
     parser.add_argument(
         "--endpoint", default=os.environ.get("KROMOSS_IMAGE_URL", DEFAULT_ENDPOINT)
     )
@@ -49,7 +47,7 @@ def main() -> None:
         width, height = _dimensions(size=args.size)
         draft = json.loads(args.draft.read_text(encoding="utf-8"))
         if not isinstance(draft, dict):
-            raise ValueError("draft must be a JSON object")
+            raise TypeError("draft must be a JSON object")
         if "caption" not in draft and (draft.get("width"), draft.get("height")) != (
             width,
             height,
@@ -206,11 +204,38 @@ def _request(
         with urllib.request.urlopen(request, timeout=900) as response:
             payload = json.load(response)
     except urllib.error.HTTPError as exc:
-        detail = exc.read(1000).decode("utf-8", errors="replace")
-        raise ValueError(f"router returned HTTP {exc.code}: {detail}") from exc
+        with exc:
+            raw = exc.read(8000).decode("utf-8", errors="replace")
+        try:
+            detail = _error_detail(value=json.loads(raw)) or raw
+        except ValueError:
+            detail = raw
+        raise ValueError(f"router returned HTTP {exc.code}: {detail[:2000]}") from exc
     image = base64.b64decode(payload["data"][0]["b64_json"], validate=True)
     _validate_png(image=image, width=width, height=height)
     return image
+
+
+def _error_detail(*, value: object, depth: int = 0) -> str:
+    """Extract a readable reason from router and model error envelopes.
+
+    Args:
+        value:
+            Decoded error payload.
+        depth (optional):
+            Current nesting depth. Defaults to zero.
+
+    Returns:
+        Human-readable reason, or an empty string for an unknown shape.
+    """
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, dict) and depth < 5:
+        for key in ("message", "detail", "error"):
+            detail = _error_detail(value=value.get(key), depth=depth + 1)
+            if detail:
+                return detail
+    return ""
 
 
 def _validate_png(*, image: bytes, width: int, height: int) -> None:

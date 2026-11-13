@@ -110,7 +110,7 @@ export const generateImageRenderers: DisplayRenderers = {
 			.map((part) => part.text)
 			.join("\n");
 		if (options.expanded) return new Text(text, 0, 0);
-		if (context.isError) return new Text(theme.fg("error", "✗ image generation failed"), 0, 0);
+		if (context.isError) return new Text(theme.fg("error", `✗ ${text.trim() || "Image generation failed"}`), 0, 0);
 		const count = (result.details as { count?: number } | undefined)?.count ?? 1;
 		return new Text(
 			theme.fg("success", count === 1 ? "✓ Generated image" : `✓ Generated ${count} images`),
@@ -177,7 +177,7 @@ export const generateVideoRenderers: DisplayRenderers = {
 		if (options.expanded) return new Text(text, 0, 0);
 		return new Text(
 			context.isError
-				? theme.fg("error", "✗ video generation failed")
+				? theme.fg("error", `✗ ${text.trim() || "Video generation failed"}`)
 				: theme.fg("success", "✓ Generated video"),
 			0,
 			0,

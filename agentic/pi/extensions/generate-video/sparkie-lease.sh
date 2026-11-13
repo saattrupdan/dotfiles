@@ -47,7 +47,8 @@ while ((SECONDS < deadline)); do
 		exit 0
 	fi
 	if [[ $started == 1 ]] && ! kill -0 "$launcher" 2>/dev/null; then
-		echo 'MiniMax-H3 startup failed; inspect ~/model-servers/minimax-h3/pi-generation.log.' >&2
+		echo 'MiniMax-H3 startup failed:' >&2
+		tail -c 4000 "$HOME/model-servers/minimax-h3/pi-generation.log" >&2
 		exit 1
 	fi
 	# Unlike sleep, this observes cancellation/EOF while the model is loading.

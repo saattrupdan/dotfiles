@@ -145,3 +145,24 @@ test("remote lease reports preservation and contention without stopping a ready 
 		} finally { await state.close(); }
 	}
 });
+
+
+test("SSH lease returns the failed launcher's memory diagnostic", async () => {
+    const state = await fixture();
+    const savedHome = process.env.HOME, savedPath = process.env.PATH;
+    try {
+        await rm(path.join(state.home, "container"));
+        await writeFile(path.join(state.home, "bin/docker"), '#!/bin/bash\nsleep 0.2\nexit 1\n', { mode: 0o755 });
+        await writeFile(path.join(state.home, "model-servers/minimax-h3/start.sh"),
+            '#!/bin/bash\necho "Video model needs 85 GiB available; only 54.0 GiB available" >&2\nexit 1\n');
+        await writeFile(path.join(state.home, "bin/ssh"), `#!/bin/bash\nexec /bin/bash '${script}'\n`, { mode: 0o755 });
+        process.env.HOME = state.home;
+        process.env.PATH = `${state.home}/bin:${savedPath}`;
+        await assert.rejects(acquireSparkie(AbortSignal.timeout(5000)),
+            /MiniMax-H3 startup failed:.*\n.*needs 85 GiB available; only 54.0 GiB available/);
+    } finally {
+        process.env.HOME = savedHome;
+        process.env.PATH = savedPath;
+        await state.close();
+    }
+});

@@ -336,7 +336,7 @@ test("tool renderer has concise progress, success and failure states", () => {
 			{ expanded, isPartial }, theme as never, { isError } as never).render(120).join("\n").trimEnd();
 	assert.equal(render(false, true), "[warning]⋯ Generating video");
 	assert.equal(render(false, false), "[success]✓ Generated video");
-	assert.equal(render(false, false, true), "[error]✗ video generation failed");
+	assert.equal(render(false, false, true), "[error]✗ Full video result");
 	assert.equal(render(true, false, true), "Full video result");
 });
 
@@ -419,4 +419,27 @@ test("working indicator recognises generate_video", () => {
 	const { ctx, working } = setup();
 	handlers.get("tool_execution_start")!({ toolName: "generate_video", toolCallId: "v1" }, ctx);
 	assert.deepEqual(working, ["Generating video..."]);
+});
+
+test("structured admission failures reach tool results and collapsed display", async () => {
+    const message = "Video model needs 85 GiB available; only 54.0 GiB available";
+    const state = setup();
+    const previous = globalThis.fetch;
+    try {
+        for (const error of [{ detail: { message } }, { error: { message } }, { detail: message }]) {
+            globalThis.fetch = async () => new Response(JSON.stringify(error), { status: 503 });
+            const result = await state.tool.execute("v-memory", { seconds: 5, prompt: "A cat" }, undefined, undefined, state.ctx);
+            assert.equal(result.isError, true);
+            assert.deepEqual(result.content, [{ type: "text", text: `Video router HTTP 503: ${message}` }]);
+            const theme = { fg: (_colour: string, text: string) => text };
+            const rendered = state.tool.renderResult!(result, { expanded: false, isPartial: false }, theme as never, { isError: true } as never).render(200).join("\n");
+            assert.ok(rendered.includes(message));
+        }
+    } finally { globalThis.fetch = previous; }
+});
+
+test("failed jobs preserve structured detail errors", async () => {
+    await assert.rejects(generateVideo({ seconds: 5, prompt: "A cat" }, {
+        fetch: async () => job("failed", { error: { detail: { code: "insufficient_memory", message: "Only 54 GiB available" } } }),
+    }), /Only 54 GiB available.*video_test/);
 });

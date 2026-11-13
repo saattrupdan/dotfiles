@@ -9,6 +9,7 @@ import json
 import struct
 import sys
 import unittest
+import urllib.error
 import zlib
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -118,9 +119,11 @@ class GenerateTests(unittest.TestCase):
 
     def test_model_selection_is_not_available(self) -> None:
         """The CLI cannot request the retired Base checkpoint."""
-        with patch.object(sys, "argv", ["generate.py", "--model", "base"]):
-            with self.assertRaises(SystemExit) as result:
-                GENERATE.main()
+        with (
+            patch.object(sys, "argv", ["generate.py", "--model", "base"]),
+            self.assertRaises(SystemExit) as result,
+        ):
+            GENERATE.main()
         self.assertEqual(result.exception.code, 2)
 
     def test_request(self) -> None:
@@ -132,7 +135,9 @@ class GenerateTests(unittest.TestCase):
             ).encode()
         )
         with (
-            patch.object(GENERATE.urllib.request, "urlopen", return_value=response) as mock,
+            patch.object(
+                GENERATE.urllib.request, "urlopen", return_value=response
+            ) as mock,
             patch.object(GENERATE.secrets, "randbits", return_value=17) as random_seed,
         ):
             actual = GENERATE._request(
@@ -151,6 +156,37 @@ class GenerateTests(unittest.TestCase):
         self.assertEqual(payload["seed"], 17)
         random_seed.assert_called_once_with(32)
 
+    def test_memory_admission_error_is_readable(self) -> None:
+        """Preserve structured admission details without exposing JSON syntax."""
+        message = "Image model needs 70 GiB available; only 54.0 GiB available"
+        for payload in (
+            {"detail": {"code": "insufficient_memory", "message": message}},
+            {"error": {"message": message}},
+            {"detail": message},
+        ):
+            error = urllib.error.HTTPError(
+                "http://router",
+                503,
+                "Unavailable",
+                None,
+                io.BytesIO(json.dumps(payload).encode()),
+            )
+            with (
+                patch.object(GENERATE.urllib.request, "urlopen", side_effect=error),
+                self.assertRaises(ValueError) as raised,
+            ):
+                GENERATE._request(
+                    endpoint="http://router",
+                    model=GENERATE.MODEL_ID,
+                    prompt="A teapot",
+                    size="512x512",
+                    width=512,
+                    height=512,
+                )
+            self.assertEqual(
+                str(raised.exception), f"router returned HTTP 503: {message}"
+            )
+
     def test_each_request_uses_a_fresh_random_seed(self) -> None:
         """Avoid repeating the same server seed across identical image requests."""
         image = _png(width=512, height=512)
@@ -163,7 +199,9 @@ class GenerateTests(unittest.TestCase):
                 "urlopen",
                 side_effect=[io.BytesIO(response), io.BytesIO(response)],
             ) as url,
-            patch.object(GENERATE.secrets, "randbits", side_effect=[17, 18]) as random_seed,
+            patch.object(
+                GENERATE.secrets, "randbits", side_effect=[17, 18]
+            ) as random_seed,
         ):
             for _ in range(2):
                 GENERATE._request(
@@ -194,16 +232,18 @@ class GenerateTests(unittest.TestCase):
                 {"data": [{"b64_json": base64.b64encode(image).decode()}]}
             ).encode()
         )
-        with patch.object(GENERATE.urllib.request, "urlopen", return_value=response):
-            with self.assertRaisesRegex(ValueError, "unexpected dimensions"):
-                GENERATE._request(
-                    endpoint="http://127.0.0.1:31000",
-                    model=GENERATE.MODEL_ID,
-                    prompt="A red teapot.",
-                    size="512x512",
-                    width=512,
-                    height=512,
-                )
+        with (
+            patch.object(GENERATE.urllib.request, "urlopen", return_value=response),
+            self.assertRaisesRegex(ValueError, "unexpected dimensions"),
+        ):
+            GENERATE._request(
+                endpoint="http://127.0.0.1:31000",
+                model=GENERATE.MODEL_ID,
+                prompt="A red teapot.",
+                size="512x512",
+                width=512,
+                height=512,
+            )
 
 
 if __name__ == "__main__":

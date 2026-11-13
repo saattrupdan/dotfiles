@@ -20,7 +20,7 @@ interface VideoJob {
 	id: string;
 	status: "queued" | "in_progress" | "completed" | "failed";
 	progress?: number;
-	error?: string | { message?: string } | null;
+	error?: unknown;
 }
 
 interface VideoOptions {
@@ -47,10 +47,24 @@ function parseJob(value: unknown): VideoJob {
 
 async function checked(response: Response): Promise<Response> {
 	if (!response.ok) {
-		const detail = (await response.text()).slice(0, 2000);
-		throw new Error(`Video router HTTP ${response.status}: ${detail || response.statusText}`);
+		const raw = await response.text();
+		let detail = raw;
+		try { detail = errorDetail(JSON.parse(raw)) || raw; } catch { /* Keep non-JSON diagnostics. */ }
+		throw new Error(`Video router HTTP ${response.status}: ${detail.slice(0, 2000) || response.statusText}`);
 	}
 	return response;
+}
+
+function errorDetail(value: unknown, depth = 0): string {
+	if (typeof value === "string") return value.trim();
+	if (value && typeof value === "object" && depth < 5) {
+		const record = value as Record<string, unknown>;
+		for (const key of ["message", "detail", "error"]) {
+			const detail = errorDetail(record[key], depth + 1);
+			if (detail) return detail;
+		}
+	}
+	return "";
 }
 
 export async function generateVideo(input: VideoInput, options: VideoOptions = {}): Promise<{ path: string; jobId: string; warnings: string[] }> {
@@ -117,7 +131,7 @@ export async function generateVideo(input: VideoInput, options: VideoOptions = {
 		signal.throwIfAborted();
 		const jobUrl = `${base}/v1/videos/${encodeURIComponent(jobId)}`;
 		while (job.status !== "completed") {
-			if (job.status === "failed") throw new Error((typeof job.error === "string" ? job.error : job.error?.message) || "Video generation failed.");
+			if (job.status === "failed") throw new Error((errorDetail(job.error) || JSON.stringify(job.error) || "Video generation failed.").slice(0, 2000));
 			const progress = typeof job.progress === "number" && Number.isFinite(job.progress)
 				? ` (${Math.min(100, Math.max(0, job.progress))}%)` : "";
 			options.onProgress?.(job.status === "queued" ? "Video queued on Sparkie..." : `Generating video${progress}...`);
