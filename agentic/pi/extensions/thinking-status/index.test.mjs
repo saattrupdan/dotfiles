@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
+import process from "node:process";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -46,6 +50,7 @@ function harness({ started = true } = {}) {
 	emit("session_start");
 	if (started) InteractiveMode.prototype.showWorkingStatusIndicator.call(mode);
 	return {
+		ctx,
 		emit,
 		override: (label) => listeners.get("thinking-status:override")({ label }),
 		mode,
@@ -100,6 +105,53 @@ test("the default Working label stays neutral from startup through fallback tran
 	h.override("Retrying...");
 	h.override(undefined);
 	assert.equal(foregroundAt(h.render(), "Working..."), theme.getFgAnsi("muted"));
+});
+
+test("background search indexing cannot restore an orange native fallback", { timeout: 10000 }, async () => {
+	const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), "pi-search-status-"));
+	const previousHome = process.env.HOME;
+	process.env.HOME = sandbox;
+	try {
+		const repo = path.join(sandbox, "repo");
+		fs.mkdirSync(repo);
+		execFileSync("git", ["init", "--quiet", repo]);
+		fs.writeFileSync(path.join(repo, "example.ts"), "export const example = 1;\n");
+		execFileSync("git", ["add", "."], { cwd: repo });
+		const h = harness();
+		h.setBorderColor("thinkingHigh");
+		const updates = [];
+		const completed = Promise.withResolvers();
+		const ui = {
+			...h.ctx.ui,
+			setWorkingMessage(message) {
+				h.ctx.ui.setWorkingMessage(message);
+				if (message === undefined) completed.resolve();
+			},
+			setStatus(key, message) {
+				updates.push([key, message]);
+				if (message === undefined) completed.resolve();
+			},
+		};
+		const search = await jiti.import(path.join(root, "../search/index.ts"), { default: true });
+		let tool;
+		await search({ registerTool(value) { tool = value; } });
+		const result = await tool.execute("search-1", { query: "example" }, undefined, undefined, {
+			cwd: repo, hasUI: true, ui,
+		});
+		assert.match(result.content[0].text, /example/);
+		// The tool returns before reconciliation completes. A normal phase update
+		// restores the grey label, then the background completion used to clear it.
+		h.emit("message_update", { message: { content: [{ type: "text", text: "Answer" }] } });
+		await completed.promise;
+		assert.equal(foregroundAt(h.render(), "Working..."), theme.getFgAnsi("muted"));
+		assert.equal(updates[0][0], "search-index");
+		assert.match(updates[0][1], /Updating search index/);
+		assert.deepEqual(updates.at(-1), ["search-index", undefined]);
+	} finally {
+		if (previousHome === undefined) delete process.env.HOME;
+		else process.env.HOME = previousHome;
+		fs.rmSync(sandbox, { recursive: true, force: true });
+	}
 });
 
 test("an active subagent label stays neutral when the embedded editor turns orange", () => {

@@ -472,24 +472,25 @@ export default async function (pi: ExtensionAPI) {
 			// every search, especially for large repos or slow tree-sitter parses.
 			// The index returned by ensureFullIndex() is always usable, even if
 			// slightly stale.
+			// Background work must not replace or clear the foreground activity label.
 			if (ctx?.hasUI) {
-				ctx.ui.setWorkingMessage("Updating search index…");
+				ctx.ui.setStatus("search-index", ctx.ui.theme.fg("muted", "Updating search index…"));
 			}
 			const updateProgress = (processed: number, total: number): void => {
 				if (ctx?.hasUI && processed < total) {
 					const percent = Math.round((processed / total) * 100);
-					ctx.ui.setWorkingMessage(`Updating search index… ${percent}% (${processed}/${total})`);
+					ctx.ui.setStatus("search-index", ctx.ui.theme.fg("muted", `Updating search index… ${percent}% (${processed}/${total})`));
 				}
 			};
 			// Fire-and-forget: reconciliation runs in background, errors silently ignored
 			// to avoid crashing the search tool
 			void reconcileIndexAsync(db, repoRoot, outline, updateProgress).then(
 				() => {
-					if (ctx?.hasUI) ctx.ui.setWorkingMessage(undefined);
+					if (ctx?.hasUI) ctx.ui.setStatus("search-index", undefined);
 				},
 				() => {
 					// Reconciliation failed silently - index still usable from ensureFullIndex()
-					if (ctx?.hasUI) ctx.ui.setWorkingMessage(undefined);
+					if (ctx?.hasUI) ctx.ui.setStatus("search-index", undefined);
 				},
 			);
 
