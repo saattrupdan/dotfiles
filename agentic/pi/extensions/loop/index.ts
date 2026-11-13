@@ -3,6 +3,7 @@ import { registerRemoteCommand } from "../_remote_bridge/commands.ts";
 
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { checkCondition, type Verdict } from "./checker.ts";
@@ -366,7 +367,8 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 			const path = file?.[2] ?? file?.[3];
 			if (path) {
 				try {
-					options.prompt = await readFile(resolve(ctx.cwd, path), "utf8");
+					const promptPath = path.startsWith("~/") ? `${homedir()}${path.slice(1)}` : path;
+					options.prompt = await readFile(resolve(ctx.cwd, promptPath), "utf8");
 					if (!options.prompt.trim()) throw new Error("file is empty");
 				} catch (error) {
 					say(`Unable to read prompt file ${path}: ${String(error instanceof Error ? error.message : error)}.`);

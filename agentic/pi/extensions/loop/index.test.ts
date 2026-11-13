@@ -82,6 +82,40 @@ test("@-prefixed .txt paths load prompts with relative, quoted, and absolute pat
 	}
 });
 
+test("~/ prompt paths expand home with optional @ and quotes", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-loop-"));
+	const originalHome = process.env.HOME;
+	try {
+		const home = join(dir, "home");
+		const cwd = join(dir, "cwd");
+		await mkdir(home);
+		await mkdir(cwd);
+		await writeFile(join(home, "prompt.txt"), "Prompt from home");
+		await writeFile(join(home, "prompt with spaces.txt"), "Prompt from home");
+		await writeFile(join(home, "empty.txt"), " \n");
+		process.env.HOME = home;
+		const h = harness(undefined, { cwd });
+		for (const path of ["@~/prompt.txt", "~/prompt.txt", '@"~/prompt with spaces.txt"', "'~/prompt with spaces.txt'"]) {
+			await h.command(path);
+			assert.equal(h.sent.at(-1), "Prompt from home");
+			await h.finish();
+			await h.command("stop");
+		}
+		await h.command("@~/missing.txt");
+		assert.match(h.notices.at(-1) ?? "", /Unable to read prompt file ~\/missing\.txt/);
+		await h.command("@~/empty.txt");
+		assert.match(h.notices.at(-1) ?? "", /file is empty/);
+		assert.equal(h.sent.length, 4);
+		await h.command("read @~/prompt.txt");
+		assert.equal(h.sent.at(-1), "read @~/prompt.txt");
+		await h.command("stop");
+	} finally {
+		if (originalHome === undefined) delete process.env.HOME;
+		else process.env.HOME = originalHome;
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
 test("missing or empty .txt files do not start a loop; prose remains a prompt", async () => {
 	const dir = await mkdtemp(join(tmpdir(), "pi-loop-"));
 	try {
