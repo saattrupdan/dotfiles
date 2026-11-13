@@ -557,7 +557,7 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 			if (!sessionFile) throw new Error("A saved Pi session is required to clean up this branch.");
 			const { mainRoot, branchSha, branchExists } = await prepareBranchCleanup(manifest);
 			pendingCleanup = { sessionFile, mainRoot, branchSha, branchExists };
-			return { content: [{ type: "text", text: `Verified this worktree's HEAD is on main. Cleaning up the isolated worktree and returning to main. Do not call more tools until this session resumes on main.` }], details: undefined, terminate: true };
+			return { content: [{ type: "text", text: `Verified this worktree's HEAD is on main. Cleaning up the isolated worktree and returning to main. Do not call more tools until this session resumes on main.` }], details: { worktreeHandoff: true }, terminate: true };
 		},
 		...branchRenderers["clean_up_isolated_branch"],
 
@@ -574,7 +574,7 @@ function registerManagedSession(pi: ExtensionAPI, manifest: SessionManifest): vo
 			if (!sessionFile) throw new Error("A saved Pi session is required to discard this branch.");
 			const prepared = await prepareBranchDiscard(manifest);
 			pendingCleanup = { sessionFile, ...prepared, discard: true };
-			return { content: [{ type: "text", text: "Discarding this isolated branch, its unmerged commits, and all local files. Removing the worktree and returning saved sessions to main. Do not call more tools until this session resumes on main." }], details: undefined, terminate: true };
+			return { content: [{ type: "text", text: "Discarding this isolated branch, its unmerged commits, and all local files. Removing the worktree and returning saved sessions to main. Do not call more tools until this session resumes on main." }], details: { worktreeHandoff: true }, terminate: true };
 		},
 		...branchRenderers["discard_isolated_branch"],
 

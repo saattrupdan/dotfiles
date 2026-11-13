@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
+import { EventEmitter } from "node:events";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -12,6 +13,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import registerIsolation, { continuationArgs, isPrintMode, launchWithProgress, recoveredFromRateLimit } from "./index.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import registerLoop from "../loop/index.ts";
+import registerNotify from "../notify/index.ts";
 import { getLoopHandoff, isLoopActive, LOOP_HANDOFF_ENV } from "../_loop_state/state.ts";
 import {
 	acquirePublishLock,
@@ -1616,8 +1618,10 @@ for (const toolName of ["discard_isolated_branch", "clean_up_isolated_branch"]) 
 			const handlers = new Map<string, Array<(...args: unknown[]) => unknown>>();
 			const previousToken = process.env.PI_PROFILE_RELOAD_TOKEN;
 			process.env.PI_PROFILE_RELOAD_TOKEN = "cleanup-regression";
+			const notifications: string[] = [];
+			const events = new EventEmitter();
 			try {
-				await registerIsolation({
+				const pi = {
 					registerFlag: () => undefined, registerCommand: () => undefined,
 					getFlag: () => false,
 					exec: async () => ({ code: 0, stdout: `${plan.childCwd}\n` }),
@@ -1626,17 +1630,24 @@ for (const toolName of ["discard_isolated_branch", "clean_up_isolated_branch"]) 
 						handlers.set(name, [...(handlers.get(name) ?? []), handler]);
 					},
 					sendMessage: () => assert.fail("cleanup must not queue another turn in the old worktree"),
-				} as unknown as ExtensionAPI);
+					events,
+				} as unknown as ExtensionAPI;
+				// Load notify first: correctness must not depend on handler ordering.
+				registerNotify(pi, (title) => { notifications.push(title); });
+				await registerIsolation(pi);
 				const ctx = { sessionManager: { getSessionFile: () => current } };
 				// A nested cleanup cannot terminate its outer codemode call either.
 				for (const handler of handlers.get("message_end") ?? []) {
 					await handler({ message: { role: "assistant", content: [{ type: "toolCall", id: "wrapper", name: "codemode", arguments: {} }] } }, ctx);
 				}
+				const blockedCalls: BeforeToolCallResult[] = [];
 				for (const handler of handlers.get("tool_call") ?? []) {
-					const blocked = await handler({ toolName, toolCallId: "nested-cleanup" }, ctx) as BeforeToolCallResult;
-					assert.equal(blocked.block, true);
-					assert.match(blocked.reason!, /Cleanup has not started/);
+					const blocked = await handler({ toolName, toolCallId: "nested-cleanup" }, ctx) as BeforeToolCallResult | undefined;
+					if (blocked) blockedCalls.push(blocked);
 				}
+				assert.equal(blockedCalls.length, 1);
+				assert.equal(blockedCalls[0]!.block, true);
+				assert.match(blockedCalls[0]!.reason!, /Cleanup has not started/);
 				let requests = 0;
 				let cleanups = 0;
 				const model: Model<"openai-completions"> = {
@@ -1684,6 +1695,7 @@ for (const toolName of ["discard_isolated_branch", "clean_up_isolated_branch"]) 
 				await agent.prompt("Discard or clean up, then continue on main.");
 				assert.equal(requests, mixed ? 2 : 1);
 				assert.equal(cleanups, 1);
+				assert.deepEqual(notifications, [], "returning to main is not task completion");
 				assert.equal(agent.state.errorMessage, undefined);
 				const results = agent.state.messages.filter((message) => message.role === "toolResult");
 				assert.equal(results.filter((result) => result.isError).length, mixed ? 1 : 0);

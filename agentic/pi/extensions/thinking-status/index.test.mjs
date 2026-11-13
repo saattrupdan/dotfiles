@@ -15,7 +15,7 @@ const runtimeRoot = path.dirname(fileURLToPath(import.meta.resolve("@earendil-wo
 const { loadThemeFromPath } = await import(pathToFileURL(path.join(runtimeRoot, "modes/interactive/theme/theme.js")));
 const theme = loadThemeFromPath(path.join(root, "../../themes/gruvbox.json"), "truecolor");
 
-function harness() {
+function harness({ started = true } = {}) {
 	const handlers = new Map();
 	const listeners = new Map();
 	const mode = {
@@ -23,13 +23,17 @@ function harness() {
 		editor: { embedWorkingStatus: true, borderColor: (text) => theme.fg("muted", text), setWorkingStatusIndicator() {} },
 		workingIndicatorOptions: { frames: ["*"] },
 		defaultWorkingMessage: "Working...",
+		session: { isStreaming: false },
 		showStatusIndicator(indicator) { this.activeStatusIndicator = indicator; },
+		showWorkingStatusIndicator() { InteractiveMode.prototype.showWorkingStatusIndicator.call(this); },
+		setWorkingVisible(visible) { InteractiveMode.prototype.setWorkingVisible.call(this, visible); },
+		clearStatusIndicator() { this.activeStatusIndicator = undefined; },
 	};
 	const ui = InteractiveMode.prototype.createExtensionUIContext.call(mode);
 	const ctx = {
 		ui: {
 			setWorkingMessage: ui.setWorkingMessage,
-			setWorkingVisible() {},
+			setWorkingVisible: ui.setWorkingVisible,
 			setHiddenThinkingLabel() {},
 			theme,
 		},
@@ -40,7 +44,7 @@ function harness() {
 	});
 	const emit = (name, event = {}) => handlers.get(name)?.(event, ctx);
 	emit("session_start");
-	InteractiveMode.prototype.showWorkingStatusIndicator.call(mode);
+	if (started) InteractiveMode.prototype.showWorkingStatusIndicator.call(mode);
 	return {
 		emit,
 		override: (label) => listeners.get("thinking-status:override")({ label }),
@@ -59,6 +63,22 @@ function foregroundAt(line, text) {
 	// eslint-disable-next-line no-control-regex -- Inspect the rendered ANSI foreground at the label.
 	return [...line.slice(0, index).matchAll(/\x1b\[([\d;]*)m/g)].at(-1)?.[0];
 }
+
+test("cleanup continuation restores the embedded spinner and phase label without turn_start", () => {
+	const h = harness({ started: false });
+	h.mode.session.isStreaming = true;
+	h.emit("agent_start");
+	assert.ok(h.mode.activeStatusIndicator, "the resumed agent must show the editor-border spinner");
+	h.emit("message_update", { message: { content: [{ type: "thinking" }] } });
+	assert.match(h.render(), /Thinking\.\.\./);
+	h.emit("tool_execution_start", { toolCallId: "read-on-main", toolName: "read" });
+	assert.match(h.render(), /Reading\.\.\./);
+	assert.equal(h.mode.activeStatusIndicator.spinnerColorFn("*"), h.mode.editor.borderColor("*"));
+	h.mode.session.isStreaming = false;
+	h.emit("agent_settled");
+	assert.equal(h.mode.activeStatusIndicator, undefined, "even a fast continuation must stop its spinner");
+	assert.equal(h.mode.workingVisible, true, "the next ordinary prompt can show its indicator");
+});
 
 test("the default Working label stays neutral from startup through fallback transitions", () => {
 	const h = harness();

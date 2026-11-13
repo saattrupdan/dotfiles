@@ -73,6 +73,35 @@ test("quiet WebSocket and Codex retries cause no failure or premature finish not
 	assert.deepEqual(notifications, ["Pi finished"]);
 });
 
+test("handoffs stay silent but resumed completions, failures, and failed cleanup remain visible", { skip: process.platform !== "darwin" }, async () => {
+	const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
+	const notifications: string[] = [];
+	const pi = {
+		on: (event: string, handler: (event: unknown, ctx: unknown) => unknown) => handlers.set(event, handler),
+		events: { on: () => {} },
+	} as unknown as ExtensionAPI;
+	const ctx = { hasUI: true, sessionManager: { getSessionName: () => "Test" } } as ExtensionContext;
+	notifyExtension(pi, (title) => { notifications.push(title); });
+	await handlers.get("session_start")!({}, ctx);
+	const handoff = {
+		role: "toolResult", toolName: "clean_up_isolated_branch", isError: false,
+		details: { worktreeHandoff: true }, content: [{ type: "text", text: "Returning to main" }],
+	};
+	const finish = { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Done on main" }] };
+	const failure = { role: "assistant", stopReason: "error", errorMessage: "Disk failure", content: [] };
+	const end = async (messages: unknown[]) => { await handlers.get("agent_end")!({ messages }, ctx); };
+	await end([handoff]);
+	assert.deepEqual(notifications, []);
+	await end([handoff, finish]);
+	await end([handoff, failure]);
+	await end([{ ...handoff, isError: true }, failure]);
+	await end([{ ...handoff, details: undefined }]);
+	assert.deepEqual(notifications, ["Pi finished", "Pi failed", "Pi failed", "Pi finished"]);
+	// A handoff in history never suppresses later unrelated requests.
+	await end([handoff, finish, { role: "user", content: "Another task" }, finish]);
+	assert.equal(notifications.at(-1), "Pi finished");
+});
+
 test("agent endings stay silent during an active loop and notify again after it stops", { skip: process.platform !== "darwin" }, async () => {
 	const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
 	const notifications: string[] = [];

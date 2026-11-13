@@ -68,6 +68,15 @@ export default function (pi: ExtensionAPI) {
 		lastCtx = ctx;
 		ctx.ui.setHiddenThinkingLabel("(...)");
 		update("agent_start", null, ctx);
+		// Startup continuations can start before the TUI subscribes to turn_start.
+		// Restore the same editor-border indicator that carries our phase label.
+		ctx.ui.setWorkingVisible(true);
+	});
+	pi.on("agent_settled", (_event, ctx) => {
+		update("agent_settled", null, ctx);
+		// A fast startup run can also finish before the TUI sees agent_end.
+		ctx.ui.setWorkingVisible(false);
+		ctx.ui.setWorkingVisible(true);
 	});
 	pi.events.on("thinking-status:override", (data) => {
 		if (!lastCtx) return;

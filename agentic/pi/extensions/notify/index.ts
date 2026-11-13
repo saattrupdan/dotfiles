@@ -337,6 +337,11 @@ export default function (pi: ExtensionAPI, send = notify) {
 		// Loop iterations also end agent runs without needing user attention.
 		if (retrying || loopIteration || isLoopActive()) return;
 		const msgs = event.messages ?? [];
+		// Cleanup deliberately terminates this run before the launcher resumes it
+		// on main. The accepted tool result marks that handoff, not completion.
+		const last = msgs.at(-1);
+		if (last?.role === "toolResult" && !last.isError &&
+			(last.details as { worktreeHandoff?: boolean } | undefined)?.worktreeHandoff === true) return;
 
 		// Skip notifications for extension-injected nudge/block loops. The retry
 		// extension uses the state signal above; other extensions are detected by
