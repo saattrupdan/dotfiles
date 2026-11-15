@@ -17,6 +17,7 @@ const composer = ref<HTMLElement>();
 const composerHeight = ref(80);
 let scrollFrame: number | undefined;
 let resize: ResizeObserver | undefined;
+let resizeFrame: number | undefined;
 const route = useRoute();
 const router = useRouter();
 const auth = useAuth();
@@ -303,11 +304,16 @@ async function load(initial = true) {
 }
 onMounted(() => {
   resize = new ResizeObserver(() => {
-    if (composer.value)
-      composerHeight.value = composer.value.getBoundingClientRect().height;
-    if (paging.value) return;
-    if (!following) restoreAnchor(heldAnchor);
-    else scrollBottom();
+    if (resizeFrame !== undefined) return;
+    // Reserving composer space resizes the observed conversation too.
+    resizeFrame = requestAnimationFrame(() => {
+      resizeFrame = undefined;
+      if (composer.value)
+        composerHeight.value = composer.value.getBoundingClientRect().height;
+      if (paging.value) return;
+      if (!following) restoreAnchor(heldAnchor);
+      else scrollBottom();
+    });
   });
   if (content.value) resize.observe(content.value);
   if (composer.value) resize.observe(composer.value);
@@ -332,6 +338,7 @@ onUnmounted(() => {
   loadGeneration++;
   clearInterval(time);
   resize?.disconnect();
+  if (resizeFrame !== undefined) cancelAnimationFrame(resizeFrame);
   window.removeEventListener("scroll", scrolled);
   window.removeEventListener("wheel", userScroll);
   window.removeEventListener("keydown", keyScrolled);
@@ -840,6 +847,7 @@ async function upload(event: Event) {
   display: flex;
   flex-direction: column;
   min-height: calc(100dvh - var(--header-height) - env(safe-area-inset-top));
+  padding-bottom: var(--composer-height);
 }
 .older-history {
   min-height: 44px;
@@ -901,10 +909,12 @@ h1 {
   margin-bottom: 8px;
 }
 .composer {
-  flex-shrink: 0;
-  margin-top: auto;
-  position: sticky;
+  position: fixed;
   bottom: 0;
+  inset-inline: 12px;
+  max-width: 776px;
+  margin-inline: auto;
+  z-index: 30;
   max-height: calc(100dvh - env(safe-area-inset-top) - 132px);
   overflow-y: auto;
   overscroll-behavior: contain;

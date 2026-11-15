@@ -337,6 +337,90 @@ test(
         },
       );
       await t.test(
+        "composer stays at the viewport bottom while scrolling the conversation",
+        async () => {
+          for (const viewport of [
+            { width: 402, height: 874 },
+            { width: 402, height: 480 },
+            { width: 1024, height: 874 },
+          ]) {
+            await page.setViewportSize(viewport);
+            const positions = await page.evaluate(async () => {
+              window.dispatchEvent(new WheelEvent("wheel", { deltaY: -100 }));
+              const end =
+                document.documentElement.scrollHeight - window.innerHeight;
+              const positions = [];
+              for (const fraction of [0, 0.25, 0.5, 0.75, 1, 0.5, 0, 1]) {
+                window.scrollTo({ top: end * fraction, behavior: "instant" });
+                await new Promise<void>((resolve) =>
+                  requestAnimationFrame(() =>
+                    requestAnimationFrame(() => resolve()),
+                  ),
+                );
+                const box = document
+                  .querySelector(".composer")!
+                  .getBoundingClientRect();
+                positions.push({
+                  scrollY: window.scrollY,
+                  gap: window.innerHeight - box.bottom,
+                });
+              }
+              return positions;
+            });
+            for (const position of positions)
+              assert(
+                Math.abs(position.gap) < 3,
+                `Composer moved from bottom: ${JSON.stringify({ viewport, position })}`,
+              );
+            const layout = await page.evaluate(() => {
+              const composer = document
+                .querySelector(".composer")!
+                .getBoundingClientRect();
+              const conversation = document
+                .querySelector(".conversation")!
+                .getBoundingClientRect();
+              const rows = document.querySelectorAll("[data-history-row]");
+              return {
+                left: composer.left - conversation.left,
+                right: composer.right - conversation.right,
+                overlap:
+                  rows[rows.length - 1]!.getBoundingClientRect().bottom - composer.top,
+              };
+            });
+            assert(Math.abs(layout.left) < 2 && Math.abs(layout.right) < 2);
+            assert(layout.overlap <= 0, "Composer covers the last history row");
+          }
+          await page.setViewportSize({ width: 402, height: 874 });
+          // Model scrollable space below the app after mobile viewport changes.
+          try {
+            await page.evaluate(() => {
+              document.body.style.paddingBottom = "320px";
+              window.scrollTo({
+                top: document.documentElement.scrollHeight,
+                behavior: "instant",
+              });
+            });
+            await expect
+              .poll(() =>
+                page.locator(".composer").evaluate((element) =>
+                  Math.abs(
+                    window.innerHeight - element.getBoundingClientRect().bottom,
+                  ),
+                ),
+              )
+              .toBeLessThan(3);
+          } finally {
+            await page.evaluate(() => {
+              document.body.style.paddingBottom = "";
+              window.scrollTo({
+                top: document.documentElement.scrollHeight,
+                behavior: "instant",
+              });
+            });
+          }
+        },
+      );
+      await t.test(
         "opens at the bottom instantly; smooth follow never pulls a reader down",
         async () => {
           const gap = () =>
