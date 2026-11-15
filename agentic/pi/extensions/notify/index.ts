@@ -28,8 +28,10 @@
  * terminal-notifier helper makes alerts clickable: a click runs AppleScript
  * that reveals the originating window, tab, and pane. Alerts are suppressed
  * when that iTerm2 pane is already active and iTerm2 is frontmost; pending
- * alerts are dismissed when the user returns to that pane. No
- * notification is sent outside iTerm2 or if terminal-notifier is unavailable.
+ * alerts are dismissed when the user returns to that pane. In Holi, the
+ * existing `holi agent notify` command delivers inbox entries and native
+ * banners, with session links when Holi accepts interactive Pi session ids.
+ * Holi handles focus suppression and click-to-open. Other terminal hosts remain silent.
  *
  * Orchestrator-only: subagent processes never have a UI and their question
  * dialogs are bridged to the parent — the parent's own listeners already
@@ -44,9 +46,11 @@
 
 import { spawn } from "node:child_process";
 import * as os from "node:os";
+import { isAbsolute } from "node:path";
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isLoopActive, onLoopCompletion } from "../_loop_state/state.ts";
+import { createNotificationDelivery, type NotificationDelivery, type NotificationOrigin, type NotificationSender } from "./delivery.ts";
 import { isTransientCodexError, isTransientWebSocketClosure, RETRY_STATE_EVENT } from "../rate-limit-retry/index.ts";
 
 const IS_MACOS = os.platform() === "darwin";
@@ -57,13 +61,12 @@ const SOUND_FINISHED = "Glass";
 const SOUND_QUESTION = "Tink";
 const SOUND_FAILED = "Basso";
 
-// Minimum gap between any two notifications. Cheap defence against
-// back-to-back events (e.g. question dialog dismissed → agent_end fires
-// immediately after the question notification) collapsing into one
-// indistinguishable beep.
-const MIN_GAP_MS = 400;
-
-let lastNotifyAt = 0;
+const ORIGIN_ENTRY = "notify-holi-origin";
+// A new conversation has no entries yet; keep its physical host across /new and /reload.
+const hostState = (globalThis as typeof globalThis & {
+	__piNotifyHost?: { origin?: NotificationOrigin };
+}).__piNotifyHost ??= {};
+let delivery: NotificationDelivery | undefined;
 let hasUI = false;
 let sessionManager: { getSessionName(): string | undefined } | undefined;
 
@@ -241,17 +244,24 @@ function notifyViaITerm(title: string, body: string, sound: string): void {
 	});
 }
 
-function notify(title: string, body: string, sound: string): void {
-	if (!IS_MACOS) return;
-	if (!hasUI) return;
-	if (process.env.TERM_PROGRAM !== "iTerm.app" || !process.env.ITERM_SESSION_ID) return;
-	const now = Date.now();
-	if (now - lastNotifyAt < MIN_GAP_MS) return;
-	lastNotifyAt = now;
+function savedOrigin(ctx: ExtensionContext): NotificationOrigin | undefined {
+	for (const entry of [...ctx.sessionManager.getEntries()].reverse()) {
+		if (entry.type !== "custom" || entry.customType !== ORIGIN_ENTRY) continue;
+		const origin = entry.data as Partial<NotificationOrigin> | null;
+		if (origin && typeof origin.cwd === "string" && isAbsolute(origin.cwd) &&
+			typeof origin.conversationId === "string" && origin.conversationId.length > 0) {
+			return { cwd: origin.cwd, conversationId: origin.conversationId };
+		}
+	}
+	return undefined;
+}
+
+async function notify(title: string, body: string, sound: string): Promise<void> {
+	if (!IS_MACOS || !hasUI) return;
 	// Prefix the title with the session name if available (format: "Session — Title")
 	const name = getSessionName();
 	const fullTitle = name ? `${name} — ${title}` : title;
-	notifyViaITerm(fullTitle, body, sound);
+	await delivery?.send(fullTitle, body, sound);
 }
 
 function truncate(s: string, max = 120): string {
@@ -285,7 +295,11 @@ function isRetryableBlockedAbort(stopReason: string | undefined, errorMessage: s
 	);
 }
 
-export default function (pi: ExtensionAPI, send = notify) {
+export default function (
+	pi: ExtensionAPI,
+	send: NotificationSender = notify,
+	makeDelivery = createNotificationDelivery,
+) {
 	// Subagent children don't drive a UI; the orchestrator gets the events
 	// that actually matter to the human.
 	if (process.env.PI_SUBAGENT_CHILD === "1") return;
@@ -305,11 +319,25 @@ export default function (pi: ExtensionAPI, send = notify) {
 		retrying = (data as { retrying: boolean }).retrying;
 	});
 
-	pi.on("session_start", (_event, ctx) => {
+	pi.on("session_start", async (_event, ctx) => {
 		// In non-interactive / print mode (pi -p "..."), there's no UI and
 		// notifications would be unwanted noise. Gate on ctx.hasUI.
 		hasUI = ctx.hasUI;
 		sessionManager = ctx.sessionManager;
+		if (hasUI && send === notify) {
+			const saved = savedOrigin(ctx);
+			const origin = saved ?? hostState.origin ?? { cwd: ctx.cwd, conversationId: ctx.sessionManager.getSessionId() };
+			delivery = makeDelivery(origin, {
+				sendITerm: notifyViaITerm,
+				rememberOrigin: (verified) => {
+					hostState.origin = verified;
+					if (saved?.cwd !== verified.cwd || saved.conversationId !== verified.conversationId) {
+						pi.appendEntry(ORIGIN_ENTRY, verified);
+					}
+				},
+			});
+			await delivery.ready;
+		}
 		retrying = false;
 		loopIteration = isLoopActive();
 	});
@@ -319,7 +347,7 @@ export default function (pi: ExtensionAPI, send = notify) {
 		const input = event.input as { questions?: Array<{ question?: unknown }> } | undefined;
 		const first = input?.questions?.[0]?.question;
 		const preview = typeof first === "string" && first.length > 0 ? truncate(first) : "Pi needs your input.";
-		send("Pi has a question", preview, SOUND_QUESTION);
+		await send("Pi has a question", preview, SOUND_QUESTION);
 	});
 
 	// Normal prompts finish at agent_end. /loop completion comes from the loop
@@ -400,7 +428,7 @@ export default function (pi: ExtensionAPI, send = notify) {
 			)
 				return;
 			const detail = errorMessage ? truncate(errorMessage) : stopReason;
-			send("Pi failed", detail, SOUND_FAILED);
+			await send("Pi failed", detail, SOUND_FAILED);
 		} else {
 			// Only notify on success if no errors occurred during the turn.
 			// Check for any tool results with isError: true — if the agent
@@ -410,7 +438,7 @@ export default function (pi: ExtensionAPI, send = notify) {
 				return toolMsg?.role === "tool" && toolMsg.isError === true;
 			});
 			if (hadToolErrors) return;
-			send("Pi finished", "Ready for your next prompt.", SOUND_FINISHED);
+			await send("Pi finished", "Ready for your next prompt.", SOUND_FINISHED);
 		}
 	});
 }
