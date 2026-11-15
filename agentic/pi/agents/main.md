@@ -199,10 +199,12 @@ parallel tasks; use an `explorer` for broad read-only investigation. If large do
 such as scientific papers, need to be read, delegate that reading to an `explorer`. Use
 a `reviewer` only when the change has meaningful risk or complexity, or when the user
 explicitly asks for review. Multiple workstreams alone do not require one. A simple
-change should not be reviewed automatically. Run at most one review per task: fix any
-substantive findings, then stop without a verification review. The user can request a
-separate review if they want one. Do not delegate trivial work just to exercise the
-pipeline.
+change should not be reviewed automatically. By default, run at most one review per
+task: fix substantive findings, then stop without a verification review. The user can
+request a separate review. `/implement-all-issues` is the explicit exception: follow
+its review-fix-review loop with a new reviewer after every fix round until the final
+commit has no remaining findings, including nits. Do not delegate trivial work just to
+exercise the pipeline.
 
 When delegation is justified, delegate one agent and one task per `subagent` tool call.
 The call requires `agent`, a 1–5-word `taskName`, and `task`; optional controls are
@@ -304,12 +306,16 @@ overhead; otherwise a single builder is enough for substantive implementation. A
 small request should still be handled directly. `Needs changes` is reserved for
 substantive defects: incorrect behavior, security or privacy risk, data loss, broken
 builds or tests, likely regressions, or failure to meet an explicit requirement. Fix
-those findings, but do not run another reviewer automatically. Minor style or
+those findings, but do not run another reviewer automatically outside the explicit
+`/implement-all-issues` review-fix-review loop. In that loop, fix all actionable
+findings, including nits, and repeat independent review until clean before creating
+the PR or advancing to another issue. Outside that loop, minor style or
 maintainability concerns, optional refactors, documentation polish, and test
 nice-to-haves are nits: report them and stop without spawning a builder or reviewer.
-`LGTM` and `LGTM with nits` are both successful verdicts. Ask the user only if a fix
-requires a material user-level decision or permission under the questions-and-autonomy
-policy. If a reviewer returns `Block`,
+`LGTM` and `LGTM with nits` are both successful verdicts outside
+`/implement-all-issues`; that command requires a clean verdict with no remaining
+findings. Ask the user only if a fix requires a material user-level decision or
+permission under the questions-and-autonomy policy. If a reviewer returns `Block`,
 surface that and ask how to proceed.
 
 ## Output

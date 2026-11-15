@@ -331,7 +331,21 @@ test("implement-all-issues starts the same loop with its issue prompt and finish
 	assert.match(prompt, /existing standard label for issues blocked by a decision.*create a decision-blocked label and apply it/);
 	assert.match(prompt, /break it into actionable sub-issues linked to the original issue as their parent/);
 	assert.match(prompt, /choose only one actionable sub-issue for this run/);
-	assert.match(prompt, /assign me to it, create a feature branch.*independent review.*create a PR on it where you assign me/);
+	assert.match(prompt, /claim it using the mandatory claim command.*status claimed.*create a feature branch.*independent review.*create a PR on it where you assign me/);
+	assert.match(prompt, /Mandatory claim command: run node '[^\n]+claim-issue\.mjs' ISSUE_NUMBER.*ONE bash tool call/);
+	assert.match(prompt, /Never split the check and assignment.*even to @me, belongs to another session/);
+	assert.match(prompt, /Exit 3 \(unavailable\) or 4 \(busy\).*choose another fresh candidate/);
+	assert.match(prompt, /Any other failure or uncertain result means stop/);
+	assert.match(prompt, /Never delete or expire a busy\/retained lock automatically/);
+	assert.match(prompt, /Only exit 0 AND JSON status claimed.*permits implementation/);
+	assert.match(prompt, /including newly created leaf sub-issues; never reuse a previous iteration's claim/);
+	assert.match(prompt, /Before creating the PR, run a mandatory review-fix-review loop/);
+	assert.match(prompt, /fix every actionable finding \(including nits\).*commit the fixes/);
+	assert.match(prompt, /invoke a NEW reviewer subagent on the updated complete implementation/);
+	assert.match(prompt, /Repeat with a new reviewer.*no remaining findings or changes needed/);
+	assert.match(prompt, /LGTM with nits is not a clean result/);
+	assert.match(prompt, /reviewer is unavailable, stop and report the blocker/);
+	assert.match(prompt, /end your final response with PI_IMPLEMENT_ALL_ISSUES_BLOCKED on its own line/);
 	await h.finish();
 	assert.equal(checks.length, 1);
 	assert.match(checks[0]!, /^No actionable unassigned issues remain:/);
@@ -360,6 +374,8 @@ for (const remote of [false, true]) {
 				assert.ok(prompt.endsWith(`\n\n${instruction}`));
 				assert.equal(prompt.split(instruction).length, 2);
 				assert.ok(prompt.indexOf("Fresh GitHub issue selection") < prompt.indexOf(instruction));
+				assert.match(prompt, /Mandatory claim command: run node.*claim-issue\.mjs/);
+				assert.match(prompt, /mandatory review-fix-review loop.*NEW reviewer subagent/);
 			}
 			assert.match(checks[0]!, /^No actionable unassigned issues remain:/);
 			assert.ok(!checks[0]!.includes(instruction));
@@ -368,6 +384,38 @@ for (const remote of [false, true]) {
 		}
 	});
 }
+
+for (const blocker of ["Claim response was lost", "Reviewer is unavailable", "A review finding needs a user decision"]) {
+	test(`an issue blocker stops before completion checking or advancing: ${blocker}`, async () => {
+		let checks = 0;
+		const outcomes: string[] = [];
+		const unsubscribe = onLoopCompletion("issue-blocker-test", (completion) => { outcomes.push(completion.outcome); });
+		const h = harness(async () => {
+			checks++;
+			return { done: true, evidence: "no unassigned issues remain" };
+		});
+		try {
+			await h.command("", "implement-all-issues");
+			await h.finish(`${blocker}\nPI_IMPLEMENT_ALL_ISSUES_BLOCKED`);
+			assert.equal(checks, 0, "an assigned unfinished issue must not become successful completion");
+			assert.equal(h.sent.length, 1);
+			assert.equal(h.timers.size, 0, "a blocked iteration must not schedule another issue");
+			assert.equal(isLoopActive(), false);
+			assert.deepEqual(outcomes, ["failed"]);
+			assert.match(h.notices.at(-1) ?? "", /Loop stopped:.*blocked.*checkout and claim are preserved/);
+		} finally {
+			unsubscribe();
+			await h.command("stop");
+		}
+	});
+}
+
+test("ordinary loops do not interpret the issue-only blocked marker", async () => {
+	const h = harness();
+	await h.command("--max-runs 1 echo a marker");
+	await h.finish("PI_IMPLEMENT_ALL_ISSUES_BLOCKED");
+	assert.match(h.notices.at(-1) ?? "", /Loop complete after 1 run/);
+});
 
 test("blank instructions preserve the default issue prompt", async () => {
 	const h = harness();
