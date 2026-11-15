@@ -29,7 +29,10 @@ function github(options = {}) {
 			return { data: { repository: { issue: {
 				number: 42, state: state.closed ? "CLOSED" : "OPEN",
 				assignees: { totalCount: assignees.length, nodes: assignees.map((login) => ({ login })) },
-				...(state.missingRelationship ? {} : { subIssues: { totalCount: state.parent ? 1 : 0 } }),
+				...(state.missingRelationship ? {} : { subIssuesSummary: state.summary ?? {
+					total: state.parent ? 250 : 0,
+					completed: state.parent ? (state.childrenClosed && !(state.assignments && state.reopenChildAfterAssignment) ? 250 : 249) : 0,
+				} }),
 			} } } };
 		}
 		if (args[3].endsWith("/assignees")) {
@@ -77,6 +80,31 @@ for (const options of [{ assignees: ["other"] }, { assignees: ["dan"] }, { close
 		assert.equal((await h.claim()).status, "unavailable");
 		assert.equal(h.state.assignments, 0);
 		assert.equal(h.state.releases, 1);
+	});
+}
+
+test("a parent with all children closed is claimable, including beyond the first child page", async () => {
+	const h = github({ parent: true, childrenClosed: true });
+	assert.equal((await h.claim()).status, "claimed");
+	assert.equal(h.state.assignments, 1);
+	assert.equal(h.state.releases, 1);
+	assert.ok(h.state.calls.some((args) => args.some((arg) => arg.includes("subIssuesSummary{total completed}"))));
+});
+
+test("reopening a child before assignment verification invalidates a parent's claim", async () => {
+	const h = github({ parent: true, childrenClosed: true, reopenChildAfterAssignment: true });
+	await assert.rejects(h.claim(), /Issue assignment could not be verified/);
+	assert.equal(h.state.assignments, 1);
+	assert.equal(h.state.locked, true);
+	assert.equal(h.state.releases, 0);
+});
+
+for (const summary of [{ total: 2, completed: 3 }, { total: 2 }, { total: -1, completed: -1 }, { total: "2", completed: "2" }]) {
+	test(`invalid child summary prevents assignment: ${JSON.stringify(summary)}`, async () => {
+		const h = github({ summary });
+		await assert.rejects(h.claim(), /sub-issue relationship/);
+		assert.equal(h.state.assignments, 0);
+		assert.equal(h.state.locked, true);
 	});
 }
 
@@ -140,7 +168,7 @@ else if (args[3] === 'graphql') {
   else {
     if (!existsSync(lock)) throw new Error('unlocked issue check');
     const assigned = existsSync(assignment);
-    output({data:{repository:{issue:{number:42,state:'OPEN',assignees:{totalCount:assigned?1:0,nodes:assigned?[{login:'dan'}]:[]},subIssues:{totalCount:0}}}}});
+    output({data:{repository:{issue:{number:42,state:'OPEN',assignees:{totalCount:assigned?1:0,nodes:assigned?[{login:'dan'}]:[]},subIssuesSummary:{total:0,completed:0}}}}});
   }
 } else if (args.includes('DELETE')) { rmSync(lock, {recursive:true}); }
 else if (args[3].endsWith('/assignees')) {

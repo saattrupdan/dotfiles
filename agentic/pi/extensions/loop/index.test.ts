@@ -328,8 +328,8 @@ test("implement-all-issues starts the same loop with its issue prompt and finish
 	assert.match(prompt, /^# Implement one issue per iteration\n/);
 	const stages = [
 		"## 1. Select and triage", "## 2. Claim before starting work",
-		"## 3. Implement and test", "## 4. Review until clean",
-		"## 5. Publish the PR", "## 6. Clean up before advancing", "## Blocked outcome",
+		"## 3. Verify what remains, then implement if needed", "## 4. Review until clean",
+		"## 5. Publish the result", "## 6. Clean up before advancing", "## Blocked outcome",
 	];
 	let previous = -1;
 	for (const heading of stages) {
@@ -344,8 +344,15 @@ test("implement-all-issues starts the same loop with its issue prompt and finish
 	assert.equal(prompt, template
 		.replace("{{PI_ISSUE_CANDIDATES}}", "#2, #4")
 		.replace("{{PI_ISSUE_CLAIM_COMMAND}}", claimCommand));
-	assert.match(prompt, /Fresh GitHub issue selection.*#2, #4/);
-	assert.match(prompt, /Parents with sub-issues are excluded even\n/);
+	assert.match(prompt, /Fresh GitHub issue selection[\s\S]*?#2, #4/);
+	assert.match(prompt, /A parent with open children must wait/);
+	assert.match(prompt, /A parent whose children are all closed\n {2}is eligible/);
+	assert.match(prompt, /Closed children alone\n {2}do not prove that the parent has been delivered/);
+	assert.match(prompt, /freshly checks that\n {2}the issue is open, unassigned, and has no open children/);
+	assert.match(prompt, /this is a close-only task/);
+	assert.match(prompt, /Do not invent code changes, create an\n {2}unnecessary branch\/commit, or open an empty PR/);
+	assert.match(prompt, /For a close-only parent, have it independently verify the parent/);
+	assert.match(prompt, /close it as completed\. Verify it is closed; no PR/);
 	assert.match(prompt, /comment specifying the decision needed/);
 	assert.match(prompt, /existing standard label for issues blocked by a decision/);
 	assert.match(prompt, /create a decision-blocked label and apply it/);
@@ -361,7 +368,7 @@ test("implement-all-issues starts the same loop with its issue prompt and finish
 	assert.equal(prompt.match(/Invoke one independent reviewer subagent/g)?.length, 1);
 	const beforeReview = prompt.slice(0, prompt.indexOf("## 4. Review until clean"));
 	assert.doesNotMatch(beforeReview, /independent review|reviewer subagent/);
-	assert.match(prompt, /no additional review is needed for an unchanged clean commit/);
+	assert.match(prompt, /additional review is needed for an unchanged clean result/);
 	assert.match(prompt, /fix every actionable finding, including nits/);
 	assert.match(prompt, /Invoke a NEW reviewer subagent on the updated complete implementation/);
 	assert.match(prompt, /Repeat steps 2–3 until clean/);
@@ -459,21 +466,21 @@ test("blank instructions preserve the default issue prompt", async () => {
 	await h.command("stop");
 });
 
-test("issue selection refreshes for each iteration and never suggests a parent", async () => {
+test("issue selection refreshes eligible candidates for each iteration", async () => {
 	let calls = 0;
 	const h = harness(async () => ({ done: false, evidence: "another leaf remains" }), {
 		contextTokens: 2_000,
 		listIssues: async () => ++calls === 1 ? [12] : [14],
 	});
 	await h.command("", "implement-all-issues");
-	assert.match(h.sent[0] ?? "", /Fresh GitHub issue selection.*#12/);
+	assert.match(h.sent[0] ?? "", /Fresh GitHub issue selection[\s\S]*?#12/);
 	await h.finish("PR created");
 	h.tick(); // short context skips compaction
 	h.tick(); // fetch next candidate
 	await Promise.resolve();
 	assert.equal(calls, 2);
-	assert.match(h.sent[1] ?? "", /Fresh GitHub issue selection.*#14/);
-	assert.doesNotMatch(h.sent[1] ?? "", /Fresh GitHub issue selection.*#12/);
+	assert.match(h.sent[1] ?? "", /Fresh GitHub issue selection[\s\S]*?#14/);
+	assert.doesNotMatch(h.sent[1] ?? "", /Fresh GitHub issue selection[\s\S]*?#12/);
 	await h.command("stop");
 });
 
@@ -503,7 +510,7 @@ test("a user turn during issue selection cannot complete or duplicate the issue 
 	h.setPending(false);
 	h.tick();
 	assert.equal(h.sent.length, 1);
-	assert.match(h.sent[0] ?? "", /Fresh GitHub issue selection.*#7/);
+	assert.match(h.sent[0] ?? "", /Fresh GitHub issue selection[\s\S]*?#7/);
 	assert.equal(lookups, 1);
 	await h.command("stop");
 });

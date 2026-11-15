@@ -1,4 +1,4 @@
-/** Claim an unassigned leaf issue under a cross-machine GitHub ref mutex. */
+/** Claim an unassigned issue with no unfinished children under a cross-machine GitHub ref mutex. */
 import { execFile } from "node:child_process";
 import console from "node:console";
 import process from "node:process";
@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const IDENTITY_QUERY = "query($owner:String!,$repo:String!){viewer{login} repository(owner:$owner,name:$repo){defaultBranchRef{target{oid}}}}";
-const ISSUE_QUERY = "query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){issue(number:$number){number state assignees(first:100){totalCount nodes{login}} subIssues(first:1){totalCount}}}}";
+const ISSUE_QUERY = "query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){issue(number:$number){number state assignees(first:100){totalCount nodes{login}} subIssuesSummary{total completed}}}}";
 
 async function runGh(args, cwd) {
 	const env = { ...process.env, GH_PROMPT_DISABLED: "1" };
@@ -59,7 +59,9 @@ export async function claimIssue(number, cwd = process.cwd(), gh = runGh) {
 			if (issue?.number !== number || !["OPEN", "CLOSED"].includes(issue.state) ||
 				!Number.isSafeInteger(issue.assignees?.totalCount) || issue.assignees.totalCount < 0 ||
 				!Array.isArray(issue.assignees.nodes) ||
-				!Number.isSafeInteger(issue.subIssues?.totalCount) || issue.subIssues.totalCount < 0) {
+				!Number.isSafeInteger(issue.subIssuesSummary?.total) || issue.subIssuesSummary.total < 0 ||
+				!Number.isSafeInteger(issue.subIssuesSummary?.completed) || issue.subIssuesSummary.completed < 0 ||
+				issue.subIssuesSummary.completed > issue.subIssuesSummary.total) {
 				throw new Error("GitHub omitted the issue's state, assignment, or sub-issue relationship.");
 			}
 			return issue;
@@ -67,10 +69,10 @@ export async function claimIssue(number, cwd = process.cwd(), gh = runGh) {
 		const before = await snapshot();
 		let status = "unavailable";
 		// @me is NOT proof of this session's ownership. Any assignment means skip.
-		if (before.state === "OPEN" && before.assignees.totalCount === 0 && before.subIssues.totalCount === 0) {
+		if (before.state === "OPEN" && before.assignees.totalCount === 0 && before.subIssuesSummary.completed === before.subIssuesSummary.total) {
 			await api([`repos/${repository}/issues/${number}/assignees`, "--method", "POST", "-f", `assignees[]=${login}`]);
 			const after = await snapshot();
-			if (after.state !== "OPEN" || after.subIssues.totalCount !== 0 || after.assignees.totalCount !== 1 ||
+			if (after.state !== "OPEN" || after.subIssuesSummary.completed !== after.subIssuesSummary.total || after.assignees.totalCount !== 1 ||
 				after.assignees.nodes.length !== 1 || after.assignees.nodes[0]?.login !== login) {
 				throw new Error("Issue assignment could not be verified; do not implement or remove any assignee.");
 			}

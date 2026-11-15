@@ -4,11 +4,15 @@ Complete the stages below for one issue before advancing to another.
 
 ## 1. Select and triage
 
-Fresh GitHub issue selection (unassigned issues with no sub-issues): {{PI_ISSUE_CANDIDATES}}.
+Fresh GitHub issue selection (unassigned leaves and parents with all children closed):
+{{PI_ISSUE_CANDIDATES}}.
 
 - Select only from these issue numbers, except a new leaf sub-issue you create
-  from a listed issue during this run. Parents with sub-issues are excluded even
-  when open and unassigned; verify GitHub's parent/sub-issue relationship.
+  from a listed issue during this run. Verify GitHub's parent/sub-issue relationship.
+- A parent with open children must wait. A parent whose children are all closed
+  is eligible: inspect its full requirements and the children's implementations
+  and merged PRs to determine whether anything remains. Closed children alone
+  do not prove that the parent has been delivered.
 - Before assigning, confirm the implementation is clear, no crucial architectural
   decision remains unresolved, and the work fits one reasonably scoped PR.
 - If a crucial architectural decision is unresolved, leave the issue unassigned.
@@ -33,8 +37,9 @@ ISSUE_NUMBER with the chosen positive issue number:
 ```
 
 - The helper acquires an atomic GitHub-side per-issue lock, freshly checks that
-  the issue is open, unassigned, and has no sub-issues, assigns the authenticated
-  user, verifies the assignment, and releases the lock in that same invocation.
+  the issue is open, unassigned, and has no open children, assigns the authenticated
+  user, verifies the assignment and child completion, and releases the lock in
+  that same invocation. This applies to eligible parents as well as leaves.
 - Never split the check and assignment or bypass the helper with gh issue edit
   or direct assignment API calls. An existing assignment, even to @me, is not
   this session's ownership: skip that issue.
@@ -47,26 +52,37 @@ ISSUE_NUMBER with the chosen positive issue number:
 - Claim only one issue per iteration, including newly created leaf sub-issues.
   Never reuse a previous iteration's claim or treat an earlier assignment as yours.
 
-## 3. Implement and test
+## 3. Verify what remains, then implement if needed
 
-- After a confirmed claim, create a feature branch and fully implement the issue,
-  following repository rules. Run the relevant checks and tests until they pass.
+- For a claimed parent, verify the current base checkout against the parent's full
+  requirements, child implementations, merged PRs, and relevant checks. Inspect
+  descendants where needed; do not assume closed or cancelled children delivered
+  their requirements. Identify any missing integration, behavior, or acceptance work.
+- If the parent is fully delivered and nothing remains, this is a close-only task:
+  record concrete verification evidence. Do not invent code changes, create an
+  unnecessary branch/commit, or open an empty PR. Still follow the review stage.
+- Otherwise, create a feature branch and implement the remaining work, following
+  repository rules. Run the relevant checks and tests until they pass.
 - Track the temporary resources you create so cleanup can distinguish them from
   pre-existing user resources and resources owned by other sessions.
 - For visual changes, capture screenshots or a short video of the actual feature
   for the PR. Preserve that evidence before removing temporary test resources.
-- Commit the complete implementation before requesting review.
+- Commit any implementation changes before requesting review.
 
 ## 4. Review until clean
 
 1. Invoke one independent reviewer subagent on the complete implementation at the
-   current commit. If it reports no remaining findings or changes needed, proceed
-   to publishing; no additional review is needed for an unchanged clean commit.
+   current commit. For a close-only parent, have it independently verify the parent
+   requirements and delivery evidence, including whether any work remains. If it
+   reports no remaining findings or changes needed, proceed to publishing; no
+   additional review is needed for an unchanged clean result.
 2. Otherwise, fix every actionable finding, including nits, run the relevant
    checks, clean up resources created for that fix round, and commit the fixes.
 3. Invoke a NEW reviewer subagent on the updated complete implementation. Include
    the previous findings and how they were addressed. Repeat steps 2–3 until clean.
 
+- If close-only review finds missing work, return to stage 3 and implement it
+  before repeating review. Do not close the parent while requirements remain.
 - LGTM with nits is not clean: address the nits and re-review.
 - Do not substitute self-review, skip re-review after fixes, or impose an arbitrary
   review-round limit. If source changes after a clean review, check and review the
@@ -74,12 +90,16 @@ ISSUE_NUMBER with the chosen positive issue number:
 - If a reviewer is unavailable or a finding cannot be resolved safely without a
   user decision, use the blocked outcome below. Do not publish or advance.
 
-## 5. Publish the PR
+## 5. Publish the result
 
-- Only after checks pass and the final commit has a clean independent review,
-  push all implementation commits and create the PR. Assign me to the PR and copy
-  all GitHub labels from the issue to it. Include visual evidence when applicable.
-- Verify the PR and remote branch contain the reviewed commits.
+- For a close-only parent, only after clean independent verification, add a comment
+  explaining how its requirements were delivered, link the completed children/PRs
+  and verification evidence, and close it as completed. Verify it is closed; no PR,
+  feature branch, or new implementation commit is required.
+- For implemented changes, only after checks pass and the final commit has a clean
+  independent review, push all implementation commits and create the PR. Assign
+  me to the PR and copy all GitHub labels from the issue to it. Include visual
+  evidence when applicable. Verify it contains the reviewed commits.
 
 ## 6. Clean up before advancing
 
@@ -91,10 +111,11 @@ ISSUE_NUMBER with the chosen positive issue number:
   processes or delete pre-existing apps, user data, or another session's resources.
 - Preserve PR evidence and any required deliverables. Verify owned temporary
   resources are gone; if cleanup fails, report it using the blocked outcome below.
-- After successful publication and cleanup, confirm all changes are committed and
+- After successful publication and cleanup, confirm any changes are committed and
   pushed, return to the base checkout, and discard only the task's local feature
-  branch and worktree. Keep the remote branch and PR intact and preserve unrelated
-  local changes. Follow repository rules when they prohibit branches/worktrees.
+  branch and worktree, if created. Keep the remote branch and PR intact and preserve
+  unrelated local changes. Close-only tasks must not create branches/worktrees just
+  to clean them up. Follow repository rules when they prohibit branches/worktrees.
 - If blocked, preserve the task's checkout, branch, and issue claim for recovery;
   clean up only disposable runtime resources. Do not advance to another issue.
 

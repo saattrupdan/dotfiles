@@ -1,13 +1,13 @@
-/** Fetch every open unassigned GitHub issue without sub-issues; never guess on a partial listing. */
+/** Fetch open unassigned GitHub issues with no unfinished children; never guess on a partial listing. */
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const PAGE_LIMIT = 100;
-const QUERY = "query($owner:String!,$repo:String!,$cursor:String){repository(owner:$owner,name:$repo){issues(first:100,states:OPEN,after:$cursor){nodes{number assignees(first:1){totalCount} subIssues(first:1){totalCount}} pageInfo{hasNextPage endCursor}}}}";
+const QUERY = "query($owner:String!,$repo:String!,$cursor:String){repository(owner:$owner,name:$repo){issues(first:100,states:OPEN,after:$cursor){nodes{number assignees(first:1){totalCount} subIssuesSummary{total completed}} pageInfo{hasNextPage endCursor}}}}";
 
-export const ISSUE_CONDITION = "No actionable unassigned issues remain: independently check every open unassigned issue using GitHub's parent–sub-issue relationship. An issue with sub-issues is a non-actionable parent; any unassigned sub-issue without sub-issues remains a candidate. Complex issues without sub-issues must first be decomposed and linked, and remaining leaf issues must have documented blockers or missing clarifications; decision-blocked issues also require the repo's standard decision-blocker label or decision-blocked label";
+export const ISSUE_CONDITION = "No actionable unassigned issues remain: independently check every open unassigned issue using GitHub's parent–sub-issue relationship. Leaves and parents whose children are all closed are candidates. Parents with open children must wait. For eligible parents, verify the parent requirements, child implementations and merged PRs: closed children alone do not prove delivery. A fully delivered parent still needs verification and closing, not a new implementation or PR. Complex issues without children must first be decomposed and linked; remaining eligible issues must have documented blockers or missing clarifications; decision-blocked issues also require the repo's standard decision-blocker label or decision-blocked label";
 
 type Gh = (args: string[], cwd: string, signal?: AbortSignal) => Promise<string>;
 
@@ -19,8 +19,8 @@ async function runGh(args: string[], cwd: string, signal?: AbortSignal): Promise
 	return stdout.trim();
 }
 
-/** All candidate numbers, not just the first page. Parents are excluded by GitHub's actual sub-issue relationship. */
-export async function listUnassignedLeafIssues(cwd: string, signal?: AbortSignal, gh: Gh = runGh): Promise<number[]> {
+/** All candidate numbers, not just the first page. Parents qualify once GitHub reports every child closed, including beyond one child page. */
+export async function listEligibleUnassignedIssues(cwd: string, signal?: AbortSignal, gh: Gh = runGh): Promise<number[]> {
 	const repository = (await gh(["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"], cwd, signal)).trim();
 	if (!/^[\w.-]+\/[\w.-]+$/.test(repository)) throw new Error("Could not identify this GitHub repository.");
 	const [owner, repo] = repository.split("/");
@@ -33,7 +33,7 @@ export async function listUnassignedLeafIssues(cwd: string, signal?: AbortSignal
 		const response = JSON.parse(await gh(args, cwd, signal)) as {
 			errors?: unknown[];
 			data?: { repository?: { issues?: {
-				nodes?: Array<{ number?: number; assignees?: { totalCount?: number }; subIssues?: { totalCount?: number } }>;
+				nodes?: Array<{ number: number; assignees?: { totalCount: number }; subIssuesSummary?: { total: number; completed: number } }>;
 				pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
 			} } };
 		};
@@ -43,11 +43,14 @@ export async function listUnassignedLeafIssues(cwd: string, signal?: AbortSignal
 			throw new Error("GitHub did not return a complete issue/sub-issue listing.");
 		}
 		for (const issue of issues.nodes) {
-			if (!Number.isSafeInteger(issue.number) || typeof issue.assignees?.totalCount !== "number" ||
-				typeof issue.subIssues?.totalCount !== "number") {
-				throw new Error("GitHub omitted an issue's assignment or sub-issue relationship.");
+			const summary = issue.subIssuesSummary;
+			if (!Number.isSafeInteger(issue.number) || issue.number < 1 || !issue.assignees || !summary ||
+				!Number.isSafeInteger(issue.assignees.totalCount) || issue.assignees.totalCount < 0 ||
+				!Number.isSafeInteger(summary.total) || !Number.isSafeInteger(summary.completed) ||
+				summary.total < 0 || summary.completed < 0 || summary.completed > summary.total) {
+				throw new Error("GitHub omitted or returned invalid assignment or sub-issue completion counts.");
 			}
-			if (issue.assignees.totalCount === 0 && issue.subIssues.totalCount === 0) candidates.push(issue.number!);
+			if (issue.assignees.totalCount === 0 && summary.completed === summary.total) candidates.push(issue.number);
 		}
 		if (!issues.pageInfo.hasNextPage) return candidates;
 		const next = issues.pageInfo.endCursor;

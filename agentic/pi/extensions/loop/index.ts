@@ -8,7 +8,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { checkCondition, type Verdict } from "./checker.ts";
-import { ISSUE_CONDITION, listUnassignedLeafIssues } from "./issue-candidates.ts";
+import { ISSUE_CONDITION, listEligibleUnassignedIssues } from "./issue-candidates.ts";
 import { hasLoopReturnToBase, LOOP_HANDOFF_ENV, LOOP_MAIN_DIRTY, returnLoopToBase, reportLoopCompletion, setLoopActive, setLoopHandoffProvider, type LoopHandoff } from "../_loop_state/state.ts";
 import { NON_INTERACTIVE_BANNER } from "../non-interactive/prompt.ts";
 
@@ -108,7 +108,7 @@ interface ActiveLoop extends LoopOptions {
 
 export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 	const check = deps.check ?? checkCondition;
-	const listIssues = deps.listIssues ?? listUnassignedLeafIssues;
+	const listIssues = deps.listIssues ?? listEligibleUnassignedIssues;
 	const setTimer = deps.setTimer ?? setTimeout;
 	const clearTimer = deps.clearTimer ?? clearTimeout;
 	const setCountdownInterval = deps.setInterval ?? setInterval;
