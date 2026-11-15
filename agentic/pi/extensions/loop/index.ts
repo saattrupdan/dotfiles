@@ -14,12 +14,22 @@ import { NON_INTERACTIVE_BANNER } from "../non-interactive/prompt.ts";
 
 const STATUS_KEY = "loop";
 const MAX_DURATION_MS = 24 * 60 * 60 * 1_000;
-const RATE_LIMIT_RETRY_MS = 60_000;
-const MAX_RATE_LIMIT_RETRY_MS = 5 * 60_000;
+const RETRY_DELAY_MS = 60_000;
+const MAX_RETRY_DELAY_MS = 5 * 60_000;
 const MAIN_RETURN_RETRY_MS = 30_000;
 
 function isRateLimitError(error: unknown): boolean {
 	return /rate[ -]?limit|too many requests|\b429\b/i.test(String(error));
+}
+/** Retry read-only GitHub transport failures, not authentication, schema, or parsing errors. */
+function isTransientGitHubError(error: unknown): boolean {
+	const details = error && typeof error === "object"
+		? error as { name?: unknown; message?: unknown; stderr?: unknown; code?: unknown; killed?: unknown; signal?: unknown }
+		: undefined;
+	if (details?.name === "AbortError") return false;
+	if (details?.killed === true && details.signal === "SIGTERM") return true;
+	const text = [String(error), details?.message, details?.stderr, details?.code].join("\n");
+	return /unexpected EOF|(?:Post|Get|Head) "https?:\/\/[^"\n]+": EOF|\b(?:ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|ETIMEDOUT|ENOTFOUND)\b|connection reset by peer|connection refused|network is unreachable|no such host|temporary failure in name resolution|(?:i\/o|connection|request) (?:timeout|timed out)|TLS handshake timeout|timeout awaiting response headers|context deadline exceeded|HTTP (?:408|500|502|503|504)\b|bad gateway|service unavailable|gateway timeout/i.test(text);
 }
 const COMPACTION_INSTRUCTIONS =
 	"Summarize this loop's goal, constraints, work completed, failed attempts, current file state, " +
@@ -94,9 +104,9 @@ interface ActiveLoop extends LoopOptions {
 	completionId: string;
 	aborted?: boolean;
 	runs: number;
-	phase: "running" | "selecting" | "checking" | "waiting" | "complete" | "compacting" | "rate limited";
+	phase: "running" | "selecting" | "checking" | "waiting" | "complete" | "compacting" | "rate limited" | "GitHub unavailable";
 	compacted: boolean;
-	rateLimitRetries: number;
+	retryCount: number;
 	waitUntil?: number;
 	lastOutput?: string;
 	failed?: boolean;
@@ -201,12 +211,12 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 			?? settings?.keepRecentTokens ?? 20_000;
 		return tokens > keepRecent;
 	}
-	function retryAfterRateLimit(loop: ActiveLoop, callback: () => void) {
+	function retryAfterFailure(loop: ActiveLoop, callback: () => void, reason: "rate limited" | "GitHub unavailable" = "rate limited") {
 		if (active !== loop) return;
-		loop.phase = "rate limited";
-		const delay = Math.min(RATE_LIMIT_RETRY_MS * 2 ** Math.min(loop.rateLimitRetries++, 3), MAX_RATE_LIMIT_RETRY_MS);
+		loop.phase = reason;
+		const delay = Math.min(RETRY_DELAY_MS * 2 ** Math.min(loop.retryCount++, 3), MAX_RETRY_DELAY_MS);
 		startCountdown(loop, delay);
-		say(`Loop rate limited; retrying in ${Math.ceil(delay / 1_000)}s (run ${loop.runs}).`);
+		say(`Loop ${reason}; retrying in ${Math.ceil(delay / 1_000)}s (run ${loop.runs}).`);
 		timer = setTimer(() => {
 			timer = undefined;
 			if (active !== loop) return;
@@ -218,7 +228,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 		if (active !== loop) return;
 		loop.phase = "waiting";
 		loop.compacted = false;
-		loop.rateLimitRetries = 0;
+		loop.retryCount = 0;
 		startCountdown(loop, loop.intervalMs);
 		const token = loop.generation;
 		const tick = () => {
@@ -245,7 +255,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 				const resume = () => {
 					if (active !== loop || generation !== token) return;
 					loop.compacted = true;
-					loop.rateLimitRetries = 0;
+					loop.retryCount = 0;
 					loop.phase = "waiting";
 					updateStatus(loop.ctx);
 					// Run on a later tick: the compaction callback can fire while Pi
@@ -259,12 +269,12 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 						onError: (error) => {
 							if (active !== loop || generation !== token) return;
 							if (/^(Nothing to compact \(session too small\)|Already compacted)$/.test(error.message)) resume();
-							else if (isRateLimitError(error)) retryAfterRateLimit(loop, tick);
+							else if (isRateLimitError(error)) retryAfterFailure(loop, tick);
 							else stop(`Loop stopped: compaction failed (${error.message}).`, "failed");
 						},
 					});
 				} catch (error) {
-					if (isRateLimitError(error)) retryAfterRateLimit(loop, tick);
+					if (isRateLimitError(error)) retryAfterFailure(loop, tick);
 					else stop(`Loop stopped: compaction failed (${String(error)}).`, "failed");
 				}
 				return;
@@ -283,24 +293,6 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 		loop.failed = false;
 		updateStatus(loop.ctx);
 		let prompt = loop.prompt;
-		if (loop.returnToBase) {
-			const controller = new AbortController();
-			selecting = controller;
-			try {
-				const candidates = await listIssues(loop.ctx.cwd, controller.signal);
-				const claimScript = fileURLToPath(new URL("./claim-issue.mjs", import.meta.url));
-				const quotedScript = `'${claimScript.replace(/'/g, `'\\''`)}'`;
-				prompt = prompt
-					.replace(ISSUE_CANDIDATES_MARKER, candidates.length ? candidates.map((number) => `#${number}`).join(", ") : "none")
-					.replace(ISSUE_CLAIM_COMMAND_MARKER, `node ${quotedScript} ISSUE_NUMBER`);
-			} catch (error) {
-				if (active === loop && !controller.signal.aborted) stop(`Loop stopped: issue selection failed (${String(error)}).`, "failed");
-				return;
-			} finally {
-				if (selecting === controller) selecting = undefined;
-			}
-		}
-		if (loop.instruction) prompt += `\n\n## Additional instructions\n\n${loop.instruction}`;
 		const submit = () => {
 			timer = undefined;
 			if (active !== loop || loop.runs !== runId ||
@@ -318,12 +310,41 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 				if (active === loop && loop.phase === "running") stop("Loop stopped: the next turn did not start (check Pi errors/authentication).", "failed");
 			}, 60_000);
 			try {
-				pi.sendUserMessage(`${NON_INTERACTIVE_BANNER}\n\n${prompt}`);
+				const instruction = loop.instruction ? `\n\n## Additional instructions\n\n${loop.instruction}` : "";
+				pi.sendUserMessage(`${NON_INTERACTIVE_BANNER}\n\n${prompt}${instruction}`);
 			} catch (error) {
 				stop(`Loop stopped: unable to send prompt (${String(error)}).`, "failed");
 			}
 		};
-		submit();
+		async function selectAndSubmit() {
+			if (active !== loop || loop.runs !== runId) return;
+			loop.phase = "selecting";
+			updateStatus(loop.ctx);
+			const controller = new AbortController();
+			selecting = controller;
+			try {
+				const candidates = await listIssues(loop.ctx.cwd, controller.signal);
+				if (active !== loop || controller.signal.aborted) return;
+				const claimScript = fileURLToPath(new URL("./claim-issue.mjs", import.meta.url));
+				const quotedScript = `'${claimScript.replace(/'/g, `'\\''`)}'`;
+				prompt = loop.prompt
+					.replace(ISSUE_CANDIDATES_MARKER, candidates.length ? candidates.map((number) => `#${number}`).join(", ") : "none")
+					.replace(ISSUE_CLAIM_COMMAND_MARKER, `node ${quotedScript} ISSUE_NUMBER`);
+				loop.retryCount = 0;
+			} catch (error) {
+				if (active === loop && !controller.signal.aborted) {
+					if (isRateLimitError(error) || isTransientGitHubError(error)) {
+						retryAfterFailure(loop, () => { void selectAndSubmit(); }, isRateLimitError(error) ? "rate limited" : "GitHub unavailable");
+					} else stop(`Loop stopped: issue selection failed (${String(error)}).`, "failed");
+				}
+				return;
+			} finally {
+				if (selecting === controller) selecting = undefined;
+			}
+			submit();
+		}
+		if (loop.returnToBase) await selectAndSubmit();
+		else submit();
 	}
 
 	const loopCommand = {
@@ -372,7 +393,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 					return;
 				}
 			}
-			active = { ...options, instruction: instruction?.trim() || undefined, completionId: randomUUID(), runs: 0, phase: "running", compacted: false, rateLimitRetries: 0, generation: ++generation, returnToBase, ctx };
+			active = { ...options, instruction: instruction?.trim() || undefined, completionId: randomUUID(), runs: 0, phase: "running", compacted: false, retryCount: 0, generation: ++generation, returnToBase, ctx };
 			setLoopActive(true, ctx);
 			void run(active);
 		},
@@ -448,19 +469,20 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 		try {
 			verdict = await check(loop.condition!, loop.lastOutput!, ctx, controller.signal);
 		} catch (error) {
-			if (active === loop && !controller.signal.aborted && isRateLimitError(error)) {
-				retryAfterRateLimit(loop, () => {
+			if (active === loop && !controller.signal.aborted &&
+				(isRateLimitError(error) || (loop.returnToBase && isTransientGitHubError(error)))) {
+				retryAfterFailure(loop, () => {
 					if (active !== loop || controller.signal.aborted) return;
 					loop.phase = "checking";
 					updateStatus(ctx);
 					void evaluate(loop, ctx, controller);
-				});
+				}, isRateLimitError(error) ? "rate limited" : "GitHub unavailable");
 			} else if (active === loop) stop(`Loop stopped: completion check failed (${String(error)}).`, "failed");
 			return;
 		}
 		if (checker === controller) checker = undefined;
 		if (active !== loop || controller.signal.aborted) return;
-		loop.rateLimitRetries = 0;
+		loop.retryCount = 0;
 		if (verdict.done) {
 			const message = `Loop complete after ${loop.runs} run(s): ${verdict.evidence}`;
 			if (loop.returnToBase && hasLoopReturnToBase()) {
@@ -538,7 +560,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 			reportLoopCompletion(handoff.completionId ?? randomUUID(), "finished", ctx);
 			return;
 		}
-		active = { ...handoff, completionId: handoff.completionId ?? randomUUID(), compacted: false, rateLimitRetries: 0, generation: ++generation, ctx };
+		active = { ...handoff, completionId: handoff.completionId ?? randomUUID(), compacted: false, retryCount: 0, generation: ++generation, ctx };
 		setLoopActive(true, ctx);
 		if (active.phase === "waiting") schedule(active);
 		else updateStatus(ctx);

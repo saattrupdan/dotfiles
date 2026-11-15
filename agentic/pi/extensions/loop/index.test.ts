@@ -533,6 +533,151 @@ test("a user turn during issue selection cannot complete or duplicate the issue 
 	await h.command("stop");
 });
 
+test("a GitHub unexpected EOF pauses and retries selection without consuming another iteration", async () => {
+	let attempts = 0;
+	const h = harness(undefined, {
+		listIssues: async () => {
+			if (++attempts === 1) throw new Error('Command failed: gh api graphql\nPost "https://api.github.com/graphql": unexpected EOF');
+			return [17];
+		},
+	});
+	try {
+		await h.command("", "implement-all-issues");
+		assert.equal(isLoopActive(), true, "a dropped GitHub connection must not stop the loop");
+		assert.equal(h.sent.length, 0, "never guess candidates after a failed fetch");
+		assert.match(h.statuses.at(-1) ?? "", /GitHub unavailable.*1m/);
+		assert.equal(h.tick(), 60_000);
+		await settle();
+		assert.equal(attempts, 2);
+		assert.equal(h.sent.length, 1);
+		assert.match(h.sent[0] ?? "", /Fresh GitHub issue selection[\s\S]*?#17/);
+		await h.command("status");
+		assert.match(h.notices.at(-1) ?? "", /run 1,/);
+	} finally {
+		await h.command("stop");
+	}
+});
+
+for (const failure of [
+	new Error('Get "https://api.github.com/graphql": EOF'),
+	new Error("gh: Bad Gateway (HTTP 502)"),
+	new Error("gh: Service Unavailable (HTTP 503)"),
+	Object.assign(new Error("gh exited"), { stderr: "read: connection reset by peer" }),
+	Object.assign(new Error("gh exited"), { code: "ETIMEDOUT" }),
+	Object.assign(new Error("gh timed out"), { killed: true, signal: "SIGTERM" }),
+	new Error("API rate limit exceeded (HTTP 403)"),
+]) {
+	test(`transient GitHub selection failures wait rather than stop: ${failure.message}`, async () => {
+		const h = harness(undefined, { listIssues: async () => { throw failure; } });
+		try {
+			await h.command("", "implement-all-issues");
+			assert.equal(isLoopActive(), true);
+			assert.equal(h.sent.length, 0);
+			assert.equal(h.timers.size, 1);
+			assert.equal(h.intervals.size, 1);
+		} finally {
+			await h.command("stop");
+		}
+	});
+}
+
+for (const failure of ["gh: Bad credentials (HTTP 401)", "gh: Resource not accessible (HTTP 403)",
+	"GraphQL: syntax error", "GitHub omitted or returned invalid assignment or sub-issue completion counts.",
+	"Unexpected end of JSON input"]) {
+	test(`non-transient GitHub selection errors still fail closed: ${failure}`, async () => {
+		const h = harness(undefined, { listIssues: async () => { throw new Error(failure); } });
+		await h.command("", "implement-all-issues");
+		assert.equal(isLoopActive(), false);
+		assert.equal(h.sent.length, 0);
+		assert.equal(h.timers.size, 0);
+		assert.match(h.notices.at(-1) ?? "", /issue selection failed/);
+	});
+}
+
+test("persistent GitHub outages use capped backoff without incrementing the run counter", async () => {
+	let attempts = 0;
+	const h = harness(undefined, { listIssues: async () => { attempts++; throw new Error("unexpected EOF"); } });
+	try {
+		await h.command("", "implement-all-issues");
+		for (const delay of [60_000, 120_000, 240_000, 300_000, 300_000]) {
+			assert.equal(h.tick(), delay);
+			await settle();
+			assert.equal(isLoopActive(), true);
+		}
+		assert.equal(attempts, 6);
+		assert.equal(h.sent.length, 0);
+		await h.command("status");
+		assert.match(h.notices.at(-1) ?? "", /run 1,/);
+	} finally {
+		await h.command("stop");
+	}
+});
+
+for (const shutdown of [false, true]) {
+	test(`GitHub retry backoff is cancelled by ${shutdown ? "session shutdown" : "stop"}`, async () => {
+		let attempts = 0;
+		const h = harness(undefined, { listIssues: async () => { attempts++; throw new Error("unexpected EOF"); } });
+		await h.command("", "implement-all-issues");
+		const staleRetry = [...h.timers.values()][0]?.callback;
+		assert.ok(staleRetry);
+		if (shutdown) await h.emit("session_shutdown");
+		else await h.command("stop");
+		assert.equal(h.timers.size, 0);
+		assert.equal(h.intervals.size, 0);
+		staleRetry();
+		await settle();
+		assert.equal(attempts, 1);
+		assert.equal(h.sent.length, 0);
+		assert.equal(isLoopActive(), false);
+	});
+}
+
+test("stopping a retried in-flight GitHub fetch aborts it and discards a late response", async () => {
+	let attempts = 0;
+	let signal: AbortSignal | undefined;
+	let resolveSelection: ((issues: number[]) => void) | undefined;
+	const h = harness(undefined, { listIssues: async (_cwd, nextSignal) => {
+		if (++attempts === 1) throw new Error("unexpected EOF");
+		signal = nextSignal;
+		return new Promise<number[]>((resolve) => { resolveSelection = resolve; });
+	} });
+	await h.command("", "implement-all-issues");
+	h.tick();
+	await settle();
+	assert.equal(signal?.aborted, false);
+	await h.command("stop");
+	assert.equal(signal?.aborted, true);
+	resolveSelection?.([42]);
+	await settle();
+	assert.equal(h.sent.length, 0);
+	assert.equal(h.timers.size, 0);
+});
+
+test("GitHub outages during completion checking retry the check, not the implementation", async () => {
+	let checks = 0;
+	let selections = 0;
+	const h = harness(async () => {
+		if (++checks === 1) throw new Error("unexpected EOF");
+		return { done: true, evidence: "no actionable issues remain" };
+	}, { listIssues: async () => {
+		if (++selections === 1) throw new Error("unexpected EOF");
+		return [42];
+	} });
+	await h.command("", "implement-all-issues");
+	assert.equal(h.tick(), 60_000);
+	await settle();
+	await h.finish("PR created");
+	assert.equal(isLoopActive(), true);
+	assert.match(h.statuses.at(-1) ?? "", /GitHub unavailable/);
+	assert.equal(h.tick(), 60_000, "successful selection resets the retry backoff");
+	await settle();
+	assert.equal(checks, 2);
+	assert.equal(selections, 2);
+	assert.equal(h.sent.length, 1);
+	assert.equal(isLoopActive(), false);
+	assert.match(h.notices.at(-1) ?? "", /Loop complete after 1 run/);
+});
+
 test("GitHub selection errors stop the issue loop without guessing a parent", async () => {
 	const h = harness(undefined, {
 		listIssues: async () => { throw new Error("GitHub sub-issues unavailable"); },
