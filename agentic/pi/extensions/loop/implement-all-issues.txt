@@ -9,6 +9,9 @@ Fresh GitHub issue selection (unassigned leaves and parents with all children cl
 
 - Select only from these issue numbers, except a new leaf sub-issue you create
   from a listed issue during this run. Verify GitHub's parent/sub-issue relationship.
+- Recheck documented unblock conditions before skipping a blocked issue. A blocker
+  label is not a permanent exclusion: once resolved, the issue can be selected again.
+  Do not repeatedly claim or re-comment while the documented blocker is unchanged.
 - A parent with open children must wait. A parent whose children are all closed
   is eligible: inspect its full requirements and the children's implementations
   and merged PRs to determine whether anything remains. Closed children alone
@@ -18,9 +21,11 @@ Fresh GitHub issue selection (unassigned leaves and parents with all children cl
 - If a crucial architectural decision is unresolved, leave the issue unassigned.
   Add a comment specifying the decision needed unless already documented. Apply
   the repo's existing standard label for issues blocked by a decision; if none
-  exists, create a decision-blocked label and apply it. Try another issue.
+  exists, create a decision-blocked label and apply it. End this iteration normally;
+  the loop will check for other actionable issues and start the next iteration.
 - For other unclear requirements, comment with the specific clarification needed,
-  leave the issue unassigned, and try another issue.
+  apply an appropriate blocker label, leave the issue unassigned, and end this
+  iteration normally as described in Issue-specific blockers below.
 - If too complex, break it into actionable sub-issues linked to the original
   issue as their parent. Reuse existing sub-issues rather than duplicating them.
   Leave the parent unassigned and choose only one actionable leaf sub-issue.
@@ -45,8 +50,9 @@ ISSUE_NUMBER with the chosen positive issue number:
   this session's ownership: skip that issue.
 - Only exit 0 AND JSON status claimed for the selected issue permits implementation.
 - Exit 3 (unavailable) or 4 (busy): choose another fresh candidate without changing
-  its assignment or lock. Any other failure or uncertain result: stop and report
-  it using the blocked outcome below; do not implement or retry assignment.
+  its assignment or lock. For any other failure or uncertain result, do not
+  implement or retry assignment. Record the issue-specific blocker below and end
+  this iteration normally; never bypass or clear an uncertain claim.
 - Never delete or expire a busy/retained lock automatically. Recovery requires
   confirming its owning session has stopped.
 - Claim only one issue per iteration, including newly created leaf sub-issues.
@@ -88,7 +94,8 @@ ISSUE_NUMBER with the chosen positive issue number:
   review-round limit. If source changes after a clean review, check and review the
   updated commit before publishing.
 - If a reviewer is unavailable or a finding cannot be resolved safely without a
-  user decision, use the blocked outcome below. Do not publish or advance.
+  user decision, record an issue-specific blocker and end this iteration normally.
+  Do not publish or close that issue without the required clean review.
 
 ## 5. Publish the result
 
@@ -110,24 +117,47 @@ ISSUE_NUMBER with the chosen positive issue number:
   resources you can identify as belonging to this iteration; never stop unrelated
   processes or delete pre-existing apps, user data, or another session's resources.
 - Preserve PR evidence and any required deliverables. Verify owned temporary
-  resources are gone; if cleanup fails, report it using the blocked outcome below.
+  resources are gone; if cleanup fails, document the remaining resources as an
+  issue-specific blocker. Do not hide cleanup failures or touch unrelated resources.
 - After successful publication and cleanup, confirm any changes are committed and
   pushed, return to the base checkout, and discard only the task's local feature
   branch and worktree, if created. Keep the remote branch and PR intact and preserve
   unrelated local changes. Close-only tasks must not create branches/worktrees just
   to clean them up. Follow repository rules when they prohibit branches/worktrees.
-- If blocked, preserve the task's checkout, branch, and issue claim for recovery;
-  clean up only disposable runtime resources. Do not advance to another issue.
+- If blocked after starting implementation, preserve unfinished work in its feature
+  branch/worktree, but release this iteration's issue assignment as described below.
+  Commit a checkpoint if needed for the automatic return to base; never discard
+  unfinished changes or delete a blocked task's branch/worktree. Clean up only
+  disposable runtime resources and leave unrelated local changes untouched.
 
-## Blocked outcome
+## Issue-specific blockers
 
-If a claim has an error/uncertain result, or implementation, review, publication,
-or cleanup cannot finish safely:
+A blocker belongs to the issue, not the whole loop. If a claim, implementation,
+review, publication, or cleanup cannot finish safely:
 
-- Clean up owned disposable runtime resources as described above.
-- Explain the blocker and any resources that could not be cleaned up.
-- End your final response with PI_IMPLEMENT_ALL_ISSUES_BLOCKED on its own line.
+- Leave the issue open. Add a comment with the exact blocker, the decision or action
+  needed to unblock it, evidence/progress so far, and any retained work or resources.
+  Update an existing blocker comment rather than repeating unchanged information.
+- Apply the repository's appropriate blocker label. Use its standard decision
+  blocker label for unresolved decisions/permissions; if none exists, create and
+  apply decision-blocked. For other blockers use the existing general blocker
+  label, or create and apply blocked if needed.
+- If this iteration successfully claimed the issue, remove the authenticated user's
+  assignment added by that claim and verify it was removed. Blocked issues must not
+  stay assigned to this session; other agents must be able to reassess them later.
+  An issue never claimed by this iteration stays unassigned.
+- Remove only this iteration's confirmed assignment. Never take over or remove
+  another session's assignment or lock, including a pre-existing @me assignment.
+  An uncertain claim is not proof of ownership: do not clear its lock or guess whose
+  assignment to remove. Document the uncertainty and any recovery needed.
+- If GitHub is unavailable or unassignment fails, report exactly which comment,
+  label, or assignment updates could not be made instead of claiming success.
+- Clean up owned disposable runtime resources and preserve unfinished work as above.
+- End this iteration normally with a concise blocker report. Do not call /loop stop,
+  request that the whole loop stop, emit a special stop token, or treat the issue as
+  implemented. The loop's normal --until check decides whether actionable issues
+  remain and starts the next iteration when they do.
 
-This marks the iteration failed and stops the loop before completion checking or
-branch cleanup. Do not report successful completion. Busy/unavailable candidates
-alone are not terminal failures; try another fresh candidate instead.
+Only when no actionable unassigned issue remains should the loop finish. A single
+blocked issue must not prevent the loop from working on other eligible issues.
+Busy/unavailable candidates alone are not blockers; try another fresh candidate.

@@ -25,7 +25,6 @@ const COMPACTION_INSTRUCTIONS =
 	"Summarize this loop's goal, constraints, work completed, failed attempts, current file state, " +
 	"and the next concrete step. Keep the summary brief but retain information needed by the next iteration.";
 const USAGE = "Usage: /loop [1h2m3s] [--max-runs N] <prompt|file.txt> [--until <condition>] | /loop status | /loop stop";
-const ISSUE_BLOCKED_MARKER = "PI_IMPLEMENT_ALL_ISSUES_BLOCKED";
 const ISSUE_CANDIDATES_MARKER = "{{PI_ISSUE_CANDIDATES}}";
 const ISSUE_CLAIM_COMMAND_MARKER = "{{PI_ISSUE_CLAIM_COMMAND}}";
 
@@ -495,10 +494,6 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 		}
 		if (loop.failed || loop.lastOutput === undefined) {
 			stop("Loop stopped: iteration failed or was interrupted.", loop.aborted ? undefined : "failed");
-			return;
-		}
-		if (loop.returnToBase && loop.lastOutput.split(/\r?\n/).some((line) => line.trim() === ISSUE_BLOCKED_MARKER)) {
-			stop("Loop stopped: issue claim, implementation, review, publication, or cleanup is blocked; the current checkout and claim are preserved. See the iteration's blocker report.", "failed");
 			return;
 		}
 		if (loop.condition) {

@@ -329,7 +329,7 @@ test("implement-all-issues starts the same loop with its issue prompt and finish
 	const stages = [
 		"## 1. Select and triage", "## 2. Claim before starting work",
 		"## 3. Verify what remains, then implement if needed", "## 4. Review until clean",
-		"## 5. Publish the result", "## 6. Clean up before advancing", "## Blocked outcome",
+		"## 5. Publish the result", "## 6. Clean up before advancing", "## Issue-specific blockers",
 	];
 	let previous = -1;
 	for (const heading of stages) {
@@ -381,9 +381,21 @@ test("implement-all-issues starts the same loop with its issue prompt and finish
 	assert.match(prompt, /Preserve PR evidence and any required deliverables/);
 	assert.match(prompt, /Verify owned temporary\n {2}resources are gone/);
 	assert.match(prompt, /Keep the remote branch and PR intact/);
-	assert.match(prompt, /If blocked, preserve the task's checkout, branch, and issue claim/);
-	assert.match(prompt, /End your final response with PI_IMPLEMENT_ALL_ISSUES_BLOCKED on its own line/);
-	assert.match(prompt, /implementation, review, publication,\nor cleanup cannot finish safely/);
+	assert.match(prompt, /If blocked after starting implementation, preserve unfinished work/);
+	assert.match(prompt, /A blocker belongs to the issue, not the whole loop/);
+	assert.match(prompt, /Add a comment with the exact blocker/);
+	assert.match(prompt, /Apply the repository's appropriate blocker label/);
+	assert.match(prompt, /Recheck documented unblock conditions before skipping a blocked issue/);
+	assert.match(prompt, /A blocker\n {2}label is not a permanent exclusion/);
+	assert.match(prompt, /remove the authenticated user's\n {2}assignment added by that claim and verify it was removed/);
+	assert.match(prompt, /Blocked issues must not\n {2}stay assigned to this session/);
+	assert.match(prompt, /Remove only this iteration's confirmed assignment/);
+	assert.match(prompt, /including a pre-existing @me assignment/);
+	assert.match(prompt, /An uncertain claim is not proof of ownership/);
+	assert.match(prompt, /End this iteration normally with a concise blocker report/);
+	assert.match(prompt, /The loop's normal --until check decides whether actionable issues/);
+	assert.match(prompt, /A single\nblocked issue must not prevent the loop from working on other eligible issues/);
+	assert.doesNotMatch(prompt, /PI_IMPLEMENT_ALL_ISSUES_BLOCKED|marks the iteration failed/);
 	await h.finish();
 	assert.equal(checks.length, 1);
 	assert.match(checks[0]!, /^No actionable unassigned issues remain:/);
@@ -412,7 +424,7 @@ for (const remote of [false, true]) {
 				assert.ok(prompt.endsWith(`\n\n## Additional instructions\n\n${instruction}`));
 				assert.equal(prompt.split(instruction).length, 2);
 				assert.equal(prompt.match(/^## Additional instructions$/gm)?.length, 1);
-				assert.ok(prompt.indexOf("## Additional instructions") > prompt.indexOf("## Blocked outcome"));
+				assert.ok(prompt.indexOf("## Additional instructions") > prompt.indexOf("## Issue-specific blockers"));
 				assert.ok(prompt.indexOf("Fresh GitHub issue selection") < prompt.indexOf(instruction));
 				assert.match(prompt, /node .*claim-issue\.mjs/);
 				assert.match(prompt, /## 4\. Review until clean[\s\S]*NEW reviewer subagent/);
@@ -426,36 +438,39 @@ for (const remote of [false, true]) {
 }
 
 for (const blocker of ["Claim response was lost", "Reviewer is unavailable", "A review finding needs a user decision", "Temporary app cleanup failed"]) {
-	test(`an issue blocker stops before completion checking or advancing: ${blocker}`, async () => {
+	test(`an issue blocker ends only its iteration and allows the next issue: ${blocker}`, async () => {
 		let checks = 0;
+		let selections = 0;
 		const outcomes: string[] = [];
 		const unsubscribe = onLoopCompletion("issue-blocker-test", (completion) => { outcomes.push(completion.outcome); });
 		const h = harness(async () => {
 			checks++;
-			return { done: true, evidence: "no unassigned issues remain" };
-		});
+			return { done: checks > 1, evidence: checks > 1 ? "only documented blocked issues remain" : "another issue remains" };
+		}, { contextTokens: 2_000, listIssues: async () => { selections++; return [2, 4]; } });
 		try {
 			await h.command("", "implement-all-issues");
-			await h.finish(`${blocker}\nPI_IMPLEMENT_ALL_ISSUES_BLOCKED`);
-			assert.equal(checks, 0, "an assigned unfinished issue must not become successful completion");
-			assert.equal(h.sent.length, 1);
-			assert.equal(h.timers.size, 0, "a blocked iteration must not schedule another issue");
+			// Previously started sessions may still include the retired marker in prose.
+			await h.finish(`${blocker}. Commented on #2, applied its blocker label, and removed this session's assignment.\nPI_IMPLEMENT_ALL_ISSUES_BLOCKED`);
+			assert.equal(checks, 1, "issue-specific blockers must still reach completion checking");
+			assert.equal(isLoopActive(), true, "another actionable issue keeps the loop running");
+			assert.deepEqual(outcomes, [], "a blocked issue must not report a loop failure");
+			h.tick();
+			h.tick();
+			await Promise.resolve();
+			assert.equal(h.sent.length, 2);
+			assert.equal(selections, 2);
+			assert.match(h.sent[1] ?? "", /Fresh GitHub issue selection[\s\S]*?#2, #4/);
+			await h.finish("The next issue was delivered; the other issue's blocker is documented.");
+			assert.equal(checks, 2);
 			assert.equal(isLoopActive(), false);
-			assert.deepEqual(outcomes, ["failed"]);
-			assert.match(h.notices.at(-1) ?? "", /Loop stopped:.*blocked.*checkout and claim are preserved/);
+			assert.deepEqual(outcomes, ["finished"]);
+			assert.equal(h.timers.size, 0);
 		} finally {
 			unsubscribe();
 			await h.command("stop");
 		}
 	});
 }
-
-test("ordinary loops do not interpret the issue-only blocked marker", async () => {
-	const h = harness();
-	await h.command("--max-runs 1 echo a marker");
-	await h.finish("PI_IMPLEMENT_ALL_ISSUES_BLOCKED");
-	assert.match(h.notices.at(-1) ?? "", /Loop complete after 1 run/);
-});
 
 test("blank instructions preserve the default issue prompt", async () => {
 	const h = harness();
