@@ -325,27 +325,58 @@ test("implement-all-issues starts the same loop with its issue prompt and finish
 	await h.command("", "implement-all-issues");
 	assert.equal(h.sent.length, 1);
 	const prompt = h.sent[0]!;
-	assert.match(prompt, /^Find an unassigned issue for this repo\. Before assigning it/);
-	assert.match(prompt, /Fresh GitHub issue selection.*#2, #4.*Parents with sub-issues are excluded/);
-	assert.match(prompt, /crucial architectural decision.*do not assign or implement.*comment specifying the decision needed/);
-	assert.match(prompt, /existing standard label for issues blocked by a decision.*create a decision-blocked label and apply it/);
-	assert.match(prompt, /break it into actionable sub-issues linked to the original issue as their parent/);
-	assert.match(prompt, /choose only one actionable sub-issue for this run/);
-	assert.match(prompt, /claim it using the mandatory claim command.*status claimed.*create a feature branch.*independent review.*create a PR on it where you assign me/);
-	assert.match(prompt, /Mandatory claim command: run node '[^\n]+claim-issue\.mjs' ISSUE_NUMBER.*ONE bash tool call/);
-	assert.match(prompt, /Never split the check and assignment.*even to @me, belongs to another session/);
-	assert.match(prompt, /Exit 3 \(unavailable\) or 4 \(busy\).*choose another fresh candidate/);
-	assert.match(prompt, /Any other failure or uncertain result means stop/);
+	assert.match(prompt, /^# Implement one issue per iteration\n/);
+	const stages = [
+		"## 1. Select and triage", "## 2. Claim before starting work",
+		"## 3. Implement and test", "## 4. Review until clean",
+		"## 5. Publish the PR", "## 6. Clean up before advancing", "## Blocked outcome",
+	];
+	let previous = -1;
+	for (const heading of stages) {
+		const position = prompt.indexOf(heading);
+		assert.ok(position > previous, `missing or out-of-order stage: ${heading}`);
+		previous = position;
+	}
+	assert.doesNotMatch(prompt, /\{\{PI_ISSUE_/);
+	const template = await readFile(new URL("./implement-all-issues.txt", import.meta.url), "utf8");
+	const claimCommand = prompt.match(/^node '[^\n]+claim-issue\.mjs' ISSUE_NUMBER$/m)?.[0];
+	assert.ok(claimCommand);
+	assert.equal(prompt, template
+		.replace("{{PI_ISSUE_CANDIDATES}}", "#2, #4")
+		.replace("{{PI_ISSUE_CLAIM_COMMAND}}", claimCommand));
+	assert.match(prompt, /Fresh GitHub issue selection.*#2, #4/);
+	assert.match(prompt, /Parents with sub-issues are excluded even\n/);
+	assert.match(prompt, /comment specifying the decision needed/);
+	assert.match(prompt, /existing standard label for issues blocked by a decision/);
+	assert.match(prompt, /create a decision-blocked label and apply it/);
+	assert.match(prompt, /sub-issues linked to the original\n {2}issue as their parent/);
+	assert.match(prompt, /choose only one actionable leaf sub-issue/);
+	assert.match(prompt, /ONE bash tool call/);
+	assert.match(prompt, /\n```sh\nnode '[^\n]+claim-issue\.mjs' ISSUE_NUMBER\n```/);
+	assert.match(prompt, /even to @me, is not\n {2}this session's ownership/);
+	assert.match(prompt, /Only exit 0 AND JSON status claimed/);
+	assert.match(prompt, /Exit 3 \(unavailable\) or 4 \(busy\)/);
 	assert.match(prompt, /Never delete or expire a busy\/retained lock automatically/);
-	assert.match(prompt, /Only exit 0 AND JSON status claimed.*permits implementation/);
-	assert.match(prompt, /including newly created leaf sub-issues; never reuse a previous iteration's claim/);
-	assert.match(prompt, /Before creating the PR, run a mandatory review-fix-review loop/);
-	assert.match(prompt, /fix every actionable finding \(including nits\).*commit the fixes/);
-	assert.match(prompt, /invoke a NEW reviewer subagent on the updated complete implementation/);
-	assert.match(prompt, /Repeat with a new reviewer.*no remaining findings or changes needed/);
-	assert.match(prompt, /LGTM with nits is not a clean result/);
-	assert.match(prompt, /reviewer is unavailable, stop and report the blocker/);
-	assert.match(prompt, /end your final response with PI_IMPLEMENT_ALL_ISSUES_BLOCKED on its own line/);
+	assert.match(prompt, /Never reuse a previous iteration's claim/);
+	assert.equal(prompt.match(/Invoke one independent reviewer subagent/g)?.length, 1);
+	const beforeReview = prompt.slice(0, prompt.indexOf("## 4. Review until clean"));
+	assert.doesNotMatch(beforeReview, /independent review|reviewer subagent/);
+	assert.match(prompt, /no additional review is needed for an unchanged clean commit/);
+	assert.match(prompt, /fix every actionable finding, including nits/);
+	assert.match(prompt, /Invoke a NEW reviewer subagent on the updated complete implementation/);
+	assert.match(prompt, /Repeat steps 2–3 until clean/);
+	assert.match(prompt, /LGTM with nits is not clean/);
+	assert.match(prompt, /Stop and remove temporary testing applications, dev\/test servers, containers/);
+	assert.match(prompt, /browser sessions\/profiles, disposable databases\/test data, and scratch files/);
+	assert.match(prompt, /including resources created by subagents/);
+	assert.match(prompt, /Perform this runtime cleanup on failure or interruption too/);
+	assert.match(prompt, /never stop unrelated\n {2}processes or delete pre-existing apps, user data, or another session's resources/);
+	assert.match(prompt, /Preserve PR evidence and any required deliverables/);
+	assert.match(prompt, /Verify owned temporary\n {2}resources are gone/);
+	assert.match(prompt, /Keep the remote branch and PR intact/);
+	assert.match(prompt, /If blocked, preserve the task's checkout, branch, and issue claim/);
+	assert.match(prompt, /End your final response with PI_IMPLEMENT_ALL_ISSUES_BLOCKED on its own line/);
+	assert.match(prompt, /implementation, review, publication,\nor cleanup cannot finish safely/);
 	await h.finish();
 	assert.equal(checks.length, 1);
 	assert.match(checks[0]!, /^No actionable unassigned issues remain:/);
@@ -374,8 +405,8 @@ for (const remote of [false, true]) {
 				assert.ok(prompt.endsWith(`\n\n${instruction}`));
 				assert.equal(prompt.split(instruction).length, 2);
 				assert.ok(prompt.indexOf("Fresh GitHub issue selection") < prompt.indexOf(instruction));
-				assert.match(prompt, /Mandatory claim command: run node.*claim-issue\.mjs/);
-				assert.match(prompt, /mandatory review-fix-review loop.*NEW reviewer subagent/);
+				assert.match(prompt, /node .*claim-issue\.mjs/);
+				assert.match(prompt, /## 4\. Review until clean[\s\S]*NEW reviewer subagent/);
 			}
 			assert.match(checks[0]!, /^No actionable unassigned issues remain:/);
 			assert.ok(!checks[0]!.includes(instruction));
@@ -385,7 +416,7 @@ for (const remote of [false, true]) {
 	});
 }
 
-for (const blocker of ["Claim response was lost", "Reviewer is unavailable", "A review finding needs a user decision"]) {
+for (const blocker of ["Claim response was lost", "Reviewer is unavailable", "A review finding needs a user decision", "Temporary app cleanup failed"]) {
 	test(`an issue blocker stops before completion checking or advancing: ${blocker}`, async () => {
 		let checks = 0;
 		const outcomes: string[] = [];
@@ -562,7 +593,7 @@ test("issue loop returns to main after a PR and starts the next issue there", as
 		main.tick(); // next issue fetches fresh candidates back on main
 		await Promise.resolve();
 		assert.equal(main.sent.length, 1);
-		assert.match(main.sent[0] ?? "", /^Find an unassigned issue for this repo/);
+		assert.match(main.sent[0] ?? "", /^# Implement one issue per iteration/);
 		assert.ok(main.sent[0]!.endsWith(`\n\n${instruction}`));
 		await main.command("stop");
 	} finally {

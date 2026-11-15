@@ -26,18 +26,8 @@ const COMPACTION_INSTRUCTIONS =
 	"and the next concrete step. Keep the summary brief but retain information needed by the next iteration.";
 const USAGE = "Usage: /loop [1h2m3s] [--max-runs N] <prompt|file.txt> [--until <condition>] | /loop status | /loop stop";
 const ISSUE_BLOCKED_MARKER = "PI_IMPLEMENT_ALL_ISSUES_BLOCKED";
-const ALL_ISSUES_PROMPT = [
-	"Find an unassigned issue for this repo. Before assigning it, decide whether its implementation is clear, no crucial architectural decisions remain unresolved, and it fits in one reasonably scoped PR.",
-	"If a crucial architectural decision must be made first, do not assign or implement that issue. If the issue does not already identify the decision as a blocker, add a comment specifying the decision needed. Apply the repo's existing standard label for issues blocked by a decision; if no such label exists, create a decision-blocked label and apply it. Then move to another unassigned issue.",
-	"If the implementation is unclear for another reason, comment with the specific clarification needed, leave it unassigned, and move to another issue.",
-	"If the issue is too complex, break it into actionable sub-issues linked to the original issue as their parent. Reuse existing sub-issues rather than duplicating them, leave the parent unassigned, and choose only one actionable sub-issue for this run. In later iterations never select or implement an unassigned parent with sub-issues; continue with its unassigned leaf sub-issues instead.",
-	"Once you have one clear, decision-ready, manageable issue, claim it using the mandatory claim command below. Only after that command exits 0 with status claimed for that issue may you create a feature branch where you fully implement it, ensure all checks and tests pass as well as an independent review, take screenshots or create a small video demonstrating the feature if it's visual, and create a PR on it where you assign me. Copy all GitHub labels from the issue to the PR.",
-	"Before creating the PR, run a mandatory review-fix-review loop: invoke an independent reviewer subagent on the complete implementation at the current commit, fix every actionable finding (including nits), run the relevant checks, and commit the fixes. After any fixes, invoke a NEW reviewer subagent on the updated complete implementation, carrying forward the previous findings and how they were addressed. Repeat with a new reviewer after every fix round until the latest reviewer explicitly reports no remaining findings or changes needed. LGTM with nits is not a clean result for this command: address the nits and re-review. Never substitute a self-review, skip a re-review, impose an arbitrary review-round limit, or create the PR/advance to another issue before a clean independent review of the final commit. If a finding cannot be resolved safely without a user decision or a reviewer is unavailable, stop and report the blocker rather than claiming completion.",
-	"After creating the PR, confirm all implementation changes are committed and pushed, return to the base checkout, and discard the task's local feature branch and worktree. Keep the remote branch and PR intact, and preserve unrelated local changes.",
-	"If no actionable unassigned issue remains, report the blockers and do not claim that blocked issues were implemented.",
-	`If a claim fails or has an uncertain result, or implementation/review cannot finish safely (including an unavailable reviewer or unresolved review finding), end your final response with ${ISSUE_BLOCKED_MARKER} on its own line and explain the blocker. This is a terminal failed iteration: do not advance to another issue or report successful completion. Busy/unavailable candidates alone are not terminal failures; try another fresh candidate.`,
-].join(" ");
-
+const ISSUE_CANDIDATES_MARKER = "{{PI_ISSUE_CANDIDATES}}";
+const ISSUE_CLAIM_COMMAND_MARKER = "{{PI_ISSUE_CLAIM_COMMAND}}";
 
 export interface LoopOptions {
 	intervalMs: number;
@@ -299,10 +289,11 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 			selecting = controller;
 			try {
 				const candidates = await listIssues(loop.ctx.cwd, controller.signal);
-				prompt += `\n\nFresh GitHub issue selection (unassigned issues with no sub-issues): ${candidates.length ? candidates.map((number) => `#${number}`).join(", ") : "none"}. Select only from these issue numbers, except a new leaf sub-issue you create from a listed issue during this run. Parents with sub-issues are excluded even when they remain open and unassigned. Verify the parent/sub-issue relationship before assigning; do not select a parent by browsing around this list.`;
 				const claimScript = fileURLToPath(new URL("./claim-issue.mjs", import.meta.url));
 				const quotedScript = `'${claimScript.replace(/'/g, `'\\''`)}'`;
-				prompt += `\n\nMandatory claim command: run node ${quotedScript} ISSUE_NUMBER from this repository checkout, replacing ISSUE_NUMBER with the chosen positive issue number, in ONE bash tool call. This command acquires an atomic GitHub-side per-issue lock, freshly checks that the issue is open, unassigned, and has no sub-issues, assigns the authenticated user, verifies the assignment, and releases the lock in that same invocation. Never split the check and assignment into separate commands or bypass the helper with gh issue edit/API calls. An existing assignment, even to @me, belongs to another session: do not implement it. Exit 3 (unavailable) or 4 (busy) means choose another fresh candidate without changing its assignment or lock. Any other failure or uncertain result means stop and report it, not implement or retry assignment. Never delete or expire a busy/retained lock automatically; recovery requires confirming its owning session has stopped. Only exit 0 AND JSON status claimed for the selected issue permits implementation. Claim only one issue per iteration, including newly created leaf sub-issues; never reuse a previous iteration's claim or treat an earlier assignment as ownership.`;
+				prompt = prompt
+					.replace(ISSUE_CANDIDATES_MARKER, candidates.length ? candidates.map((number) => `#${number}`).join(", ") : "none")
+					.replace(ISSUE_CLAIM_COMMAND_MARKER, `node ${quotedScript} ISSUE_NUMBER`);
 			} catch (error) {
 				if (active === loop && !controller.signal.aborted) stop(`Loop stopped: issue selection failed (${String(error)}).`, "failed");
 				return;
@@ -392,7 +383,8 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 	const allIssuesCommand = {
 		description: "Implement unassigned repository issues until none are left, with an optional instruction for every iteration",
 		async handler(args: string, ctx: ExtensionContext) {
-			await loopCommand.handler(`${ALL_ISSUES_PROMPT} --until ${ISSUE_CONDITION}`, ctx, true, args);
+			const promptFile = fileURLToPath(new URL("./implement-all-issues.txt", import.meta.url));
+			await loopCommand.handler(`${JSON.stringify(promptFile)} --until ${ISSUE_CONDITION}`, ctx, true, args);
 		},
 	};
 	pi.registerCommand("implement-all-issues", allIssuesCommand);
@@ -506,7 +498,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 			return;
 		}
 		if (loop.returnToBase && loop.lastOutput.split(/\r?\n/).some((line) => line.trim() === ISSUE_BLOCKED_MARKER)) {
-			stop("Loop stopped: issue claim, implementation, or review is blocked; the current checkout and claim are preserved. See the iteration's blocker report.", "failed");
+			stop("Loop stopped: issue claim, implementation, review, publication, or cleanup is blocked; the current checkout and claim are preserved. See the iteration's blocker report.", "failed");
 			return;
 		}
 		if (loop.condition) {

@@ -1,0 +1,112 @@
+# Implement one issue per iteration
+
+Complete the stages below for one issue before advancing to another.
+
+## 1. Select and triage
+
+Fresh GitHub issue selection (unassigned issues with no sub-issues): {{PI_ISSUE_CANDIDATES}}.
+
+- Select only from these issue numbers, except a new leaf sub-issue you create
+  from a listed issue during this run. Parents with sub-issues are excluded even
+  when open and unassigned; verify GitHub's parent/sub-issue relationship.
+- Before assigning, confirm the implementation is clear, no crucial architectural
+  decision remains unresolved, and the work fits one reasonably scoped PR.
+- If a crucial architectural decision is unresolved, leave the issue unassigned.
+  Add a comment specifying the decision needed unless already documented. Apply
+  the repo's existing standard label for issues blocked by a decision; if none
+  exists, create a decision-blocked label and apply it. Try another issue.
+- For other unclear requirements, comment with the specific clarification needed,
+  leave the issue unassigned, and try another issue.
+- If too complex, break it into actionable sub-issues linked to the original
+  issue as their parent. Reuse existing sub-issues rather than duplicating them.
+  Leave the parent unassigned and choose only one actionable leaf sub-issue.
+- If no actionable unassigned issue remains, report the blockers. Do not claim
+  that blocked issues were implemented.
+
+## 2. Claim before starting work
+
+Run this command in ONE bash tool call from this repository checkout, replacing
+ISSUE_NUMBER with the chosen positive issue number:
+
+```sh
+{{PI_ISSUE_CLAIM_COMMAND}}
+```
+
+- The helper acquires an atomic GitHub-side per-issue lock, freshly checks that
+  the issue is open, unassigned, and has no sub-issues, assigns the authenticated
+  user, verifies the assignment, and releases the lock in that same invocation.
+- Never split the check and assignment or bypass the helper with gh issue edit
+  or direct assignment API calls. An existing assignment, even to @me, is not
+  this session's ownership: skip that issue.
+- Only exit 0 AND JSON status claimed for the selected issue permits implementation.
+- Exit 3 (unavailable) or 4 (busy): choose another fresh candidate without changing
+  its assignment or lock. Any other failure or uncertain result: stop and report
+  it using the blocked outcome below; do not implement or retry assignment.
+- Never delete or expire a busy/retained lock automatically. Recovery requires
+  confirming its owning session has stopped.
+- Claim only one issue per iteration, including newly created leaf sub-issues.
+  Never reuse a previous iteration's claim or treat an earlier assignment as yours.
+
+## 3. Implement and test
+
+- After a confirmed claim, create a feature branch and fully implement the issue,
+  following repository rules. Run the relevant checks and tests until they pass.
+- Track the temporary resources you create so cleanup can distinguish them from
+  pre-existing user resources and resources owned by other sessions.
+- For visual changes, capture screenshots or a short video of the actual feature
+  for the PR. Preserve that evidence before removing temporary test resources.
+- Commit the complete implementation before requesting review.
+
+## 4. Review until clean
+
+1. Invoke one independent reviewer subagent on the complete implementation at the
+   current commit. If it reports no remaining findings or changes needed, proceed
+   to publishing; no additional review is needed for an unchanged clean commit.
+2. Otherwise, fix every actionable finding, including nits, run the relevant
+   checks, clean up resources created for that fix round, and commit the fixes.
+3. Invoke a NEW reviewer subagent on the updated complete implementation. Include
+   the previous findings and how they were addressed. Repeat steps 2–3 until clean.
+
+- LGTM with nits is not clean: address the nits and re-review.
+- Do not substitute self-review, skip re-review after fixes, or impose an arbitrary
+  review-round limit. If source changes after a clean review, check and review the
+  updated commit before publishing.
+- If a reviewer is unavailable or a finding cannot be resolved safely without a
+  user decision, use the blocked outcome below. Do not publish or advance.
+
+## 5. Publish the PR
+
+- Only after checks pass and the final commit has a clean independent review,
+  push all implementation commits and create the PR. Assign me to the PR and copy
+  all GitHub labels from the issue to it. Include visual evidence when applicable.
+- Verify the PR and remote branch contain the reviewed commits.
+
+## 6. Clean up before advancing
+
+- Stop and remove temporary testing applications, dev/test servers, containers,
+  browser sessions/profiles, disposable databases/test data, and scratch files
+  created by this iteration, including resources created by subagents.
+- Perform this runtime cleanup on failure or interruption too. Remove only
+  resources you can identify as belonging to this iteration; never stop unrelated
+  processes or delete pre-existing apps, user data, or another session's resources.
+- Preserve PR evidence and any required deliverables. Verify owned temporary
+  resources are gone; if cleanup fails, report it using the blocked outcome below.
+- After successful publication and cleanup, confirm all changes are committed and
+  pushed, return to the base checkout, and discard only the task's local feature
+  branch and worktree. Keep the remote branch and PR intact and preserve unrelated
+  local changes. Follow repository rules when they prohibit branches/worktrees.
+- If blocked, preserve the task's checkout, branch, and issue claim for recovery;
+  clean up only disposable runtime resources. Do not advance to another issue.
+
+## Blocked outcome
+
+If a claim has an error/uncertain result, or implementation, review, publication,
+or cleanup cannot finish safely:
+
+- Clean up owned disposable runtime resources as described above.
+- Explain the blocker and any resources that could not be cleaned up.
+- End your final response with PI_IMPLEMENT_ALL_ISSUES_BLOCKED on its own line.
+
+This marks the iteration failed and stops the loop before completion checking or
+branch cleanup. Do not report successful completion. Busy/unavailable candidates
+alone are not terminal failures; try another fresh candidate instead.
