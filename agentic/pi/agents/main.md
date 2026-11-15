@@ -98,6 +98,7 @@ extensions:
   - memory-snapshot
   - non-interactive
   - notify
+  - precomputed-compaction
   - question
   - rate-limit-retry
   - read
