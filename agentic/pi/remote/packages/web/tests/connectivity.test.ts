@@ -142,7 +142,6 @@ test(
       await expect(page.getByRole("heading", { name: "You're offline" })).toBeVisible();
       assert.equal(calls.length, previous);
       await context.setOffline(false);
-      await page.getByRole("button", { name: "Try again", exact: true }).click();
       await expect(page.getByText("Pair a device", { exact: true })).toBeVisible();
       assert(
         calls.slice(previous).every((call) => call.endsWith("/me")),
@@ -176,6 +175,7 @@ test(
               : { unlocked: true },
         });
       });
+      await direct.clock.install();
       await direct.goto(url);
       await expect(
         direct.getByRole("heading", { name: "Conversations", exact: true }),
@@ -184,6 +184,27 @@ test(
       assert(!openingCalls.some((call) => /auth\/(options|assert)|pairing/.test(call)));
       await expect(direct.getByRole("button", { name: "Open sessions" })).toHaveCount(
         0,
+      );
+      await paired.setOffline(true);
+      await expect(
+        direct.getByRole("status").filter({ hasText: "Reconnecting..." }).first(),
+      ).toBeVisible();
+      await direct.clock.fastForward(60001);
+      await expect(
+        direct.getByRole("heading", { name: "Conversations", exact: true }),
+      ).toHaveCount(0);
+      const beforeRecovery = openingCalls.length;
+      await paired.setOffline(false);
+      await expect(
+        direct.getByRole("heading", { name: "Conversations", exact: true }),
+      ).toBeVisible();
+      await expect(
+        direct.getByRole("status").filter({ hasText: "Reconnecting..." }),
+      ).toHaveCount(0);
+      assert(openingCalls.slice(beforeRecovery).includes("/api/v1/auth/unlock"));
+      assert(
+        !openingCalls.slice(beforeRecovery).some((call) => call.endsWith("/actions")),
+        "Automatic recovery must not replay commands",
       );
       await paired.close();
       const fallback = await browser.newContext({

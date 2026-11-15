@@ -227,6 +227,174 @@ test("offline startup fails immediately without making requests or prompting for
   }
 });
 
+for (const browserOffline of [true, false]) {
+  test(`a lost connection recovers after the presence lease expires (${browserOffline ? "offline event" : "Mac unreachable"})`, async () => {
+    const f = fixture();
+    const original = globalThis.fetch;
+    let reachable = true;
+    let now = Date.now();
+    mock.method(Date, "now", () => now);
+    mock.method(globalThis, "fetch", (url: string, options: RequestInit) => {
+      if (!reachable) return Promise.reject(new TypeError("Network unavailable"));
+      return original(url, options);
+    });
+    try {
+      await f.auth.initialize();
+      assert(f.auth.unlocked);
+      reachable = false;
+      if (browserOffline) {
+        Object.assign(navigator, { onLine: false });
+        f.windowEvents.offline!();
+      }
+      now += 60000;
+      mock.timers.tick(15000);
+      await flush();
+      assert(f.auth.connectionFailed);
+      assert(!f.auth.unlocked);
+      reachable = true;
+      if (browserOffline) {
+        Object.assign(navigator, { onLine: true });
+        f.windowEvents.online!();
+        await flush();
+      }
+      mock.timers.tick(15000);
+      await flush();
+      await flush();
+      assert.equal(
+        f.auth.connectionFailed,
+        false,
+        "must stop reconnecting after access returns",
+      );
+      assert.equal(
+        f.auth.unlocked,
+        true,
+        "must reopen sessions without restarting the app",
+      );
+      assert.equal(f.auth.pending, 0);
+      assert(!f.calls.some((url) => /actions|auth\/(options|assert)/.test(url)));
+    } finally {
+      f.close();
+    }
+  });
+}
+
+test("recovery waits for foreground and coalesces online, focus and timer retries", async () => {
+  const f = fixture();
+  const original = globalThis.fetch;
+  let finish!: (response: Response) => void;
+  let probes = 0;
+  try {
+    await f.auth.initialize();
+    f.windowEvents.offline!();
+    f.doc.visibilityState = "hidden";
+    f.documentEvents.visibilitychange!();
+    await flush();
+    const previous = f.calls.length;
+    f.windowEvents.online!();
+    mock.timers.tick(15000);
+    await flush();
+    assert.equal(f.calls.length, previous, "hidden app must not poll for recovery");
+    mock.method(globalThis, "fetch", (url: string, options: RequestInit) => {
+      if (url.endsWith("/me")) {
+        probes++;
+        return new Promise((resolve) => (finish = resolve));
+      }
+      return original(url, options);
+    });
+    f.doc.visibilityState = "visible";
+    f.documentEvents.visibilitychange!();
+    f.windowEvents.online!();
+    f.windowEvents.focus!();
+    assert.equal(probes, 1, "recovery events must share one request");
+    assert(f.auth.reconnecting);
+    finish(new Response(JSON.stringify({ paired: true, csrf: "fixture" })));
+    await flush();
+    assert.equal(f.auth.connectionFailed, false);
+    assert.equal(f.auth.visible, true);
+    assert.equal(f.auth.unlocked, true);
+    assert.equal(f.auth.reconnecting, false);
+    assert.equal(f.auth.pending, 0);
+  } finally {
+    f.close();
+  }
+});
+
+test("backgrounding during recovery preserves the background lease and drafts", async () => {
+  const f = fixture();
+  const original = globalThis.fetch;
+  let finish!: (response: Response) => void;
+  let now = Date.now();
+  let leaseAt = now;
+  let foregroundLease = true;
+  mock.method(Date, "now", () => now);
+  try {
+    await f.auth.initialize();
+    const store = useSessions();
+    store.drafts.fixture = "Keep this draft";
+    mock.method(globalThis, "fetch", (url: string, options: RequestInit) => {
+      if (url.endsWith("/me")) return new Promise((resolve) => (finish = resolve));
+      if (url.endsWith("/auth/presence")) {
+        if (now - leaseAt > (foregroundLease ? 45000 : 120000))
+          return Promise.resolve(new Response('{"error":"locked"}', { status: 423 }));
+        foregroundLease = JSON.parse(options.body as string).foreground;
+        leaseAt = now;
+      }
+      return original(url, options);
+    });
+    f.windowEvents.offline!();
+    f.windowEvents.online!();
+    f.doc.visibilityState = "hidden";
+    f.documentEvents.visibilitychange!();
+    await flush();
+    assert.equal(foregroundLease, false);
+    finish(new Response(JSON.stringify({ paired: true, csrf: "fixture" })));
+    await flush();
+    assert.equal(f.auth.visible, false);
+    now += 60000;
+    f.doc.visibilityState = "visible";
+    f.documentEvents.visibilitychange!();
+    await flush();
+    assert.equal(store.drafts.fixture, "Keep this draft");
+    assert(f.auth.unlocked);
+    assert(f.auth.visible);
+  } finally {
+    f.close();
+  }
+});
+
+test("failed automatic recovery keeps retrying without replaying writes", async () => {
+  const f = fixture();
+  const original = globalThis.fetch;
+  let reachable = false;
+  let probes = 0;
+  mock.method(globalThis, "fetch", (url: string, options: RequestInit) => {
+    probes++;
+    if (!reachable) return Promise.reject(new TypeError("Mac unreachable"));
+    return original(url, options);
+  });
+  try {
+    await f.auth.initialize();
+    assert(f.auth.connectionFailed);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const previous = probes;
+      mock.timers.tick(15000);
+      await flush();
+      assert.equal(probes, previous + 1);
+      assert(f.auth.connectionFailed);
+      assert.equal(f.auth.reconnecting, false);
+      assert.equal(f.auth.pending, 0);
+    }
+    reachable = true;
+    mock.timers.tick(15000);
+    await flush();
+    assert(f.auth.unlocked);
+    assert.equal(f.auth.connectionFailed, false);
+    assert(f.calls.every((url) => /\/(me|auth\/unlock)$/.test(url)));
+  } finally {
+    f.close();
+  }
+});
+
 test("timed out writes release their spinner without automatically submitting again", async () => {
   const f = fixture();
   let posts = 0;

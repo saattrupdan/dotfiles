@@ -233,8 +233,12 @@ export const useAuth = defineStore("auth", () => {
     networkAvailable.value =
       typeof navigator === "undefined" || navigator.onLine !== false;
     try {
-      if (unlocked.value) await me();
-      else await initialize();
+      if (unlocked.value) {
+        const expected = authGeneration;
+        await me();
+        if (expected === authGeneration && document.visibilityState === "visible")
+          await resumeForeground();
+      } else await initialize();
     } catch (e) {
       error.value = e instanceof Error ? e.message : "Can't connect to your Mac.";
     } finally {
@@ -268,12 +272,26 @@ export const useAuth = defineStore("auth", () => {
       background = 0;
     } else if (!unlocked.value && !connectionFailed.value) await autoUnlock();
   }
+  function recoverConnection() {
+    if (
+      connectionFailed.value &&
+      document.visibilityState === "visible" &&
+      navigator.onLine !== false
+    ) {
+      void reconnect();
+      return true;
+    }
+    return false;
+  }
   function backgroundChanged() {
     if (document.visibilityState !== "visible") {
       visible.value = false;
       background = Date.now();
       void presence(false);
-    } else if (!unlocked.value) {
+      return;
+    }
+    if (recoverConnection()) return;
+    if (!unlocked.value) {
       visible.value = true;
       void autoUnlock();
     } else void resumeForeground();
@@ -289,13 +307,16 @@ export const useAuth = defineStore("auth", () => {
   });
   window.addEventListener("online", () => {
     networkAvailable.value = true;
+    recoverConnection();
   });
+  window.addEventListener("focus", recoverConnection);
   document.addEventListener("visibilitychange", backgroundChanged);
   window.addEventListener("pagehide", () => {
     clear();
     void request("/auth/lock", { method: "POST", keepalive: true }).catch(() => {});
   });
   setInterval(() => {
+    if (recoverConnection()) return;
     if (!unlocked.value) return;
     if (!visible.value) {
       if (Date.now() - background >= 120000) clear();

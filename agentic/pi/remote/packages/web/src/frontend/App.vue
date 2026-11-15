@@ -137,10 +137,10 @@ onUnmounted(() => {
   document.removeEventListener("touchmove", preventPinch);
 });
 watch(
-  () => [auth.unlocked, auth.visible],
-  ([unlocked, visible]) => {
+  () => [auth.unlocked, auth.visible, auth.online],
+  ([unlocked, visible, online]) => {
     if (unlocked) pairing.value = "";
-    if (!unlocked || !visible) sessions.disconnect();
+    if (!unlocked || !visible || !online) sessions.disconnect();
     else {
       sessions.resume();
       void syncNotifications();
