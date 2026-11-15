@@ -409,8 +409,10 @@ for (const remote of [false, true]) {
 			await Promise.resolve();
 			assert.equal(h.sent.length, 2);
 			for (const prompt of h.sent) {
-				assert.ok(prompt.endsWith(`\n\n${instruction}`));
+				assert.ok(prompt.endsWith(`\n\n## Additional instructions\n\n${instruction}`));
 				assert.equal(prompt.split(instruction).length, 2);
+				assert.equal(prompt.match(/^## Additional instructions$/gm)?.length, 1);
+				assert.ok(prompt.indexOf("## Additional instructions") > prompt.indexOf("## Blocked outcome"));
 				assert.ok(prompt.indexOf("Fresh GitHub issue selection") < prompt.indexOf(instruction));
 				assert.match(prompt, /node .*claim-issue\.mjs/);
 				assert.match(prompt, /## 4\. Review until clean[\s\S]*NEW reviewer subagent/);
@@ -463,6 +465,7 @@ test("blank instructions preserve the default issue prompt", async () => {
 	h.setBusy(false);
 	await h.command(" \n\t ", "implement-all-issues");
 	assert.equal(h.sent[1], prompt);
+	assert.doesNotMatch(h.sent[1] ?? "", /^## Additional instructions$/m);
 	await h.command("stop");
 });
 
@@ -601,7 +604,7 @@ test("issue loop returns to main after a PR and starts the next issue there", as
 		await Promise.resolve();
 		assert.equal(main.sent.length, 1);
 		assert.match(main.sent[0] ?? "", /^# Implement one issue per iteration/);
-		assert.ok(main.sent[0]!.endsWith(`\n\n${instruction}`));
+		assert.ok(main.sent[0]!.endsWith(`\n\n## Additional instructions\n\n${instruction}`));
 		await main.command("stop");
 	} finally {
 		setLoopReturnToBase(undefined);

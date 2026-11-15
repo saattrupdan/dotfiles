@@ -301,7 +301,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 				if (selecting === controller) selecting = undefined;
 			}
 		}
-		if (loop.instruction) prompt += `\n\n${loop.instruction}`;
+		if (loop.instruction) prompt += `\n\n## Additional instructions\n\n${loop.instruction}`;
 		const submit = () => {
 			timer = undefined;
 			if (active !== loop || loop.runs !== runId ||
