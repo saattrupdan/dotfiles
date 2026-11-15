@@ -107,16 +107,16 @@ test("worker is detached, singleton, separately configured and does not rewrite 
 test("footer shows the same symbol for preparation and retry, and nothing when ready or inactive", async t => {
 	const app = setup(t, conversation(12));
 	app.event("session_start");
-	assert.equal(app.statuses.at(-1), "↻");
+	assert.equal(app.statuses.at(-1), "🫸💬🫷");
 	await app.complete();
 	assert.equal(app.statuses.at(-1), undefined, "ready checkpoints are silent");
-	assert.ok(app.statuses.every(status => status === undefined || status === "↻"));
+	assert.ok(app.statuses.every(status => status === undefined || status === "🫸💬🫷"));
 
 	const retry = setup(t);
 	retry.event("session_start");
-	assert.equal(retry.statuses.at(-1), "↻");
+	assert.equal(retry.statuses.at(-1), "🫸💬🫷");
 	await retry.complete(0, { content: [], stopReason: "error", errorMessage: "temporarily unavailable" });
-	assert.equal(retry.statuses.at(-1), "↻");
+	assert.equal(retry.statuses.at(-1), "🫸💬🫷");
 	retry.event("session_shutdown");
 	assert.equal(retry.statuses.at(-1), undefined);
 

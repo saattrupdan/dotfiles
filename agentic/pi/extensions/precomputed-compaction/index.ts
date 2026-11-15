@@ -81,7 +81,7 @@ export default function (pi: ExtensionAPI) {
 	let lastError: string | undefined;
 
 	const status = (ctx: ExtensionContext, state?: string) => ctx.ui.setStatus("precomputed-compaction",
-		state === "preparing" || state === "retry pending" ? "↻" : undefined);
+		state === "preparing" || state === "retry pending" ? "🫸💬🫷" : undefined);
 	const clearTimer = () => { if (timer) clearTimeout(timer); timer = undefined; };
 	const invalidate = () => {
 		generation++;
