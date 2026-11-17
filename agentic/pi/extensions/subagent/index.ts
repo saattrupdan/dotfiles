@@ -1,3 +1,4 @@
+import { transcripts, type ToolOutput } from "./transcript.ts";
 import { createSubagentRenderers, ModelAttempt, SingleResult, getFinalOutput, isFailedResult, isModelAttemptFailure, isRetryableModelAttemptFailure, getResultOutput, formatAttemptModel } from "./display.ts";
 import { remotePromptsEnabled } from "../_remote_bridge/prompts.ts";
 /**
@@ -179,6 +180,7 @@ async function runSingleAgent(
 	taskSkills?: string[],
 	agentScope?: AgentScope,
 	sessionLabel?: string,
+	privateHistory = false,
 ): Promise<SingleResult> {
 	const agent = agents.find((a) => a.name === agentName && a.subagent);
 
@@ -363,10 +365,13 @@ async function runSingleAgent(
 				if (onUpdate) {
 					onUpdate({
 						content: [{ type: "text", text: getFinalOutput(currentResult.messages) || "(running...)" }],
-						details: currentResult,
+						details: compactResult(currentResult, true),
 					});
 				}
 			};
+
+			const transcript = transcripts.create({ persist: !privateHistory, onUpdate: emitUpdate });
+			currentResult.transcriptId = transcript.id;
 
 			try {
 				if (signal?.aborted) {
@@ -407,6 +412,7 @@ async function runSingleAgent(
 					}
 				}
 
+				currentResult.cwd = effectiveCwd ?? defaultCwd;
 				const args = [...baseArgs];
 				if (childModel) args.push("--model", childModel);
 				args.push(`Task: ${task}`);
@@ -446,6 +452,8 @@ async function runSingleAgent(
 						PI_SUBAGENT_CHILD: "1",
 						PI_QUESTION_RESPONSE_FD: "3",
 					};
+					if (privateHistory) childEnv.PI_SUBAGENT_PRIVATE = "1";
+					else delete childEnv.PI_SUBAGENT_PRIVATE;
 					if (sessionLabel) {
 						childEnv.PI_SUBAGENT_SESSION_NAME = sessionLabel;
 					} else {
@@ -492,8 +500,11 @@ async function runSingleAgent(
 							startExitTimeout();
 						}
 
+						if (event.type === "message_update" && event.message) transcript.stream(event.message as Message);
+
 						if (event.type === "message_end" && event.message) {
 							const msg = event.message as Message;
+							transcript.append(msg);
 							currentResult.messages.push(compactMessage(msg));
 							if (currentResult.messages.length > 200) currentResult.messages.shift();
 
@@ -534,6 +545,7 @@ async function runSingleAgent(
 						if (event.type === "tool_execution_update" && event.toolCallId) {
 							const partial = event.partialResult;
 							if (partial) {
+								transcript.partial(event.toolCallId, { ...partial, isError: !!partial.isError } as ToolOutput);
 								if (!currentResult.partialResults) currentResult.partialResults = {};
 								currentResult.partialResults[event.toolCallId] = {
 									content: [],
@@ -721,6 +733,8 @@ async function runSingleAgent(
 				attempts.push(attempt);
 				currentResult.modelAttempts = [...attempts];
 				lastResult = currentResult;
+			} finally {
+				transcript.finish();
 			}
 		}
 
@@ -817,6 +831,12 @@ export default function (pi: ExtensionAPI) {
 	// the label each tool call got, so renderCall can show it in its own row.
 	const labelCounter = createSubagentLabelCounter();
 	const labelsByToolCallId = new Map<string, string>();
+	const { dispose: disposeDisplay, ...renderers } = createSubagentRenderers(labelsByToolCallId);
+	pi.on("session_shutdown", (event) => {
+		disposeDisplay();
+		if (event.reason === "quit" || event.reason === "new" || event.reason === "resume") transcripts.clearPrivate();
+	});
+	pi.on("session_start", () => disposeDisplay());
 
 	pi.registerTool({
 		name: "subagent",
@@ -892,6 +912,7 @@ export default function (pi: ExtensionAPI) {
 				params.skills,
 				agentScope,
 				sessionLabel,
+				ctx.sessionManager.getSessionFile() === undefined || process.env.PI_SUBAGENT_PRIVATE === "1",
 			);
 			// Covers the early-return paths inside runSingleAgent, which build their
 			// own SingleResult before any of them knows about the label.
@@ -910,7 +931,7 @@ export default function (pi: ExtensionAPI) {
 			};
 		},
 
-		...createSubagentRenderers(labelsByToolCallId),
+		...renderers,
 
 
 	});

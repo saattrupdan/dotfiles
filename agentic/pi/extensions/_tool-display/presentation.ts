@@ -1,36 +1,9 @@
 /** Replay native renderers without extension registration, tool execution, or session writers. */
-import {
-	createBashToolDefinition,
-	createEditToolDefinition,
-	createReadToolDefinition,
-	createWriteToolDefinition,
-	initTheme,
-	ToolExecutionComponent,
-	type ToolRenderers,
-} from "@earendil-works/pi-coding-agent";
+import { initTheme, ToolExecutionComponent, type ToolRenderers } from "@earendil-works/pi-coding-agent";
 import { displayBlock, type ToolBlock, type ToolLineStyle } from "./block.ts";
-import { makeRenderCall, makeRenderResult } from "../mcp-collapse/display.ts";
-import { collapseAutoloadResult } from "../skill/types.ts";
 import { createSubagentRenderers } from "../subagent/display.ts";
 import { boundedToolArguments } from "./arguments.ts";
-import { branchRenderers } from "./branch-result.ts";
-import {
-	codeTreeRenderers,
-	codemodeRenderers,
-	createBashResultRenderer,
-	generateImageRenderers,
-	generateVideoRenderers,
-	questionRenderers,
-	pythonCodeRenderers,
-	readCallRenderers,
-	writeRenderers,
-	recallMemoryRenderers,
-	searchRenderers,
-	skillRenderers,
-	storeMemoryRenderers,
-	webBrowseRenderers,
-	webSearchRenderers,
-} from "./renderers.ts";
+import { toolRenderers } from "./catalog.ts";
 
 interface Result {
 	content: Array<{ type: string; text?: string; [key: string]: unknown }>;
@@ -46,26 +19,6 @@ const shorten = (text: string) => {
 	return value;
 };
 
-const builtins = {
-	read: createReadToolDefinition("/"),
-	write: createWriteToolDefinition("/"),
-	edit: createEditToolDefinition("/"),
-	bash: createBashToolDefinition("/"),
-};
-const custom = {
-	code_tree: codeTreeRenderers,
-	codemode: codemodeRenderers,
-	generate_image: generateImageRenderers,
-	generate_video: generateVideoRenderers,
-	question: questionRenderers,
-	python: pythonCodeRenderers,
-	recall_memory: recallMemoryRenderers,
-	search: searchRenderers,
-	skill: skillRenderers,
-	store_memory: storeMemoryRenderers,
-	web_browse: webBrowseRenderers,
-	web_search: webSearchRenderers,
-};
 let initialized = false;
 
 /** The returned text is the laptop's collapsed tool block, without terminal styling. */
@@ -80,46 +33,13 @@ export function toolPresentationBlock(
 		initTheme("dark");
 		initialized = true;
 	}
-	let renderers: object = custom[name as keyof typeof custom] ?? {};
-	const builtin = builtins[name as keyof typeof builtins];
-	if (builtin) {
-		const original = (
-			name === "write" ? writeRenderers.renderResult : builtin.renderResult
-		) as ToolRenderers["renderResult"];
-		renderers = {
-			renderShell: builtin.renderShell,
-			renderCall:
-				name === "read"
-					? readCallRenderers.renderCall
-					: name === "write"
-						? writeRenderers.renderCall
-						: builtin.renderCall,
-			renderResult:
-				name === "bash"
-					? createBashResultRenderer(new Map(), builtins.bash.renderResult)
-					: original &&
-						(((value, options, theme, context) =>
-							original(
-								collapseAutoloadResult(value, options.expanded, context.isError),
-								options,
-								theme,
-								context as never,
-							)) as typeof original),
-		};
-	}
-	if (
-		name === "mcp" ||
-		name.startsWith("mcp_") ||
-		["memory_query", "memory_add", "memory_update"].includes(name)
-	)
-		renderers = { renderCall: makeRenderCall(name), renderResult: makeRenderResult(name) };
+	let renderers: ToolRenderers = toolRenderers(name);
 	if (name === "subagent") {
 		const label = result?.details?.sessionLabel;
 		renderers = createSubagentRenderers(
 			typeof label === "string" ? new Map([[id, label]]) : undefined,
-		);
+		) as ToolRenderers;
 	}
-	if (branchRenderers[name]) renderers = branchRenderers[name]!;
 	const bounded = boundedToolArguments(args);
 	const details = result?.details ? boundedToolArguments(result.details) : undefined;
 	const colors: Partial<Record<Exclude<ToolLineStyle, "plain">, string>> = {};

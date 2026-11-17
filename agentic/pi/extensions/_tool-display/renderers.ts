@@ -3,10 +3,11 @@ import type {
 	AgentToolResult,
 	Theme,
 	ToolRenderResultOptions,
+	ToolRenderers,
 } from "@earendil-works/pi-coding-agent";
-import type { createBashToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { DisplayRenderers } from "./types.ts";
-import { Text } from "@earendil-works/pi-tui";
+import { Text, type Component } from "@earendil-works/pi-tui";
+import { stopNativeTimer } from "./native.ts";
 import { renderExpandedCall } from "./expanded-call.ts";
 import { safeCommandPreview } from "../web-browse/command.ts";
 const DEFAULT_DEPTH = 2;
@@ -367,42 +368,25 @@ export const recallMemoryRenderers: DisplayRenderers = {
 };
 
 export function createBashResultRenderer(
-	bashState: ReadonlyMap<string, { status: "running" | "completed" | "failed" }>,
-	baseRenderResult?: ReturnType<typeof createBashToolDefinition>["renderResult"],
-): NonNullable<ReturnType<typeof createBashToolDefinition>["renderResult"]> {
+	baseRenderResult?: ToolRenderers["renderResult"],
+): NonNullable<ToolRenderers["renderResult"]> {
+	const expandedComponents = new WeakMap<object, Component>();
 	return (result, options, theme, context) => {
-		// If collapsed (not expanded), show only a status indicator
 		if (!options.expanded) {
-			// Check context for error state (available even if state map lookup fails)
-			const isError = context.isError;
-
-			// Try to get state for this tool call from our tracked map
-			const toolCallId = context.toolCallId;
-			const state = toolCallId ? bashState.get(toolCallId) : undefined;
-
-			// If we have tracked state and it's not running, use it
-			if (state && state.status !== "running") {
-				if (state.status === "failed") {
-					return new Text(theme.fg("error", "✗ bash failed"), 0, 0);
-				}
-				return new Text(theme.fg("success", "✓ bash executed"), 0, 0);
-			}
-
-			// Fallback: use context.isError if state lookup failed
-			if (isError) {
-				return new Text(theme.fg("error", "✗ bash failed"), 0, 0);
-			}
-			if (state?.status === "running") {
-				return new Text(theme.fg("warning", "⋯ bash running"), 0, 0);
-			}
-
-			// Default: assume success if we got here (renderResult means execution completed)
-			return new Text(theme.fg("success", "✓ bash executed"), 0, 0);
+			stopNativeTimer(context.state);
+			if (context.isError) return new Text(theme.fg("error", "✗ bash failed"), 0, 0);
+			return new Text(options.isPartial
+				? theme.fg("warning", "⋯ bash running")
+				: theme.fg("success", "✓ bash executed"), 0, 0);
 		}
 
 		// Expanded: delegate to the built-in renderer for full output
 		if (baseRenderResult) {
-			return baseRenderResult(result, options, theme, context);
+			const component = baseRenderResult(result, options, theme, {
+				...context, lastComponent: expandedComponents.get(context.state),
+			});
+			if (context.state && typeof context.state === "object") expandedComponents.set(context.state, component);
+			return component;
 		}
 
 		// Fallback: show raw text content
@@ -424,3 +408,34 @@ export const codemodeRenderers: DisplayRenderers = {
 		return new Text(theme.fg("success", "✓ codemode executed"), 0, 0);
 	},
 };
+
+/** Keep native expanded render slots separate from the collapsed status Text. */
+export function collapseCodemodeRenderers(original?: ToolRenderers): ToolRenderers {
+	const calls = new WeakMap<object, Component>();
+	const results = new WeakMap<object, Component>();
+	return {
+		...original,
+		renderCall(args, theme, context) {
+			if (!context.expanded) {
+				stopNativeTimer(context.state);
+				return codemodeRenderers.renderCall!({}, theme, { ...context, args: {} });
+			}
+			const component = original?.renderCall?.(args, theme, {
+				...context, lastComponent: calls.get(context.state),
+			}) ?? renderExpandedCall("codemode", args, theme);
+			if (context.state && typeof context.state === "object") calls.set(context.state, component);
+			return component;
+		},
+		renderResult(result, options, theme, context) {
+			if (!options.expanded) {
+				stopNativeTimer(context.state);
+				return codemodeRenderers.renderResult!(result, options, theme, { ...context, args: {} });
+			}
+			const component = original?.renderResult?.(result, options, theme, {
+				...context, lastComponent: results.get(context.state),
+			}) ?? new Text(textContent(result.content), 0, 0);
+			if (context.state && typeof context.state === "object") results.set(context.state, component);
+			return component;
+		},
+	};
+}

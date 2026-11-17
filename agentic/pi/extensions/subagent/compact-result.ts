@@ -1,4 +1,4 @@
-/** Keep subagent UI history useful without persisting entire child tool transcripts. */
+/** Keep model/session payloads compact; lossless display history lives in the local transcript archive. */
 import type { Message } from "@earendil-works/pi-ai";
 
 const MAX_TEXT = 64_000;
@@ -20,7 +20,7 @@ function compactArguments(value: unknown): unknown {
 	return value;
 }
 
-/** Tool-result content (not shown by the subagent renderer) often includes base64 images. */
+/** Large tool payloads belong in the local archive, not in each parent result update. */
 export function compactMessage(message: Message): Message {
 	if (message.role === "toolResult") {
 		const result = message as typeof message & { details?: ResultLike };
@@ -44,7 +44,7 @@ export function compactMessage(message: Message): Message {
 	return { ...message, content: [] } as Message;
 }
 
-/** Bound retained messages; a child session itself remains available on disk. */
+/** Bound fallback messages while preserving the reference to the lossless display archive. */
 export function compactResult<T extends ResultLike>(result: T, live = false): T {
 	const partialResults = live && result.partialResults
 		? Object.fromEntries(Object.entries(result.partialResults).slice(-20).map(([id, partial]) => {

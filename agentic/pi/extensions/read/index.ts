@@ -1,4 +1,4 @@
-import { readCallRenderers } from "../_tool-display/renderers.ts";
+import { readToolRenderers } from "../_tool-display/catalog.ts";
 /**
  * Index-backed `read` tool extension.
  *
@@ -35,14 +35,10 @@ import * as path from "node:path";
 
 import {
 	type AgentToolResult,
-	createReadToolDefinition,
 	type ExtensionAPI,
 	formatDimensionNote,
 	resizeImage,
-	type Theme,
-	type ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
-import { type Component, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 import { convertHeicToJpeg, isHeifImage } from "./heic.js";
@@ -545,7 +541,6 @@ const Params = Type.Object({
 
 type OutlinerModule = Awaited<ReturnType<typeof loadModules>>["outliner"];
 type IndexStoreModule = Awaited<ReturnType<typeof loadModules>>["indexStore"];
-type SkillModule = Awaited<ReturnType<typeof loadSkillRenderHelpers>>;
 
 interface ReadDeps {
 	outline: OutlinerModule["outline"];
@@ -558,9 +553,6 @@ interface ReadDeps {
 
 let depsPromise: Promise<ReadDeps> | null = null;
 let depsFailure: string | null = null;
-let helpersFailure: string | null = null;
-let builtinReadRenderResult: RenderResultFn | null = null;
-let collapseAutoloadResult: SkillModule["collapseAutoloadResult"] | null = null;
 
 /** Resolve the outliner + index-store modules once, retrying after failure. */
 function loadDeps(): Promise<ReadDeps> {
@@ -581,24 +573,6 @@ function loadDeps(): Promise<ReadDeps> {
 			});
 	}
 	return depsPromise;
-}
-
-/** Warm the synchronous `renderResult` helpers without blocking registration. */
-function warmRenderHelpers(): void {
-	void loadSkillRenderHelpers()
-		.then((skill) => {
-			collapseAutoloadResult = skill.collapseAutoloadResult;
-		})
-		.catch((err: unknown) => {
-			helpersFailure = `skill helpers: ${(err as Error)?.message ?? String(err)}`;
-		});
-	try {
-		// Deferred from registration time: only the renderer is needed here, and
-		// renderResult has a plain-text fallback if this is not ready yet.
-		builtinReadRenderResult = createReadToolDefinition(process.cwd()).renderResult as RenderResultFn;
-	} catch (err) {
-		helpersFailure = `built-in renderer: ${(err as Error)?.message ?? String(err)}`;
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -649,7 +623,6 @@ export default function (pi: ExtensionAPI, overrides: ReadExtensionOverrides = {
 							text:
 								`read could not load its helper modules: ${(err as Error)?.message ?? String(err)}.`
 								+ (depsFailure && depsFailure !== (err as Error)?.message ? ` (earlier: ${depsFailure})` : "")
-								+ (helpersFailure ? ` (${helpersFailure})` : "")
 								+ " Restart pi to reload the extensions.",
 						},
 					],
@@ -902,64 +875,10 @@ export default function (pi: ExtensionAPI, overrides: ReadExtensionOverrides = {
 			})(), filePath);
 		},
 
-		...readCallRenderers,
-
-		// A blocked read (e.g. skill autoload) surfaces as an error result whose
-		// text the harness shows in full even when collapsed. Collapse such an
-		// injection to its `↪ … skills injected` summary line, then defer to pi's
-		// built-in read renderer — so the full guidance still shows on expand
-		// (Ctrl+O) and every other result renders exactly as before.
-		renderResult(result, options, theme, context) {
-			if (!builtinReadRenderResult || !collapseAutoloadResult) {
-				// Helpers are still loading (or failed to load) — render the plain
-				// text instead of blocking the UI on them.
-				const text = (result.content ?? [])
-					.map((block) => (block.type === "text" ? block.text : ""))
-					.join("\n")
-					.trim();
-				return new Text(text, 0, 0);
-			}
-			return builtinReadRenderResult(
-				collapseAutoloadResult(result, options.expanded, context.isError),
-				options,
-				theme,
-				context,
-			);
-		},
+		...readToolRenderers,
 	});
 
-	// Start resolving the deferred helpers now so the first call rarely waits.
-	warmRenderHelpers();
 	void loadDeps().catch(() => undefined);
-}
-
-// ---------------------------------------------------------------------------
-// Sibling/built-in module loaders (resolved lazily, like loadModules above)
-// ---------------------------------------------------------------------------
-
-// `ToolRenderContext` is not exported from the package root, so type the
-// context structurally with the fields the built-in read renderer reads. The
-// full context the harness passes is a superset and assigns cleanly.
-interface ReadRenderContext {
-	args: unknown;
-	isError: boolean;
-	expanded: boolean;
-	showImages: boolean;
-	cwd: string;
-	lastComponent: Component | undefined;
-}
-
-type RenderResultFn = (
-	result: AgentToolResult<unknown>,
-	options: ToolRenderResultOptions,
-	theme: Theme,
-	context: ReadRenderContext,
-) => Component;
-
-/** Load the skill-autoload render helpers from the sibling `skill` extension. */
-async function loadSkillRenderHelpers(): Promise<typeof import("../skill/types.ts")> {
-	const jiti = await import("jiti").then((m) => m.createJiti(import.meta.url, { moduleCache: false }));
-	return jiti.import("../skill/types.ts") as Promise<typeof import("../skill/types.ts")>;
 }
 
 // ---------------------------------------------------------------------------

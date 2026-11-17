@@ -53,6 +53,8 @@ await jiti.import(path.join(root, "read", "heic.test.ts"), { default: false });
 await jiti.import(path.join(root, "read", "size-guard.test.ts"), { default: false });
 await jiti.import(path.join(root, "subagent", "session-label.test.ts"), { default: false });
 await jiti.import(path.join(root, "subagent", "compact-result.test.ts"), { default: false });
+await jiti.import(path.join(root, "subagent", "transcript.test.ts"), { default: false });
+await jiti.import(path.join(root, "subagent", "display.test.ts"), { default: false });
 await import(path.join(root, "thinking-status", "index.test.mjs"));
 await jiti.import(path.join(root, "statusline", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "web-search", "index.test.ts"), { default: false });

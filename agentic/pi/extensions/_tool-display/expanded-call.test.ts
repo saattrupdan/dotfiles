@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { stripVTControlCharacters } from "node:util";
-import { type ExtensionAPI, initTheme } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, type SessionShutdownEvent, initTheme } from "@earendil-works/pi-coding-agent";
 
 import registerCodeTree from "../code-tree/index.ts";
 import registerGenerateImage from "../generate-image/index.ts";
@@ -52,11 +52,11 @@ test("expanded argument formatting preserves multiline text, false, zero and arr
 test("registered custom tools expose submitted arguments and full results when expanded", async () => {
 	initTheme("dark");
 	const tools = new Map<string, Tool>();
-	const shutdown: Array<() => Promise<void>> = [];
+	const shutdown: Array<(event: SessionShutdownEvent) => Promise<void>> = [];
 	const pi = {
 		registerTool: (tool: Tool) => tools.set(tool.name, tool),
 		registerCommand: () => {},
-		on: (event: string, handler: () => Promise<void>) => {
+		on: (event: string, handler: (event: SessionShutdownEvent) => Promise<void>) => {
 			if (event === "session_shutdown") shutdown.push(handler);
 		},
 	};
@@ -157,7 +157,7 @@ test("registered custom tools expose submitted arguments and full results when e
 	} finally {
 		if (previous === undefined) delete process.env.PI_SUBAGENT_CHILD;
 		else process.env.PI_SUBAGENT_CHILD = previous;
-		for (const handler of shutdown) await handler();
+		for (const handler of shutdown) await handler({ type: "session_shutdown", reason: "quit" });
 	}
 });
 

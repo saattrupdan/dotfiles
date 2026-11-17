@@ -49,7 +49,7 @@ import {
 	type ExtensionToolContext,
 } from "@earendil-works/pi-coding-agent";
 
-import { collapseAutoloadResult } from "../skill/types.ts";
+import { editToolRenderers } from "../_tool-display/catalog.ts";
 
 // The exact shape `createEditToolDefinition` returns (concrete params/details/
 // state). Typing every base reference as this keeps `pi.registerTool` inference
@@ -234,15 +234,7 @@ export default function (pi: ExtensionAPI) {
 		},
 	};
 
-	// Wrap the built-in result renderer to collapse a skill-autoload injection to
-	// its one-line summary, exactly as the `read` extension and the skill `write`
-	// override do. Since this extension owns the `edit` tool, the skill extension
-	// no longer overrides `edit` (that would collide), so the collapse lives here.
-	const baseRenderResult = renderBase.renderResult;
-	if (baseRenderResult) {
-		tool.renderResult = (result, options, theme, context) =>
-			baseRenderResult(collapseAutoloadResult(result, options.expanded, context.isError), options, theme, context);
-	}
+	Object.assign(tool, editToolRenderers);
 
 	pi.registerTool(tool);
 }
