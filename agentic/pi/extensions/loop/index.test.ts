@@ -298,27 +298,19 @@ test("opaque Codex Bad Request recovery keeps the loop in the same iteration", a
 	assert.ok(!h.notices.some((notice) => /iteration failed/.test(notice)));
 });
 
-test("a long opaque Codex rejection streak stays in the iteration; validation errors still stop it", async () => {
+test("persistent opaque Codex Bad Requests still stop the loop after bounded recovery", async () => {
 	const h = harness(undefined, { plugins: [(pi) => rateLimitRetry(pi, async () => true)] });
 	await h.command("finish the task");
-	for (let attempt = 0; attempt < 8; attempt++) {
+	for (let attempt = 0; attempt < 4; attempt++) {
 		const failed = { message: {
 			role: "assistant", provider: "openai-codex", stopReason: "error",
 			errorMessage: '{"detail":"Bad Request"}', content: [],
 		} };
 		await h.emit("message_end", failed);
 		const continuation = await h.emit("turn_end") as { continue: boolean } | undefined;
-		assert.equal(continuation?.continue, true);
-		assert.equal(failed.message.stopReason, "stop");
-		assert.equal(h.notices.some((notice) => /iteration failed/.test(notice)), false);
+		assert.equal(continuation?.continue, attempt < 3 ? true : undefined);
+		assert.equal(failed.message.stopReason, attempt < 3 ? "stop" : "error");
 	}
-	const invalid = { message: {
-		role: "assistant", provider: "openai-codex", stopReason: "error",
-		errorMessage: '{"detail":"Bad Request","code":"invalid_request"}', content: [],
-	} };
-	await h.emit("message_end", invalid);
-	assert.equal(invalid.message.stopReason, "error");
-	assert.equal(await h.emit("turn_end"), undefined);
 	await h.finish("", "error");
 	assert.match(h.notices.at(-1) ?? "", /Loop stopped: iteration failed/);
 	assert.equal(h.sent.length, 1);
