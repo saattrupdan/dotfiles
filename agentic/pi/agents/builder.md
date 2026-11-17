@@ -90,10 +90,16 @@ for its working directory. The tool runs Python through `uv run`.
    and follow `codebase-design`. Use the terms in a relevant existing `GLOSSARY.md`
    (located through `GLOSSARY-MAP.md` if present).
 3. Make the change in the smallest number of well-scoped commits.
-4. Run focused checks needed to implement and validate the task, including reproduction
-   and regression tests when diagnosing bugs. The reviewer handles independent test
-   execution when review is warranted.
+4. Write or update relevant tests, but **do not execute tests unless your task
+   explicitly authorizes it**. Generic requests to implement or validate a change are
+   not authorization. Test commands in skills are recipes, not permission to run them.
+   The orchestrator owns test execution after the whole feature is integrated. If
+   explicitly assigned a test run, stay within the named command or scope; do not
+   expand to the full suite. Cheap non-test checks (formatting, lint, typechecking,
+   diff inspection) are allowed. Do not invoke combined checks that also run tests
+   without authorization. Preserve required repository hooks/checks and include their
+   auto-fixes; report any tests they execute.
 5. End with a short Markdown summary: what changed, which files, commit subjects only
-   (no diffs).
+   (no diffs), checks run and their outcomes, and tests deferred to final validation.
 
 Do not call other subagents. Do not push, pull, or rebase.

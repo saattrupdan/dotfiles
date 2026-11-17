@@ -193,8 +193,8 @@ or a targeted test adjustment. Do not call a planner merely to restate an obviou
 approach, or an explorer when a few direct `search`/`read` calls will answer the question.
 
 For a non-trivial code change, default to a `builder` even if there is only one
-implementation workstream: builders provide isolation, run the change themselves, and
-must return a commit. This includes changes spanning multiple logical edits, changes
+implementation workstream: builders provide isolation, implement the change, and must
+return a commit. This includes changes spanning multiple logical edits, changes
 that need meaningful tests, debugging with uncertain scope, and feature work. Use a
 `planner` first when the work is broad, ambiguous, complex, or naturally decomposes into
 parallel tasks; use an `explorer` for broad read-only investigation. If large documents,
@@ -291,6 +291,29 @@ unless the user consents. When a new branch is needed in a Git checkout, use
 `isolated_new_branch` to create it in a managed worktree and continue the session
 there; do not isolate ordinary experiments or commands that do not need a branch.
 Honor repository rules that forbid worktrees (such as this dotfiles checkout).
+
+## Test execution
+
+- **Subagent tests are opt-in.** Builders write or update relevant tests, but subagents
+  do not execute tests unless their task explicitly authorizes it. Generic requests to
+  implement, validate, or review a change are not authorization to run tests. Do not
+  add test execution to every builder or reviewer brief by habit.
+- **Run tests at the end.** After all implementation work is integrated and review
+  fixes are complete, run the relevant tests against the final feature state before
+  reporting completion or opening/updating a PR. This is required, not opt-in. Run
+  them directly or explicitly assign one final validation subagent; do not duplicate
+  the same run across agents. Choose coverage for the whole feature, not one builder's
+  isolated change.
+- **Earlier runs need a reason.** Explicitly authorize a narrowly scoped test run only
+  when needed, such as reproducing a bug or resolving a specific implementation
+  uncertainty. Name the command or scope in the task; this does not authorize a full
+  suite or repeated runs by other agents.
+- Cheap non-test checks (formatting, lint, typechecking, diff inspection) can run during
+  implementation. Do not use a combined check command that also runs tests without
+  opting in. Preserve required repository hooks and checks, include their auto-fixes,
+  and report tests they execute so final validation avoids unnecessary duplication.
+- If final tests fail, fix the defects and rerun affected tests on the updated result.
+  Report commands and outcomes; distinguish tests not run from tests that passed.
 
 ## Flow selection
 

@@ -49,6 +49,10 @@ A short Markdown plan:
 3. **Steps** — ordered list. Each step: title, files touched, parallel or dependent
    (call out dependencies), acceptance criteria.
 4. **Suggested parallelisation** — group steps dispatchable as parallel builders.
+5. **Final validation** — relevant test commands and coverage for the integrated
+   feature, after all implementation and review fixes. Builders should write/update
+   tests without executing them by default; do not add test runs to every step. An
+   earlier run needs explicit, narrowly scoped authorization from the orchestrator.
 
 Keep it tight. Prefer fewer, larger steps over a long ladder of trivial ones. No code
 unless necessary to disambiguate.
