@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, test } from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import { parseAgentProfile } from "./definition.mjs";
 import { buildProfileArgs, loadProfile, resolvePiPackage, selectProfile } from "./launcher.mjs";
@@ -243,6 +243,60 @@ test("resolves allow-listed skills from either user skills directory", () => {
 		if (originalHome === undefined) delete process.env.HOME;
 		else process.env.HOME = originalHome;
 	}
+});
+
+test("main includes repository skills without expanding other profiles or global skills", async () => {
+	const dir = root();
+	const repo = path.join(dir, "repo");
+	const cwd = path.join(repo, "packages", "app");
+	fs.mkdirSync(cwd, { recursive: true });
+	// Worktrees have a .git file rather than a directory.
+	fs.writeFileSync(path.join(repo, ".git"), "gitdir: /unused/worktree\n");
+	const writeSkill = (base, name) => {
+		const skillDir = path.join(base, name);
+		fs.mkdirSync(skillDir, { recursive: true });
+		fs.writeFileSync(path.join(skillDir, "SKILL.md"),
+			`---\nname: ${name}\ndescription: Fixture skill\n---\nFixture instructions.\n`);
+	};
+	writeSkill(path.join(dir, "skills"), "memory");
+	const localPi = path.join(cwd, ".pi", "skills");
+	const localAgents = path.join(cwd, ".agents", "skills");
+	const repoPi = path.join(repo, ".pi", "skills");
+	const repoAgents = path.join(repo, ".agents", "skills");
+	writeSkill(localPi, "local-pi");
+	writeSkill(localAgents, "local-agents");
+	writeSkill(repoPi, "repo-pi");
+	writeSkill(repoAgents, "repo-agents");
+	writeSkill(path.join(dir, ".agents", "skills"), "outside-repo");
+	writeSkill(path.join(dir, "skills"), "unselected-global");
+
+	const args = buildProfileArgs(profile("main"), dir, [], cwd);
+	const skillPaths = args.filter((arg, index) => args[index - 1] === "--skill");
+	assert.ok(args.includes("--no-skills"));
+	assert.deepEqual(skillPaths, [path.join(dir, "skills", "memory"),
+		localPi, localAgents, repoPi, repoAgents]);
+
+	// Exercise Pi's real loader so selecting a parent directory actually exposes its skills.
+	const { loadSkills } = await import(pathToFileURL(path.join(resolvePiPackage(), "dist/core/skills.js")).href);
+	const { skills } = loadSkills({ cwd, agentDir: dir, skillPaths, includeDefaults: false });
+	assert.deepEqual(skills.map((skill) => skill.name).sort(),
+		["memory", "local-pi", "local-agents", "repo-pi", "repo-agents"].sort());
+	const privateArgs = buildProfileArgs(profile("librarian"), dir, [], cwd);
+	assert.deepEqual(privateArgs.filter((arg, index) => privateArgs[index - 1] === "--skill"),
+		[path.join(dir, "skills", "memory")]);
+	const emptyMain = buildProfileArgs(profile("main", { skills: [] }), dir, [], cwd);
+	assert.deepEqual(emptyMain.filter((arg, index) => emptyMain[index - 1] === "--skill"),
+		[localPi, localAgents, repoPi, repoAgents]);
+});
+
+test("outside a repo main includes only cwd skills, not ancestor user skills", () => {
+	const dir = root();
+	const cwd = path.join(dir, "project");
+	const local = path.join(cwd, ".pi", "skills");
+	fs.mkdirSync(local, { recursive: true });
+	fs.mkdirSync(path.join(dir, ".agents", "skills"), { recursive: true });
+	const args = buildProfileArgs(profile("main", { skills: [] }), dir, [], cwd);
+	assert.deepEqual(args.filter((arg, index) => args[index - 1] === "--skill"), [local]);
 });
 
 test("scopes private tools, skills, extensions and sessions before startup", () => {

@@ -131,6 +131,26 @@ export function checkSessionPaths(args, agent, agentDir, cwd = process.cwd(), se
 	}
 }
 
+// Only repo-local resources may supplement main's global skill allow-list.
+function projectSkillPaths(cwd) {
+	const directories = [];
+	let directory = path.resolve(cwd);
+	while (true) {
+		directories.push(directory);
+		if (fs.existsSync(path.join(directory, ".git"))) break;
+		const parent = path.dirname(directory);
+		if (parent === directory) {
+			// Outside a repository, do not inherit user or unrelated ancestor skills.
+			directories.splice(1);
+			break;
+		}
+		directory = parent;
+	}
+	return directories.flatMap((dir) =>
+		[".pi", ".agents"].map((name) => path.join(dir, name, "skills")),
+	).filter((dir) => fs.existsSync(dir) && fs.statSync(dir).isDirectory());
+}
+
 export function buildProfileArgs(profile, agentDir, args, cwd = process.cwd(), sessionEnv) {
 	if (
 		profile.subagent ||
@@ -186,6 +206,9 @@ export function buildProfileArgs(profile, agentDir, args, cwd = process.cwd(), s
 			}
 			flags.push("--skill", skillDir);
 		}
+	}
+	if (profile.name === "main") {
+		for (const skillPath of projectSkillPaths(cwd)) flags.push("--skill", skillPath);
 	}
 	if (profile.tools !== undefined)
 		flags.push(

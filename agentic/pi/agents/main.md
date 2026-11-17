@@ -23,6 +23,7 @@ tools:
   - web_browse
   - web_search
   - write
+# Global allow-list; repo-local .pi/skills and .agents/skills are added at launch.
 skills:
   - agent-browser
   - agents-md

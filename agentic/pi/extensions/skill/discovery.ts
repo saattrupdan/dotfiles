@@ -95,17 +95,19 @@ export function parseSkillAutoloadFrontmatter(markdown: string): SkillAutoloadCo
 
 export function discoverSkills(cwd: string, argv: string[] = process.argv.slice(2)): Skill[] {
 	const skillPaths: string[] = [];
+	let includeDefaults = true;
 	for (let index = 0; index < argv.length; index++) {
 		const arg = argv[index];
 		if (arg === "--") break;
-		if (arg === "--skill" && argv[index + 1]) skillPaths.push(argv[++index]);
+		if (arg === "--no-skills" || arg === "-ns") includeDefaults = false;
+		else if (arg === "--skill" && argv[index + 1]) skillPaths.push(argv[++index]);
 		else if (arg.startsWith("--skill=")) skillPaths.push(arg.slice("--skill=".length));
 	}
 	const { skills } = loadSkills({
 		cwd,
 		agentDir: getAgentDir(),
 		skillPaths,
-		includeDefaults: true,
+		includeDefaults,
 	});
 	return skills;
 }
