@@ -307,3 +307,64 @@ test("archived and private history indicate hidden entries without rendering mor
 	}
 	archive.clearPrivate();
 });
+
+
+test("only failed nested bash rows replace the red background with normal grey", () => {
+	const view = new ActivityView();
+	const failure = { content: [{ type: "text" as const, text: "Command exited with code 1" }], details: undefined,
+		isError: true, durationMs: 42 };
+	const before = structuredClone(failure);
+	const main = new ToolExecutionComponent("bash", "main-bash", { command: "exit 1" },
+		{ showImages: false, outputPad: 1 }, bashToolRenderers, { requestRender() {} } as TUI, process.cwd());
+	main.markExecutionStarted();
+	main.updateResult(failure, false);
+	for (const expanded of [false, true, false]) {
+		main.setExpanded(expanded);
+		const mainLines = main.render(100);
+		assert.ok(mainLines.join("\n").includes(theme.getBgAnsi("toolErrorBg")), "main bash retains its red failure background");
+		view.update([{ type: "toolCall", id: "child-bash", name: "bash", args: { command: "exit 1" }, result: failure, isPartial: false }],
+			{ theme, expanded, cwd: process.cwd(), showImages: false, outputPad: 1, resolve: toolRenderers });
+		const lines = view.render(100), raw = lines.join("\n");
+		assert.ok(!raw.includes(theme.getBgAnsi("toolErrorBg")), "nested bash should not retain the red background");
+		assert.ok(raw.includes(theme.getBgAnsi("toolSuccessBg")), "nested bash keeps the normal grey background");
+		assert.match(stripVTControlCharacters(raw), expanded ? /Command exited with code 1/ : /bash failed/);
+		const expected = mainLines.map(stripVTControlCharacters);
+		while (expected.length && !expected[0].trim()) expected.shift();
+		while (expected.length && !expected.at(-1)!.trim()) expected.pop();
+		assert.deepEqual(lines.map(stripVTControlCharacters), expected, "only styling changes, not layout or failure output");
+	}
+	assert.deepEqual(failure, before, "presentation does not change the error flag or payload");
+	view.dispose();
+});
+
+test("nested non-bash failures keep their existing backgrounds", () => {
+	const view = new ActivityView();
+	view.update([{ type: "toolCall", id: "child-read", name: "read", args: { path: "missing.ts" }, isPartial: false,
+		result: { content: [{ type: "text", text: "File not found" }], details: undefined, isError: true } }],
+		{ theme, expanded: false, cwd: process.cwd(), showImages: false, outputPad: 1, resolve: toolRenderers });
+	assert.ok(view.render(100).join("\n").includes(theme.getBgAnsi("toolErrorBg")));
+	view.dispose();
+});
+
+test("the outer subagent retains its native grey shell and blank padding rows", () => {
+	const renderers = createSubagentRenderers();
+	assert.equal(renderers.renderShell, undefined, "do not override the native outer shell");
+	const details = base();
+	details.messages = [assistant([{ type: "toolCall", id: "child", name: "bash", arguments: { command: "exit 1" } }]),
+		{ role: "toolResult", toolCallId: "child", toolName: "bash", content: [{ type: "text", text: "Command exited with code 1" }],
+			details: undefined, isError: true } as Message];
+	const parent = new ToolExecutionComponent("subagent", "parent", { agent: "reviewer", taskName: "Check bash", task: "Run exit 1" },
+		{ showImages: false }, renderers as never, { requestRender() {} } as TUI, process.cwd());
+	parent.markExecutionStarted();
+	parent.updateResult({ content: [], details, isError: false }, true);
+	for (const expanded of [false, true]) {
+		parent.setExpanded(expanded);
+		const lines = parent.render(100);
+		for (const line of [lines[1]!, lines.at(-1)!]) {
+			assert.equal(stripVTControlCharacters(line).trim(), "");
+			assert.ok(line.includes(theme.getBgAnsi("toolPendingBg")), "native blank padding rows retain the grey background");
+		}
+		assert.ok(!lines.join("\n").includes(theme.getBgAnsi("toolErrorBg")), "the child does not add red inside the outer grey card");
+	}
+	renderers.dispose();
+});

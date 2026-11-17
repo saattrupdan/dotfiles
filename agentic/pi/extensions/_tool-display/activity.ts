@@ -92,7 +92,11 @@ export class ActivityView extends Container {
 				row.component.setOutputPad(options.outputPad);
 				row.component.setExpanded(options.expanded);
 				if (item.result) row.component.updateResult(item.result, item.isPartial);
-				this.addChild(new ActivityEntry(row.component, (line) => this.mute(line, true)));
+				this.addChild(new ActivityEntry(row.component, (line) => {
+					const muted = this.mute(line, true);
+					if (item.name !== "bash" || !item.result?.isError || !this.theme) return muted;
+					return muted.replaceAll(this.theme.getBgAnsi("toolErrorBg"), this.theme.getBgAnsi("toolSuccessBg"));
+				}));
 			}
 		} finally { this.updating = false; }
 	}
