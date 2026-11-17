@@ -1317,7 +1317,7 @@ test("loop stops, cancellation and failures are not successful completion", asyn
 		const stopped = harness();
 		await stopped.command("work --until complete");
 		await stopped.command("stop");
-		assert.equal(stopped.notices.at(-1), "Loop stopped. Continue with your current work until completion. Do not start another iteration.");
+		assert.deepEqual(stopped.notices, [], "manual stop must not inject a message into the current iteration");
 		await stopped.finish();
 		assert.equal(stopped.timers.size, 0);
 		assert.deepEqual(stopped.sent, ["work"]);
