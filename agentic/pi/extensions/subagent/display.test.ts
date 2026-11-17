@@ -200,7 +200,7 @@ test("subagent tool names and arguments are muted without altering main-agent re
 });
 
 
-test("compact activity preserves internal blank lines and visible error colours", () => {
+test("compact activity preserves internal blank lines and readable muted errors", () => {
 	const view = new ActivityView();
 	const item: ActivityItem = { type: "toolCall", id: "failed", name: "unknown", args: {}, isPartial: false,
 		result: { content: [{ type: "text", text: "first paragraph\n\nsecond paragraph" }], details: undefined, isError: true } };
@@ -211,7 +211,8 @@ test("compact activity preserves internal blank lines and visible error colours"
 	assert.equal(stripVTControlCharacters(output[0]).trim(), "heading");
 	assert.equal(stripVTControlCharacters(output.at(-1)!).trim(), "second paragraph");
 	assert.ok(output.some((line) => !stripVTControlCharacters(line).trim()), "internal paragraph spacing remains");
-	assert.ok(output.join("\n").includes(theme.getFgAnsi("error")), "errors remain visible");
+	assert.ok(!output.join("\n").includes(theme.getFgAnsi("error")), "errors use muted text");
+	assert.ok(output.join("\n").includes(theme.getFgAnsi("muted")));
 	view.dispose();
 });
 
@@ -306,4 +307,76 @@ test("archived and private history indicate hidden entries without rendering mor
 		writer.finish();
 	}
 	archive.clearPrivate();
+});
+
+
+test("failed subagent cards have no error background but retain failure text and error flags", () => {
+	const details = { ...base(), exitCode: 1, errorMessage: "Child process failed" };
+	const failure = { content: [{ type: "text" as const, text: "Agent failed: Child process failed" }], details, isError: true };
+	const before = structuredClone(failure);
+	const parent = new ToolExecutionComponent("subagent", "parent", { agent: "explorer", taskName: "Inspect" },
+		{ showImages: false }, createSubagentRenderers() as never,
+		{ requestRender() {} } as TUI, process.cwd());
+	parent.markExecutionStarted();
+	parent.updateResult(failure, false);
+	for (const expanded of [false, true, false]) {
+		parent.setExpanded(expanded);
+		const raw = parent.render(100).join("\n");
+		assert.ok(!raw.includes(theme.getBgAnsi("toolErrorBg")), "subagent failure should not paint a red card");
+		assert.match(stripVTControlCharacters(raw), expanded ? /Child process failed/ : /done with errors/);
+	}
+	assert.deepEqual(failure, before);
+	parent.updateResult({ content: [{ type: "text", text: "Agent not found" }], details: undefined, isError: true }, false);
+	const fallback = parent.render(100).join("\n");
+	assert.match(stripVTControlCharacters(fallback), /Agent not found/);
+	assert.ok(fallback.includes(theme.getFgAnsi("muted")));
+	assert.ok(!fallback.includes(theme.getBgAnsi("toolErrorBg")));
+	const regular = new ToolExecutionComponent("read", "regular", { path: "missing.ts" }, { showImages: false },
+		toolRenderers("read"), { requestRender() {} } as TUI, process.cwd());
+	regular.updateResult(failure, false);
+	assert.ok(regular.render(100).join("\n").includes(theme.getBgAnsi("toolErrorBg")), "regular tools keep their normal failure styling");
+});
+
+test("failed child tool rows retain error text without a red background", () => {
+	const view = new ActivityView();
+	const failure = { content: [{ type: "text" as const, text: "Command failed with exit code 1" }], details: undefined, isError: true };
+	for (const expanded of [false, true]) {
+		view.update([{ type: "toolCall", id: "failed-bash", name: "bash", args: { command: "exit 1" },
+			result: failure, isPartial: false }], { theme, expanded, cwd: process.cwd(), showImages: false, outputPad: 1, resolve: toolRenderers });
+		const raw = view.render(100).join("\n");
+		assert.ok(!raw.includes(theme.getBgAnsi("toolErrorBg")), "child failures should not paint a red card");
+		assert.match(stripVTControlCharacters(raw), expanded ? /Command failed with exit code 1/ : /bash failed/);
+		assert.equal(failure.isError, true);
+	}
+	view.dispose();
+});
+
+
+test("child success and error status texts are muted without changing main-tool status colours", () => {
+	for (const [name, isError, summary] of [
+		["search", false, "Found 0 files, 0 defs, 13 refs"],
+		["bash", true, "bash failed"],
+	] as const) {
+		const view = new ActivityView();
+		const result = { content: [{ type: "text" as const, text: "failure details" }], details: { collapsed: summary }, isError };
+		view.update([{ type: "toolCall", id: name, name, args: { query: "needle", command: "exit 1" }, result, isPartial: false }],
+			{ theme, expanded: false, cwd: process.cwd(), showImages: false, outputPad: 1, resolve: toolRenderers });
+		const raw = view.render(100).join("\n");
+		assert.match(stripVTControlCharacters(raw), new RegExp(summary));
+		assert.ok(raw.includes(theme.getFgAnsi("muted")));
+		assert.ok(!raw.includes(theme.getFgAnsi(isError ? "error" : "success")));
+		const regular = new ToolExecutionComponent(name, `main-${name}`, { query: "needle", command: "exit 1" }, {},
+			toolRenderers(name), { requestRender() {} } as TUI, process.cwd());
+		regular.updateResult(result, false);
+		assert.ok(regular.render(100).join("\n").includes(theme.getFgAnsi(isError ? "error" : "success")));
+		view.dispose();
+	}
+	for (const exitCode of [0, 1]) {
+		const details = { ...base(), exitCode };
+		const raw = createSubagentRenderers().renderResult!({ content: [], details },
+			{ expanded: false, isPartial: false }, theme, context()).render(100).join("\n");
+		assert.ok(raw.includes(theme.getFgAnsi("muted")));
+		assert.ok(!raw.includes(theme.getFgAnsi(exitCode ? "error" : "success")));
+		assert.match(stripVTControlCharacters(raw), exitCode ? /done with errors/ : /All done/);
+	}
 });

@@ -101,12 +101,13 @@ export class ActivityView extends Container {
 		const theme = this.theme;
 		if (!theme || typeof theme.getFgAnsi !== "function") return line;
 		const muted = theme.getFgAnsi("muted");
+		line = line.replaceAll(theme.getBgAnsi("toolErrorBg"), "\x1b[49m");
 		const argument = tool
 			? foregroundAnsi(mixColors(theme.colors.mdLink, theme.colors.muted, 0.5), theme.getColorMode())
 			: muted;
 		// Native generic tool arguments use muted rather than accent.
 		if (tool) line = line.replaceAll(muted, argument);
-		for (const token of ["toolTitle", "accent", "toolOutput", "text"] as const) {
+		for (const token of ["toolTitle", "accent", "toolOutput", "text", "success", "error", "warning"] as const) {
 			const color = theme.getFgAnsi(token);
 			if (color) line = line.replaceAll(color, token === "accent" || token === "text" ? argument : muted);
 		}
