@@ -69,6 +69,26 @@ final class SigningTests: XCTestCase {
         XCTAssertEqual(model.items, [c])
     }
 
+    func testClickPlacementSelectsAllPendingLocationsButNotAlreadySignedOnes() {
+        var model = EditorModel()
+        let size = CGSize(width: 600, height: 800)
+        model.placeSignature(at: CGPoint(x: 120, y: 200), page: 0, pageSize: size)
+        let first = model.items[0]
+        model.placeSignature(at: CGPoint(x: 300, y: 400), page: 1, pageSize: size)
+        XCTAssertEqual(model.selectedSignatureIDs.count, 2)
+        XCTAssertEqual(model.pendingSignatureIDs.count, 2)
+        let ids = model.selectedSignatureIDs
+        model.apply(SignatureDrawing(strokes: [[.zero, CGPoint(x: 30, y: 10)]]), to: ids)
+        model.placeSignature(at: CGPoint(x: 500, y: 100), page: 1, pageSize: size)
+        XCTAssertEqual(model.selectedSignatureIDs.count, 1)
+        XCTAssertFalse(model.selection.contains(first.id))
+        XCTAssertEqual(model.pendingSignatureIDs.count, 1)
+        model.placeSignature(at: .zero, page: 0, pageSize: size)
+        XCTAssertEqual(model.items.last?.rect.minX, 0)
+        XCTAssertEqual(model.items.last?.rect.minY, 0)
+        XCTAssertEqual(model.selectedSignatureIDs.count, 2)
+    }
+
     func testConstrainResizedAndMovedBoxesToPage() {
         let size = CGSize(width: 200, height: 100)
         XCTAssertEqual(EditorModel.constrained(CGRect(x: -10, y: 99, width: 400, height: 0), to: size),

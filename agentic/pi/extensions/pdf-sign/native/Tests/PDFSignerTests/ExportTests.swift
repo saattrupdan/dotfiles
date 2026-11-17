@@ -132,6 +132,87 @@ final class ExportTests: XCTestCase {
         }
     }
 
+    func testContextEditTargetsTheClickedTextInsteadOfFirstSelectedText() throws {
+        _ = NSApplication.shared
+        let editor = try EditorController(source: source) { _ in XCTFail("No export requested") }
+        defer { editor.window.orderOut(nil) }
+        editor.show()
+        let canvas = editor.canvas
+        let first = EditorItem(page: 1, rect: CGRect(x: 20, y: 40, width: 100, height: 30), content: .text("Other page"))
+        let clicked = EditorItem(page: 0, rect: CGRect(x: 100, y: 160, width: 180, height: 30), content: .text("Clicked text"))
+        canvas.model.items = [first, clicked]
+        canvas.model.selection = [first.id, clicked.id]
+        var edited: UUID?
+        canvas.onEditText = { edited = $0 }
+        let point = CGPoint(x: clicked.rect.midX * canvas.zoom, y: clicked.rect.midY * canvas.zoom)
+        let event = try XCTUnwrap(NSEvent.mouseEvent(with: .rightMouseDown, location: canvas.convert(point, to: nil), modifierFlags: [], timestamp: 0,
+            windowNumber: editor.window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 0))
+        let menu = try XCTUnwrap(canvas.menu(for: event))
+        let edit = try XCTUnwrap(menu.items.first { $0.title == "Edit text…" })
+        XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(edit.action), to: edit.target, from: edit))
+        XCTAssertEqual(edited, clicked.id)
+    }
+
+    func testDraggingEmptyPageDoesNotCreateAccidentalSignatureLocations() throws {
+        _ = NSApplication.shared
+        let editor = try EditorController(source: source) { _ in XCTFail("No export requested") }
+        defer { editor.window.orderOut(nil) }
+        editor.show()
+        let canvas = editor.canvas
+        let steps: [(NSEvent.EventType, CGPoint)] = [(.leftMouseDown, CGPoint(x: 100, y: 100)),
+            (.leftMouseDragged, CGPoint(x: 180, y: 200)), (.leftMouseUp, CGPoint(x: 180, y: 200))]
+        for (type, point) in steps {
+            let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: canvas.convert(point, to: nil), modifierFlags: [], timestamp: 0,
+                windowNumber: editor.window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 0))
+            switch type {
+            case .leftMouseDown: canvas.mouseDown(with: event)
+            case .leftMouseDragged: canvas.mouseDragged(with: event)
+            default: canvas.mouseUp(with: event)
+            }
+        }
+        XCTAssertTrue(canvas.model.items.isEmpty)
+    }
+
+    func testEditorHasOnlySignAndExportPrimaryButtonsAndUsesActiveSpace() throws {
+        _ = NSApplication.shared
+        let editor = try EditorController(source: source) { _ in XCTFail("No export requested") }
+        defer { editor.window.orderOut(nil) }
+        XCTAssertEqual(editor.header.subviews.compactMap { $0 as? NSButton }.map(\.title), ["Sign", "Export"])
+        XCTAssertTrue(editor.window.collectionBehavior.contains(.moveToActiveSpace))
+        XCTAssertTrue(editor.window.collectionBehavior.contains(.fullScreenAuxiliary))
+        XCTAssertFalse(editor.window.collectionBehavior.contains(.canJoinAllSpaces))
+        XCTAssertEqual(editor.window.level, .normal)
+        XCTAssertFalse(editor.header.sign.isEnabled)
+        XCTAssertFalse(editor.header.export.isEnabled)
+        editor.canvas.model.placeSignature(at: CGPoint(x: 100, y: 150), page: 0, pageSize: editor.canvas.pageSize)
+        XCTAssertTrue(editor.header.sign.isEnabled)
+        XCTAssertFalse(editor.header.export.isEnabled)
+        let ids = editor.canvas.model.selectedSignatureIDs
+        editor.canvas.model.apply(SignatureDrawing(strokes: [[.zero, CGPoint(x: 20, y: 10)]]), to: ids)
+        XCTAssertTrue(editor.header.export.isEnabled)
+    }
+
+    func testSingleClickPlacesSignatureWithoutAPlacementMode() throws {
+        _ = NSApplication.shared
+        let editor = try EditorController(source: source) { _ in XCTFail("No export requested") }
+        defer { editor.window.orderOut(nil) }
+        editor.show()
+        let canvas = editor.canvas
+        canvas.zoom = 1
+        canvas.updateSize()
+        let point = CGPoint(x: 150, y: 250)
+        let windowPoint = canvas.convert(point, to: nil)
+        for type: NSEvent.EventType in [.leftMouseDown, .leftMouseUp] {
+            let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: windowPoint, modifierFlags: [], timestamp: 0,
+                windowNumber: editor.window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 0))
+            if type == .leftMouseDown { canvas.mouseDown(with: event) } else { canvas.mouseUp(with: event) }
+        }
+        XCTAssertEqual(canvas.model.items.count, 1, "A plain click must place a signature without switching tools or dragging a box")
+        guard let item = canvas.model.items.first else { return }
+        XCTAssertTrue(item.rect.contains(point))
+        XCTAssertTrue(canvas.model.selectedSignatureIDs.contains(item.id))
+    }
+
     func testEditorCanvasSupportsBoxesResizeMoveDeleteUndoAndText() throws {
         _ = NSApplication.shared
         let editor = try EditorController(source: source) { _ in XCTFail("No export requested") }
@@ -148,16 +229,14 @@ final class ExportTests: XCTestCase {
                                                   windowNumber: editor.window.windowNumber, context: nil,
                                                   eventNumber: 0, clickCount: clicks, pressure: 0))
         }
-        canvas.mode = .box
-        canvas.mouseDown(with: try mouse(.leftMouseDown, CGPoint(x: 50, y: 250)))
-        canvas.mouseDragged(with: try mouse(.leftMouseDragged, CGPoint(x: 210, y: 300)))
-        canvas.mouseUp(with: try mouse(.leftMouseUp, CGPoint(x: 210, y: 300)))
+        canvas.mouseDown(with: try mouse(.leftMouseDown, CGPoint(x: 138, y: 279)))
+        canvas.mouseUp(with: try mouse(.leftMouseUp, CGPoint(x: 138, y: 279)))
         XCTAssertEqual(canvas.model.items.count, 1)
-        XCTAssertEqual(canvas.model.items[0].rect, CGRect(x: 50, y: 250, width: 160, height: 50))
-        canvas.mouseDown(with: try mouse(.leftMouseDown, CGPoint(x: 210, y: 250)))
+        XCTAssertEqual(canvas.model.items[0].rect, CGRect(x: 50, y: 250, width: 176, height: 58))
+        canvas.mouseDown(with: try mouse(.leftMouseDown, CGPoint(x: 226, y: 250)))
         canvas.mouseDragged(with: try mouse(.leftMouseDragged, CGPoint(x: 240, y: 220)))
         canvas.mouseUp(with: try mouse(.leftMouseUp, CGPoint(x: 240, y: 220)))
-        XCTAssertEqual(canvas.model.items[0].rect, CGRect(x: 50, y: 220, width: 190, height: 80))
+        XCTAssertEqual(canvas.model.items[0].rect, CGRect(x: 50, y: 220, width: 190, height: 88))
         canvas.mouseDown(with: try mouse(.leftMouseDown, CGPoint(x: 100, y: 250)))
         canvas.mouseDragged(with: try mouse(.leftMouseDragged, CGPoint(x: 120, y: 260)))
         canvas.mouseUp(with: try mouse(.leftMouseUp, CGPoint(x: 120, y: 260)))

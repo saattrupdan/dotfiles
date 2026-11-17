@@ -27,7 +27,7 @@ export default function pdfSigning(pi: ExtensionAPI, overrides: Partial<SignerDe
 	pi.registerTool<typeof parameters, { status: string }>({
 		name: "sign_pdf",
 		label: "Sign PDF",
-		description: "Open a PDF in a local macOS signing editor. The user manually adds/selects boxes, draws with the whole trackpad, adds name/date text, and exports a flattened copy through a save dialog (default filename: original-signed.pdf). Returns only completion status and saved path, never document contents or signature images. Requires interactive Pi running locally on a Mac; first use builds the native helper with Xcode Command Line Tools.",
+		description: "Open a PDF in a local macOS signing editor. The user clicks the page to place signature locations, presses Sign, draws with the whole trackpad, adjusts by dragging, and presses Export to save a flattened copy through a save dialog. Name/date text is available from the page’s context menu (default filename: original-signed.pdf). Returns only completion status and saved path, never document contents or signature images. Requires interactive Pi running locally on a Mac; first use builds the native helper with Xcode Command Line Tools.",
 		promptSnippet: "Open a local PDF editor for manual trackpad signing; document and signature stay on the Mac.",
 		promptGuidelines: ["When asked to sign a PDF, use sign_pdf directly. Do not read, extract, render, or upload its contents or the signature to the model. The user places signatures and text in the local editor."],
 		parameters,
@@ -43,8 +43,9 @@ export default function pdfSigning(pi: ExtensionAPI, overrides: Partial<SignerDe
 					if (queuedSignal.aborted) throw new Error("PDF signing cancelled.");
 					return dependencies.launch(source, queuedSignal);
 				}, combined);
+				const message = result.status === "exported" ? `Signed PDF saved: ${result.path}` : "PDF signing cancelled. No copy was exported.";
 				return {
-					content: [{ type: "text", text: result.status === "exported" ? `Signed PDF saved: ${result.path}` : "PDF signing cancelled. No copy was exported." }],
+					content: [{ type: "text", text: result.returnWarning ? `${message}\n${result.returnWarning}` : message }],
 					details: { status: result.status },
 				};
 			} catch (error) {

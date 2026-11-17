@@ -12,6 +12,7 @@ await jiti.import(path.join(root, "_working-status", "status.test.ts"), { defaul
 await jiti.import(path.join(root, "run-python-code", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "pdf-sign", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "pdf-sign", "launcher.test.ts"), { default: false });
+await jiti.import(path.join(root, "pdf-sign", "focus.test.ts"), { default: false });
 await jiti.import(path.join(root, "conversation-name", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "codemode-collapse", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "_tool-display", "expanded-call.test.ts"), { default: false });

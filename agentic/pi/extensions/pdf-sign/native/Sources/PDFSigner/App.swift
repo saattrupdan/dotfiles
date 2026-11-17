@@ -74,6 +74,10 @@ final class SignerDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self.editor = editor
             window = editor.window
             editor.show()
+            if CommandLine.arguments.contains("--notify-ready") {
+                // Dedicated inherited pipe: never mix readiness with the private result channel.
+                try? FileHandle(fileDescriptor: 3, closeOnDealloc: false).write(contentsOf: Data("ready\n".utf8))
+            }
         } catch { reply(["status": "error", "message": error.localizedDescription]) }
     }
 

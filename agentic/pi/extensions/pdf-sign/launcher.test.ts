@@ -50,6 +50,61 @@ test("aborting a native editor waits for termination and rejects rather than rep
 	} finally { await rm(folder, { recursive: true, force: true }); }
 });
 
+test("activates the existing app exactly once, only after the native window reports ready", async () => {
+	const folder = await mkdtemp(path.join(os.tmpdir(), "pi-sign-ready-"));
+	try {
+		const app = path.join(folder, "Pi PDF Signer.app");
+		const helper = path.join(app, "Contents", "MacOS", "PDFSigner");
+		await mkdir(path.dirname(helper), { recursive: true });
+		await writeFile(helper, '#!/usr/bin/env node\nconst fs = require("node:fs");\nif (process.argv[4] !== "--notify-ready") process.exit(1);\nfs.writeSync(3, "rea");\nsetTimeout(() => { fs.writeSync(3, "dy\\nready\\n"); console.log(JSON.stringify({status:"cancelled"})); }, 40);\n', { mode: 0o700 });
+		const calls: string[] = [];
+		assert.deepEqual(await runHelper(helper, "/tmp/a.pdf", undefined, { activate: async (application) => { calls.push(application); } }), { status: "cancelled" });
+		assert.deepEqual(calls, [app]);
+	} finally { await rm(folder, { recursive: true, force: true }); }
+});
+
+test("failed foreground activation terminates the helper and reports a visible-window error", async () => {
+	const folder = await mkdtemp(path.join(os.tmpdir(), "pi-sign-activation-"));
+	try {
+		const helper = path.join(folder, "helper");
+		await writeFile(helper, '#!/usr/bin/env node\nrequire("node:fs").writeSync(3, "ready\\n"); setInterval(() => {}, 1000);\n', { mode: 0o700 });
+		await assert.rejects(runHelper(helper, "/tmp/a.pdf", undefined, { activate: async () => { throw new Error("PRIVATE"); } }), /could not bring.*forward/);
+	} finally { await rm(folder, { recursive: true, force: true }); }
+});
+
+test("returns focus after helper exit without turning a successful export into a failure", async () => {
+	const folder = await mkdtemp(path.join(os.tmpdir(), "pi-sign-return-"));
+	try {
+		const helper = path.join(folder, "helper");
+		await writeFile(helper, '#!/usr/bin/env node\nconsole.log(JSON.stringify({status:"exported",path:"/tmp/a-signed.pdf"}));\n', { mode: 0o700 });
+		let restored = 0;
+		assert.deepEqual(await runHelper(helper, "/tmp/a.pdf", undefined, { restore: async () => { restored++; } }), { status: "exported", path: "/tmp/a-signed.pdf" });
+		assert.equal(restored, 1);
+		const result = await runHelper(helper, "/tmp/a.pdf", undefined, { restore: async () => { throw new Error("PRIVATE"); } });
+		assert.equal(result.status, "exported");
+		assert.equal(result.returnWarning, "Could not switch back to the originating Pi session.");
+		assert.doesNotMatch(JSON.stringify(result), /PRIVATE/);
+	} finally { await rm(folder, { recursive: true, force: true }); }
+});
+
+test("completed exports survive a cancellation while focus restoration is pending", async () => {
+	const folder = await mkdtemp(path.join(os.tmpdir(), "pi-sign-late-abort-"));
+	try {
+		const helper = path.join(folder, "helper");
+		await writeFile(helper, '#!/usr/bin/env node\nconsole.log(JSON.stringify({status:"exported",path:"/tmp/a-signed.pdf"}));\n', { mode: 0o700 });
+		let restoring!: () => void;
+		let finishRestore!: () => void;
+		const started = new Promise<void>((resolve) => { restoring = resolve; });
+		const pending = new Promise<void>((resolve) => { finishRestore = resolve; });
+		const controller = new AbortController();
+		const task = runHelper(helper, "/tmp/a.pdf", controller.signal, { restore: async () => { restoring(); await pending; } });
+		await started;
+		controller.abort();
+		finishRestore();
+		assert.deepEqual(await task, { status: "exported", path: "/tmp/a-signed.pdf" });
+	} finally { await rm(folder, { recursive: true, force: true }); }
+});
+
 test("native failures and malformed output never expose helper output", async () => {
 	const folder = await mkdtemp(path.join(os.tmpdir(), "pi-sign-private-"));
 	try {

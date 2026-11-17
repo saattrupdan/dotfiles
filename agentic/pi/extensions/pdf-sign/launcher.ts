@@ -5,12 +5,18 @@ import { access, copyFile, mkdir, open, readFile, readdir, rename, stat, writeFi
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { captureReturnTarget, returnToPi } from "./focus.ts";
 
 const exec = promisify(execFile);
 const native = path.join(__dirname, "native");
 let building: Promise<string> | undefined;
 
-export type SigningResult = { status: "cancelled" } | { status: "exported"; path: string };
+export type SigningResult = ({ status: "cancelled" } | { status: "exported"; path: string }) & { returnWarning?: string };
+
+interface HelperHandoff {
+	activate(application: string): Promise<void>;
+	restore(): Promise<void>;
+}
 
 export async function resolvePDF(input: string, cwd: string): Promise<string> {
 	if (!input.trim()) throw new Error("Specify a PDF path.");
@@ -73,14 +79,25 @@ export function parseSigningResult(stdout: string): SigningResult {
 	throw new Error("The PDF editor returned an invalid result.");
 }
 
-export function runHelper(executable: string, source: string, signal?: AbortSignal): Promise<SigningResult> {
+async function activateApplication(application: string): Promise<void> {
+	// LaunchServices can switch away from a fullscreen terminal; AppKit activate alone cannot.
+	await exec("/usr/bin/open", ["-a", application], { timeout: 10_000 });
+}
+
+export function runHelper(executable: string, source: string, signal?: AbortSignal, handoff: Partial<HelperHandoff> = {}): Promise<SigningResult> {
+	const activate = handoff.activate ?? activateApplication;
 	if (signal?.aborted) return Promise.reject(new Error("PDF signing cancelled."));
 	return new Promise((resolve, reject) => {
-		const child = spawn(executable, ["--input", source], { stdio: ["ignore", "pipe", "ignore"] });
+		const child = spawn(executable, ["--input", source, "--notify-ready"], { stdio: ["ignore", "pipe", "ignore", "pipe"] });
 		let stdout = "";
+		let readiness = "";
 		let overflow = false;
+		let closed = false;
+		let activationFailed = false;
+		let activation: Promise<void> | undefined;
 		let forceKill: ReturnType<typeof setTimeout> | undefined;
 		const abort = () => {
+			if (closed) return;
 			child.kill("SIGTERM");
 			forceKill ??= setTimeout(() => child.kill("SIGKILL"), 3_000);
 			forceKill.unref();
@@ -89,17 +106,42 @@ export function runHelper(executable: string, source: string, signal?: AbortSign
 			signal?.removeEventListener("abort", abort);
 			if (forceKill) clearTimeout(forceKill);
 		};
-		child.stdout.setEncoding("utf8");
-		child.stdout.on("data", (data: string) => {
+		child.stdout!.setEncoding("utf8");
+		child.stdout!.on("data", (data: string) => {
 			if (stdout.length + data.length > 16_384) { overflow = true; abort(); }
 			else stdout += data;
 		});
-		child.once("error", () => { cleanup(); reject(new Error("Could not launch the local PDF editor.")); });
-		child.once("close", (code) => {
+		child.stdio[3]!.on("data", (data: Buffer) => {
+			if (activation || signal?.aborted || closed) return;
+			readiness += data.toString("utf8");
+			if (readiness.length > 128) { overflow = true; abort(); return; }
+			if (!readiness.includes("ready\n")) return;
+			const application = path.resolve(path.dirname(executable), "..", "..");
+			activation = activate(application).catch(() => { activationFailed = true; abort(); });
+		});
+		child.once("error", () => { closed = true; cleanup(); reject(new Error("Could not launch the local PDF editor.")); });
+		child.once("close", async (code) => {
+			closed = true;
 			cleanup();
+			let completed: SigningResult | undefined;
+			if (!overflow && code === 0) {
+				try { completed = parseSigningResult(stdout); } catch { /* Report malformed output after returning focus. */ }
+			}
+			await activation;
+			let returnWarning: string | undefined;
+			try { await handoff.restore?.(); } catch { returnWarning = "Could not switch back to the originating Pi session."; }
+			// A saved PDF cannot become cancelled while the window handoff is pending.
+			if (completed?.status === "exported") {
+				resolve(returnWarning ? { ...completed, returnWarning } : completed);
+				return;
+			}
 			if (signal?.aborted) { reject(new Error("PDF signing cancelled.")); return; }
+			if (activationFailed) { reject(new Error("macOS could not bring the PDF signing window forward.")); return; }
 			if (overflow || code !== 0) { reject(new Error("The PDF editor closed unexpectedly. No signing result was returned.")); return; }
-			try { resolve(parseSigningResult(stdout)); } catch (error) { reject(error); }
+			try {
+				const result = parseSigningResult(stdout);
+				resolve(returnWarning ? { ...result, returnWarning } : result);
+			} catch (error) { reject(error); }
 		});
 		signal?.addEventListener("abort", abort, { once: true });
 		if (signal?.aborted) abort();
@@ -107,11 +149,12 @@ export function runHelper(executable: string, source: string, signal?: AbortSign
 }
 
 export async function launchSigner(source: string, signal?: AbortSignal): Promise<SigningResult> {
+	const origin = captureReturnTarget();
 	if (signal?.aborted) throw new Error("PDF signing cancelled.");
 	building ??= buildHelper().finally(() => { building = undefined; });
 	const executable = await building;
 	if (signal?.aborted) throw new Error("PDF signing cancelled.");
-	const result = await runHelper(executable, source, signal);
+	const result = await runHelper(executable, source, signal, { restore: () => returnToPi(origin) });
 	if (result.status === "exported" && !(await stat(result.path)).isFile()) throw new Error("The signed PDF was not found after export.");
 	return result;
 }

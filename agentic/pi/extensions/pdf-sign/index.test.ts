@@ -76,6 +76,16 @@ test("session shutdown cancels the active helper", async () => {
 	assert.equal((await result).isError, true);
 });
 
+test("a focus-return problem preserves successful export and reports the handoff problem", async () => {
+	const { tool, ctx } = setup({ resolve: async () => "/a.pdf", launch: async () => ({
+		status: "exported", path: "/a-signed.pdf", returnWarning: "Could not switch back to the originating Pi session.",
+	}) });
+	const result = await tool.execute("sign", { path: "a.pdf" }, undefined, undefined, ctx);
+	assert.equal(result.isError, undefined);
+	assert.deepEqual(result.details, { status: "exported" });
+	assert.deepEqual(result.content, [{ type: "text", text: "Signed PDF saved: /a-signed.pdf\nCould not switch back to the originating Pi session." }]);
+});
+
 test("helper errors are reported without pretending that a copy was saved", async () => {
 	const { tool, ctx } = setup({ resolve: async () => "/a.pdf", launch: async () => { throw new Error("Could not build Pi PDF Signer."); } });
 	const result = await tool.execute("sign", { path: "a.pdf" }, undefined, undefined, ctx);

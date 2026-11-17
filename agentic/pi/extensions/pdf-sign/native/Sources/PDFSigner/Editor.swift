@@ -2,27 +2,34 @@ import AppKit
 import PDFKit
 import UniformTypeIdentifiers
 
-enum EditorMode { case select, box }
-
 final class PageCanvas: NSView {
     let document: PDFDocument
-    var model = EditorModel() { didSet { needsDisplay = true; onChange?() } }
-    var mode: EditorMode = .select { didSet { onChange?() } }
+    var model = EditorModel() { didSet { needsDisplay = true; window?.invalidateCursorRects(for: self); onChange?() } }
     var pageIndex = 0
     var zoom: CGFloat = 1
     var onChange: (() -> Void)?
     var onEditText: ((UUID) -> Void)?
+    var onAddText: ((CGPoint) -> Void)?
+    var onZoom: ((CGFloat) -> Void)?
     private var undoStates: [EditorModel] = []
     private var redoStates: [EditorModel] = []
     private var start: CGPoint?
-    private var draft: CGRect?
     private var originals: [UUID: CGRect] = [:]
     private var resizing: UUID?
     private var checkpointed = false
+    private var placing = false
+    private var dragged = false
+    private var contextPoint = CGPoint.zero
+    private var contextItem: UUID?
 
     init(document: PDFDocument) {
         self.document = document
         super.init(frame: .zero)
+        wantsLayer = true
+        layer?.shadowColor = NSColor.black.cgColor
+        layer?.shadowOpacity = 0.16
+        layer?.shadowRadius = 14
+        layer?.shadowOffset = CGSize(width: 0, height: -3)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -36,6 +43,15 @@ final class PageCanvas: NSView {
     func updateSize() {
         frame.size = CGSize(width: pageSize.width * zoom, height: pageSize.height * zoom)
         needsDisplay = true
+        window?.invalidateCursorRects(for: self)
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .crosshair)
+        for item in model.items where item.page == pageIndex {
+            addCursorRect(NSRect(x: item.rect.minX * zoom, y: item.rect.minY * zoom,
+                                 width: item.rect.width * zoom, height: item.rect.height * zoom), cursor: .openHand)
+        }
     }
 
     func checkpoint() {
@@ -62,22 +78,32 @@ final class PageCanvas: NSView {
         model.deleteSelection()
     }
 
+    @objc func selectAllSignatures(_ sender: Any?) {
+        model.selection = Set(model.items.filter { $0.content.isSignature }.map(\.id))
+    }
+
+    override func selectAll(_ sender: Any?) { model.selection = Set(model.items.map(\.id)) }
+
     override func keyDown(with event: NSEvent) {
         if event.modifierFlags.contains(.command) {
             switch event.charactersIgnoringModifiers?.lowercased() {
-            case "a": model.selection = Set(model.items.map(\.id)); return
+            case "a": selectAll(nil); return
             case "z":
                 if event.modifierFlags.contains(.shift) { redo(nil) } else { undo(nil) }
                 return
+            case "+", "=": onZoom?(1.2); return
+            case "-": onZoom?(1 / 1.2); return
             default: break
             }
         }
         switch event.keyCode {
         case 51, 117: deleteSelected(nil)
-        case 53: mode = .select; model.selection.removeAll()
+        case 53: model.selection.removeAll()
         default: super.keyDown(with: event)
         }
     }
+
+    override func magnify(with event: NSEvent) { onZoom?(max(0.5, 1 + event.magnification)) }
 
     private func location(_ event: NSEvent) -> CGPoint {
         let p = convert(event.locationInWindow, from: nil)
@@ -88,13 +114,13 @@ final class PageCanvas: NSView {
         window?.makeFirstResponder(self)
         let p = location(event)
         start = p
-        draft = nil
         resizing = nil
         originals = [:]
         checkpointed = false
-        guard mode == .select else { return }
+        placing = false
+        dragged = false
         let current = model.items.filter { $0.page == pageIndex }
-        let tolerance = 8 / zoom
+        let tolerance = 9 / zoom
         if let item = current.reversed().first(where: {
             model.selection.contains($0.id) && abs(p.x - $0.rect.maxX) < tolerance && abs(p.y - $0.rect.minY) < tolerance
         }) {
@@ -103,7 +129,7 @@ final class PageCanvas: NSView {
             return
         }
         guard let hit = current.reversed().first(where: { $0.rect.contains(p) }) else {
-            if !event.modifierFlags.contains(.shift) { model.selection.removeAll() }
+            placing = !event.modifierFlags.contains(.control)
             return
         }
         if event.modifierFlags.contains(.shift) {
@@ -123,12 +149,8 @@ final class PageCanvas: NSView {
     override func mouseDragged(with event: NSEvent) {
         guard let start else { return }
         let p = location(event)
-        if mode == .box {
-            draft = CGRect(x: min(start.x, p.x), y: min(start.y, p.y), width: abs(p.x - start.x), height: abs(p.y - start.y))
-            needsDisplay = true
-            return
-        }
-        guard !originals.isEmpty else { return }
+        if hypot(p.x - start.x, p.y - start.y) * zoom > 3 { dragged = true }
+        guard !originals.isEmpty, dragged else { return }
         if !checkpointed { checkpoint(); checkpointed = true }
         if let resizing, let original = originals[resizing], let index = model.items.firstIndex(where: { $0.id == resizing }) {
             let rect = CGRect(x: original.minX, y: min(p.y, original.maxY - 8), width: max(8, p.x - original.minX), height: max(8, original.maxY - p.y))
@@ -138,24 +160,49 @@ final class PageCanvas: NSView {
             let dx = min(max(p.x - start.x, -group.minX), pageSize.width - group.maxX)
             let dy = min(max(p.y - start.y, -group.minY), pageSize.height - group.maxY)
             for index in model.items.indices {
-                if let rect = originals[model.items[index].id] {
-                    model.items[index].rect = rect.offsetBy(dx: dx, dy: dy)
-                }
+                if let rect = originals[model.items[index].id] { model.items[index].rect = rect.offsetBy(dx: dx, dy: dy) }
             }
         }
     }
 
     override func mouseUp(with event: NSEvent) {
-        if mode == .box, let draft, draft.width >= 12, draft.height >= 10 {
+        if placing, !dragged, let start {
             checkpoint()
-            model.add(EditorItem(page: pageIndex, rect: draft, content: .signature(nil)))
-            mode = .select
+            model.placeSignature(at: start, page: pageIndex, pageSize: pageSize, extendingSelection: event.modifierFlags.contains(.shift))
         }
         start = nil
-        draft = nil
         originals = [:]
         resizing = nil
+        placing = false
         needsDisplay = true
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        contextPoint = location(event)
+        let hit = model.items.reversed().first { $0.page == pageIndex && $0.rect.contains(contextPoint) }
+        contextItem = hit?.id
+        if let hit, !model.selection.contains(hit.id) { model.selection = [hit.id] }
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        func item(_ title: String, _ action: Selector, enabled: Bool = true) {
+            let value = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
+            value.target = self
+            value.isEnabled = enabled
+        }
+        item("Add name or date here…", #selector(addTextHere))
+        if let hit, case .text = hit.content { item("Edit text…", #selector(editSelectedText)) }
+        menu.addItem(.separator())
+        item("Delete selected", #selector(deleteSelected(_:)), enabled: !model.selection.isEmpty)
+        item("Select all signatures", #selector(selectAllSignatures(_:)), enabled: model.items.contains { $0.content.isSignature })
+        menu.addItem(.separator())
+        item("Undo", #selector(undo(_:)), enabled: !undoStates.isEmpty)
+        item("Redo", #selector(redo(_:)), enabled: !redoStates.isEmpty)
+        return menu
+    }
+
+    @objc private func addTextHere() { onAddText?(contextPoint) }
+    @objc private func editSelectedText() {
+        if let id = contextItem, model.items.contains(where: { $0.id == id && !$0.content.isSignature }) { onEditText?(id) }
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -168,27 +215,36 @@ final class PageCanvas: NSView {
         page.draw(with: .cropBox, to: context)
         context.restoreGState()
         for item in model.items where item.page == pageIndex {
-            ItemRenderer.draw(item, in: context)
             let selected = model.selection.contains(item.id)
+            if !item.content.isExportable {
+                let shape = NSBezierPath(roundedRect: item.rect, xRadius: 5 / zoom, yRadius: 5 / zoom)
+                NSColor.controlAccentColor.withAlphaComponent(0.055).setFill()
+                shape.fill()
+                let label = "Signature" as NSString
+                let font = NSFont.systemFont(ofSize: 12 / zoom, weight: .medium)
+                let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.controlAccentColor]
+                let size = label.size(withAttributes: attributes)
+                label.draw(at: CGPoint(x: item.rect.midX - size.width / 2, y: item.rect.midY - size.height / 2), withAttributes: attributes)
+            }
+            ItemRenderer.draw(item, in: context)
             if selected || !item.content.isExportable {
                 context.saveGState()
-                context.setStrokeColor((selected ? NSColor.controlAccentColor : NSColor.systemGray).cgColor)
-                context.setLineWidth(1.2 / zoom)
-                context.setLineDash(phase: 0, lengths: selected ? [] : [5 / zoom, 3 / zoom])
-                context.stroke(item.rect)
+                context.setStrokeColor(NSColor.controlAccentColor.withAlphaComponent(selected ? 0.8 : 0.4).cgColor)
+                context.setLineWidth(1 / zoom)
+                context.setLineDash(phase: 0, lengths: item.content.isExportable ? [] : [5 / zoom, 4 / zoom])
+                let shape = CGPath(roundedRect: item.rect, cornerWidth: 5 / zoom, cornerHeight: 5 / zoom, transform: nil)
+                context.addPath(shape)
+                context.strokePath()
                 if selected {
-                    let handle = 7 / zoom
-                    context.setFillColor(NSColor.controlAccentColor.cgColor)
-                    context.fill(CGRect(x: item.rect.maxX - handle / 2, y: item.rect.minY - handle / 2, width: handle, height: handle))
+                    let radius = 3.5 / zoom
+                    let handle = CGRect(x: item.rect.maxX - radius, y: item.rect.minY - radius, width: radius * 2, height: radius * 2)
+                    context.setFillColor(NSColor.white.cgColor)
+                    context.fillEllipse(in: handle)
+                    context.setLineDash(phase: 0, lengths: [])
+                    context.strokeEllipse(in: handle)
                 }
                 context.restoreGState()
             }
-        }
-        if let draft {
-            context.setStrokeColor(NSColor.controlAccentColor.cgColor)
-            context.setLineWidth(1 / zoom)
-            context.setLineDash(phase: 0, lengths: [4 / zoom, 3 / zoom])
-            context.stroke(draft)
         }
         context.restoreGState()
     }
@@ -199,11 +255,10 @@ final class EditorController: NSObject, NSWindowDelegate {
     let canvas: PageCanvas
     private let source: URL
     private let scroll = NSScrollView()
-    private let status = NSTextField(labelWithString: "")
-    private let pageLabel = NSTextField(labelWithString: "")
-    private let signButton = NSButton()
-    private let boxButton = NSButton()
-    private let exportButton = NSButton()
+    private let status = NSTextField(labelWithString: "Click anywhere on the page to place a signature")
+    private let pages = NSPopUpButton()
+    private let zoomLabel = NSTextField(labelWithString: "")
+    private(set) var header: EditorHeader!
     private var capture: TrackpadCapture?
     private let onFinish: ([String: String]) -> Void
 
@@ -211,95 +266,89 @@ final class EditorController: NSObject, NSWindowDelegate {
         self.source = source
         self.onFinish = onFinish
         canvas = PageCanvas(document: try PDFExport.open(source))
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 860),
-                          styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1060, height: 850),
+                          styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         super.init()
-        window.title = "\(source.lastPathComponent) — Pi PDF Signer"
-        window.minSize = CGSize(width: 1080, height: 620)
+        window.title = source.lastPathComponent
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.minSize = CGSize(width: 760, height: 560)
+        window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         window.isReleasedWhenClosed = false
         window.isRestorable = false
         window.delegate = self
         buildUI()
         canvas.onChange = { [weak self] in self?.refresh() }
         canvas.onEditText = { [weak self] id in self?.editText(id: id) }
+        canvas.onAddText = { [weak self] point in self?.editText(id: nil, point: point) }
+        canvas.onZoom = { [weak self] factor in self?.changeZoom(factor) }
         refresh()
     }
 
-    private func button(_ title: String, _ action: Selector) -> NSButton {
-        NSButton(title: title, target: self, action: action)
-    }
-
     private func buildUI() {
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: 1180, height: 860))
-        window.contentView = root
-        boxButton.title = "Add signature box"
-        boxButton.target = self
-        boxButton.action = #selector(addBox)
-        boxButton.setButtonType(.toggle)
-        signButton.target = self
-        signButton.action = #selector(signSelected)
-        exportButton.title = "Export signed version"
-        exportButton.target = self
-        exportButton.action = #selector(exportPDF)
-        let toolbar = NSStackView(views: [
-            button("Select", #selector(selectMode)), boxButton,
-            button("Select all boxes", #selector(selectAllBoxes)), signButton,
-            button("Add name/date text", #selector(addText)),
-            button("Delete", #selector(deleteSelected)), button("Undo", #selector(undo)), exportButton,
-        ])
-        toolbar.orientation = .horizontal
-        toolbar.spacing = 8
-        toolbar.frame = NSRect(x: 16, y: 810, width: 1148, height: 32)
-        toolbar.autoresizingMask = [.width, .minYMargin]
-        root.addSubview(toolbar)
-        let help = NSTextField(labelWithString: "Shift-click to select multiple • Drag to move • Drag a lower-right handle to resize • Double-click text to edit")
-        help.textColor = .secondaryLabelColor
-        help.font = .systemFont(ofSize: 11)
-        let nav = NSStackView(views: [button("Previous", #selector(previousPage)), pageLabel, button("Next", #selector(nextPage)),
-                                     button("Fit page", #selector(fitPage)), button("−", #selector(zoomOut)), button("+", #selector(zoomIn)), help])
-        nav.orientation = .horizontal
-        nav.spacing = 8
-        nav.frame = NSRect(x: 16, y: 773, width: 1148, height: 28)
-        nav.autoresizingMask = [.width, .minYMargin]
-        root.addSubview(nav)
-        scroll.frame = NSRect(x: 16, y: 42, width: 1148, height: 720)
-        scroll.autoresizingMask = [.width, .height]
+        header = EditorHeader(filename: source.lastPathComponent, target: self, sign: #selector(signSelected), export: #selector(exportPDF))
+        let clip = CenteredPageClip()
+        clip.drawsBackground = true
+        clip.backgroundColor = .underPageBackgroundColor
+        scroll.contentView = clip
         scroll.hasVerticalScroller = true
         scroll.hasHorizontalScroller = true
-        scroll.borderType = .bezelBorder
+        scroll.scrollerStyle = .overlay
+        scroll.borderType = .noBorder
         scroll.backgroundColor = .underPageBackgroundColor
         scroll.documentView = canvas
-        root.addSubview(scroll)
-        status.frame = NSRect(x: 16, y: 12, width: 1148, height: 20)
-        status.autoresizingMask = [.width, .maxYMargin]
+        let footer = NSView(frame: NSRect(x: 0, y: 0, width: 1060, height: 46))
+        for index in 0..<canvas.document.pageCount { pages.addItem(withTitle: "Page \(index + 1) of \(canvas.document.pageCount)") }
+        pages.isBordered = false
+        pages.font = .systemFont(ofSize: 12, weight: .medium)
+        pages.isEnabled = canvas.document.pageCount > 1
+        pages.target = self
+        pages.action = #selector(selectPage)
+        pages.frame = NSRect(x: 22, y: 11, width: 132, height: 24)
+        pages.toolTip = "Go to a page"
+        footer.addSubview(pages)
+        status.frame = NSRect(x: 165, y: 14, width: 730, height: 18)
+        status.autoresizingMask = [.width]
+        status.alignment = .center
+        status.font = .systemFont(ofSize: 12)
         status.textColor = .secondaryLabelColor
-        root.addSubview(status)
+        footer.addSubview(status)
+        zoomLabel.frame = NSRect(x: 960, y: 14, width: 74, height: 18)
+        zoomLabel.autoresizingMask = [.minXMargin]
+        zoomLabel.alignment = .right
+        zoomLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        zoomLabel.textColor = .tertiaryLabelColor
+        zoomLabel.toolTip = "Pinch to zoom, or use ⌘+ / ⌘−"
+        footer.addSubview(zoomLabel)
+        window.contentView = EditorSurface(header: header, scroll: scroll, footer: footer)
     }
 
     func show() {
-        window.center()
-        window.makeKeyAndOrderFront(nil)
+        if let screen = NSScreen.screens.first(where: { $0.frame.contains(NSEvent.mouseLocation) }) {
+            let frame = screen.visibleFrame
+            let size = CGSize(width: min(1060, frame.width - 60), height: min(850, frame.height - 60))
+            window.setFrame(NSRect(x: frame.midX - size.width / 2, y: frame.midY - size.height / 2, width: size.width, height: size.height), display: false)
+        } else { window.center() }
+        NSRunningApplication.current.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
         NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+        window.contentView?.layoutSubtreeIfNeeded()
         fitPage()
         window.makeFirstResponder(canvas)
     }
 
     private func refresh() {
         let count = canvas.model.selectedSignatureIDs.count
-        signButton.title = count > 1 ? "Sign selected boxes (\(count))" : "Sign selected box"
-        signButton.isEnabled = count > 0 && capture == nil
-        exportButton.isEnabled = canvas.model.hasContent && capture == nil
-        boxButton.state = canvas.mode == .box ? .on : .off
-        pageLabel.stringValue = "Page \(canvas.pageIndex + 1) / \(canvas.document.pageCount)"
-        status.stringValue = canvas.mode == .box ? "Drag a rectangle on the page to create a signature box." :
-            "\(count) signature box\(count == 1 ? "" : "es") selected across the document. Changes stay in memory until export."
+        header.update(pending: count, hasContent: canvas.model.hasContent, capturing: capture != nil)
+        pages.selectItem(at: canvas.pageIndex)
+        zoomLabel.stringValue = "\(Int(canvas.zoom * 100))%"
+        if count > 0 && !canvas.model.pendingSignatureIDs.isDisjoint(with: canvas.model.selection) {
+            status.stringValue = count == 1 ? "Ready to sign · click Sign above" : "\(count) locations ready · Sign once to fill them all"
+        } else if canvas.model.hasContent {
+            status.stringValue = "Drag to adjust · Export when ready"
+        } else { status.stringValue = "Click anywhere on the page to place a signature" }
     }
-
-    @objc private func selectMode() { canvas.mode = .select; window.makeFirstResponder(canvas) }
-    @objc private func addBox() { canvas.mode = .box; window.makeFirstResponder(canvas) }
-    @objc private func selectAllBoxes() { canvas.model.selection = Set(canvas.model.items.filter { $0.content.isSignature }.map(\.id)) }
-    @objc private func deleteSelected() { canvas.deleteSelected(nil) }
-    @objc private func undo() { canvas.undo(nil) }
 
     @objc private func signSelected() {
         let ids = canvas.model.selectedSignatureIDs
@@ -320,18 +369,14 @@ final class EditorController: NSObject, NSWindowDelegate {
         }
     }
 
-    @objc private func addText() { editText(id: nil) }
-
-    private func editText(id: UUID?) {
+    private func editText(id: UUID?, point: CGPoint? = nil) {
         let alert = NSAlert()
-        alert.messageText = id == nil ? "Add name or date text" : "Edit text"
+        alert.messageText = id == nil ? "Add name or date" : "Edit text"
         alert.addButton(withTitle: "Apply")
         alert.addButton(withTitle: "Cancel")
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 400, height: 28))
         field.placeholderString = "Type your name, date, or other text"
-        if let id, let item = canvas.model.items.first(where: { $0.id == id }), case .text(let text) = item.content {
-            field.stringValue = text
-        }
+        if let id, let item = canvas.model.items.first(where: { $0.id == id }), case .text(let text) = item.content { field.stringValue = text }
         alert.accessoryView = field
         alert.window.initialFirstResponder = field
         alert.beginSheetModal(for: window) { [weak self] response in
@@ -342,8 +387,8 @@ final class EditorController: NSObject, NSWindowDelegate {
             if let id, let index = self.canvas.model.items.firstIndex(where: { $0.id == id }) {
                 self.canvas.model.items[index].content = .text(text)
             } else {
-                let visible = self.canvas.visibleRect
-                let rect = CGRect(x: visible.midX / self.canvas.zoom - 110, y: visible.midY / self.canvas.zoom - 14, width: 220, height: 28)
+                let position = point ?? CGPoint(x: self.canvas.pageSize.width / 2, y: self.canvas.pageSize.height / 2)
+                let rect = CGRect(x: position.x - 110, y: position.y - 14, width: 220, height: 28)
                 self.canvas.model.add(EditorItem(page: self.canvas.pageIndex,
                     rect: EditorModel.constrained(rect, to: self.canvas.pageSize), content: .text(text)))
             }
@@ -351,24 +396,25 @@ final class EditorController: NSObject, NSWindowDelegate {
         }
     }
 
-    @objc private func previousPage() { changePage(-1) }
-    @objc private func nextPage() { changePage(1) }
-
-    private func changePage(_ delta: Int) {
-        canvas.pageIndex = min(canvas.document.pageCount - 1, max(0, canvas.pageIndex + delta))
+    @objc private func selectPage() {
+        canvas.pageIndex = max(0, pages.indexOfSelectedItem)
         fitPage()
         refresh()
     }
 
-    @objc private func fitPage() {
+    private func fitPage() {
         let available = scroll.contentSize
-        canvas.zoom = max(0.1, min((available.width - 20) / canvas.pageSize.width, (available.height - 20) / canvas.pageSize.height))
+        canvas.zoom = max(0.1, min((available.width - 88) / canvas.pageSize.width, (available.height - 64) / canvas.pageSize.height))
         canvas.updateSize()
-        scroll.contentView.scroll(to: CGPoint(x: 0, y: max(0, canvas.frame.height - available.height)))
+        scroll.contentView.scroll(to: .zero)
+        refresh()
     }
 
-    @objc private func zoomIn() { canvas.zoom = min(4, canvas.zoom * 1.25); canvas.updateSize() }
-    @objc private func zoomOut() { canvas.zoom = max(0.1, canvas.zoom / 1.25); canvas.updateSize() }
+    private func changeZoom(_ factor: CGFloat) {
+        canvas.zoom = max(0.1, min(4, canvas.zoom * factor))
+        canvas.updateSize()
+        refresh()
+    }
 
     @objc private func exportPDF() {
         guard canvas.model.hasContent else { return }

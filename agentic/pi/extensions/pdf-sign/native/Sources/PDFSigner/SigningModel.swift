@@ -102,6 +102,20 @@ struct EditorModel {
 
     var hasContent: Bool { items.contains { $0.content.isExportable } }
 
+    var pendingSignatureIDs: Set<UUID> {
+        Set(items.filter { $0.content.isSignature && !$0.content.isExportable }.map(\.id))
+    }
+
+    mutating func placeSignature(at point: CGPoint, page: Int, pageSize: CGSize, extendingSelection: Bool = false) {
+        let size = CGSize(width: min(176, pageSize.width), height: min(58, pageSize.height))
+        let rect = Self.constrained(CGRect(x: point.x - size.width / 2, y: point.y - size.height / 2,
+                                          width: size.width, height: size.height), to: pageSize)
+        let previous = extendingSelection ? selection : pendingSignatureIDs
+        let item = EditorItem(page: page, rect: rect, content: .signature(nil))
+        items.append(item)
+        selection = previous.union([item.id])
+    }
+
     mutating func add(_ item: EditorItem) {
         items.append(item)
         selection = [item.id]
