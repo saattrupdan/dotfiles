@@ -91,12 +91,20 @@ export const useAuth = defineStore("auth", () => {
           credentials: "same-origin",
           cache: "no-store",
         });
+        const failure = `Request failed (HTTP ${result.status}). Try again.`;
         const data = await result.json().catch((error) => {
           if (controller.signal.aborted) throw controller.signal.reason;
           if (result.ok) throw error;
-          return { error: "request_failed" };
+          return { error: failure };
         });
         if (controller.signal.aborted) throw controller.signal.reason;
+        if (
+          [502, 503, 504].includes(result.status) &&
+          !(typeof data?.error === "string" && data.error !== failure)
+        )
+          throw new ConnectionError(
+            "Can't connect to the Pi Remote server on your Mac; it is unavailable. Retrying the connection automatically.",
+          );
         online.value = true;
         connectionFailed.value = false;
         if (!result.ok) {
@@ -109,7 +117,7 @@ export const useAuth = defineStore("auth", () => {
             pendingRequests.delete(controller);
             clear();
           }
-          throw new Error(data.error ?? "request_failed");
+          throw new Error(data.error ?? failure);
         }
         return data as T;
       };
@@ -118,6 +126,7 @@ export const useAuth = defineStore("auth", () => {
       if (e instanceof TypeError || e instanceof ConnectionError) {
         online.value = false;
         connectionFailed.value = true;
+        if (e instanceof ConnectionError) throw e;
         throw new ConnectionError(
           !networkAvailable.value
             ? "You're offline. Connect to the internet and try again."

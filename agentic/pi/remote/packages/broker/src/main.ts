@@ -1,13 +1,13 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.ts";
-import { assertDeployment } from "./gates.ts";
+import { assertStartup } from "./releases.ts";
 import { createBroker } from "./server.ts";
 process.umask(0o077);
 const arg = process.argv.indexOf("--config");
 const config = loadConfig(arg >= 0 ? process.argv[arg + 1] : undefined);
 const proof = process.argv.includes("--proof");
-assertDeployment(config, proof);
+assertStartup(config, import.meta.url, proof);
 if (proof) config.dataDir = path.join(config.dataDir, "proof");
 const bundled = fileURLToPath(new URL("./web/", import.meta.url));
 config.webDir ??= process.argv[1]?.endsWith(".mjs") ? bundled : undefined;

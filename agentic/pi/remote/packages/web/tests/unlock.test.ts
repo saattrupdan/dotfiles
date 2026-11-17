@@ -213,6 +213,63 @@ test("a stalled startup becomes a retryable connection error instead of hanging"
   }
 });
 
+for (const body of ["", "<html>Bad Gateway</html>"])
+  test(`a gateway failure becomes a recoverable connection error (${body || "empty response"})`, async () => {
+    const f = fixture();
+    const original = globalThis.fetch;
+    let reachable = false;
+    mock.method(globalThis, "fetch", (url: string, options: RequestInit) =>
+      reachable
+        ? original(url, options)
+        : Promise.resolve(new Response(body, { status: 502 })),
+    );
+    try {
+      await f.auth.initialize();
+      assert.equal(f.auth.connectionFailed, true);
+      assert.equal(f.auth.online, false);
+      assert.match(f.auth.error, /Pi Remote server.*Mac.*unavailable/);
+      assert(!f.auth.error.includes("request_failed"));
+      reachable = true;
+      mock.timers.tick(15000);
+      await flush();
+      await flush();
+      assert(f.auth.unlocked);
+      assert.equal(f.auth.connectionFailed, false);
+      assert(!f.calls.some((url) => /actions|auth\/(options|assert)/.test(url)));
+    } finally {
+      f.close();
+    }
+  });
+
+for (const body of ["", '{"error":"launch_timeout_check_mac"}'])
+  test(`gateway launch failures preserve uncertain outcomes and never replay writes (${body || "empty response"})`, async () => {
+    const f = fixture();
+    const original = globalThis.fetch;
+    let starts = 0;
+    try {
+      await f.auth.initialize();
+      mock.method(globalThis, "fetch", (url: string, options: RequestInit) => {
+        if (url.endsWith("/sessions") && options.method === "POST") {
+          starts++;
+          return Promise.resolve(new Response(body, { status: 504 }));
+        }
+        return original(url, options);
+      });
+      await assert.rejects(
+        f.auth.request("/sessions", { method: "POST", body: "{}" }),
+        body ? /launch_timeout_check_mac/ : /connect/i,
+      );
+      assert.equal(f.auth.connectionFailed, !body);
+      mock.timers.tick(15000);
+      await flush();
+      await flush();
+      assert.equal(f.auth.connectionFailed, false);
+      assert.equal(starts, 1);
+    } finally {
+      f.close();
+    }
+  });
+
 test("offline startup fails immediately without making requests or prompting for a passkey", async () => {
   const f = fixture();
   Object.assign(navigator, { onLine: false });

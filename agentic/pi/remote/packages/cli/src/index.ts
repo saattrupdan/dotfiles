@@ -11,6 +11,7 @@ import {
   type Config,
 } from "../../broker/src/config.ts";
 import { localRequest } from "../../broker/src/ipc.ts";
+import { assertInstalledRelease, sealRelease } from "../../broker/src/releases.ts";
 import {
   assertDeployment,
   approvePilot,
@@ -80,6 +81,7 @@ function backup(config: Config) {
   }
 }
 async function stage(config: Config) {
+  const expectedDigest = gates(config).digest;
   const root = path.join(fs.realpathSync(config.agentDir), "remote");
   const result = spawnSync(
     path.join(path.dirname(config.node), "npm"),
@@ -107,11 +109,7 @@ async function stage(config: Config) {
   );
   if (install.status !== 0)
     throw new Error("Pinned release dependencies failed to install");
-  fs.writeFileSync(
-    path.join(release, "release.json"),
-    JSON.stringify({ digest: gates(config).digest, protocol: 1, created: Date.now() }),
-    { mode: 0o600 },
-  );
+  sealRelease(config, release, expectedDigest);
   return release;
 }
 async function main() {
@@ -169,6 +167,7 @@ async function main() {
   if (command === "install" || command === "update") {
     assertDeployment(config);
     const release = await stage(config);
+    assertInstalledRelease(config, release);
     const current = path.join(config.dataDir, "current");
     const previous = fs.existsSync(current) ? fs.realpathSync(current) : undefined;
     stop();
@@ -186,17 +185,13 @@ async function main() {
     return;
   }
   if (command === "rollback") {
-    assertDeployment(config);
-    const previous = fs
-      .readFileSync(path.join(config.dataDir, "previous"), "utf8")
-      .trim();
+    const previous = fs.realpathSync(
+      fs.readFileSync(path.join(config.dataDir, "previous"), "utf8").trim(),
+    );
     const releases = fs.realpathSync(path.join(config.dataDir, "releases"));
     if (!previous.startsWith(releases + path.sep))
       throw new Error("Invalid rollback release");
-    const manifest = JSON.parse(
-      fs.readFileSync(path.join(previous, "release.json"), "utf8"),
-    );
-    if (manifest.protocol !== 1) throw new Error("Incompatible rollback protocol");
+    assertInstalledRelease(config, previous);
     stop();
     backup(config);
     const current = path.join(config.dataDir, "current");
@@ -205,7 +200,9 @@ async function main() {
     fs.symlinkSync(previous, current, "dir");
     fs.writeFileSync(path.join(config.dataDir, "previous"), old, { mode: 0o600 });
     start(config, previous);
-    console.log("Previous broker restored; native histories and running Pi sessions untouched.");
+    console.log(
+      "Previous broker restored; native histories and running Pi sessions untouched.",
+    );
     return;
   }
   if (command === "uninstall") {

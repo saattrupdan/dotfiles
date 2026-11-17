@@ -18,6 +18,7 @@ import {
   REQUIRED,
 } from "../src/gates.ts";
 import { inDeploymentScope } from "../src/deployment-scope.ts";
+import { assertInstalledRelease } from "../src/releases.ts";
 import { createBroker } from "../src/server.ts";
 import { Store, digest } from "../src/store.ts";
 import { Connections } from "../src/ipc.ts";
@@ -358,7 +359,7 @@ for (const deploymentPolicy of ["pilot", "release"] as const)
         fs.writeFileSync(path.join(bin, name), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
       fs.writeFileSync(
         path.join(bin, "npm"),
-        "#!/bin/sh\nif [ \"$1\" = run ]; then mkdir -p dist; printf 'console.log(1)' > dist/broker.mjs; fi\n",
+        "#!/bin/sh\nif [ \"$1\" = run ]; then mkdir -p dist/web; for file in broker.mjs run-managed.mjs cli.mjs web/index.html; do printf 'console.log(1)' > dist/$file; done; fi\n",
         { mode: 0o700 },
       );
       f.config.node = path.join(bin, "node");
@@ -376,27 +377,46 @@ for (const deploymentPolicy of ["pilot", "release"] as const)
         : REQUIRED)
         attest(f.config, name, f.evidence);
       if (deploymentPolicy === "pilot") approvePilot(f.config, f.evidence);
-      const result = spawnSync(
-        process.execPath,
-        [
-          "--import",
-          import.meta.resolve("tsx"),
-          fileURLToPath(new URL("../../cli/src/index.ts", import.meta.url)),
-          "install",
-          "--config",
-          configFile,
-        ],
-        {
-          env: {
-            ...process.env,
-            HOME: f.root,
-            PATH: bin + path.delimiter + process.env.PATH,
-            PI_CLI_PACKAGE: resolvePiPackage(),
+      const run = (command: string) =>
+        spawnSync(
+          process.execPath,
+          [
+            "--import",
+            import.meta.resolve("tsx"),
+            fileURLToPath(new URL("../../cli/src/index.ts", import.meta.url)),
+            command,
+            "--config",
+            configFile,
+          ],
+          {
+            env: {
+              ...process.env,
+              HOME: f.root,
+              PATH: bin + path.delimiter + process.env.PATH,
+              PI_CLI_PACKAGE: resolvePiPackage(),
+            },
+            encoding: "utf8",
           },
-          encoding: "utf8",
-        },
-      );
+        );
+      const result = run("install");
       assert.equal(result.status, 0, result.stderr);
+      const current = fs.realpathSync(path.join(f.config.dataDir, "current"));
+      assertInstalledRelease(f.config, current);
+      fs.writeFileSync(
+        path.join(f.config.agentDir, "remote/packages/changed.ts"),
+        "changed",
+      );
+      assert.throws(() => assertDeployment(f.config), /missing current evidence/);
+      assertInstalledRelease(f.config, current);
+      const previous = path.join(f.config.dataDir, "releases", "previous");
+      fs.cpSync(current, previous, { recursive: true });
+      fs.writeFileSync(path.join(f.config.dataDir, "previous"), previous);
+      const rollback = run("rollback");
+      assert.equal(rollback.status, 0, rollback.stderr);
+      assert.equal(
+        fs.realpathSync(path.join(f.config.dataDir, "current")),
+        fs.realpathSync(previous),
+      );
       assert.equal(
         fs.existsSync(path.join(f.config.dataDir, "ownership/enabled")),
         false,
