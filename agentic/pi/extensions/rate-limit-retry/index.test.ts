@@ -168,51 +168,97 @@ test("generic Codex processing failures retry without rendering an error", async
 	assert.equal(run.workingLabels.at(-1), undefined);
 });
 
-test("opaque Codex Bad Request retries three times, then preserves a persistent failure", async () => {
-	for (const errorMessage of ['{"detail":"Bad Request"}', 'Error: {"detail":"Bad Request"}']) {
-		const run = harness();
+test("opaque Codex rejection streak from the captured session recovers after more than three retries", async () => {
+	const run = harness();
+	for (let attempt = 0; attempt < 8; attempt++) {
 		const failed = () => ({ message: {
-			role: "assistant", provider: "openai-codex", stopReason: "error", errorMessage, content: [],
+			role: "assistant", provider: "openai-codex", stopReason: "error",
+			errorMessage: '{"detail":"Bad Request"}', content: [],
 		} });
-		for (let attempt = 0; attempt < 3; attempt++) {
-			const start = failed();
-			await run.emit("message_start", start);
-			assert.equal(start.message.stopReason, "pending", "the recoverable error must not stop the loop");
-			const masked = await run.emit("message_end", failed()) as { message: { stopReason: string } };
-			assert.equal(masked.message.stopReason, "stop");
-			assert.equal((await run.emit("turn_end") as { continue: boolean }).continue, true);
-		}
-		const final = failed();
-		await run.emit("message_start", final);
-		assert.equal(final.message.stopReason, "error", "persistent failures remain visible");
-		assert.equal(await run.emit("message_end", failed()), undefined);
-		assert.equal(await run.emit("turn_end"), undefined);
-		assert.deepEqual(run.delays, [2000, 4000, 8000]);
-		assert.equal(run.retryStates.at(-1), false);
+		const start = failed();
+		await run.emit("message_start", start);
+		assert.equal(start.message.stopReason, "pending", `rejection ${attempt + 1} must not end the session`);
+		const masked = await run.emit("message_end", failed()) as { message: { stopReason: string } };
+		assert.equal(masked.message.stopReason, "stop");
+		assert.equal((await run.emit("turn_end") as { continue: boolean }).continue, true);
+	}
+	assert.deepEqual(run.delays, [2000, 4000, 8000, 16000, 32000, 60000, 60000, 60000]);
+	await run.emit("message_end", success());
+	assert.equal(await run.emit("turn_end"), undefined);
+	assert.equal(run.retryStates.at(-1), false);
+});
+
+test("masked failures retain original errors and transport diagnostics in session metadata", async () => {
+	for (const errorMessage of ['{"detail":"Bad Request"}', 'Error: {"detail":"Bad Request"}', 'fetch failed']) {
+		const run = harness();
+		const transport = { type: "provider_transport_failure", timestamp: 1, error: { message: "WebSocket error" } };
+		const failed = { message: {
+			role: "assistant", provider: "openai-codex", stopReason: "error", errorMessage, content: [],
+			diagnostics: [transport],
+		} };
+		const result = await run.emit("message_end", failed) as { message: {
+			stopReason: string; diagnostics: Array<{ type: string; error: { message: string }; details?: { attempt: number } }>;
+		} };
+		assert.equal(result.message.stopReason, "stop");
+		assert.deepEqual(result.message.diagnostics[0], transport);
+		assert.equal(result.message.diagnostics[1].type, "model_request_retry");
+		assert.equal(result.message.diagnostics[1].error.message, errorMessage);
+		assert.equal(result.message.diagnostics[1].details?.attempt, 1);
+		assert.equal(failed.message.stopReason, "error", "the input message remains unchanged");
+		assert.equal(failed.message.diagnostics.length, 1);
 	}
 });
 
-test("opaque Codex recovery resets its budget only after actual output or a new session", async () => {
+test("retries keep the original request context without hiding real conversation", async () => {
+	const run = harness();
+	const user = { role: "user", content: "Finish the task" };
+	const toolCall = { role: "assistant", stopReason: "toolUse", content: [{ type: "toolCall", name: "bash" }] };
+	const toolResult = { role: "toolResult", content: [{ type: "text", text: "Done" }] };
+	const unrelated = { role: "custom", customType: "other:context", content: "Keep this" };
+	const empty = { role: "assistant", stopReason: "stop", content: [] };
+	const original = [user, toolCall, toolResult, unrelated, empty];
+	const messages = [...original];
+	for (let attempt = 0; attempt < 8; attempt++) {
+		const masked = await run.emit("message_end", { message: {
+			role: "assistant", provider: "openai-codex", stopReason: "error",
+			errorMessage: '{"detail":"Bad Request"}', content: [],
+		} }) as { message: unknown };
+		messages.push(masked.message as typeof empty);
+		// Filter before turn_end too: a failure must not require its following marker.
+		assert.deepEqual((await run.emit("context", { messages }) as { messages: unknown[] }).messages, original);
+		const turn = await run.emit("turn_end") as { entries: Array<{ customType: string; content: string }> };
+		messages.push({ role: "custom", ...turn.entries[0] });
+		assert.deepEqual((await run.emit("context", { messages }) as { messages: unknown[] }).messages, original);
+	}
+	const legacy = [user, { ...empty }, { role: "custom", customType: "rate-limit-retry:continue", content: "Resume" }];
+	assert.deepEqual((await run.emit("context", { messages: legacy }) as { messages: unknown[] }).messages, [user]);
+	assert.equal(messages.length, original.length + 16, "session history is not mutated");
+});
+
+test("opaque Codex backoff resets after real output or a new session, not a stream start", async () => {
 	const run = harness();
 	const failed = () => ({ message: {
 		role: "assistant", provider: "openai-codex", stopReason: "error",
 		errorMessage: '{"detail":"Bad Request"}', content: [],
 	} });
 	for (let attempt = 0; attempt < 3; attempt++) {
-		assert.ok(await run.emit("message_end", failed()));
+		await run.emit("message_end", failed());
 		await run.emit("turn_end");
 	}
 	await run.emit("message_update", { message: { role: "assistant" }, assistantMessageEvent: { type: "start" } });
-	assert.equal(await run.emit("message_end", failed()), undefined);
-	assert.equal(await run.emit("message_end", failed()), undefined, "exhaustion must not rearm the budget");
-	await run.emit("message_update", { message: { role: "assistant" }, assistantMessageEvent: { type: "text_delta" } });
-	assert.ok(await run.emit("message_end", failed()), "real output rearms recovery");
+	await run.emit("message_end", failed());
 	await run.emit("turn_end");
-	await run.emit("message_end", success());
-	assert.ok(await run.emit("message_end", failed()), "a successful response rearms recovery");
-	await run.emit("turn_end");
-	await run.emit("session_start");
-	assert.ok(await run.emit("message_end", failed()));
+	assert.equal(run.delays.at(-1), 16000);
+	for (const recovery of [
+		() => run.emit("message_update", { message: { role: "assistant" }, assistantMessageEvent: { type: "text_delta" } }),
+		() => run.emit("message_end", success()),
+		() => run.emit("session_start"),
+	]) {
+		await recovery();
+		await run.emit("message_end", failed());
+		await run.emit("turn_end");
+		assert.equal(run.delays.at(-1), 2000);
+	}
 });
 
 test("Bad Request recovery excludes other providers, detailed errors, partial output, and disabled retries", async () => {
