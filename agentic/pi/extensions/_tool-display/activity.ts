@@ -95,7 +95,9 @@ export class ActivityView extends Container {
 				this.addChild(new ActivityEntry(row.component, (line) => {
 					const muted = this.mute(line, true);
 					if (item.name !== "bash" || !item.result?.isError || !this.theme) return muted;
-					return muted.replaceAll(this.theme.getBgAnsi("toolErrorBg"), this.theme.getBgAnsi("toolSuccessBg"));
+					return muted
+						.replaceAll(this.theme.getBgAnsi("toolErrorBg"), this.theme.getBgAnsi("toolSuccessBg"))
+						.replaceAll(this.theme.getFgAnsi("error"), this.theme.getFgAnsi("muted"));
 				}));
 			}
 		} finally { this.updating = false; }

@@ -309,7 +309,7 @@ test("archived and private history indicate hidden entries without rendering mor
 });
 
 
-test("only failed nested bash rows replace the red background with normal grey", () => {
+test("only failed nested bash rows mute the failure label and use normal grey", () => {
 	const view = new ActivityView();
 	const failure = { content: [{ type: "text" as const, text: "Command exited with code 1" }], details: undefined,
 		isError: true, durationMs: 42 };
@@ -328,6 +328,12 @@ test("only failed nested bash rows replace the red background with normal grey",
 		assert.ok(!raw.includes(theme.getBgAnsi("toolErrorBg")), "nested bash should not retain the red background");
 		assert.ok(raw.includes(theme.getBgAnsi("toolSuccessBg")), "nested bash keeps the normal grey background");
 		assert.match(stripVTControlCharacters(raw), expanded ? /Command exited with code 1/ : /bash failed/);
+		if (!expanded) {
+			assert.ok(!raw.includes(theme.getFgAnsi("error")), "nested bash failure label is not bright red");
+			const status = lines.find((line) => stripVTControlCharacters(line).includes("✗ bash failed"))!;
+			assert.ok(status.includes(theme.getFgAnsi("muted")), "nested bash failure label is muted grey");
+			assert.ok(mainLines.join("\n").includes(theme.getFgAnsi("error")), "main bash keeps its red failure label");
+		}
 		const expected = mainLines.map(stripVTControlCharacters);
 		while (expected.length && !expected[0].trim()) expected.shift();
 		while (expected.length && !expected.at(-1)!.trim()) expected.pop();
