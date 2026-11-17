@@ -94,7 +94,10 @@ export class ActivityView extends Container {
 				if (item.result) row.component.updateResult(item.result, item.isPartial);
 				this.addChild(new ActivityEntry(row.component, (line) => {
 					const muted = this.mute(line, true);
-					if (item.name !== "bash" || !item.result?.isError || !this.theme) return muted;
+					if (!this.theme) return muted;
+					if (item.name === "search")
+						return muted.replaceAll(this.theme.getFgAnsi("success"), this.theme.getFgAnsi("muted"));
+					if (item.name !== "bash" || !item.result?.isError) return muted;
 					return muted
 						.replaceAll(this.theme.getBgAnsi("toolErrorBg"), this.theme.getBgAnsi("toolSuccessBg"))
 						.replaceAll(this.theme.getFgAnsi("error"), this.theme.getFgAnsi("muted"));

@@ -374,3 +374,26 @@ test("the outer subagent retains its native grey shell and blank padding rows", 
 	}
 	renderers.dispose();
 });
+
+
+test("nested search success statuses are grey while main-agent search stays green", () => {
+	for (const collapsed of ["Found 0 files, 0 defs, 13 refs", undefined]) {
+		const result = { content: [{ type: "text" as const, text: "Full search output" }], details: collapsed ? { collapsed } : undefined, isError: false };
+		const before = structuredClone(result), view = new ActivityView();
+		const main = new ToolExecutionComponent("search", "main-search", { query: "needle" }, {},
+			toolRenderers("search"), { requestRender() {} } as TUI, process.cwd());
+		main.updateResult(result, false);
+		const mainBefore = main.render(100).join("\n");
+		assert.ok(mainBefore.includes(theme.getFgAnsi("success")), "main search keeps its green status");
+		view.update([{ type: "toolCall", id: "child-search", name: "search", args: { query: "needle" }, result, isPartial: false }],
+			{ theme, expanded: false, cwd: process.cwd(), showImages: false, outputPad: 1, resolve: toolRenderers });
+		const lines = view.render(100), status = lines.find((line) => stripVTControlCharacters(line).includes("✓"))!;
+		assert.ok(status.includes(theme.getFgAnsi("muted")), "child search status is grey");
+		assert.ok(!status.includes(theme.getFgAnsi("success")), "child search status is not green");
+		assert.ok(stripVTControlCharacters(status).includes(collapsed ?? "search completed"));
+		assert.ok(lines.join("\n").includes(theme.getBgAnsi("toolSuccessBg")), "normal grey background remains");
+		assert.equal(main.render(100).join("\n"), mainBefore);
+		assert.deepEqual(result, before, "only presentation changes, not search results");
+		view.dispose();
+	}
+});
