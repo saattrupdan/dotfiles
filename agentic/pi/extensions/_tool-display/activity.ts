@@ -1,7 +1,7 @@
 /** Compose shared native tool rows with compact, muted subagent presentation. */
 import { stripVTControlCharacters } from "node:util";
 import { ToolExecutionComponent, type ToolRenderers, type Theme } from "@earendil-works/pi-coding-agent";
-import { Container, Markdown, type Component, type TuiMouseEvent, type TUI } from "@earendil-works/pi-tui";
+import { Container, Markdown, foregroundAnsi, mixColors, type Component, type TuiMouseEvent, type TUI } from "@earendil-works/pi-tui";
 import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import { stopNativeTimer } from "./native.ts";
 import type { ActivityItem } from "../subagent/transcript.ts";
@@ -92,22 +92,27 @@ export class ActivityView extends Container {
 				row.component.setOutputPad(options.outputPad);
 				row.component.setExpanded(options.expanded);
 				if (item.result) row.component.updateResult(item.result, item.isPartial);
-				this.addChild(new ActivityEntry(row.component, (line) => this.mute(line)));
+				this.addChild(new ActivityEntry(row.component, (line) => this.mute(line, true)));
 			}
 		} finally { this.updating = false; }
 	}
 
-	private mute(line: string): string {
+	private mute(line: string, tool = false): string {
 		const theme = this.theme;
 		if (!theme || typeof theme.getFgAnsi !== "function") return line;
 		const muted = theme.getFgAnsi("muted");
+		const argument = tool
+			? foregroundAnsi(mixColors(theme.colors.mdLink, theme.colors.muted, 0.5), theme.getColorMode())
+			: muted;
+		// Native generic tool arguments use muted rather than accent.
+		if (tool) line = line.replaceAll(muted, argument);
 		for (const token of ["toolTitle", "accent", "toolOutput", "text"] as const) {
 			const color = theme.getFgAnsi(token);
-			if (color) line = line.replaceAll(color, muted);
+			if (color) line = line.replaceAll(color, token === "accent" || token === "text" ? argument : muted);
 		}
-		// Keep narration/default text muted after native foreground resets, too.
-		line = line.replaceAll("\x1b[39m", muted).replaceAll("\x1b[0m", `\x1b[0m${muted}`);
-		return `${muted}${line}\x1b[39m`;
+		// Unstyled expanded arguments inherit the same subdued accent; narration stays grey.
+		line = line.replaceAll("\x1b[39m", argument).replaceAll("\x1b[0m", `\x1b[0m${argument}`);
+		return `${argument}${line}\x1b[39m`;
 	}
 
 	private requestRender() {

@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import { initTheme, ToolExecutionComponent, type Theme } from "@earendil-works/pi-coding-agent";
-import { Text, type TUI } from "@earendil-works/pi-tui";
+import { Text, foregroundAnsi, mixColors, type TUI } from "@earendil-works/pi-tui";
 import type { Message } from "@earendil-works/pi-ai";
 import { ActivityView } from "../_tool-display/activity.ts";
 import { toolRenderers, bashToolRenderers, writeToolRenderers } from "../_tool-display/catalog.ts";
@@ -231,4 +231,28 @@ test("compact activity forwards mouse events to the uncropped native row coordin
 		width: 80, height: 1, shift: false, alt: false, ctrl: false })?.handled);
 	assert.equal(localY, 0);
 	view.dispose();
+});
+
+
+test("child arguments have a subdued accent distinct from narration in both display modes", () => {
+	const details = base();
+	details.messages = [assistant([
+		{ type: "text", text: "Narration stays muted." },
+		{ type: "toolCall", id: "read", name: "read", arguments: { path: "file.ts" } },
+		{ type: "toolCall", id: "unknown", name: "unknown", arguments: { path: "other.ts" } },
+	])];
+	const argumentColor = foregroundAnsi(mixColors(theme.colors.mdLink, theme.colors.muted, 0.5), theme.getColorMode());
+	assert.notEqual(argumentColor, theme.getFgAnsi("muted"));
+	assert.notEqual(argumentColor, theme.getFgAnsi("accent"));
+	for (const expanded of [false, true]) {
+		const lines = createSubagentRenderers().renderResult!({ content: [], details },
+			{ expanded, isPartial: true }, theme, context()).render(100);
+		const narration = lines.find((line) => stripVTControlCharacters(line).includes("Narration stays muted."))!;
+		assert.ok(narration.includes(theme.getFgAnsi("muted")));
+		assert.ok(!narration.includes(argumentColor));
+		for (const path of ["file.ts", "other.ts"]) {
+			const argument = lines.find((line) => stripVTControlCharacters(line).includes(path))!;
+			assert.ok(argument.includes(argumentColor), `${expanded ? "expanded" : "collapsed"} ${path} should use the argument colour`);
+		}
+	}
 });
