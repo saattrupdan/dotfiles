@@ -147,7 +147,7 @@ function projectSkillPaths(cwd) {
 		directory = parent;
 	}
 	return directories.flatMap((dir) =>
-		[".pi", ".agents"].map((name) => path.join(dir, name, "skills")),
+		[".pi", ".agents", ".claude"].map((name) => path.join(dir, name, "skills")),
 	).filter((dir) => fs.existsSync(dir) && fs.statSync(dir).isDirectory());
 }
 

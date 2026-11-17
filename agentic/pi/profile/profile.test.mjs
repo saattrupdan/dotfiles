@@ -261,32 +261,37 @@ test("main includes repository skills without expanding other profiles or global
 	writeSkill(path.join(dir, "skills"), "memory");
 	const localPi = path.join(cwd, ".pi", "skills");
 	const localAgents = path.join(cwd, ".agents", "skills");
+	const localClaude = path.join(cwd, ".claude", "skills");
 	const repoPi = path.join(repo, ".pi", "skills");
 	const repoAgents = path.join(repo, ".agents", "skills");
+	const repoClaude = path.join(repo, ".claude", "skills");
 	writeSkill(localPi, "local-pi");
 	writeSkill(localAgents, "local-agents");
+	writeSkill(localClaude, "local-claude");
 	writeSkill(repoPi, "repo-pi");
 	writeSkill(repoAgents, "repo-agents");
+	writeSkill(repoClaude, "repo-claude");
 	writeSkill(path.join(dir, ".agents", "skills"), "outside-repo");
+	writeSkill(path.join(dir, ".claude", "skills"), "outside-claude");
 	writeSkill(path.join(dir, "skills"), "unselected-global");
 
 	const args = buildProfileArgs(profile("main"), dir, [], cwd);
 	const skillPaths = args.filter((arg, index) => args[index - 1] === "--skill");
 	assert.ok(args.includes("--no-skills"));
 	assert.deepEqual(skillPaths, [path.join(dir, "skills", "memory"),
-		localPi, localAgents, repoPi, repoAgents]);
+		localPi, localAgents, localClaude, repoPi, repoAgents, repoClaude]);
 
 	// Exercise Pi's real loader so selecting a parent directory actually exposes its skills.
 	const { loadSkills } = await import(pathToFileURL(path.join(resolvePiPackage(), "dist/core/skills.js")).href);
 	const { skills } = loadSkills({ cwd, agentDir: dir, skillPaths, includeDefaults: false });
 	assert.deepEqual(skills.map((skill) => skill.name).sort(),
-		["memory", "local-pi", "local-agents", "repo-pi", "repo-agents"].sort());
+		["memory", "local-pi", "local-agents", "local-claude", "repo-pi", "repo-agents", "repo-claude"].sort());
 	const privateArgs = buildProfileArgs(profile("librarian"), dir, [], cwd);
 	assert.deepEqual(privateArgs.filter((arg, index) => privateArgs[index - 1] === "--skill"),
 		[path.join(dir, "skills", "memory")]);
 	const emptyMain = buildProfileArgs(profile("main", { skills: [] }), dir, [], cwd);
 	assert.deepEqual(emptyMain.filter((arg, index) => emptyMain[index - 1] === "--skill"),
-		[localPi, localAgents, repoPi, repoAgents]);
+		[localPi, localAgents, localClaude, repoPi, repoAgents, repoClaude]);
 });
 
 test("outside a repo main includes only cwd skills, not ancestor user skills", () => {
@@ -295,6 +300,7 @@ test("outside a repo main includes only cwd skills, not ancestor user skills", (
 	const local = path.join(cwd, ".pi", "skills");
 	fs.mkdirSync(local, { recursive: true });
 	fs.mkdirSync(path.join(dir, ".agents", "skills"), { recursive: true });
+	fs.mkdirSync(path.join(dir, ".claude", "skills"), { recursive: true });
 	const args = buildProfileArgs(profile("main", { skills: [] }), dir, [], cwd);
 	assert.deepEqual(args.filter((arg, index) => args[index - 1] === "--skill"), [local]);
 });
