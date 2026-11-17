@@ -45,7 +45,7 @@ export async function checkCondition(
 		"Do not trust the working agent's claim of success: independently verify the condition. If evidence is insufficient, return done=false.",
 		"Return ONLY a JSON object: {\"done\": boolean, \"evidence\": \"short concrete reason\"}. No Markdown.",
 		`Completion condition:\n${condition}`,
-		...(candidates === undefined ? [] : [`Fresh independent GitHub check of open unassigned leaves and parents whose children are all closed: ${candidates.length ? candidates.map((number) => `#${number}`).join(", ") : "none"}. Inspect every candidate and its documented blockers before returning done=true. Do not exclude a parent just because it has children: if all are closed, verify remaining parent requirements and whether it still needs closing. Do not overlook an unassigned child.`]),
+		...(candidates === undefined ? [] : [`Fresh independent GitHub check of unassigned leaves and parents whose children are all closed, excluding decision-blocked issues: ${candidates.length ? candidates.map((number) => `#${number}`).join(", ") : "none"}. Inspect every candidate before returning done=true. A paused checkpoint, failed check, unfinished research or generic blocked label does not establish a decision blocker or completion. Respect explicit user deferrals and existing published PRs. Do not exclude a parent just because it has children: if all are closed, verify remaining parent requirements and whether it still needs closing. Do not overlook an unassigned child.`]),
 		`Working agent's most recent final response (context, not proof):\n${iterationOutput.slice(-8_000)}`,
 	].join("\n\n");
 	const args = ["--mode", "text", "-p", "--no-session", "--no-extensions", "--no-skills", "--no-prompt-templates", "--tools", "read,bash"];

@@ -1,13 +1,22 @@
-/** Fetch open unassigned GitHub issues with no unfinished children; never guess on a partial listing. */
+/** Fetch unassigned issues without decision blockers or unfinished children; fail closed on partial listings. */
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const PAGE_LIMIT = 100;
-const QUERY = "query($owner:String!,$repo:String!,$cursor:String){repository(owner:$owner,name:$repo){issues(first:100,states:OPEN,after:$cursor){nodes{number assignees(first:1){totalCount} subIssuesSummary{total completed}} pageInfo{hasNextPage endCursor}}}}";
+const QUERY = "query($owner:String!,$repo:String!,$cursor:String){repository(owner:$owner,name:$repo){issues(first:100,states:OPEN,after:$cursor){nodes{number assignees(first:1){totalCount} subIssuesSummary{total completed} labels(first:100){totalCount nodes{name}}} pageInfo{hasNextPage endCursor}}}}";
 
-export const ISSUE_CONDITION = "No actionable unassigned issues remain: independently check every open unassigned issue using GitHub's parent–sub-issue relationship. Leaves and parents whose children are all closed are candidates. Parents with open children must wait. For eligible parents, verify the parent requirements, child implementations and merged PRs: closed children alone do not prove delivery. A fully delivered parent still needs verification and closing, not a new implementation or PR. Complex issues without children must first be decomposed and linked; remaining eligible issues must have documented blockers or missing clarifications; decision-blocked issues also require the repo's standard decision-blocker label or decision-blocked label";
+export const ISSUE_CONDITION = [
+	"No actionable unassigned issues remain: independently check open unassigned issues using GitHub's parent–sub-issue relationship.",
+	"Never select or claim decision-blocked issues or issues with an equivalent decision-blocker label; they require a user or maintainer decision and are ineligible until that label is removed.",
+	"Leaves and parents whose children are all closed are candidates. Parents with open children must wait without needing a blocker label.",
+	"For eligible parents, verify the requirements, child implementations and merged PRs: closed children alone do not prove delivery. A fully delivered parent still needs verification and closing, not a new implementation or PR.",
+	"Check existing open PRs before new work: implementation merely awaiting merge is not a new implementation task and needs no blocker label.",
+	"Failed or stalled tests, reproduction, research, missing code, review fixes, unavailable reviewers and paused checkpoints remain actionable engineering, not decision blockers or evidence the loop is finished.",
+	"Only a concrete user or maintainer decision justifies creating a blocker; routine implementation and architecture choices belong to the agent. Respect explicit user deferrals.",
+	"Assignment means active work; paused work and published PRs merely awaiting merge must not reserve the issue assignment. Preserve other sessions' claims.",
+].join(" ");
 
 type Gh = (args: string[], cwd: string, signal?: AbortSignal) => Promise<string>;
 
@@ -33,7 +42,7 @@ export async function listEligibleUnassignedIssues(cwd: string, signal?: AbortSi
 		const response = JSON.parse(await gh(args, cwd, signal)) as {
 			errors?: unknown[];
 			data?: { repository?: { issues?: {
-				nodes?: Array<{ number: number; assignees?: { totalCount: number }; subIssuesSummary?: { total: number; completed: number } }>;
+				nodes?: Array<{ number: number; assignees?: { totalCount: number }; subIssuesSummary?: { total: number; completed: number }; labels?: { totalCount: number; nodes: Array<{ name: string }> } }>;
 				pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
 			} } };
 		};
@@ -50,7 +59,15 @@ export async function listEligibleUnassignedIssues(cwd: string, signal?: AbortSi
 				summary.total < 0 || summary.completed < 0 || summary.completed > summary.total) {
 				throw new Error("GitHub omitted or returned invalid assignment or sub-issue completion counts.");
 			}
-			if (issue.assignees.totalCount === 0 && summary.completed === summary.total) candidates.push(issue.number);
+			const labels = issue.labels;
+			if (!labels || !Number.isSafeInteger(labels.totalCount) || labels.totalCount < 0 ||
+				!Array.isArray(labels.nodes) || labels.nodes.length !== labels.totalCount ||
+				labels.nodes.some((label) => typeof label?.name !== "string")) {
+				throw new Error("GitHub omitted a complete issue label listing.");
+			}
+			const decisionBlocked = labels.nodes.some(({ name }) =>
+				/^(?:decision[\s:_-]+blocked|blocked[\s:_-]+decision|needs[\s:_-]+decision)$/i.test(name.trim()));
+			if (!decisionBlocked && issue.assignees.totalCount === 0 && summary.completed === summary.total) candidates.push(issue.number);
 		}
 		if (!issues.pageInfo.hasNextPage) return candidates;
 		const next = issues.pageInfo.endCursor;

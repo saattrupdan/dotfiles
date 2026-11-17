@@ -1,4 +1,4 @@
-/** Claim an unassigned issue with no unfinished children under a cross-machine GitHub ref mutex. */
+/** Claim an unassigned, decision-ready issue under a cross-machine GitHub ref mutex. */
 import { execFile } from "node:child_process";
 import console from "node:console";
 import process from "node:process";
@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const IDENTITY_QUERY = "query($owner:String!,$repo:String!){viewer{login} repository(owner:$owner,name:$repo){defaultBranchRef{target{oid}}}}";
-const ISSUE_QUERY = "query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){issue(number:$number){number state assignees(first:100){totalCount nodes{login}} subIssuesSummary{total completed}}}}";
+const ISSUE_QUERY = "query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){issue(number:$number){number state assignees(first:100){totalCount nodes{login}} subIssuesSummary{total completed} labels(first:100){totalCount nodes{name}}}}}";
 
 async function runGh(args, cwd) {
 	const env = { ...process.env, GH_PROMPT_DISABLED: "1" };
@@ -58,25 +58,41 @@ export async function claimIssue(number, cwd = process.cwd(), gh = runGh) {
 			const issue = data.repository.issue;
 			if (issue?.number !== number || !["OPEN", "CLOSED"].includes(issue.state) ||
 				!Number.isSafeInteger(issue.assignees?.totalCount) || issue.assignees.totalCount < 0 ||
-				!Array.isArray(issue.assignees.nodes) ||
+				!Array.isArray(issue.assignees.nodes) || issue.assignees.nodes.length !== issue.assignees.totalCount ||
+				issue.assignees.nodes.some((assignee) => typeof assignee?.login !== "string") ||
 				!Number.isSafeInteger(issue.subIssuesSummary?.total) || issue.subIssuesSummary.total < 0 ||
 				!Number.isSafeInteger(issue.subIssuesSummary?.completed) || issue.subIssuesSummary.completed < 0 ||
 				issue.subIssuesSummary.completed > issue.subIssuesSummary.total) {
 				throw new Error("GitHub omitted the issue's state, assignment, or sub-issue relationship.");
 			}
-			return issue;
+			const labels = issue.labels;
+			if (!labels || !Number.isSafeInteger(labels.totalCount) || labels.totalCount < 0 ||
+				!Array.isArray(labels.nodes) || labels.nodes.length !== labels.totalCount ||
+				labels.nodes.some((label) => typeof label?.name !== "string")) {
+				throw new Error("GitHub omitted a complete issue label listing.");
+			}
+			return { ...issue, decisionBlocked: labels.nodes.some(({ name }) =>
+				/^(?:decision[\s:_-]+blocked|blocked[\s:_-]+decision|needs[\s:_-]+decision)$/i.test(name.trim())) };
 		};
 		const before = await snapshot();
 		let status = "unavailable";
 		// @me is NOT proof of this session's ownership. Any assignment means skip.
-		if (before.state === "OPEN" && before.assignees.totalCount === 0 && before.subIssuesSummary.completed === before.subIssuesSummary.total) {
+		if (!before.decisionBlocked && before.state === "OPEN" && before.assignees.totalCount === 0 && before.subIssuesSummary.completed === before.subIssuesSummary.total) {
 			await api([`repos/${repository}/issues/${number}/assignees`, "--method", "POST", "-f", `assignees[]=${login}`]);
 			const after = await snapshot();
 			if (after.state !== "OPEN" || after.subIssuesSummary.completed !== after.subIssuesSummary.total || after.assignees.totalCount !== 1 ||
 				after.assignees.nodes.length !== 1 || after.assignees.nodes[0]?.login !== login) {
 				throw new Error("Issue assignment could not be verified; do not implement or remove any assignee.");
 			}
-			status = "claimed";
+			if (after.decisionBlocked) {
+				// Only our verified assignment is released if a decision label raced the claim.
+				await api([`repos/${repository}/issues/${number}/assignees`, "--method", "DELETE", "-f", `assignees[]=${login}`]);
+				const released = await snapshot();
+				if (released.assignees.nodes.length !== released.assignees.totalCount ||
+					released.assignees.nodes.some((assignee) => assignee?.login === login)) {
+					throw new Error("Decision-blocked issue assignment release could not be verified; do not implement or retry.");
+				}
+			} else status = "claimed";
 		}
 		// Never time out/reclaim locks. A crash or uncertain write leaves a lock
 		// for explicit recovery after verifying the previous session has stopped.

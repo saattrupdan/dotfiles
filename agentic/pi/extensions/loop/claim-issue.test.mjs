@@ -13,7 +13,7 @@ const execFileAsync = promisify(execFile);
 const script = fileURLToPath(new URL("./claim-issue.mjs", import.meta.url));
 
 function github(options = {}) {
-	const state = { locked: false, assignments: 0, releases: 0, assignees: [], calls: [], ...options };
+	const state = { locked: false, assignments: 0, unassignments: 0, releases: 0, assignees: [], labels: [], calls: [], ...options };
 	const gh = async (args, cwd) => {
 		assert.equal(cwd, "/checkout");
 		state.calls.push(args);
@@ -25,10 +25,15 @@ function github(options = {}) {
 			}
 			assert.ok(state.locked, "all issue checks must run under the remote lock");
 			if (state.failRead) throw new Error("read failed");
-			const assignees = state.assignments && state.afterAssignees ? state.afterAssignees : state.assignees;
+			const assignees = state.unassignments && state.keepAssigneeAfterRemoval ? ["dan"]
+				: state.assignments && state.afterAssignees ? state.afterAssignees : state.assignees;
+			const labels = state.assignments && state.afterLabels ? state.afterLabels : state.labels;
 			return { data: { repository: { issue: {
 				number: 42, state: state.closed ? "CLOSED" : "OPEN",
 				assignees: { totalCount: assignees.length, nodes: assignees.map((login) => ({ login })) },
+				...(state.missingLabels ? {} : { labels: state.labelsConnection ?? {
+					totalCount: labels.length, nodes: labels.map((name) => ({ name })),
+				} }),
 				...(state.missingRelationship ? {} : { subIssuesSummary: state.summary ?? {
 					total: state.parent ? 250 : 0,
 					completed: state.parent ? (state.childrenClosed && !(state.assignments && state.reopenChildAfterAssignment) ? 250 : 249) : 0,
@@ -38,6 +43,12 @@ function github(options = {}) {
 		if (args[3].endsWith("/assignees")) {
 			assert.ok(state.locked);
 			assert.ok(args.includes("assignees[]=dan"));
+			if (args.includes("DELETE")) {
+				state.unassignments++;
+				state.assignees = state.assignees.filter((login) => login !== "dan");
+				if (state.failUnassignment) throw new Error("unassignment response lost");
+				return {};
+			}
 			state.assignments++;
 			state.assignees.push("dan");
 			if (state.failAssignment) throw new Error("assignment response lost");
@@ -83,6 +94,40 @@ for (const options of [{ assignees: ["other"] }, { assignees: ["dan"] }, { close
 	});
 }
 
+for (const label of ["decision-blocked", "Decision Blocked", "blocked:decision", "needs-decision"]) {
+	test(`decision-blocked issues cannot be claimed: ${label}`, async () => {
+		const h = github({ labels: [label], parent: true, childrenClosed: true });
+		assert.equal((await h.claim()).status, "unavailable");
+		assert.equal(h.state.assignments, 0);
+		assert.equal(h.state.releases, 1);
+	});
+}
+
+test("an old generic blocked label is not itself a decision blocker", async () => {
+	const h = github({ labels: ["blocked"] });
+	assert.equal((await h.claim()).status, "claimed");
+});
+
+test("a decision label racing assignment verification releases only the confirmed new assignment", async () => {
+	const h = github({ afterLabels: ["decision-blocked"] });
+	assert.equal((await h.claim()).status, "unavailable");
+	assert.equal(h.state.assignments, 1);
+	assert.equal(h.state.unassignments, 1);
+	assert.deepEqual(h.state.assignees, []);
+	assert.equal(h.state.releases, 1);
+	assert.equal(h.state.locked, false);
+});
+
+for (const labelsConnection of [{ totalCount: 1, nodes: [] }, { totalCount: -1, nodes: [] },
+	{ totalCount: 1, nodes: [{ name: null }] }]) {
+	test(`incomplete labels prevent a claim: ${JSON.stringify(labelsConnection)}`, async () => {
+		const h = github({ labelsConnection });
+		await assert.rejects(h.claim(), /complete issue label listing/);
+		assert.equal(h.state.assignments, 0);
+		assert.equal(h.state.locked, true);
+	});
+}
+
 test("a parent with all children closed is claimable, including beyond the first child page", async () => {
 	const h = github({ parent: true, childrenClosed: true });
 	assert.equal((await h.claim()).status, "claimed");
@@ -119,7 +164,9 @@ test("an existing lock is never removed or expired", async () => {
 for (const options of [
 	{ lostLockResponse: true }, { failRead: true }, { missingRelationship: true },
 	{ failAssignment: true }, { afterAssignees: ["other"] },
-	{ afterAssignees: ["dan", "other"] }, { failRelease: true },
+	{ afterAssignees: ["dan", "other"] }, { failRelease: true }, { missingLabels: true },
+	{ afterLabels: ["decision-blocked"], failUnassignment: true },
+	{ afterLabels: ["decision-blocked"], keepAssigneeAfterRemoval: true },
 ]) {
 	test(`uncertain outcomes fail closed and retain the lock: ${JSON.stringify(options)}`, async () => {
 		const h = github(options);
@@ -168,7 +215,8 @@ else if (args[3] === 'graphql') {
   else {
     if (!existsSync(lock)) throw new Error('unlocked issue check');
     const assigned = existsSync(assignment);
-    output({data:{repository:{issue:{number:42,state:'OPEN',assignees:{totalCount:assigned?1:0,nodes:assigned?[{login:'dan'}]:[]},subIssuesSummary:{total:0,completed:0}}}}});
+    const labels = process.env.CLAIM_TEST_DECISION_BLOCKED ? [{name:'decision-blocked'}] : [];
+    output({data:{repository:{issue:{number:42,state:'OPEN',assignees:{totalCount:assigned?1:0,nodes:assigned?[{login:'dan'}]:[]},subIssuesSummary:{total:0,completed:0},labels:{totalCount:labels.length,nodes:labels}}}}});
   }
 } else if (args.includes('DELETE')) { rmSync(lock, {recursive:true}); }
 else if (args[3].endsWith('/assignees')) {
@@ -187,16 +235,20 @@ else if (args[3].endsWith('/assignees')) {
 		// gh's executable is ESM on both older and current Node versions.
 		await writeFile(join(dir, "package.json"), '{"type":"module"}');
 		const env = { ...process.env, PATH: `${dir}:${process.env.PATH}`, GH_REPO: "wrong/repository", CLAIM_TEST_ROOT: dir };
-		const run = async () => {
+		const run = async (extraEnv = {}) => {
 			try {
-				const result = await execFileAsync(process.execPath, [script, "42"], { cwd: dir, env });
+				const result = await execFileAsync(process.execPath, [script, "42"], { cwd: dir, env: { ...env, ...extraEnv } });
 				return { code: 0, ...JSON.parse(result.stdout) };
 			} catch (error) {
 				assert.ok([3, 4].includes(error.code), error.stderr);
 				return { code: error.code, ...JSON.parse(error.stdout) };
 			}
 		};
-		const results = await Promise.all(Array.from({ length: 8 }, run));
+		const blocked = await run({ CLAIM_TEST_DECISION_BLOCKED: "1" });
+		assert.equal(blocked.status, "unavailable");
+		assert.equal(blocked.code, 3);
+		await assert.rejects(readFile(join(dir, "assigned"), "utf8"), { code: "ENOENT" });
+		const results = await Promise.all(Array.from({ length: 8 }, () => run()));
 		assert.equal(results.filter((result) => result.status === "claimed" && result.code === 0).length, 1);
 		assert.equal(results.filter((result) => ["busy", "unavailable"].includes(result.status)).length, 7);
 		assert.equal(await readFile(join(dir, "assigned"), "utf8"), "dan");

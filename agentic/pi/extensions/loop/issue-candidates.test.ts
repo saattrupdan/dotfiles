@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { listEligibleUnassignedIssues } from "./issue-candidates.ts";
 
-const issue = (number: number, total = 0, completed = 0, assigned = 0) => ({
+const issue = (number: number, total = 0, completed = 0, assigned = 0, labels: string[] = []) => ({
 	number, assignees: { totalCount: assigned }, subIssuesSummary: { total, completed },
+	labels: { totalCount: labels.length, nodes: labels.map((name) => ({ name })) },
 });
 
 test("paginates all issues and includes parents only when every child is closed", async () => {
@@ -23,6 +24,35 @@ test("paginates all issues and includes parents only when every child is closed"
 	assert.deepEqual(await listEligibleUnassignedIssues("/repo", undefined, gh), [2, 6, 4, 7]);
 	assert.ok(calls[1]!.some((arg) => arg.includes("subIssuesSummary{total completed}")));
 	assert.ok(calls[2]!.includes("cursor=next"));
+});
+
+test("decision-blocked leaves and completed parents never enter the candidate list", async () => {
+	const gh = async (args: string[]) => args[0] === "repo" ? "example/project" : JSON.stringify({
+		data: { repository: { issues: {
+			nodes: [
+				issue(1, 0, 0, 0, ["decision-blocked"]),
+				issue(2, 250, 250, 0, ["Decision Blocked"]),
+				issue(3, 0, 0, 0, ["blocked:decision"]),
+				issue(4, 0, 0, 0, ["needs-decision"]),
+				issue(5, 0, 0, 0, ["blocked"]), issue(6),
+			],
+			pageInfo: { hasNextPage: false },
+		} } },
+	});
+	assert.deepEqual(await listEligibleUnassignedIssues("/repo", undefined, gh), [5, 6]);
+});
+
+test("missing or incomplete label listings fail closed", async () => {
+	for (const labels of [undefined, {}, { totalCount: 1, nodes: [] },
+		{ totalCount: -1, nodes: [] }, { totalCount: 0, nodes: null },
+		{ totalCount: 1, nodes: [{ name: null }] }]) {
+		const gh = async (args: string[]) => args[0] === "repo" ? "example/project" : JSON.stringify({
+			data: { repository: { issues: {
+				nodes: [{ ...issue(1), labels }], pageInfo: { hasNextPage: false },
+			} } },
+		});
+		await assert.rejects(listEligibleUnassignedIssues("/repo", undefined, gh), /complete issue label listing/);
+	}
 });
 
 test("missing or inconsistent completion counts fail closed rather than treating a parent as ready", async () => {
