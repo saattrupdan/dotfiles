@@ -397,3 +397,35 @@ test("nested search success statuses are grey while main-agent search stays gree
 		view.dispose();
 	}
 });
+
+
+test("nested bash success labels are grey while main-agent bash stays green", () => {
+	const result = { content: [{ type: "text" as const, text: "Success colour check" }], details: undefined, isError: false, durationMs: 42 };
+	const before = structuredClone(result), view = new ActivityView();
+	const args = { command: "printf 'Success colour check\\n'" };
+	const main = new ToolExecutionComponent("bash", "main-bash-success", args, { showImages: false, outputPad: 1 },
+		bashToolRenderers, { requestRender() {} } as TUI, process.cwd());
+	main.markExecutionStarted();
+	main.updateResult(result, false);
+	for (const expanded of [false, true, false]) {
+		main.setExpanded(expanded);
+		const mainLines = main.render(100);
+		view.update([{ type: "toolCall", id: "child-bash-success", name: "bash", args, result, isPartial: false }],
+			{ theme, expanded, cwd: process.cwd(), showImages: false, outputPad: 1, resolve: toolRenderers });
+		const lines = view.render(100);
+		if (!expanded) {
+			const status = lines.find((line) => stripVTControlCharacters(line).includes("✓ bash executed"))!;
+			assert.ok(status.includes(theme.getFgAnsi("muted")), "nested bash success label is grey");
+			assert.ok(!status.includes(theme.getFgAnsi("success")), "nested bash success label is not green");
+			assert.ok(mainLines.join("\n").includes(theme.getFgAnsi("success")), "main bash success label stays green");
+		} else assert.match(plain(view), /Success colour check/);
+		assert.ok(lines.join("\n").includes(theme.getBgAnsi("toolSuccessBg")), "normal grey background remains");
+		const expected = mainLines.map(stripVTControlCharacters);
+		while (expected.length && !expected[0].trim()) expected.shift();
+		while (expected.length && !expected.at(-1)!.trim()) expected.pop();
+		assert.deepEqual(lines.map(stripVTControlCharacters), expected, "layout and output remain native");
+		assert.deepEqual(main.render(100), mainLines, "main bash rendering is unchanged");
+	}
+	assert.deepEqual(result, before, "presentation does not change success flags or output");
+	view.dispose();
+});
