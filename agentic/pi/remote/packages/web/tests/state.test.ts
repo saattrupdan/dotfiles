@@ -965,3 +965,195 @@ test("live questions survive older HTTP snapshots and stale resolution or expiry
     t.mock.timers.reset();
   }
 });
+
+test("finished results clear only on entry or app resume, not live refresh or Home", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
+  Object.assign(globalThis, {
+    document: { visibilityState: "visible", addEventListener() {} },
+    window: { addEventListener() {} },
+    location: { protocol: "https:", host: "fixture.test.ts.net" },
+    WebSocket: Socket,
+  });
+  setActivePinia(createPinia());
+  const auth = useAuth(),
+    store = useSessions();
+  auth.unlocked = true;
+  auth.visible = true;
+  const id = "c2d90aba-4820-494b-978d-1991e3e820cf";
+  let result: Session = {
+    sessionId: id,
+    epoch: 1,
+    sequence: 1,
+    state: "idle",
+    idle: true,
+    completion: { id: crypto.randomUUID(), outcome: "finished" },
+  } as Session;
+  const acknowledgements: string[] = [];
+  auth.request = (async (url: string, options?: RequestInit) => {
+    if (url.endsWith("/acknowledge")) {
+      const body = JSON.parse(options!.body as string);
+      acknowledgements.push(body.completionId);
+      if (result.completion?.id === body.completionId)
+        result = { ...result, completion: undefined, sequence: result.sequence + 1 };
+      return { ...result };
+    }
+    if (url === "/sessions") return [{ ...result }];
+    if (url === `/sessions/${id}`) return { ...result };
+    if (url.includes("/history")) return { messages: [], revision: "r", older: null };
+    throw new Error(`Unexpected request ${url}`);
+  }) as typeof auth.request;
+  const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
+  try {
+    await store.refresh();
+    store.connect("");
+    await store.acknowledge(id);
+    assert.deepEqual(acknowledgements, []);
+    store.connect(id);
+    await store.detail(id);
+    await store.acknowledge(id);
+    assert.equal(acknowledgements.length, 1);
+    assert.equal(store.homeListing[0]!.completion, undefined);
+    assert.equal(store.listing[0]!.completion, undefined);
+    result = {
+      ...result,
+      sequence: 3,
+      completion: { id: crypto.randomUUID(), outcome: "finished" },
+    };
+    Socket.latest.onmessage?.({ data: JSON.stringify({ type: "sessions.changed" }) });
+    await tick();
+    assert.equal(store.sessions[0]!.completion?.id, result.completion.id);
+    assert.equal(
+      acknowledgements.length,
+      1,
+      "a live completion stays finished until the next entry",
+    );
+    auth.visible = false;
+    store.disconnect();
+    await store.acknowledge(id);
+    assert.equal(acknowledgements.length, 1, "background cannot acknowledge");
+    auth.visible = true;
+    store.resume();
+    await tick();
+    assert.equal(acknowledgements.length, 2);
+    assert.equal(store.sessions[0]!.completion, undefined);
+    result = {
+      ...result,
+      sequence: 5,
+      completion: { id: crypto.randomUUID(), outcome: "finished" },
+    };
+    store.connect("");
+    store.resume();
+    await tick();
+    assert.equal(
+      acknowledgements.length,
+      2,
+      "resuming Home must not acknowledge another conversation",
+    );
+    assert.equal(store.homeListing[0]!.completion?.id, result.completion.id);
+  } finally {
+    auth.clear();
+    t.mock.timers.reset();
+  }
+});
+
+test("late acknowledgement responses cannot replace newer results or repopulate a locked store", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
+  Object.assign(globalThis, {
+    document: { visibilityState: "visible", addEventListener() {} },
+    window: { addEventListener() {} },
+    location: { protocol: "https:", host: "fixture.test.ts.net" },
+    WebSocket: Socket,
+  });
+  setActivePinia(createPinia());
+  const auth = useAuth(),
+    store = useSessions();
+  auth.unlocked = true;
+  auth.visible = true;
+  const first = {
+    sessionId: "session",
+    epoch: 1,
+    sequence: 1,
+    state: "idle",
+    completion: { id: crypto.randomUUID(), outcome: "finished" },
+  } as Session;
+  store.sessions = [first];
+  let finish!: (value: unknown) => void;
+  auth.request = (() =>
+    new Promise((resolve) => {
+      finish = resolve;
+    })) as typeof auth.request;
+  try {
+    store.connect("session");
+    const pending = store.acknowledge("session");
+    const finishAck = finish;
+    const fresh = store.detail("session");
+    const newer = {
+      ...first,
+      sequence: 4,
+      completion: { id: crypto.randomUUID(), outcome: "finished" as const },
+    };
+    finish(newer);
+    await fresh;
+    finishAck({ ...first, sequence: 2, completion: undefined });
+    await pending;
+    assert.equal(store.sessions[0]!.completion?.id, newer.completion.id);
+    const locked = store.acknowledge("session");
+    auth.clear();
+    finish({ ...newer, completion: undefined });
+    await locked;
+    assert.deepEqual(store.sessions, []);
+  } finally {
+    auth.clear();
+    t.mock.timers.reset();
+  }
+});
+
+test("a newer transcript cursor cannot discard a finished metadata snapshot", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
+  Object.assign(globalThis, {
+    document: { visibilityState: "visible", addEventListener() {} },
+    window: { addEventListener() {} },
+    location: { protocol: "https:", host: "fixture.test.ts.net" },
+    WebSocket: Socket,
+  });
+  setActivePinia(createPinia());
+  const auth = useAuth(),
+    store = useSessions();
+  auth.unlocked = true;
+  auth.visible = true;
+  const running = {
+    sessionId: "session",
+    epoch: 1,
+    sequence: 1,
+    state: "running",
+    idle: false,
+  } as Session;
+  store.sessions = [running];
+  let finish!: (value: unknown) => void;
+  auth.request = (() =>
+    new Promise((resolve) => {
+      finish = resolve;
+    })) as typeof auth.request;
+  try {
+    store.connect("session");
+    const reading = store.detail("session");
+    Socket.latest.onmessage?.({
+      data: JSON.stringify({
+        type: "message_end",
+        sessionId: "session",
+        sequence: 5,
+        data: { role: "assistant", content: "Done", timestamp: 1 },
+      }),
+    });
+    const completion = { id: crypto.randomUUID(), outcome: "finished" as const };
+    finish({ ...running, sequence: 4, idle: true, state: "idle", completion });
+    await reading;
+    assert.deepEqual(store.sessions[0]!.completion, completion);
+    assert.equal(store.sessions[0]!.state, "idle");
+    assert.equal(store.sessions[0]!.idle, true);
+    assert.equal(store.sessions[0]!.sequence, 5);
+  } finally {
+    auth.clear();
+    t.mock.timers.reset();
+  }
+});

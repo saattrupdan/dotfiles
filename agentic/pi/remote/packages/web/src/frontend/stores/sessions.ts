@@ -11,6 +11,7 @@ import type {
   StreamEvent,
 } from "../../../../protocol/src/index.ts";
 import { CommandStatus } from "../../../../protocol/src/index.ts";
+import { orderConversations } from "../../../../protocol/src/session-status.ts";
 import { mergeHistory, sameMessage, windowProof } from "../lib/history-window.ts";
 import type { HistoryPage } from "../../../../protocol/src/index.ts";
 import { remoteCommandId } from "../lib/receipts.ts";
@@ -264,6 +265,7 @@ export const useSessions = defineStore("sessions", () => {
       ) {
         row.workingMessage = previous.workingMessage;
         row.prompt = previous.prompt;
+        // Transcript cursors do not version runtime metadata or completion markers.
         row.sequence = previous.sequence;
       }
       if (activity !== activityGeneration) row.workingMessage = undefined;
@@ -272,6 +274,14 @@ export const useSessions = defineStore("sessions", () => {
       accepted.push(row);
     }
     sessions.value = [...known.values()];
+    listing.value = orderConversations(
+      listing.value.map((row) => known.get(row.sessionId) ?? row),
+      listing.value,
+    );
+    homeListing.value = orderConversations(
+      homeListing.value.map((row) => known.get(row.sessionId) ?? row),
+      homeListing.value,
+    );
     return accepted;
   }
   async function refresh(folder = currentFolder) {
@@ -295,9 +305,9 @@ export const useSessions = defineStore("sessions", () => {
         request === listingRequest
       ) {
         const rows = merge(result, metadata, activity);
-        listing.value = rows;
+        listing.value = orderConversations(rows, listing.value);
         if (folder === undefined) {
-          homeListing.value = rows;
+          homeListing.value = orderConversations(rows, homeListing.value);
           homeSessionsReady = true;
           homeLoaded.value = homeFoldersReady;
         }
@@ -636,10 +646,36 @@ export const useSessions = defineStore("sessions", () => {
         }, 1500);
     };
   }
+  async function acknowledge(id: string) {
+    const completion = sessions.value.find((row) => row.sessionId === id)?.completion;
+    if (
+      selected !== id ||
+      !auth.unlocked ||
+      !auth.visible ||
+      completion?.outcome !== "finished"
+    )
+      return;
+    const expected = generation;
+    const request = ++metadataRequest;
+    const result = await auth.request<Session>(`/sessions/${id}/acknowledge`, {
+      method: "POST",
+      body: JSON.stringify({ completionId: completion.id }),
+    });
+    if (expected === generation && auth.unlocked && !isHidden(id))
+      merge([result], request);
+  }
   function resume() {
-    connect(selected);
-    if (selected) void history(selected).catch(() => {});
-    else void refresh().catch(() => {});
+    const id = selected;
+    const expected = generation;
+    connect(id);
+    if (id) {
+      void history(id).catch(() => {});
+      void detail(id)
+        .then(() => {
+          if (expected === generation && selected === id) return acknowledge(id);
+        })
+        .catch(() => {});
+    } else void refresh().catch(() => {});
   }
   async function reconcile() {
     const expected = generation;
@@ -772,6 +808,7 @@ export const useSessions = defineStore("sessions", () => {
     homePosition,
     loadFolders,
     detail,
+    acknowledge,
     resume,
     pending,
     sessions,

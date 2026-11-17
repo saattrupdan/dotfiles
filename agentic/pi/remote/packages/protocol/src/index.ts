@@ -91,6 +91,7 @@ export const Registration = z.object({
 });
 export type Registration = z.infer<typeof Registration>;
 export interface Session extends Registration {
+  completion?: { id: string; outcome: "finished" | "failed" };
   workingMessage?: string;
   runtimeCwd?: string;
   nativeSessionId?: string;

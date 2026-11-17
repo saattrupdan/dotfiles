@@ -431,6 +431,28 @@ export async function createBroker(
     read(req);
     return find(sessionId(req));
   });
+  app.post("/api/v1/sessions/:id/acknowledge", async (req) => {
+    const a = mutate(req);
+    const id = sessionId(req);
+    const { completionId } = z
+      .object({ completionId: z.string().uuid() })
+      .parse(req.body);
+    await find(id);
+    // Re-read after discovery: an entry request must never clear a newer run.
+    const session = store.session(id);
+    if (
+      session?.completion?.id === completionId &&
+      session.completion.outcome === "finished"
+    ) {
+      session.completion = undefined;
+      store.save(session);
+      const event = store.event(id, "completion.acknowledged", { completionId });
+      if (event) emit(event);
+      emit({ version: 1, type: "sessions.changed", data: null });
+      store.audit(a.device, id, "acknowledge", "idle");
+    }
+    return find(id);
+  });
   app.get("/api/v1/sessions/:id/history", async (req) => {
     read(req);
     const session = await find(sessionId(req));

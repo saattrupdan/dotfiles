@@ -6,6 +6,7 @@ import LoadingIndicator from "../components/LoadingIndicator.vue";
 import { isUntitled } from "../lib/conversation-name.ts";
 import Icon from "../components/Icon.vue";
 import { useSessions } from "../stores/sessions.ts";
+import { conversationStatus } from "../../../../protocol/src/session-status.ts";
 const store = useSessions();
 const folder = computed(() => store.folder);
 const search = ref("");
@@ -123,32 +124,20 @@ const folders = computed(() =>
         }) || a.cwd.localeCompare(b.cwd, undefined, { sensitivity: "base" }),
     ),
 );
-const statusOrder: Record<string, number> = {
-  running: 0,
-  answer_needed: 1,
-  waiting: 2,
-  idle: 3,
-};
 const activeStates = new Set(["idle", "running", "waiting", "answer_needed"]);
 const showListing = computed(
   () => !loading.value || (folder.value === undefined && store.homeLoaded),
 );
 const filtered = computed(() =>
-  (folder.value === undefined ? store.homeListing : store.listing)
-    .filter(
-      (session) =>
-        !isUntitled(session.name) &&
-        isUsersDirectory(session.cwd) &&
-        (filter.value === "all" || session.state === filter.value) &&
-        `${session.name} ${session.sessionId} ${session.cwd}`
-          .toLowerCase()
-          .includes(search.value.toLowerCase()),
-    )
-    .sort(
-      (a, b) =>
-        (statusOrder[a.state] ?? 4) - (statusOrder[b.state] ?? 4) ||
-        b.lastActivity - a.lastActivity,
-    ),
+  (folder.value === undefined ? store.homeListing : store.listing).filter(
+    (session) =>
+      !isUntitled(session.name) &&
+      isUsersDirectory(session.cwd) &&
+      (filter.value === "all" || conversationStatus(session) === filter.value) &&
+      `${session.name} ${session.sessionId} ${session.cwd}`
+        .toLowerCase()
+        .includes(search.value.toLowerCase()),
+  ),
 );
 const active = computed(() =>
   filtered.value.filter(
@@ -207,11 +196,11 @@ const basename = (cwd: string) => cwd.split("/").filter(Boolean).at(-1) || cwd;
       >
         <option value="all">All</option>
         <option
-          v-for="state in ['running', 'idle', 'waiting', 'stopped', 'interrupted']"
+          v-for="state in ['needs_input', 'failed', 'finished', 'running', 'idle']"
           :key="state"
           :value="state"
         >
-          {{ state }}
+          {{ state.replace("_", " ") }}
         </option>
       </select>
     </div>
@@ -252,9 +241,9 @@ const basename = (cwd: string) => cwd.split("/").filter(Boolean).at(-1) || cwd;
             :data-home-key="'session:' + session.sessionId"
           >
             <div class="row">
-              <span :class="['dot', session.state]" />
+              <span :class="['dot', conversationStatus(session)]" />
               <span class="state">{{
-                session.state === "answer_needed" ? "answer needed" : session.state
+                conversationStatus(session).replace("_", " ")
               }}</span>
             </div>
             <h3>{{ session.name || "Saved conversation" }}</h3>
@@ -319,8 +308,8 @@ const basename = (cwd: string) => cwd.split("/").filter(Boolean).at(-1) || cwd;
         class="session"
       >
         <div class="row">
-          <span :class="['dot', session.state]" /><span class="state">{{
-            session.prompt?.state === "expired" ? "answer needed" : session.state
+          <span :class="['dot', conversationStatus(session)]" /><span class="state">{{
+            conversationStatus(session).replace("_", " ")
           }}</span
           ><span class="time">{{
             new Date(session.lastActivity).toLocaleDateString()
@@ -423,12 +412,16 @@ h3 {
   background: var(--muted);
 }
 .dot.running {
-  background: var(--accent);
-  box-shadow: 0 0 0 3px #b4e4cc0c;
-}
-.dot.waiting,
-.dot.answer_needed {
   background: #f0cf84;
+}
+.dot.finished {
+  background: var(--accent);
+}
+.dot.failed {
+  background: #ff6b6b;
+}
+.dot.needs_input {
+  background: #c4a0ff;
 }
 .section-title {
   margin: 24px 0 0;

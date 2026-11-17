@@ -114,6 +114,8 @@ test(
         timestamp: 2000 + index,
         remoteHistoryKey: index.toString(16).padStart(64, "0"),
       }));
+      let completion: { id: string; outcome: "finished" | "failed" } | undefined;
+      let acknowledgementCount = 0;
       let promptSequence = 0;
       let stopped = false,
         recoveries = 0,
@@ -132,6 +134,7 @@ test(
         lastActivity: 1000,
         state: stopped ? "stopped" : prompt ? "waiting" : "idle",
         prompt,
+        completion,
       });
       await page.routeWebSocket("**/api/v1/events", (route) => {
         socket = route;
@@ -157,6 +160,11 @@ test(
             });
             return;
           }
+          body = session();
+        } else if (url.pathname.endsWith("/acknowledge")) {
+          acknowledgementCount++;
+          if (route.request().postDataJSON().completionId === completion?.id)
+            completion = undefined;
           body = session();
         } else if (url.pathname.endsWith("/recover")) {
           recoveries++;
@@ -347,15 +355,12 @@ test(
             await page.setViewportSize(viewport);
             const positions = await page.evaluate(async () => {
               window.dispatchEvent(new WheelEvent("wheel", { deltaY: -100 }));
-              const end =
-                document.documentElement.scrollHeight - window.innerHeight;
+              const end = document.documentElement.scrollHeight - window.innerHeight;
               const positions = [];
               for (const fraction of [0, 0.25, 0.5, 0.75, 1, 0.5, 0, 1]) {
                 window.scrollTo({ top: end * fraction, behavior: "instant" });
                 await new Promise<void>((resolve) =>
-                  requestAnimationFrame(() =>
-                    requestAnimationFrame(() => resolve()),
-                  ),
+                  requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
                 );
                 const box = document
                   .querySelector(".composer")!
@@ -402,11 +407,13 @@ test(
             });
             await expect
               .poll(() =>
-                page.locator(".composer").evaluate((element) =>
-                  Math.abs(
-                    window.innerHeight - element.getBoundingClientRect().bottom,
+                page
+                  .locator(".composer")
+                  .evaluate((element) =>
+                    Math.abs(
+                      window.innerHeight - element.getBoundingClientRect().bottom,
+                    ),
                   ),
-                ),
               )
               .toBeLessThan(3);
           } finally {
@@ -1044,7 +1051,7 @@ test(
         assert.equal(folderRequests.length, 0);
       });
       await t.test(
-        "Home groups status before recency and alphabetizes folder names without case",
+        "Home matches iTerm2 attention order and colours, with stable ties",
         async () => {
           extraSessions = [
             {
@@ -1068,6 +1075,24 @@ test(
               state: "answer_needed",
               lastActivity: 8000,
             },
+            {
+              ...session(),
+              sessionId: "00000000-0000-4000-8000-000000000044",
+              name: "Failed run",
+              completion: {
+                id: "00000000-0000-4000-8000-000000000054",
+                outcome: "failed",
+              },
+            },
+            {
+              ...session(),
+              sessionId: "00000000-0000-4000-8000-000000000045",
+              name: "Finished run",
+              completion: {
+                id: "00000000-0000-4000-8000-000000000055",
+                outcome: "finished",
+              },
+            },
           ];
           extraFolders = [
             { cwd: "/Users/fixture/Zebra", count: 1, lastActivity: 2000 },
@@ -1079,11 +1104,23 @@ test(
           await page.getByRole("link", { name: "Pi Remote", exact: true }).click();
           const active = page.getByRole("region", { name: "Active sessions" });
           await expect(active.locator("h3")).toHaveText([
-            "Older running",
             "Answer needed",
-            "Newest idle",
+            "Failed run",
+            "Finished run",
+            "Older running",
             "Phone layout fixture",
+            "Newest idle",
           ]);
+          for (const [name, colour] of [
+            ["Older running", "rgb(240, 207, 132)"],
+            ["Finished run", "rgb(37, 211, 102)"],
+            ["Newest idle", "rgb(165, 177, 184)"],
+            ["Failed run", "rgb(255, 107, 107)"],
+            ["Answer needed", "rgb(196, 160, 255)"],
+          ])
+            await expect(
+              active.getByRole("link", { name: new RegExp(name!) }).locator(".dot"),
+            ).toHaveCSS("background-color", colour!);
           await expect(page.locator("button.folder h3")).toHaveText([
             "apple",
             "Banana",
@@ -1095,6 +1132,40 @@ test(
           await page.waitForLoadState("networkidle");
           await page.reload();
           await page.getByRole("link", { name: "Pi Remote", exact: true }).click();
+        },
+      );
+      await t.test(
+        "entry and app resume acknowledge finished conversations",
+        async () => {
+          const active = page.getByRole("region", { name: "Active sessions" });
+          const row = active.getByRole("link", { name: /Phone layout fixture/ });
+          const before = acknowledgementCount;
+          completion = {
+            id: "00000000-0000-4000-8000-000000000060",
+            outcome: "finished",
+          };
+          socket!.send(
+            JSON.stringify({ version: 1, type: "sessions.changed", data: null }),
+          );
+          await expect(row.locator(".state")).toHaveText("finished");
+          assert.equal(acknowledgementCount, before);
+          await row.click();
+          await expect(page.locator(".opening-indicator")).toHaveCount(0);
+          await expect.poll(() => acknowledgementCount).toBe(before + 1);
+          completion = {
+            id: "00000000-0000-4000-8000-000000000061",
+            outcome: "finished",
+          };
+          socket!.send(
+            JSON.stringify({ version: 1, type: "sessions.changed", data: null }),
+          );
+          await page.waitForLoadState("networkidle");
+          assert.equal(acknowledgementCount, before + 1);
+          await page.evaluate("window.__connectionAuth.visible=false");
+          await page.evaluate("window.__connectionAuth.visible=true");
+          await expect.poll(() => completion).toBe(undefined);
+          await page.getByRole("button", { name: "Go back", exact: true }).click();
+          await expect(row.locator(".state")).toHaveText("idle");
         },
       );
       await t.test(
@@ -1686,6 +1757,7 @@ test(
             ...session(),
             sessionId: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
             name: `Earlier session ${index}`,
+            state: "running",
             lastActivity: 2000 + index,
           }));
           extraFolders = Array.from({ length: 15 }, (_, index) => ({
@@ -1731,7 +1803,7 @@ test(
               sessionId: "00000000-0000-4000-8000-999999999999",
               name: "New top session",
               lastActivity: 5000,
-              state: "running",
+              state: "waiting",
             });
             homeGate = undefined;
             release();

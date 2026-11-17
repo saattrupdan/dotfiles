@@ -287,6 +287,8 @@ async function load(initial = true) {
     await store.history(target, initial);
     if (disposed || expected !== loadGeneration || target !== id.value) return;
     store.connect(target);
+    await store.acknowledge(target);
+    if (disposed || expected !== loadGeneration || target !== id.value) return;
     name.value = isUntitled(session.value?.name) ? "" : (session.value?.name ?? "");
     const parts = (session.value?.model ?? "").split("/");
     provider.value = parts.shift() ?? "";

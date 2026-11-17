@@ -176,6 +176,7 @@ export class Connections {
                   : registration.sessionId,
               epoch,
               sequence: old?.sequence ?? 0,
+              completion: registration.idle ? old?.completion : undefined,
               prompt:
                 registration.prompt ??
                 (old?.prompt?.state === "expired" ? old.prompt : undefined),
@@ -250,8 +251,10 @@ export class Connections {
               session.state,
               session.loop,
               session.prompt,
+              session.completion,
             ]);
             session.idle = state.idle;
+            if (!state.idle) session.completion = undefined;
             if (state.idle) this.previews.delete(session.sessionId);
             if (state.idle)
               this.working.get(session.sessionId)?.update("agent_settled", null);
@@ -269,7 +272,13 @@ export class Connections {
                     : "running";
             this.store.save(session);
             if (
-              before !== JSON.stringify([session.state, session.loop, session.prompt])
+              before !==
+              JSON.stringify([
+                session.state,
+                session.loop,
+                session.prompt,
+                session.completion,
+              ])
             )
               this.emit({ version: 1, type: "sessions.changed", data: session });
             return;
@@ -414,16 +423,27 @@ export class Connections {
               session.state,
               session.loop,
               session.prompt,
+              session.completion,
             ]);
             const status = this.working.get(session.sessionId)!;
             const previousMessage = status.message(!session.idle);
             status.update(kind, value.data);
             if (kind === "agent_start") {
+              session.completion = undefined;
               session.idle = false;
               session.state = "running";
               if (session.prompt?.state === "expired") session.prompt = undefined;
             }
             if (kind === "loop_completed") session.loop = false;
+            if (
+              kind === "loop_completed" ||
+              (kind === "agent_settled" &&
+                !(value.data as { loopIteration: boolean }).loopIteration)
+            )
+              session.completion = {
+                id: randomUUID(),
+                outcome: (value.data as { outcome: "finished" | "failed" }).outcome,
+              };
             if (kind === "agent_settled") {
               session.idle = true;
               session.state =
@@ -456,7 +476,13 @@ export class Connections {
               );
             this.store.save(session);
             if (
-              before !== JSON.stringify([session.state, session.loop, session.prompt])
+              before !==
+              JSON.stringify([
+                session.state,
+                session.loop,
+                session.prompt,
+                session.completion,
+              ])
             )
               this.emit({ version: 1, type: "sessions.changed", data: session });
             const message = status.message(!session.idle);

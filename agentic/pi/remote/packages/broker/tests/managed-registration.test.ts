@@ -217,6 +217,7 @@ test("a resumed parent inside its managed worktree registers as active during su
           .get(publicId)!.data as string,
       ).outcome;
     assert.equal(outcome(), "failed");
+    assert.equal(store.session(publicId)!.completion?.outcome, "failed");
     send({ type: "event", kind: "agent_start", data: null });
     send({
       type: "event",
@@ -226,11 +227,26 @@ test("a resumed parent inside its managed worktree registers as active during su
     send({ type: "event", kind: "agent_settled", data: null });
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(outcome(), "finished");
+    const finished = store.session(publicId)!.completion!;
+    assert.equal(finished.outcome, "finished");
+    send({ type: "heartbeat", data: { idle: true, loop: false } });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.deepEqual(store.session(publicId)!.completion, finished);
+    send({ type: "event", kind: "agent_start", data: null });
+    send({ type: "heartbeat", data: { idle: false, loop: true } });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(store.session(publicId)!.completion, undefined);
     send({
       type: "event",
       kind: "agent_settled",
       data: { loopIteration: true, privateText: "never copy" },
     });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(
+      store.session(publicId)!.completion,
+      undefined,
+      "loop iterations are not finished runs",
+    );
     const completionId = randomUUID();
     const completion = {
       type: "event",
@@ -258,6 +274,8 @@ test("a resumed parent inside its managed worktree registers as active during su
       [{ id: completionId, outcome: "finished" }],
       "terminal notification is validated, stripped and emitted once",
     );
+    const loopResult = store.session(publicId)!.completion!;
+    assert.equal(loopResult.outcome, "finished");
     // A normal reconnect/registration must not forget the terminal notification ID.
     send({
       type: "register",
@@ -269,6 +287,8 @@ test("a resumed parent inside its managed worktree registers as active during su
       },
     });
     await wait("registered");
+    assert.deepEqual(store.session(publicId)!.completion, loopResult);
+    send({ type: "heartbeat", data: { idle: true, loop: false } });
     send(completion);
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(
