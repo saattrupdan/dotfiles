@@ -429,3 +429,40 @@ test("nested bash success labels are grey while main-agent bash stays green", ()
 	assert.deepEqual(result, before, "presentation does not change success flags or output");
 	view.dispose();
 });
+
+
+for (const name of ["skill", "web_search"]) {
+	test(`nested ${name} success and error text is grey without changing main-agent colours`, () => {
+		for (const isError of [false, true]) {
+			const colour = isError ? "error" : "success";
+			const text = isError ? theme.fg("error", `${name} failed`) : "Full tool output";
+			const details = name === "skill" ? (isError ? undefined : { name: "commit" })
+				: { status: isError ? "unavailable" : "ok", resultCount: 2 };
+			const result = { content: [{ type: "text" as const, text }], details, isError };
+			const before = structuredClone(result), view = new ActivityView();
+			const args = name === "skill" ? { name: "commit" } : { query: "example" };
+			const main = new ToolExecutionComponent(name, `main-${name}`, args, { showImages: false, outputPad: 1 },
+				toolRenderers(name), { requestRender() {} } as TUI, process.cwd());
+			main.updateResult(result, false);
+			for (const expanded of [false, true, false]) {
+				main.setExpanded(expanded);
+				const mainLines = main.render(100);
+				if (!expanded) assert.ok(mainLines.join("\n").includes(theme.getFgAnsi(colour)), "main tool retains its status colour");
+				view.update([{ type: "toolCall", id: `child-${name}`, name, args, result, isPartial: false }],
+					{ theme, expanded, cwd: process.cwd(), showImages: false, outputPad: 1, resolve: toolRenderers });
+				const lines = view.render(100), raw = lines.join("\n");
+				assert.ok(!raw.includes(theme.getFgAnsi("success")), "child output is not green");
+				assert.ok(!raw.includes(theme.getFgAnsi("error")), "child output is not bright red");
+				if (!expanded || isError) assert.ok(raw.includes(theme.getFgAnsi("muted")), "child status text is muted grey");
+				assert.ok(raw.includes(theme.getBgAnsi(isError ? "toolErrorBg" : "toolSuccessBg")), "backgrounds are unchanged");
+				const expected = mainLines.map(stripVTControlCharacters);
+				while (expected.length && !expected[0].trim()) expected.shift();
+				while (expected.length && !expected.at(-1)!.trim()) expected.pop();
+				assert.deepEqual(lines.map(stripVTControlCharacters), expected, "layout and visible output remain native");
+				assert.deepEqual(main.render(100), mainLines, "main-agent rendering is unchanged");
+			}
+			assert.deepEqual(result, before, "error flags and full payload are preserved");
+			view.dispose();
+		}
+	});
+}
