@@ -356,7 +356,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 			}
 			const command = args.trim();
 			if (command === "stop") {
-				if (active) stop("Loop stopped; any running iteration may finish.");
+				if (active) stop("Loop stopped. Continue with your current work until completion. Do not start another iteration.");
 				else say("No loop is active.");
 				return;
 			}
