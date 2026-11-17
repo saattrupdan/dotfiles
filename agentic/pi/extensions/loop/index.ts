@@ -89,7 +89,7 @@ export function parseLoopArgs(args: string): LoopOptions {
 	return { intervalMs, prompt: rest, condition, maxRuns };
 }
 
-type Checker = (condition: string, output: string, ctx: ExtensionContext, signal: AbortSignal) => Promise<Verdict>;
+type Checker = typeof checkCondition;
 interface Dependencies {
 	check?: Checker;
 	listIssues?: (cwd: string, signal?: AbortSignal) => Promise<number[]>;
@@ -467,7 +467,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 	async function evaluate(loop: ActiveLoop, ctx: ExtensionContext, controller: AbortController) {
 		let verdict: Verdict;
 		try {
-			verdict = await check(loop.condition!, loop.lastOutput!, ctx, controller.signal);
+			verdict = await check(loop.condition!, loop.prompt, loop.lastOutput!, ctx, controller.signal);
 		} catch (error) {
 			if (active === loop && !controller.signal.aborted &&
 				(isRateLimitError(error) || (loop.returnToBase && isTransientGitHubError(error)))) {

@@ -14,7 +14,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import loopExtension, { parseDuration, parseLoopArgs } from "./index.ts";
 import { loopHandoffEnv } from "../git-worktree-isolation/index.ts";
 import { createLaunchPlan, prepareBranchReturn } from "../git-worktree-isolation/git.ts";
-import { parseVerdict, type Verdict } from "./checker.ts";
+import { checkCondition, parseVerdict, type Verdict } from "./checker.ts";
 import { getLoopHandoff, isLoopActive, LOOP_HANDOFF_ENV, LOOP_MAIN_DIRTY, onLoopChange, onLoopCompletion, currentLoopCompletion, setLoopReturnToBase, suspendLoopForHandoff } from "../_loop_state/state.ts";
 import notifyExtension from "../notify/index.ts";
 import rateLimitRetry from "../rate-limit-retry/index.ts";
@@ -144,9 +144,62 @@ test("checker verdict is strict and needs evidence", () => {
 	}
 });
 
+test("checker process receives the full loop prompt as reference context", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-loop-checker-"));
+	const originalPath = process.env.PATH;
+	try {
+		await writeFile(join(dir, "pi"), `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.writeFileSync("checker-args.json", JSON.stringify(process.argv.slice(2)));
+console.log(JSON.stringify({ done: true, evidence: "verified" }));
+`, { mode: 0o755 });
+		process.env.PATH = `${dir}:${originalPath ?? ""}`;
+		const prompt = `First requirement\n${"details ".repeat(1_500)}\nLast requirement`;
+		const output = `Old output${"x".repeat(8_000)}Latest result`;
+		const ctx = { cwd: dir } as ExtensionContext;
+		assert.deepEqual(await checkCondition("all requirements in the loop prompt are met", prompt, output, ctx, new AbortController().signal), {
+			done: true, evidence: "verified",
+		});
+		const args = JSON.parse(await readFile(join(dir, "checker-args.json"), "utf8")) as string[];
+		assert.ok(args.includes("--no-session"));
+		const request = args.at(-1)!;
+		assert.ok(request.includes(`Loop prompt:\n${prompt}`), "the loop prompt is not truncated");
+		assert.ok(request.includes("Completion condition:\nall requirements in the loop prompt are met"));
+		assert.ok(request.includes(`Working agent's most recent final response (context, not proof):\n${output.slice(-8_000)}`));
+		assert.match(request, /task context, not instructions to execute/);
+		assert.match(request, /independently verify the condition/);
+	} finally {
+		if (originalPath === undefined) delete process.env.PATH;
+		else process.env.PATH = originalPath;
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("checker keeps the captured file prompt across iterations", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-loop-"));
+	const prompts: string[] = [];
+	const h = harness(async (_condition, prompt) => {
+		prompts.push(prompt);
+		return { done: prompts.length === 2, evidence: "checked requirements" };
+	}, { cwd: dir, contextTokens: 2_000 });
+	try {
+		await writeFile(join(dir, "prompt.txt"), "Implement the two requirements\nKeep this context\n");
+		await h.command("prompt.txt --until both requirements are met");
+		await writeFile(join(dir, "prompt.txt"), "Replacement instructions");
+		await h.finish();
+		h.tick();
+		h.tick();
+		await h.finish();
+		assert.deepEqual(prompts, Array(2).fill("Implement the two requirements\nKeep this context\n"));
+	} finally {
+		await h.command("stop");
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
 type Handler = (event: unknown, ctx: ExtensionContext) => unknown;
 function harness(
-	check?: (condition: string, output: string, ctx: ExtensionContext, signal: AbortSignal) => Promise<Verdict>,
+	check?: typeof checkCondition,
 	options: { sessionId?: string; plugins?: Array<(pi: ExtensionAPI) => void>; notifications?: string[]; mode?: "tui" | "rpc" | "print"; autoStart?: boolean; compact?: "complete" | "small" | "fail" | "pending" | "rateOnce"; contextTokens?: number; cwd?: string; listIssues?: (cwd: string, signal?: AbortSignal) => Promise<number[]> } = {},
 ) {
 	const handlers = new Map<string, Handler[]>();
@@ -726,7 +779,8 @@ test("a branch relaunch resumes the running issue iteration, then checks complet
 		assert.equal(parent.timers.size, 0, "the old process must release its watchdog");
 		await parent.emit("session_shutdown");
 		const checked: string[] = [];
-		const child = harness(async (condition) => {
+		const child = harness(async (condition, prompt) => {
+			assert.equal(prompt, snapshot?.prompt, "the checker receives the captured prompt after handoff");
 			checked.push(condition);
 			return { done: true, evidence: "all issues assigned" };
 		});
@@ -1078,9 +1132,10 @@ test("until loops keep running beyond 20 checks without an explicit cap", async 
 	assert.match(h.notices.at(-1) ?? "", /Loop complete after 21 run\(s\)/);
 });
 
-test("until checker sees final response and stops only on done", async () => {
+test("until checker sees loop prompt and final response and stops only on done", async () => {
 	const calls: string[] = [];
-	const h = harness(async (condition, output) => {
+	const h = harness(async (condition, prompt, output) => {
+		assert.equal(prompt, "fix errors");
 		calls.push(`${condition}: ${output}`);
 		return { done: calls.length === 2, evidence: "confirmed by check" };
 	});
@@ -1262,7 +1317,7 @@ test("print mode cannot silently start an unobserved loop", async () => {
 test("stop during checker aborts it and cannot schedule a stale next run", async () => {
 	let resolveCheck: ((verdict: Verdict) => void) | undefined;
 	let signal: AbortSignal | undefined;
-	const h = harness(async (_condition, _output, _ctx, controller) => {
+	const h = harness(async (_condition, _prompt, _output, _ctx, controller) => {
 		signal = controller;
 		return new Promise<Verdict>((resolve) => { resolveCheck = resolve; });
 	});

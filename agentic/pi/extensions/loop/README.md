@@ -47,10 +47,11 @@ run with their existing history rather than wasting a compaction call. Other
 compaction failures stop the loop. Compaction itself uses an additional model
 call and may take time. With `--until`, a separate, fresh, ephemeral Pi process checks the
 condition after every run. It can inspect the working directory and run verification commands,
-but it does not inherit the working agent's conversation: it sees the condition
-and a bounded copy of the last final answer. It returns a yes/no verdict with
-evidence. A failed or malformed check stops the loop visibly; it never counts
-as success. Rate limits during compaction or the completion check instead pause
+but it does not inherit the working agent's conversation: it sees the full captured
+loop prompt, the condition, and a bounded copy of the last final answer. The condition
+can refer to requirements in the loop prompt. The prompt is reference context, not
+instructions for the checker to execute. It returns a yes/no verdict with evidence.
+A failed or malformed check stops the loop visibly; it never counts as success. Rate limits during compaction or the completion check instead pause
 and retry the same step after 1–5 minutes (exponential backoff); they do not
 consume a run. `/loop stop` cancels the retry. The checker is instructed not to modify files, but its shell tool is
 **not a read-only sandbox**. Use explicit, verifiable conditions and review
