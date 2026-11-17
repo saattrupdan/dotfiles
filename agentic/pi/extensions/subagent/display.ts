@@ -165,7 +165,6 @@ export function createSubagentRenderers(
 	const activeViews = new Set<ActivityView>();
 	const views = new WeakMap<object, ActivityView>();
 	return {
-		renderShell: "self",
 		dispose() {
 			for (const view of activeViews) view.dispose();
 			activeViews.clear();
@@ -195,7 +194,7 @@ export function createSubagentRenderers(
 			const details = result.details as SingleResult | undefined;
 			if (!details) {
 				const text = result.content[0];
-				return new Text(theme.fg("muted", text?.type === "text" ? text.text : "(no output)"), 0, 0);
+				return new Text(text?.type === "text" ? text.text : "(no output)", 0, 0);
 			}
 			const key = context.state && typeof context.state === "object" ? context.state : undefined;
 			let view = key ? views.get(key) : undefined;
@@ -204,8 +203,8 @@ export function createSubagentRenderers(
 				if (view) activeViews.delete(view);
 				if (key) views.delete(key);
 				return new Text(isFailedResult(details)
-					? theme.fg("muted", "✗ done with errors (Ctrl+O to expand)")
-					: theme.fg("muted", "✓ All done"), 0, 0);
+					? theme.fg("error", "✗ done with errors (Ctrl+O to expand)")
+					: theme.fg("success", "✓ All done"), 0, 0);
 			}
 			view ??= new ActivityView();
 			if (key) views.set(key, view);
@@ -243,17 +242,17 @@ export function createSubagentRenderers(
 			});
 			const container = new Container();
 			if (!expanded) container.addChild(new Spacer(1));
-			if (isFailedResult(details)) container.addChild(new Text(theme.fg("muted", "✗ failed"), 0, 0));
+			if (isFailedResult(details)) container.addChild(new Text(theme.fg("error", "✗ failed"), 0, 0));
 			const attempts = formatModelAttempts(details.modelAttempts);
 			if (attempts) container.addChild(new Text(theme.fg("dim", `Models: ${attempts}`), 0, 0));
 			if (isFailedResult(details) && details.errorMessage)
-				container.addChild(new Text(theme.fg("muted", `Error: ${details.errorMessage}`), 0, 0));
+				container.addChild(new Text(theme.fg("error", `Error: ${details.errorMessage}`), 0, 0));
 			if (expanded) {
 				container.addChild(new Text(theme.fg("muted", "─── Task ───"), 0, 0));
 				container.addChild(new Text(theme.fg("dim", details.task), 0, 0));
 				container.addChild(new Spacer(1));
 				container.addChild(new Text(theme.fg("muted", "─── Output ───"), 0, 0));
-				if (historyError) container.addChild(new Text(theme.fg("muted", historyError), 0, 0));
+				if (historyError) container.addChild(new Text(theme.fg("error", historyError), 0, 0));
 			}
 			if (hasEarlierActivity) container.addChild(new Text(theme.fg("muted", "(...)"), 0, 0));
 			container.addChild(view);
