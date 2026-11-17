@@ -17,6 +17,7 @@ tools:
   - read
   - recall_memory
   - search
+  - sign_pdf
   - skill
   - store_memory
   - subagent
@@ -100,6 +101,7 @@ extensions:
   - memory-snapshot
   - non-interactive
   - notify
+  - pdf-sign
   - precomputed-compaction
   - question
   - rate-limit-retry

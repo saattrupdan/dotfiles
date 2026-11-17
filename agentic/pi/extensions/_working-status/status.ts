@@ -11,6 +11,7 @@ const TOOL_LABELS: Record<string, string> = {
 	code_tree: "Mapping...",
 	generate_image: "Generating image...",
 	generate_video: "Generating video...",
+	sign_pdf: "Signing PDF locally...",
 	skill: "Upskilling...",
 	question: "Questioning...",
 	web_browse: "Browsing...",
