@@ -213,12 +213,13 @@ export function createSubagentRenderers(
 			let items: ActivityItem[];
 			let historyError: string | undefined;
 			try {
-				items = details.transcriptId ? archive.read(details.transcriptId, expanded)
+				items = details.transcriptId ? archive.read(details.transcriptId, expanded, COLLAPSED_ITEM_COUNT + 1)
 					: activityItems(details.messages, details.partialResults);
 			} catch (error) {
 				historyError = `History unavailable: ${(error as Error).message}`;
 				items = activityItems(details.messages, details.partialResults);
 			}
+			const hasEarlierActivity = !expanded && items.length > COLLAPSED_ITEM_COUNT;
 			if (!expanded) items = items.slice(-COLLAPSED_ITEM_COUNT);
 			if (!isPartial) items = items.map((item) => item.type === "toolCall" && item.isPartial
 				? { ...item, isPartial: false, result: {
@@ -240,6 +241,7 @@ export function createSubagentRenderers(
 				},
 			});
 			const container = new Container();
+			if (!expanded) container.addChild(new Spacer(1));
 			if (isFailedResult(details)) container.addChild(new Text(theme.fg("error", "✗ failed"), 0, 0));
 			const attempts = formatModelAttempts(details.modelAttempts);
 			if (attempts) container.addChild(new Text(theme.fg("dim", `Models: ${attempts}`), 0, 0));
@@ -252,6 +254,7 @@ export function createSubagentRenderers(
 				container.addChild(new Text(theme.fg("muted", "─── Output ───"), 0, 0));
 				if (historyError) container.addChild(new Text(theme.fg("error", historyError), 0, 0));
 			}
+			if (hasEarlierActivity) container.addChild(new Text(theme.fg("muted", "(...)"), 0, 0));
 			container.addChild(view);
 			const finalOutput = result.content.find((part) => part.type === "text");
 			const output = !isPartial && finalOutput?.type === "text" ? finalOutput.text : "";
@@ -260,7 +263,10 @@ export function createSubagentRenderers(
 			if (!items.length && !output)
 				container.addChild(new Text(theme.fg("muted", isPartial ? "(no output yet)" : "(no output)"), 0, 0));
 			const usage = formatUsageStats(details.usage, details.model);
-			if (usage) container.addChild(new Text(theme.fg("dim", usage), 0, 0));
+			if (usage) {
+				container.addChild(new Spacer(1));
+				container.addChild(new Text(theme.fg("dim", usage), 0, 0));
+			}
 			return container;
 		},
 	};

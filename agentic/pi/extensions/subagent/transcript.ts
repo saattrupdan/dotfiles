@@ -96,12 +96,12 @@ export class TranscriptArchive {
 	clearPrivate() { privateTranscripts.clear(); }
 
 	/** Only selected entries load payloads. The incremental index retains byte offsets, not tool output. */
-	read(id: string, expanded: boolean): ActivityItem[] {
+	read(id: string, expanded: boolean, limit = 5): ActivityItem[] {
 		if (id.startsWith("memory:")) {
 			const history = privateTranscripts.get(id);
 			if (!history) throw new Error("Private subagent history is no longer available");
 			const items = activityItems([...history.messages, ...(history.live.message ? [history.live.message] : [])], history.live.partialResults);
-			return expanded ? items : items.slice(-5);
+			return expanded ? items : items.slice(-limit);
 		}
 		const file = this.file(id);
 		let index = this.indexes.get(id);
@@ -133,7 +133,7 @@ export class TranscriptArchive {
 			try { live = JSON.parse(fs.readFileSync(`${file}.live`, "utf8")) as Live; }
 			catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
 			const streaming = live.message ? activityItems([live.message], live.partialResults) : [];
-			const count = Math.max(0, 5 - streaming.length);
+			const count = Math.max(0, limit - streaming.length);
 			const selected = expanded ? index.entries : count ? index.entries.slice(-count) : [];
 			const loaded = new Map<number, Message>();
 			const load = (location: Location) => {
@@ -156,7 +156,7 @@ export class TranscriptArchive {
 				return { type: "toolCall", id: part.id, name: part.name, args: part.arguments,
 					result: result ? load(result) as ToolOutput : live.partialResults[part.id], isPartial: !result };
 			});
-			return expanded ? [...items, ...streaming] : [...items, ...streaming].slice(-5);
+			return expanded ? [...items, ...streaming] : [...items, ...streaming].slice(-limit);
 		} finally { fs.closeSync(fd); }
 	}
 

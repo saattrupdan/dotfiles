@@ -178,7 +178,7 @@ test("nested activity has no empty shell-padding lines between narration and too
 	])];
 	const output = plain(createSubagentRenderers().renderResult!({ content: [], details },
 		{ expanded: false, isPartial: true }, theme, context()));
-	assert.deepEqual(output.split("\n").map((line) => line.trim()), [
+	assert.deepEqual(output.trim().split("\n").map((line) => line.trim()), [
 		"First step.", "read first.ts", "Next step.", "read second.ts", "Finished.",
 	]);
 });
@@ -255,4 +255,55 @@ test("child arguments have a subdued accent distinct from narration in both disp
 			assert.ok(argument.includes(argumentColor), `${expanded ? "expanded" : "collapsed"} ${path} should use the argument colour`);
 		}
 	}
+});
+
+
+test("live collapsed activity separates the preview and footer and marks hidden entries", () => {
+	const renderers = createSubagentRenderers(), details = base(), ctx = context();
+	details.usage = { ...usage, turns: 5 };
+	details.messages = Array.from({ length: 7 }, (_, n) => assistant([{ type: "text", text: `entry-${n}` }]));
+	const call = plain(renderers.renderCall!({ agent: "explorer", taskName: "Preview", task: details.task }, theme,
+		{ ...ctx, isPartial: true, expanded: false }));
+	const body = plain(renderers.renderResult!({ content: [], details }, { expanded: false, isPartial: true }, theme, ctx));
+	assert.deepEqual(`${call}\n${body}`.split("\n").map((line) => line.trim()), [
+		"subagent explorer: Preview [user]", "Inspect output", "", "(...)",
+		"entry-2", "entry-3", "entry-4", "entry-5", "entry-6", "", "5 turns",
+	]);
+	const expanded = plain(renderers.renderResult!({ content: [], details }, { expanded: true, isPartial: true }, theme, ctx));
+	assert.doesNotMatch(expanded, /\(\.\.\.\)/);
+	assert.match(expanded, /entry-0/);
+	assert.deepEqual(plain(renderers.renderResult!({ content: [], details }, { expanded: false, isPartial: false }, theme, ctx))
+		.split("\n").map((line) => line.trimEnd()), ["✓ All done"]);
+});
+
+test("omission marker appears only once the five-entry window hides earlier activity", () => {
+	for (const count of [0, 1, 5, 6]) {
+		const details = base();
+		details.messages = Array.from({ length: count }, (_, n) => assistant([{ type: "text", text: `entry-${n}` }]));
+		const output = plain(createSubagentRenderers().renderResult!({ content: [], details },
+			{ expanded: false, isPartial: true }, theme, context()));
+		assert.equal(output.includes("(...)"), count > 5);
+	}
+});
+
+test("archived and private history indicate hidden entries without rendering more than five", (t) => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-display-window-"));
+	t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+	const archive = new TranscriptArchive(root);
+	for (const persist of [true, false]) {
+		const writer = archive.create({ persist }), details = base();
+		details.transcriptId = writer.id;
+		const renderers = createSubagentRenderers(undefined, archive);
+		for (let n = 0; n < 5; n++) writer.append(assistant([{ type: "text", text: `archived-${n}` }]));
+		const render = () => plain(renderers.renderResult!({ content: [], details },
+			{ expanded: false, isPartial: true }, theme, context()));
+		assert.doesNotMatch(render(), /\(\.\.\.\)/);
+		writer.append(assistant([{ type: "text", text: "archived-5" }]));
+		const output = render();
+		assert.match(output, /\(\.\.\.\)/);
+		assert.doesNotMatch(output, /archived-0/);
+		assert.equal(output.match(/archived-/g)?.length, 5);
+		writer.finish();
+	}
+	archive.clearPrivate();
 });
