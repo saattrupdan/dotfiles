@@ -40,7 +40,10 @@ for (const name of ["read", "write", "edit", "bash", "codemode", "python", "sear
 			expected.markExecutionStarted();
 			expected.setExpanded(expanded);
 			expected.updateResult(item.result!, false);
-			assert.deepEqual(view.render(100), expected.render(100));
+			const native = expected.render(100);
+			while (native.length && !stripVTControlCharacters(native[0]).trim()) native.shift();
+			while (native.length && !stripVTControlCharacters(native.at(-1)!).trim()) native.pop();
+			assert.deepEqual(view.render(100), native);
 			view.dispose();
 		}
 	});
@@ -161,4 +164,71 @@ test("an interrupted partial result remains visible as a failed child tool in ex
 	const output = plain(createSubagentRenderers().renderResult!({ content: [], details }, { expanded: true, isPartial: false }, theme, context()));
 	assert.match(output, /last progress/);
 	assert.match(output, /Tool interrupted/);
+});
+
+
+test("nested activity has no empty shell-padding lines between narration and tool calls", () => {
+	const details = base();
+	details.messages = [assistant([
+		{ type: "text", text: "First step." },
+		{ type: "toolCall", id: "one", name: "read", arguments: { path: "first.ts" } },
+		{ type: "text", text: "Next step." },
+		{ type: "toolCall", id: "two", name: "read", arguments: { path: "second.ts" } },
+		{ type: "text", text: "Finished." },
+	])];
+	const output = plain(createSubagentRenderers().renderResult!({ content: [], details },
+		{ expanded: false, isPartial: true }, theme, context()));
+	assert.deepEqual(output.split("\n").map((line) => line.trim()), [
+		"First step.", "read first.ts", "Next step.", "read second.ts", "Finished.",
+	]);
+});
+
+test("subagent tool names and arguments are muted without altering main-agent rendering", () => {
+	const details = base();
+	details.messages = [assistant([{ type: "toolCall", id: "read", name: "read", arguments: { path: "file.ts" } }])];
+	const main = new ToolExecutionComponent("read", "main", { path: "file.ts" }, { showImages: false }, toolRenderers("read"),
+		{ requestRender() {} } as TUI, process.cwd());
+	const before = main.render(100).join("\n");
+	assert.ok(before.includes(theme.getFgAnsi("toolTitle")));
+	assert.ok(before.includes(theme.getFgAnsi("accent")));
+	const output = createSubagentRenderers().renderResult!({ content: [], details },
+		{ expanded: false, isPartial: true }, theme, context()).render(100).join("\n");
+	assert.ok(output.includes(theme.getFgAnsi("muted")));
+	assert.ok(!output.includes(theme.getFgAnsi("toolTitle")), "child tool title should not use the main colour");
+	assert.ok(!output.includes(theme.getFgAnsi("accent")), "child arguments should not use the main accent");
+	assert.equal(main.render(100).join("\n"), before);
+});
+
+
+test("compact activity preserves internal blank lines and visible error colours", () => {
+	const view = new ActivityView();
+	const item: ActivityItem = { type: "toolCall", id: "failed", name: "unknown", args: {}, isPartial: false,
+		result: { content: [{ type: "text", text: "first paragraph\n\nsecond paragraph" }], details: undefined, isError: true } };
+	view.update([item], { theme, expanded: true, cwd: process.cwd(), showImages: false, outputPad: 1,
+		resolve: () => ({ renderCall: () => new Text("heading"), renderResult: (result, _options, theme) =>
+			new Text(theme.fg("error", result.content.map((part) => part.type === "text" ? part.text : "").join(""))) }) });
+	const output = view.render(80);
+	assert.equal(stripVTControlCharacters(output[0]).trim(), "heading");
+	assert.equal(stripVTControlCharacters(output.at(-1)!).trim(), "second paragraph");
+	assert.ok(output.some((line) => !stripVTControlCharacters(line).trim()), "internal paragraph spacing remains");
+	assert.ok(output.join("\n").includes(theme.getFgAnsi("error")), "errors remain visible");
+	view.dispose();
+});
+
+test("compact activity forwards mouse events to the uncropped native row coordinates", () => {
+	const view = new ActivityView();
+	let localY: number | undefined;
+	view.update([{ type: "toolCall", id: "click", name: "custom", args: {}, isPartial: true }], {
+		theme, expanded: false, cwd: process.cwd(), showImages: false, outputPad: 1,
+		resolve: () => ({ renderCall: () => ({
+			render: () => ["clickable"], invalidate() {},
+			handleMouse(event) { localY = event.y; return { handled: true }; },
+		}) }),
+	});
+	const lines = view.render(80);
+	assert.equal(lines.length, 1);
+	assert.ok(view.handleMouse({ type: "click", button: "left", x: 2, y: 0, screenX: 2, screenY: 10,
+		width: 80, height: 1, shift: false, alt: false, ctrl: false })?.handled);
+	assert.equal(localY, 0);
+	view.dispose();
 });

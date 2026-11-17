@@ -228,7 +228,7 @@ export function createSubagentRenderers(
 					isError: true,
 				} } : item);
 			view.update(items, {
-				expanded, cwd: details.cwd ?? context.cwd ?? process.cwd(),
+				theme, expanded, cwd: details.cwd ?? context.cwd ?? process.cwd(),
 				showImages: context.showImages ?? false, outputPad: context.outputPad ?? 1,
 				invalidate: context.invalidate,
 				resolve(name, item) {

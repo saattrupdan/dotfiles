@@ -1,6 +1,7 @@
-/** Compose native tool rows without flattening their styling, layout, or renderer state. */
-import { ToolExecutionComponent, type ToolRenderers } from "@earendil-works/pi-coding-agent";
-import { Container, Markdown, type TUI } from "@earendil-works/pi-tui";
+/** Compose shared native tool rows with compact, muted subagent presentation. */
+import { stripVTControlCharacters } from "node:util";
+import { ToolExecutionComponent, type ToolRenderers, type Theme } from "@earendil-works/pi-coding-agent";
+import { Container, Markdown, type Component, type TuiMouseEvent, type TUI } from "@earendil-works/pi-tui";
 import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import { stopNativeTimer } from "./native.ts";
 import type { ActivityItem } from "../subagent/transcript.ts";
@@ -8,12 +9,39 @@ import type { ActivityItem } from "../subagent/transcript.ts";
 type Row = { component: ToolExecutionComponent; states: Set<{ interval?: ReturnType<typeof setInterval> }>; dispose?: () => void };
 type Options = {
 	expanded: boolean; cwd: string; showImages: boolean; outputPad: number;
-	invalidate?: () => void; resolve(name: string, item: ActivityItem): ToolRenderers;
+	theme?: Theme; invalidate?: () => void; resolve(name: string, item: ActivityItem): ToolRenderers;
 };
+
+/** Remove only a native entry's outer shell padding; retain its internal layout and mouse coordinates. */
+class ActivityEntry implements Component {
+	private leading = 0;
+	private height = 0;
+	constructor(private inner: Component, private tint: (line: string) => string) {}
+
+	render(width: number): string[] {
+		const lines = this.inner.render(width);
+		this.height = lines.length;
+		this.leading = 0;
+		const image = (line: string) => line.includes("\x1b_G") || line.includes("\x1b]1337;File=");
+		const blank = (line: string) => !image(line) && !stripVTControlCharacters(line).trim();
+		while (this.leading < lines.length && blank(lines[this.leading]!)) this.leading++;
+		let end = lines.length;
+		// Image rows can reserve blank terminal cells below an escape-only payload.
+		const images = lines.some(image);
+		if (!images) while (end > this.leading && blank(lines[end - 1]!)) end--;
+		return lines.slice(this.leading, end).map(this.tint);
+	}
+
+	invalidate() { this.inner.invalidate(); }
+	handleMouse(event: TuiMouseEvent) {
+		return this.inner.handleMouse?.({ ...event, y: event.y + this.leading, height: this.height });
+	}
+}
 
 export class ActivityView extends Container {
 	private rows = new Map<string, Row>();
 	private cwd?: string;
+	private theme?: Theme;
 	private updating = false;
 	private active = false;
 	private redrawQueued = false;
@@ -22,6 +50,7 @@ export class ActivityView extends Container {
 	update(items: ActivityItem[], options: Options) {
 		if (this.cwd !== options.cwd) this.dispose();
 		this.cwd = options.cwd;
+		this.theme = options.theme;
 		this.invalidateParent = options.invalidate;
 		this.updating = true;
 		this.active = true;
@@ -34,7 +63,7 @@ export class ActivityView extends Container {
 			this.clear();
 			for (const item of items) {
 				if (item.type === "text") {
-					this.addChild(new Markdown(item.text, 0, 0, getMarkdownTheme()));
+					this.addChild(new ActivityEntry(new Markdown(item.text, 0, 0, getMarkdownTheme()), (line) => this.mute(line)));
 					continue;
 				}
 				let row = this.rows.get(item.id);
@@ -63,9 +92,22 @@ export class ActivityView extends Container {
 				row.component.setOutputPad(options.outputPad);
 				row.component.setExpanded(options.expanded);
 				if (item.result) row.component.updateResult(item.result, item.isPartial);
-				this.addChild(row.component);
+				this.addChild(new ActivityEntry(row.component, (line) => this.mute(line)));
 			}
 		} finally { this.updating = false; }
+	}
+
+	private mute(line: string): string {
+		const theme = this.theme;
+		if (!theme || typeof theme.getFgAnsi !== "function") return line;
+		const muted = theme.getFgAnsi("muted");
+		for (const token of ["toolTitle", "accent", "toolOutput", "text"] as const) {
+			const color = theme.getFgAnsi(token);
+			if (color) line = line.replaceAll(color, muted);
+		}
+		// Keep narration/default text muted after native foreground resets, too.
+		line = line.replaceAll("\x1b[39m", muted).replaceAll("\x1b[0m", `\x1b[0m${muted}`);
+		return `${muted}${line}\x1b[39m`;
 	}
 
 	private requestRender() {
