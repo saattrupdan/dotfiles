@@ -111,7 +111,7 @@ export class ActivityView extends Container {
 				this.addChild(new ActivityEntry(row.component, (line) => {
 					const muted = this.mute(line, true);
 					if (!this.theme) return muted;
-					if (["skill", "web_search", "python", "code_tree", "web_browse"].includes(item.name))
+					if (["skill", "web_search", "python", "code_tree", "web_browse", "write"].includes(item.name))
 						return muted
 							.replaceAll(this.theme.getFgAnsi("success"), this.theme.getFgAnsi("muted"))
 							.replaceAll(this.theme.getFgAnsi("error"), this.theme.getFgAnsi("muted"));

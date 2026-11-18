@@ -431,7 +431,7 @@ test("nested bash success labels are grey while main-agent bash stays green", ()
 });
 
 
-for (const name of ["skill", "web_search", "python", "code_tree", "web_browse"]) {
+for (const name of ["skill", "web_search", "python", "code_tree", "web_browse", "write"]) {
 	test(`nested ${name} success and error text is grey without changing main-agent colours`, () => {
 		const outcomes = name === "code_tree" ? ["ok", "fallback", "error"]
 			: name === "web_browse" ? ["ok", "error", "details_error"] : ["ok", "error"];
@@ -447,6 +447,7 @@ for (const name of ["skill", "web_search", "python", "code_tree", "web_browse"])
 			const before = structuredClone(result), view = new ActivityView();
 			const args = name === "skill" ? { name: "commit" } : name === "web_search" ? { query: "example" }
 				: name === "code_tree" ? { path: "src", depth: 1 } : name === "web_browse" ? { command: "help" }
+				: name === "write" ? { path: "/tmp/pi-write-display-check.txt", content: "Display check\n" }
 				: { description: "Preview Python status", code: isError ? "raise RuntimeError('check')" : "print('check')" };
 			const main = new ToolExecutionComponent(name, `main-${name}`, args, { showImages: false, outputPad: 1 },
 				toolRenderers(name), { requestRender() {} } as TUI, process.cwd());
