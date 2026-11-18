@@ -12,7 +12,7 @@ from pathlib import Path
 import iterm2
 
 MARKER = "user.pi_agent_sort_status"
-POLL_INTERVAL = 2
+POLL_INTERVAL = 0.5
 REQUEST_TIMEOUT = 30
 RANK = {
     "need_input": 0,
