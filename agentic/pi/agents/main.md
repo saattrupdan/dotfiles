@@ -106,6 +106,7 @@ extensions:
   - question
   - rate-limit-retry
   - read
+  - read-groups
   - remote-control
   - search
   - skill
