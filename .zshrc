@@ -289,6 +289,7 @@ online() {
 
 alias ls='eza'
 alias vim='nvim'
+alias npi='nvim +PiAgentOpen'
 alias gt='cd ~/gitsky'
 alias ll='ls -l'
 alias la='ls -ah'
