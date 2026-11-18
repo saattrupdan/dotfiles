@@ -89,6 +89,26 @@ final class SigningTests: XCTestCase {
         XCTAssertEqual(model.selectedSignatureIDs.count, 2)
     }
 
+    func testPrintedTextBoxesFitLongNamesAndWrapWithinThePage() {
+        let text = "Søren Ærø — Frederiksberg — 18/11/2026"
+        let page = CGSize(width: 600, height: 800)
+        let point = CGPoint(x: 300, y: 400)
+        let rect = ItemRenderer.textRect(text, centeredAt: point, pageSize: page)
+        XCTAssertGreaterThan(rect.width, 220)
+        XCTAssertEqual(rect.midX, point.x)
+        XCTAssertEqual(rect.midY, point.y)
+        XCTAssertEqual(rect.height, 28)
+        let narrow = CGSize(width: 180, height: 800)
+        let wrapped = ItemRenderer.textRect(text, centeredAt: .zero, pageSize: narrow)
+        XCTAssertEqual(wrapped.width, narrow.width)
+        XCTAssertGreaterThan(wrapped.height, 28)
+        XCTAssertEqual(wrapped.minX, 0)
+        XCTAssertEqual(wrapped.minY, 0)
+        let corner = ItemRenderer.textRect("København", centeredAt: CGPoint(x: 600, y: 800), pageSize: page)
+        XCTAssertEqual(corner.maxX, page.width)
+        XCTAssertEqual(corner.maxY, page.height)
+    }
+
     func testConstrainResizedAndMovedBoxesToPage() {
         let size = CGSize(width: 200, height: 100)
         XCTAssertEqual(EditorModel.constrained(CGRect(x: -10, y: 99, width: 400, height: 0), to: size),

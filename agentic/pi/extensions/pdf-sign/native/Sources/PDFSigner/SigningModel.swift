@@ -145,21 +145,33 @@ struct EditorModel {
 }
 
 enum ItemRenderer {
+    private static func textAttributes(fontSize: CGFloat) -> [NSAttributedString.Key: Any] {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byWordWrapping
+        return [.font: NSFont.systemFont(ofSize: fontSize), .foregroundColor: NSColor.black, .paragraphStyle: paragraph]
+    }
+
+    /// Measure with the same font and wrapping used by preview and export.
+    static func textRect(_ text: String, centeredAt point: CGPoint, pageSize: CGSize) -> CGRect {
+        let attributes = textAttributes(fontSize: 18)
+        let string = text as NSString
+        let width = min(pageSize.width, max(220, ceil(string.size(withAttributes: attributes).width) + 4))
+        let measured = string.boundingRect(with: CGSize(width: max(1, width - 4), height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: attributes)
+        let height = max(28, ceil(measured.height) + 4)
+        return EditorModel.constrained(CGRect(x: point.x - width / 2, y: point.y - height / 2,
+            width: width, height: height), to: pageSize)
+    }
+
     static func draw(_ item: EditorItem, in context: CGContext) {
         switch item.content {
         case .signature(let drawing):
             if let drawing { draw(drawing, in: item.rect.insetBy(dx: 3, dy: 3), context: context) }
         case .text(let text):
             let fontSize = max(4, min(18, item.rect.height * 0.65))
-            let paragraph = NSMutableParagraphStyle()
-            paragraph.lineBreakMode = .byWordWrapping
             NSGraphicsContext.saveGraphicsState()
             NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
-            (text as NSString).draw(in: item.rect, withAttributes: [
-                .font: NSFont.systemFont(ofSize: fontSize),
-                .foregroundColor: NSColor.black,
-                .paragraphStyle: paragraph,
-            ])
+            (text as NSString).draw(in: item.rect, withAttributes: textAttributes(fontSize: fontSize))
             NSGraphicsContext.restoreGraphicsState()
         }
     }

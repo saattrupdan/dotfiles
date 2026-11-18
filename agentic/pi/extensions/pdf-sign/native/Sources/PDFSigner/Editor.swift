@@ -11,6 +11,9 @@ final class PageCanvas: NSView {
     var onEditText: ((UUID) -> Void)?
     var onAddText: ((CGPoint) -> Void)?
     var onZoom: ((CGFloat) -> Void)?
+    var placingText = false {
+        didSet { window?.invalidateCursorRects(for: self); onChange?() }
+    }
     private var undoStates: [EditorModel] = []
     private var redoStates: [EditorModel] = []
     private var start: CGPoint?
@@ -47,7 +50,8 @@ final class PageCanvas: NSView {
     }
 
     override func resetCursorRects() {
-        addCursorRect(bounds, cursor: .crosshair)
+        addCursorRect(bounds, cursor: placingText ? .iBeam : .crosshair)
+        guard !placingText else { return }
         for item in model.items where item.page == pageIndex {
             addCursorRect(NSRect(x: item.rect.minX * zoom, y: item.rect.minY * zoom,
                                  width: item.rect.width * zoom, height: item.rect.height * zoom), cursor: .openHand)
@@ -98,7 +102,9 @@ final class PageCanvas: NSView {
         }
         switch event.keyCode {
         case 51, 117: deleteSelected(nil)
-        case 53: model.selection.removeAll()
+        case 53:
+            if placingText { placingText = false }
+            else { model.selection.removeAll() }
         default: super.keyDown(with: event)
         }
     }
@@ -119,6 +125,10 @@ final class PageCanvas: NSView {
         checkpointed = false
         placing = false
         dragged = false
+        if placingText {
+            placing = !event.modifierFlags.contains(.control)
+            return
+        }
         let current = model.items.filter { $0.page == pageIndex }
         let tolerance = 9 / zoom
         if let item = current.reversed().first(where: {
@@ -166,14 +176,20 @@ final class PageCanvas: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
-        if placing, !dragged, let start {
-            checkpoint()
-            model.placeSignature(at: start, page: pageIndex, pageSize: pageSize, extendingSelection: event.modifierFlags.contains(.shift))
-        }
+        let point = placing && !dragged ? start : nil
         start = nil
         originals = [:]
         resizing = nil
         placing = false
+        if let point {
+            if placingText {
+                placingText = false
+                onAddText?(point)
+            } else {
+                checkpoint()
+                model.placeSignature(at: point, page: pageIndex, pageSize: pageSize, extendingSelection: event.modifierFlags.contains(.shift))
+            }
+        }
         needsDisplay = true
     }
 
@@ -189,7 +205,7 @@ final class PageCanvas: NSView {
             value.target = self
             value.isEnabled = enabled
         }
-        item("Add name or date here…", #selector(addTextHere))
+        item("Add printed text here…", #selector(addTextHere))
         if let hit, case .text = hit.content { item("Edit text…", #selector(editSelectedText)) }
         menu.addItem(.separator())
         item("Delete selected", #selector(deleteSelected(_:)), enabled: !model.selection.isEmpty)
@@ -200,7 +216,10 @@ final class PageCanvas: NSView {
         return menu
     }
 
-    @objc private func addTextHere() { onAddText?(contextPoint) }
+    @objc private func addTextHere() {
+        placingText = false
+        onAddText?(contextPoint)
+    }
     @objc private func editSelectedText() {
         if let id = contextItem, model.items.contains(where: { $0.id == id && !$0.content.isSignature }) { onEditText?(id) }
     }
@@ -286,7 +305,7 @@ final class EditorController: NSObject, NSWindowDelegate {
     }
 
     private func buildUI() {
-        header = EditorHeader(filename: source.lastPathComponent, target: self, sign: #selector(signSelected), export: #selector(exportPDF))
+        header = EditorHeader(filename: source.lastPathComponent, target: self, text: #selector(toggleTextPlacement), sign: #selector(signSelected), export: #selector(exportPDF))
         let clip = CenteredPageClip()
         clip.drawsBackground = true
         clip.backgroundColor = .underPageBackgroundColor
@@ -340,19 +359,28 @@ final class EditorController: NSObject, NSWindowDelegate {
 
     private func refresh() {
         let count = canvas.model.selectedSignatureIDs.count
-        header.update(pending: count, hasContent: canvas.model.hasContent, capturing: capture != nil)
+        header.update(pending: count, hasContent: canvas.model.hasContent, capturing: capture != nil, placingText: canvas.placingText)
         pages.selectItem(at: canvas.pageIndex)
         zoomLabel.stringValue = "\(Int(canvas.zoom * 100))%"
-        if count > 0 && !canvas.model.pendingSignatureIDs.isDisjoint(with: canvas.model.selection) {
+        if canvas.placingText {
+            status.stringValue = "Click where the text belongs · Esc to cancel"
+        } else if count > 0 && !canvas.model.pendingSignatureIDs.isDisjoint(with: canvas.model.selection) {
             status.stringValue = count == 1 ? "Ready to sign · click Sign above" : "\(count) locations ready · Sign once to fill them all"
         } else if canvas.model.hasContent {
-            status.stringValue = "Drag to adjust · Export when ready"
-        } else { status.stringValue = "Click anywhere on the page to place a signature" }
+            status.stringValue = "Drag to adjust · double-click text to edit · Export when ready"
+        } else { status.stringValue = "Click to place a signature · Add text for names, locations, and dates" }
+    }
+
+    @objc private func toggleTextPlacement() {
+        guard capture == nil else { return }
+        canvas.placingText.toggle()
+        window.makeFirstResponder(canvas)
     }
 
     @objc private func signSelected() {
         let ids = canvas.model.selectedSignatureIDs
         guard !ids.isEmpty, capture == nil else { return }
+        canvas.placingText = false
         let capture = TrackpadCapture()
         self.capture = capture
         refresh()
@@ -371,16 +399,19 @@ final class EditorController: NSObject, NSWindowDelegate {
 
     private func editText(id: UUID?, point: CGPoint? = nil) {
         let alert = NSAlert()
-        alert.messageText = id == nil ? "Add name or date" : "Edit text"
+        alert.messageText = id == nil ? "Add printed text" : "Edit printed text"
+        alert.informativeText = "Enter your printed name, location, date, or other text. Drag to move it, drag its corner to resize, or double-click to edit."
         alert.addButton(withTitle: "Apply")
         alert.addButton(withTitle: "Cancel")
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 400, height: 28))
-        field.placeholderString = "Type your name, date, or other text"
+        field.placeholderString = "Name, location, date, or other text"
         if let id, let item = canvas.model.items.first(where: { $0.id == id }), case .text(let text) = item.content { field.stringValue = text }
         alert.accessoryView = field
         alert.window.initialFirstResponder = field
         alert.beginSheetModal(for: window) { [weak self] response in
-            guard let self, response == .alertFirstButtonReturn else { return }
+            guard let self else { return }
+            defer { self.window.makeFirstResponder(self.canvas) }
+            guard response == .alertFirstButtonReturn else { return }
             let text = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return }
             self.canvas.checkpoint()
@@ -388,11 +419,9 @@ final class EditorController: NSObject, NSWindowDelegate {
                 self.canvas.model.items[index].content = .text(text)
             } else {
                 let position = point ?? CGPoint(x: self.canvas.pageSize.width / 2, y: self.canvas.pageSize.height / 2)
-                let rect = CGRect(x: position.x - 110, y: position.y - 14, width: 220, height: 28)
                 self.canvas.model.add(EditorItem(page: self.canvas.pageIndex,
-                    rect: EditorModel.constrained(rect, to: self.canvas.pageSize), content: .text(text)))
+                    rect: ItemRenderer.textRect(text, centeredAt: position, pageSize: self.canvas.pageSize), content: .text(text)))
             }
-            self.window.makeFirstResponder(self.canvas)
         }
     }
 
@@ -418,6 +447,7 @@ final class EditorController: NSObject, NSWindowDelegate {
 
     @objc private func exportPDF() {
         guard canvas.model.hasContent else { return }
+        canvas.placingText = false
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.pdf]
         panel.canCreateDirectories = true

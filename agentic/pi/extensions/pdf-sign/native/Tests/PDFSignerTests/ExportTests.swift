@@ -173,11 +173,13 @@ final class ExportTests: XCTestCase {
         XCTAssertTrue(canvas.model.items.isEmpty)
     }
 
-    func testEditorHasOnlySignAndExportPrimaryButtonsAndUsesActiveSpace() throws {
+    func testEditorHasTextSignAndExportButtonsAndUsesActiveSpace() throws {
         _ = NSApplication.shared
         let editor = try EditorController(source: source) { _ in XCTFail("No export requested") }
         defer { editor.window.orderOut(nil) }
-        XCTAssertEqual(editor.header.subviews.compactMap { $0 as? NSButton }.map(\.title), ["Sign", "Export"])
+        XCTAssertEqual(editor.header.subviews.compactMap { $0 as? NSButton }.map(\.title), ["Add text", "Sign", "Export"])
+        XCTAssertTrue(editor.header.text.isEnabled)
+        XCTAssertEqual(editor.header.text.keyEquivalent, "t")
         XCTAssertTrue(editor.window.collectionBehavior.contains(.moveToActiveSpace))
         XCTAssertTrue(editor.window.collectionBehavior.contains(.fullScreenAuxiliary))
         XCTAssertFalse(editor.window.collectionBehavior.contains(.canJoinAllSpaces))
@@ -254,6 +256,128 @@ final class ExportTests: XCTestCase {
            let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
             view.cacheDisplay(in: view.bounds, to: bitmap)
             try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: screenshot))
+        }
+    }
+
+    private func click(_ canvas: PageCanvas, at point: CGPoint, clicks: Int = 1) throws {
+        for type: NSEvent.EventType in [.leftMouseDown, .leftMouseUp] {
+            let location = canvas.convert(CGPoint(x: point.x * canvas.zoom, y: point.y * canvas.zoom), to: nil)
+            let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: location, modifierFlags: [], timestamp: 0,
+                windowNumber: canvas.window!.windowNumber, context: nil, eventNumber: 0, clickCount: clicks, pressure: 0))
+            if type == .leftMouseDown { canvas.mouseDown(with: event) } else { canvas.mouseUp(with: event) }
+        }
+    }
+
+    func testTextPlacementIsOneShotAndDoesNotCreateOrChangeSignatureBoxes() throws {
+        _ = NSApplication.shared
+        let editor = try EditorController(source: source) { _ in XCTFail("No export requested") }
+        defer { editor.window.orderOut(nil) }
+        editor.show()
+        let canvas = editor.canvas
+        let point = CGPoint(x: 150, y: 250)
+        canvas.model.placeSignature(at: point, page: 0, pageSize: canvas.pageSize)
+        let original = canvas.model.items
+        let selection = canvas.model.selection
+        var placed: [CGPoint] = []
+        canvas.onAddText = { placed.append($0) }
+        editor.header.text.performClick(nil)
+        XCTAssertTrue(canvas.placingText)
+        XCTAssertEqual(editor.header.text.title, "Cancel text")
+        try click(canvas, at: point)
+        XCTAssertEqual(placed.count, 1)
+        XCTAssertEqual(try XCTUnwrap(placed.first).x, point.x, accuracy: 0.01)
+        XCTAssertEqual(try XCTUnwrap(placed.first).y, point.y, accuracy: 0.01)
+        XCTAssertFalse(canvas.placingText)
+        XCTAssertEqual(editor.header.text.title, "Add text")
+        XCTAssertEqual(canvas.model.items, original)
+        XCTAssertEqual(canvas.model.selection, selection)
+        try click(canvas, at: CGPoint(x: 300, y: 400))
+        XCTAssertEqual(canvas.model.items.count, 2, "The next plain click must place a signature again")
+        XCTAssertEqual(placed.count, 1)
+        canvas.undo(nil)
+        XCTAssertEqual(canvas.model.items, original, "Text placement alone must not add an undo checkpoint")
+    }
+
+    func testTextPlacementCanBeCancelledWithButtonOrEscapeWithoutChangingSelection() throws {
+        _ = NSApplication.shared
+        let editor = try EditorController(source: source) { _ in XCTFail("No export requested") }
+        defer { editor.window.orderOut(nil) }
+        editor.canvas.model.placeSignature(at: CGPoint(x: 100, y: 150), page: 0, pageSize: editor.canvas.pageSize)
+        let selection = editor.canvas.model.selection
+        editor.header.text.performClick(nil)
+        editor.header.text.performClick(nil)
+        XCTAssertFalse(editor.canvas.placingText)
+        editor.header.text.performClick(nil)
+        let escape = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: editor.window.windowNumber, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53))
+        editor.canvas.keyDown(with: escape)
+        XCTAssertFalse(editor.canvas.placingText)
+        XCTAssertEqual(editor.canvas.model.selection, selection)
+        XCTAssertEqual(editor.canvas.model.items.count, 1)
+    }
+
+    func testPrintedTextCanBeAddedEditedUndoneAndExportedWithoutASignature() throws {
+        _ = NSApplication.shared
+        let editor = try EditorController(source: source) { _ in XCTFail("No export requested") }
+        defer { editor.window.orderOut(nil) }
+        editor.show()
+        let canvas = editor.canvas
+        editor.header.text.performClick(nil)
+        try click(canvas, at: CGPoint(x: 150, y: 250))
+        var sheet = try XCTUnwrap(editor.window.attachedSheet)
+        var field = try XCTUnwrap(sheet.initialFirstResponder as? NSTextField)
+        field.stringValue = "  Søren Ærø — København — 18/11/2026  "
+        editor.window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
+        wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in canvas.model.hasContent }, object: nil)], timeout: 3)
+        XCTAssertEqual(canvas.model.items.count, 1)
+        canvas.model.items[0].rect = CGRect(x: 5, y: 250, width: 350, height: 24)
+        let original = try XCTUnwrap(canvas.model.items.first)
+        XCTAssertEqual(original.content, .text("Søren Ærø — København — 18/11/2026"))
+        XCTAssertEqual(canvas.model.items.count, 1)
+        XCTAssertTrue(canvas.model.selectedSignatureIDs.isEmpty)
+        XCTAssertFalse(editor.header.sign.isEnabled)
+        XCTAssertTrue(editor.header.export.isEnabled)
+        try click(canvas, at: CGPoint(x: original.rect.midX, y: original.rect.midY), clicks: 2)
+        sheet = try XCTUnwrap(editor.window.attachedSheet)
+        field = try XCTUnwrap(sheet.initialFirstResponder as? NSTextField)
+        field.stringValue = "Søren Ærø — Frederiksberg — 19/11/2026"
+        editor.window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
+        wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in canvas.model.items.first?.content != original.content }, object: nil)], timeout: 3)
+        XCTAssertEqual(canvas.model.items.first?.id, original.id)
+        XCTAssertEqual(canvas.model.items.first?.rect, original.rect, "Editing must preserve a manually fitted text box")
+        XCTAssertEqual(canvas.model.items.first?.content, .text("Søren Ærø — Frederiksberg — 19/11/2026"))
+        let destination = folder.appendingPathComponent("text-only.pdf")
+        try PDFExport.write(document: canvas.document, items: canvas.model.items, source: source, destination: destination)
+        let output = try XCTUnwrap(PDFDocument(url: destination))
+        let text = try XCTUnwrap(output.page(at: 0)?.string)
+        XCTAssertTrue(text.contains("Søren Ærø"))
+        XCTAssertTrue(text.contains("Frederiksberg"))
+        XCTAssertTrue(text.contains("19/11/2026"))
+        canvas.undo(nil)
+        XCTAssertEqual(canvas.model.items, [original])
+        canvas.undo(nil)
+        XCTAssertTrue(canvas.model.items.isEmpty)
+        XCTAssertFalse(editor.header.export.isEnabled)
+        canvas.redo(nil)
+        XCTAssertEqual(canvas.model.items, [original])
+    }
+
+    func testCancelledAndBlankTextSheetsLeaveDocumentUnchanged() throws {
+        _ = NSApplication.shared
+        let editor = try EditorController(source: source) { _ in XCTFail("No export requested") }
+        defer { editor.window.orderOut(nil) }
+        editor.show()
+        for response: NSApplication.ModalResponse in [.alertSecondButtonReturn, .alertFirstButtonReturn] {
+            editor.header.text.performClick(nil)
+            try click(editor.canvas, at: CGPoint(x: 150, y: 250))
+            let sheet = try XCTUnwrap(editor.window.attachedSheet)
+            let field = try XCTUnwrap(sheet.initialFirstResponder as? NSTextField)
+            field.stringValue = response == .alertFirstButtonReturn ? "   " : "Discard this text"
+            editor.window.endSheet(sheet, returnCode: response)
+            wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in editor.window.attachedSheet == nil }, object: nil)], timeout: 3)
+            XCTAssertTrue(editor.canvas.model.items.isEmpty)
+            XCTAssertFalse(editor.canvas.placingText)
+            XCTAssertFalse(editor.header.export.isEnabled)
         }
     }
 

@@ -1,4 +1,4 @@
-/** Open a local, model-free PDF editor for manual handwritten signing. */
+/** Open a local, model-free PDF editor for handwritten signatures and printed text. */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
@@ -27,9 +27,9 @@ export default function pdfSigning(pi: ExtensionAPI, overrides: Partial<SignerDe
 	pi.registerTool<typeof parameters, { status: string }>({
 		name: "sign_pdf",
 		label: "Sign PDF",
-		description: "Open a PDF in a local macOS signing editor. The user clicks the page to place signature locations, presses Sign, draws with the whole trackpad, adjusts by dragging, and presses Export to save a flattened copy through a save dialog. Name/date text is available from the page’s context menu (default filename: original-signed.pdf). Returns only completion status and saved path, never document contents or signature images. Requires interactive Pi running locally on a Mac; first use builds the native helper with Xcode Command Line Tools.",
-		promptSnippet: "Open a local PDF editor for manual trackpad signing; document and signature stay on the Mac.",
-		promptGuidelines: ["When asked to sign a PDF, use sign_pdf directly. Do not read, extract, render, or upload its contents or the signature to the model. The user places signatures and text in the local editor."],
+		description: "Open a PDF in a local macOS signing editor. The user clicks the page to place signature locations, presses Sign, draws with the whole trackpad, adjusts by dragging, and presses Export to save a flattened copy through a save dialog. To add printed text (name, location, date, or other text), click Add text, click its location on the page, and type; double-click existing text to edit it. Text-only export is supported (default filename: original-signed.pdf). Returns only completion status and saved path, never document contents or signature images. Requires interactive Pi running locally on a Mac; first use builds the native helper with Xcode Command Line Tools.",
+		promptSnippet: "Open a local PDF editor for manual trackpad signatures or printed text; document, signature, and text stay on the Mac.",
+		promptGuidelines: ["When asked to sign a PDF or add printed text to a PDF, use sign_pdf directly. Do not read, extract, render, or upload its contents or the signature to the model. The user places signatures and text in the local editor."],
 		parameters,
 		executionMode: "sequential",
 		async execute(_id, params, signal, _onUpdate, ctx) {

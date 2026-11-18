@@ -1,6 +1,6 @@
 import AppKit
 
-/// Two deliberately prominent actions; everything else belongs to the document.
+/// Document actions stay visible while placement and editing happen on the page.
 final class SigningButton: NSButton {
     private let symbol: String
     private let prominent: Bool
@@ -72,16 +72,18 @@ final class SigningButton: NSButton {
 }
 
 final class EditorHeader: NSView {
+    let text: SigningButton
     let sign: SigningButton
     let export: SigningButton
     private let filename: NSTextField
-    private let subtitle = NSTextField(labelWithString: "Click the page to place your signature")
+    private let subtitle = NSTextField(labelWithString: "Sign or add printed text anywhere on the page")
     private let icon = NSImageView()
 
     override var isFlipped: Bool { true }
 
-    init(filename: String, target: AnyObject, sign: Selector, export: Selector) {
+    init(filename: String, target: AnyObject, text: Selector, sign: Selector, export: Selector) {
         self.filename = NSTextField(labelWithString: filename)
+        self.text = SigningButton("Add text", symbol: "textformat", prominent: false, target: target, action: text)
         self.sign = SigningButton("Sign", symbol: "signature", prominent: true, target: target, action: sign)
         self.export = SigningButton("Export", symbol: "square.and.arrow.up", prominent: false, target: target, action: export)
         super.init(frame: .zero)
@@ -89,16 +91,20 @@ final class EditorHeader: NSView {
         self.filename.lineBreakMode = .byTruncatingMiddle
         subtitle.font = .systemFont(ofSize: 12)
         subtitle.textColor = .secondaryLabelColor
+        subtitle.lineBreakMode = .byTruncatingTail
         icon.image = NSImage(systemSymbolName: "doc.text", accessibilityDescription: "PDF document")
         icon.contentTintColor = .controlAccentColor
         icon.imageScaling = .scaleProportionallyUpOrDown
+        self.text.keyEquivalent = "t"
+        self.text.keyEquivalentModifierMask = [.command]
+        self.text.toolTip = "Place printed text: name, location, date, or other text (⌘T)"
         self.sign.keyEquivalent = "s"
         self.sign.keyEquivalentModifierMask = [.command]
         self.sign.toolTip = "Draw a signature for the selected locations (⌘S)"
         self.export.keyEquivalent = "e"
         self.export.keyEquivalentModifierMask = [.command]
         self.export.toolTip = "Export a signed PDF copy (⌘E)"
-        for view in [icon, self.filename, subtitle, self.sign, self.export] { addSubview(view) }
+        for view in [icon, self.filename, subtitle, self.text, self.sign, self.export] { addSubview(view) }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -106,16 +112,25 @@ final class EditorHeader: NSView {
     override func layout() {
         super.layout()
         icon.frame = NSRect(x: 30, y: 45, width: 30, height: 34)
-        filename.frame = NSRect(x: 76, y: 40, width: max(150, bounds.width - 360), height: 26)
-        subtitle.frame = NSRect(x: 76, y: 70, width: max(150, bounds.width - 360), height: 18)
+        filename.frame = NSRect(x: 76, y: 40, width: max(150, bounds.width - 500), height: 26)
+        subtitle.frame = NSRect(x: 76, y: 70, width: max(150, bounds.width - 500), height: 18)
+        text.frame = NSRect(x: bounds.width - 384, y: 47, width: 128, height: 38)
         sign.frame = NSRect(x: bounds.width - 246, y: 47, width: 100, height: 38)
         export.frame = NSRect(x: bounds.width - 136, y: 47, width: 108, height: 38)
     }
 
-    func update(pending: Int, hasContent: Bool, capturing: Bool) {
+    func update(pending: Int, hasContent: Bool, capturing: Bool, placingText: Bool) {
+        text.isEnabled = !capturing
+        text.title = placingText ? "Cancel text" : "Add text"
+        text.setAccessibilityLabel(text.title)
+        text.needsDisplay = true
         sign.isEnabled = pending > 0 && !capturing
         export.isEnabled = hasContent && !capturing
-        subtitle.stringValue = pending > 1 ? "\(pending) locations selected · draw once to sign them all" : "Click the page to place your signature"
+        if placingText {
+            subtitle.stringValue = "Click the page to place printed text · Esc to cancel"
+        } else {
+            subtitle.stringValue = pending > 1 ? "\(pending) locations selected · draw once to sign them all" : "Sign or add printed text anywhere on the page"
+        }
     }
 }
 

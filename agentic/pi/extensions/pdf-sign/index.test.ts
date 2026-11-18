@@ -23,6 +23,9 @@ test("registers a local signing tool with privacy instructions and sequential ex
 	assert.equal(tool.executionMode, "sequential");
 	assert.match(tool.promptGuidelines!.join(" "), /Do not read, extract, render, or upload/);
 	assert.deepEqual(Object.keys((tool.parameters as { properties: object }).properties), ["path"]);
+	assert.match(tool.description, /Add text/);
+	assert.match(tool.description, /Text-only export is supported/);
+	assert.match(tool.promptGuidelines!.join(" "), /add printed text to a PDF/);
 });
 
 test("unsupported platforms, SSH, and headless sessions cannot open a window", async () => {
