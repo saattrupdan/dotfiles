@@ -1157,3 +1157,169 @@ test("a newer transcript cursor cannot discard a finished metadata snapshot", as
     t.mock.timers.reset();
   }
 });
+
+test("mark all as read acknowledges finished conversations only, across folders", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
+  Object.assign(globalThis, {
+    document: { visibilityState: "visible", addEventListener() {} },
+    window: { addEventListener() {} },
+  });
+  setActivePinia(createPinia());
+  const auth = useAuth(),
+    store = useSessions();
+  auth.unlocked = true;
+  auth.visible = true;
+  const rows = [
+    { sessionId: "finished-one", state: "idle", cwd: "/Users/one" },
+    { sessionId: "finished-two", state: "stopped", cwd: "/Users/two" },
+    { sessionId: "running", state: "running" },
+    { sessionId: "looping", state: "idle", loop: true },
+    { sessionId: "waiting", state: "waiting" },
+    { sessionId: "prompt", state: "idle", prompt: { state: "pending" } },
+    { sessionId: "failed", state: "idle" },
+    { sessionId: "idle", state: "idle" },
+  ].map((row) => ({
+    epoch: 1,
+    sequence: 1,
+    lastActivity: 1,
+    completion:
+      row.sessionId === "idle"
+        ? undefined
+        : {
+            id: crypto.randomUUID(),
+            outcome: row.sessionId === "failed" ? "failed" : "finished",
+          },
+    ...row,
+  })) as Session[];
+  store.sessions = rows;
+  store.homeListing = rows;
+  store.listing = [rows[0]!];
+  store.folder = "/Users/one";
+  const requests: string[] = [];
+  auth.request = (async (url: string, options?: RequestInit) => {
+    const row = rows.find((row) => url === `/sessions/${row.sessionId}/acknowledge`)!;
+    assert.equal(options?.method, "POST");
+    assert.equal(JSON.parse(options!.body as string).completionId, row.completion!.id);
+    requests.push(row.sessionId);
+    return { ...row, completion: undefined };
+  }) as typeof auth.request;
+  try {
+    await store.acknowledgeAllFinished();
+    assert.deepEqual(requests.sort(), ["finished-one", "finished-two"]);
+    assert.equal(store.sessions[0]!.completion, undefined);
+    assert.equal(store.sessions[1]!.completion, undefined);
+    assert.equal(store.homeListing.filter((row) => !row.completion).length, 3);
+    assert.equal(store.listing[0]!.completion, undefined);
+    for (const row of rows.slice(2))
+      assert.deepEqual(
+        store.sessions.find((s) => s.sessionId === row.sessionId),
+        row,
+      );
+    await store.acknowledgeAllFinished();
+    assert.equal(requests.length, 2, "nothing remains to acknowledge");
+    store.sessions = rows;
+    auth.visible = false;
+    await store.acknowledgeAllFinished();
+    assert.equal(requests.length, 2, "background cannot acknowledge");
+    auth.visible = true;
+    auth.unlocked = false;
+    await store.acknowledgeAllFinished();
+    assert.equal(requests.length, 2, "locked clients cannot acknowledge");
+  } finally {
+    auth.clear();
+    t.mock.timers.reset();
+  }
+});
+
+test("bulk acknowledgement keeps newer completions and reports partial failures", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
+  Object.assign(globalThis, {
+    document: { visibilityState: "visible", addEventListener() {} },
+    window: { addEventListener() {} },
+  });
+  setActivePinia(createPinia());
+  const auth = useAuth(),
+    store = useSessions();
+  auth.unlocked = true;
+  auth.visible = true;
+  const rows = ["older", "failed-request", "success"].map((sessionId) => ({
+    sessionId,
+    epoch: 1,
+    sequence: 1,
+    state: "idle",
+    completion: { id: crypto.randomUUID(), outcome: "finished" },
+  })) as Session[];
+  store.sessions = rows;
+  let finish!: (value: Session) => void;
+  let fail = true;
+  const newer = {
+    ...rows[0]!,
+    completion: {
+      id: crypto.randomUUID(),
+      outcome: "finished" as const,
+    },
+  };
+  auth.request = (async (url: string, options?: RequestInit) => {
+    if (url === "/sessions/older") return newer;
+    const row = rows.find((row) => url === `/sessions/${row.sessionId}/acknowledge`)!;
+    assert.equal(JSON.parse(options!.body as string).completionId, row.completion!.id);
+    if (row.sessionId === "failed-request" && fail) throw new Error("offline");
+    if (row.sessionId === "older")
+      return new Promise<Session>((resolve) => {
+        finish = resolve;
+      });
+    return { ...row, completion: undefined };
+  }) as typeof auth.request;
+  try {
+    const pending = store.acknowledgeAllFinished();
+    await store.detail("older");
+    finish({ ...rows[0]!, completion: undefined });
+    await assert.rejects(pending, /Could not mark 1 conversation as read/);
+    assert.equal(store.sessions[0]!.completion?.id, newer.completion.id);
+    assert.equal(store.sessions[1]!.completion?.id, rows[1]!.completion!.id);
+    assert.equal(store.sessions[2]!.completion, undefined);
+    fail = false;
+    store.sessions = [rows[1]!];
+    await store.acknowledgeAllFinished();
+    assert.equal(store.sessions[0]!.completion, undefined);
+  } finally {
+    auth.clear();
+    t.mock.timers.reset();
+  }
+});
+
+test("locking during bulk acknowledgement cannot repopulate conversations", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
+  Object.assign(globalThis, {
+    document: { visibilityState: "visible", addEventListener() {} },
+    window: { addEventListener() {} },
+  });
+  setActivePinia(createPinia());
+  const auth = useAuth(),
+    store = useSessions();
+  auth.unlocked = true;
+  auth.visible = true;
+  const row = {
+    sessionId: "finished",
+    epoch: 1,
+    sequence: 1,
+    state: "idle",
+    completion: { id: crypto.randomUUID(), outcome: "finished" },
+  } as Session;
+  store.sessions = [row];
+  let finish!: (value: Session) => void;
+  auth.request = (() =>
+    new Promise<Session>((resolve) => {
+      finish = resolve;
+    })) as typeof auth.request;
+  try {
+    const pending = store.acknowledgeAllFinished();
+    auth.clear();
+    finish({ ...row, completion: undefined });
+    await pending;
+    assert.deepEqual(store.sessions, []);
+  } finally {
+    auth.clear();
+    t.mock.timers.reset();
+  }
+});

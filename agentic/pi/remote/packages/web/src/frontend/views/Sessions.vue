@@ -13,6 +13,23 @@ const search = ref("");
 const filter = ref("all");
 const browseError = ref("");
 const browsing = ref(false);
+const markingRead = ref(false);
+const markReadError = ref("");
+const hasFinished = computed(() =>
+  store.sessions.some((session) => conversationStatus(session) === "finished"),
+);
+async function markAllRead() {
+  if (markingRead.value) return;
+  markingRead.value = true;
+  markReadError.value = "";
+  try {
+    await store.acknowledgeAllFinished();
+  } catch (e) {
+    markReadError.value = (e as Error).message;
+  } finally {
+    markingRead.value = false;
+  }
+}
 const error = computed(() =>
   folder.value === undefined ? store.homeError : browseError.value,
 );
@@ -153,13 +170,25 @@ const basename = (cwd: string) => cwd.split("/").filter(Boolean).at(-1) || cwd;
   >
     <div class="row heading">
       <h1>Conversations</h1>
-      <RouterLink
-        to="/new"
-        class="new icon-button"
-        aria-label="New conversation"
-        title="New conversation"
-        >+</RouterLink
-      >
+      <div class="row heading-actions">
+        <button
+          class="icon-button"
+          aria-label="Mark all as read"
+          title="Mark all as read"
+          :disabled="markingRead || !hasFinished"
+          :aria-busy="markingRead"
+          @click="markAllRead"
+        >
+          <Icon :name="markingRead ? 'spinner' : 'check'" />
+        </button>
+        <RouterLink
+          to="/new"
+          class="new icon-button"
+          aria-label="New conversation"
+          title="New conversation"
+          >+</RouterLink
+        >
+      </div>
     </div>
     <div class="row context">
       <button
@@ -204,6 +233,13 @@ const basename = (cwd: string) => cwd.split("/").filter(Boolean).at(-1) || cwd;
         </option>
       </select>
     </div>
+    <p
+      v-if="markReadError"
+      class="error"
+      role="alert"
+    >
+      {{ markReadError }}
+    </p>
     <p
       v-if="error"
       class="error"
@@ -333,6 +369,9 @@ const basename = (cwd: string) => cwd.split("/").filter(Boolean).at(-1) || cwd;
 }
 .heading h1 {
   margin: 0;
+}
+.heading-actions {
+  gap: 8px;
 }
 .context {
   justify-content: space-between;

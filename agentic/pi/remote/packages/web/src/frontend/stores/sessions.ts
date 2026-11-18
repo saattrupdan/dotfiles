@@ -11,7 +11,10 @@ import type {
   StreamEvent,
 } from "../../../../protocol/src/index.ts";
 import { CommandStatus } from "../../../../protocol/src/index.ts";
-import { orderConversations } from "../../../../protocol/src/session-status.ts";
+import {
+  conversationStatus,
+  orderConversations,
+} from "../../../../protocol/src/session-status.ts";
 import { mergeHistory, sameMessage, windowProof } from "../lib/history-window.ts";
 import type { HistoryPage } from "../../../../protocol/src/index.ts";
 import { remoteCommandId } from "../lib/receipts.ts";
@@ -655,14 +658,34 @@ export const useSessions = defineStore("sessions", () => {
       completion?.outcome !== "finished"
     )
       return;
+    await acknowledgeCompletion(id, completion.id);
+  }
+  async function acknowledgeCompletion(id: string, completionId: string) {
+    if (!auth.unlocked || !auth.visible || isHidden(id)) return;
     const expected = generation;
     const request = ++metadataRequest;
     const result = await auth.request<Session>(`/sessions/${id}/acknowledge`, {
       method: "POST",
-      body: JSON.stringify({ completionId: completion.id }),
+      body: JSON.stringify({ completionId }),
     });
     if (expected === generation && auth.unlocked && !isHidden(id))
       merge([result], request);
+  }
+  async function acknowledgeAllFinished() {
+    const completed = sessions.value
+      .filter((session) => conversationStatus(session) === "finished")
+      .map((session) => ({
+        id: session.sessionId,
+        completionId: session.completion!.id,
+      }));
+    const results = await Promise.allSettled(
+      completed.map(({ id, completionId }) => acknowledgeCompletion(id, completionId)),
+    );
+    const failed = results.filter((result) => result.status === "rejected").length;
+    if (failed)
+      throw new Error(
+        `Could not mark ${failed} conversation${failed === 1 ? "" : "s"} as read. Try again.`,
+      );
   }
   function resume() {
     const id = selected;
@@ -809,6 +832,7 @@ export const useSessions = defineStore("sessions", () => {
     loadFolders,
     detail,
     acknowledge,
+    acknowledgeAllFinished,
     resume,
     pending,
     sessions,

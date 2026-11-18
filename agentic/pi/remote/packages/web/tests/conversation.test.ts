@@ -1135,6 +1135,38 @@ test(
         },
       );
       await t.test(
+        "check button marks completed conversations read without opening them",
+        async () => {
+          const active = page.getByRole("region", { name: "Active sessions" });
+          const row = active.getByRole("link", { name: /Phone layout fixture/ });
+          const check = page.getByRole("button", { name: "Mark all as read" });
+          const before = acknowledgementCount;
+          await expect(check).toBeDisabled();
+          completion = {
+            id: "00000000-0000-4000-8000-000000000062",
+            outcome: "finished",
+          };
+          socket!.send(
+            JSON.stringify({ version: 1, type: "sessions.changed", data: null }),
+          );
+          await expect(row.locator(".state")).toHaveText("finished");
+          await expect(check).toBeEnabled();
+          const search = page.getByRole("searchbox");
+          await search.fill("no matching conversation");
+          await check.click();
+          await expect.poll(() => acknowledgementCount).toBe(before + 1);
+          await expect(check).toBeDisabled();
+          await search.fill("");
+          await expect(row.locator(".state")).toHaveText("idle");
+          await expect(
+            page.getByRole("heading", {
+              name: "Conversations",
+              exact: true,
+            }),
+          ).toBeVisible();
+        },
+      );
+      await t.test(
         "entry and app resume acknowledge finished conversations",
         async () => {
           const active = page.getByRole("region", { name: "Active sessions" });
