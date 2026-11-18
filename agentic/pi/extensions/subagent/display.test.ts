@@ -431,19 +431,22 @@ test("nested bash success labels are grey while main-agent bash stays green", ()
 });
 
 
-for (const name of ["skill", "web_search", "python", "code_tree"]) {
+for (const name of ["skill", "web_search", "python", "code_tree", "web_browse"]) {
 	test(`nested ${name} success and error text is grey without changing main-agent colours`, () => {
-		for (const outcome of name === "code_tree" ? ["ok", "fallback", "error"] : ["ok", "error"]) {
+		const outcomes = name === "code_tree" ? ["ok", "fallback", "error"]
+			: name === "web_browse" ? ["ok", "error", "details_error"] : ["ok", "error"];
+		for (const outcome of outcomes) {
 			const isError = outcome === "error";
-			const colour = isError ? "error" : "success";
+			const colour = isError || outcome === "details_error" ? "error" : "success";
 			const text = isError ? theme.fg("error", `${name} failed`)
 				: name === "code_tree" && outcome === "ok" ? "# tree src (2 files, depth 1)\na.ts\nb.ts" : "Full tool output";
 			const details = name === "skill" ? (isError ? undefined : { name: "commit" })
-				: name === "web_search" ? { status: isError ? "unavailable" : "ok", resultCount: 2 } : undefined;
+				: name === "web_search" ? { status: isError ? "unavailable" : "ok", resultCount: 2 }
+				: name === "web_browse" && outcome === "details_error" ? { error: "Firefox action failed" } : undefined;
 			const result = { content: [{ type: "text" as const, text }], details, isError };
 			const before = structuredClone(result), view = new ActivityView();
 			const args = name === "skill" ? { name: "commit" } : name === "web_search" ? { query: "example" }
-				: name === "code_tree" ? { path: "src", depth: 1 }
+				: name === "code_tree" ? { path: "src", depth: 1 } : name === "web_browse" ? { command: "help" }
 				: { description: "Preview Python status", code: isError ? "raise RuntimeError('check')" : "print('check')" };
 			const main = new ToolExecutionComponent(name, `main-${name}`, args, { showImages: false, outputPad: 1 },
 				toolRenderers(name), { requestRender() {} } as TUI, process.cwd());
@@ -470,3 +473,83 @@ for (const name of ["skill", "web_search", "python", "code_tree"]) {
 		}
 	});
 }
+
+
+test("wrapped and multiline nested bash commands stay muted with terminal bold styling", () => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wrap-theme-"));
+	const previousDir = process.env.PI_CODING_AGENT_DIR;
+	fs.mkdirSync(path.join(root, "themes"));
+	fs.copyFileSync(new URL("../../themes/gruvbox.json", import.meta.url), path.join(root, "themes", "gruvbox.json"));
+	process.env.PI_CODING_AGENT_DIR = root;
+	try {
+		for (const name of ["dark", "gruvbox"]) {
+			initTheme(name);
+			let activeTheme!: Theme;
+			new ToolExecutionComponent("capture", "capture", {}, {}, {
+				renderCall(_args, value) { activeTheme = value; return new Text(""); },
+			}, { requestRender() {} } as TUI, process.cwd());
+			assert.equal(activeTheme.name, name, "the requested theme must actually load");
+			const mainTitle = foregroundAnsi(activeTheme.colors.toolTitle, activeTheme.getColorMode()).slice(2, -1);
+			// Match the native shell call's bold title without relying on Chalk's TTY detection.
+			const renderer = { renderCall(args: { command?: string }, value: Theme) {
+				return new Text(value.fg("toolTitle", `\x1b[1m$ ${args.command}\x1b[22m`), 0, 0);
+			} };
+			for (const command of ["printf " + "wrapword ".repeat(24), "printf first\nprintf second\nprintf third"]) {
+				for (const width of [24, 40, 100]) for (const expanded of [false, true]) {
+					const args = { command }, view = new ActivityView();
+					const main = new ToolExecutionComponent("bash", "main-wrap", args, { showImages: false, outputPad: 1 },
+						renderer, { requestRender() {} } as TUI, process.cwd());
+					main.setExpanded(expanded);
+					const before = main.render(width);
+					assert.ok(before.join("\n").includes(mainTitle), "main bash keeps its native title colour");
+					view.update([{ type: "toolCall", id: "wrap", name: "bash", args, isPartial: true }],
+						{ theme: activeTheme, expanded, cwd: process.cwd(), showImages: false, outputPad: 1, resolve: () => renderer });
+					const lines = view.render(width);
+					assert.ok(lines.length > 1, "fixture must contain multiple visible command lines");
+					for (const line of lines) {
+						// eslint-disable-next-line no-control-regex -- Inspect terminal SGR attributes.
+						const sequences = line.match(/\x1b\[[\d;]*m/g) ?? [];
+						assert.ok(!sequences.some((sequence) => sequence.includes(mainTitle)),
+							`${name} continuation restores the main title colour at width ${width}: ${JSON.stringify(line)}`);
+						assert.ok(line.includes(activeTheme.getFgAnsi("muted")), "every command row stays muted");
+						assert.ok(line.includes("\x1b[1m"), "bold styling survives recolouring");
+						assert.ok(line.includes(activeTheme.getBgAnsi("toolPendingBg")), "native background is preserved");
+					}
+					const expected = before.map(stripVTControlCharacters);
+					while (expected.length && !expected[0].trim()) expected.shift();
+					while (expected.length && !expected.at(-1)!.trim()) expected.pop();
+					assert.deepEqual(lines.map(stripVTControlCharacters), expected, "wrapping and command text are unchanged");
+					assert.deepEqual(main.render(width), before, "main-agent rendering is untouched");
+					view.dispose();
+				}
+			}
+		}
+	} finally {
+		if (previousDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousDir;
+		initTheme("dark");
+		fs.rmSync(root, { recursive: true, force: true });
+	}
+});
+
+
+test("combined ANSI recolouring preserves bold, RGB and indexed colour groups", () => {
+	for (const indexed of [false, true]) {
+		const foreground = indexed ? "38;5;178" : foregroundAnsi(theme.colors.toolTitle, theme.getColorMode()).slice(2, -1);
+		const background = indexed ? "48;5;24" : "48;2;17;34;51";
+		const underline = indexed ? "58;2;51;68;85" : "58;5;42";
+		const text = `\x1b[1;${foreground};${background};${underline}mcolour-check\x1b[0m`;
+		const view = new ActivityView();
+		view.update([{ type: "toolCall", id: "styled", name: "custom", args: {}, isPartial: true }], {
+			theme, expanded: false, cwd: process.cwd(), showImages: false, outputPad: 1,
+			resolve: () => ({ renderCall: () => ({ render: () => [text], invalidate() {} }) }),
+		});
+		const raw = view.render(100).join("\n");
+		assert.ok(raw.includes("\x1b[1m"), "bold is preserved");
+		assert.ok(raw.includes(`\x1b[${background}m`), "background colour parameters remain grouped");
+		assert.ok(raw.includes(`\x1b[${underline}m`), "underline colour parameters remain grouped");
+		assert.ok(raw.includes(indexed ? `\x1b[${foreground}m` : theme.getFgAnsi("muted")), "only mapped foregrounds change");
+		assert.match(stripVTControlCharacters(raw), /colour-check/);
+		view.dispose();
+	}
+});

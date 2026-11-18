@@ -12,6 +12,22 @@ type Options = {
 	theme?: Theme; invalidate?: () => void; resolve(name: string, item: ActivityItem): ToolRenderers;
 };
 
+/** Split combined SGR styles without splitting RGB, indexed, or underline colour parameters. */
+function splitSgrAttributes(line: string): string {
+	// eslint-disable-next-line no-control-regex -- SGR escape sequences are the input format.
+	return line.replace(/\x1b\[([\d;]+)m/g, (sequence, parameters: string) => {
+		const codes = parameters.split(";"), attributes: string[] = [];
+		for (let index = 0; index < codes.length;) {
+			const extended = ["38", "48", "58"].includes(codes[index]!);
+			const length = !extended ? 1 : codes[index + 1] === "2" ? 5 : codes[index + 1] === "5" ? 3 : 0;
+			if (!length || index + length > codes.length) return sequence;
+			attributes.push(`\x1b[${codes.slice(index, index + length).join(";")}m`);
+			index += length;
+		}
+		return attributes.join("");
+	});
+}
+
 /** Remove only a native entry's outer shell padding; retain its internal layout and mouse coordinates. */
 class ActivityEntry implements Component {
 	private leading = 0;
@@ -95,7 +111,7 @@ export class ActivityView extends Container {
 				this.addChild(new ActivityEntry(row.component, (line) => {
 					const muted = this.mute(line, true);
 					if (!this.theme) return muted;
-					if (["skill", "web_search", "python", "code_tree"].includes(item.name))
+					if (["skill", "web_search", "python", "code_tree", "web_browse"].includes(item.name))
 						return muted
 							.replaceAll(this.theme.getFgAnsi("success"), this.theme.getFgAnsi("muted"))
 							.replaceAll(this.theme.getFgAnsi("error"), this.theme.getFgAnsi("muted"));
@@ -113,6 +129,7 @@ export class ActivityView extends Container {
 	private mute(line: string, tool = false): string {
 		const theme = this.theme;
 		if (!theme || typeof theme.getFgAnsi !== "function") return line;
+		line = splitSgrAttributes(line);
 		const muted = theme.getFgAnsi("muted");
 		const argument = tool
 			? foregroundAnsi(mixColors(theme.colors.mdLink, theme.colors.muted, 0.5), theme.getColorMode())
