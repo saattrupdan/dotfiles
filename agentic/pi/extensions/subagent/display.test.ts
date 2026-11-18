@@ -431,16 +431,19 @@ test("nested bash success labels are grey while main-agent bash stays green", ()
 });
 
 
-for (const name of ["skill", "web_search", "python"]) {
+for (const name of ["skill", "web_search", "python", "code_tree"]) {
 	test(`nested ${name} success and error text is grey without changing main-agent colours`, () => {
-		for (const isError of [false, true]) {
+		for (const outcome of name === "code_tree" ? ["ok", "fallback", "error"] : ["ok", "error"]) {
+			const isError = outcome === "error";
 			const colour = isError ? "error" : "success";
-			const text = isError ? theme.fg("error", `${name} failed`) : "Full tool output";
+			const text = isError ? theme.fg("error", `${name} failed`)
+				: name === "code_tree" && outcome === "ok" ? "# tree src (2 files, depth 1)\na.ts\nb.ts" : "Full tool output";
 			const details = name === "skill" ? (isError ? undefined : { name: "commit" })
 				: name === "web_search" ? { status: isError ? "unavailable" : "ok", resultCount: 2 } : undefined;
 			const result = { content: [{ type: "text" as const, text }], details, isError };
 			const before = structuredClone(result), view = new ActivityView();
 			const args = name === "skill" ? { name: "commit" } : name === "web_search" ? { query: "example" }
+				: name === "code_tree" ? { path: "src", depth: 1 }
 				: { description: "Preview Python status", code: isError ? "raise RuntimeError('check')" : "print('check')" };
 			const main = new ToolExecutionComponent(name, `main-${name}`, args, { showImages: false, outputPad: 1 },
 				toolRenderers(name), { requestRender() {} } as TUI, process.cwd());
