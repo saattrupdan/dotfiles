@@ -1,0 +1,1 @@
+export function requestSandbox(state: { cwd: string; model?: { provider: string; id: string }; thinking?: string; mode?: string }, transport?: unknown, timeout?: number): Promise<{ status: string; error?: string }>;

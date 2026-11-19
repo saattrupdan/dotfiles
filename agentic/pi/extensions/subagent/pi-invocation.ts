@@ -45,7 +45,13 @@ export function getPiInvocation(args: string[]): PiInvocation {
 		}
 	}
 
-	return selectPiInvocation(args, {
+	// Child agents keep the filesystem-only model connection even with strict
+	// extension allow-lists. This grants inference, never host tool execution.
+	const guestProvider = path.join(process.env.PI_CODING_AGENT_DIR ?? "", "extensions/sandbox-guest");
+	const scopedArgs = process.env.PI_SANDBOX === "1"
+		? ["--extension", guestProvider, ...args]
+		: args;
+	return selectPiInvocation(scopedArgs, {
 		execPath: process.execPath,
 		currentScript,
 		resolvedScript,

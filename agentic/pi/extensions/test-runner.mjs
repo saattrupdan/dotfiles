@@ -61,6 +61,7 @@ await jiti.import(path.join(root, "subagent", "transcript.test.ts"), { default: 
 await jiti.import(path.join(root, "subagent", "display.test.ts"), { default: false });
 await import(path.join(root, "thinking-status", "index.test.mjs"));
 await jiti.import(path.join(root, "statusline", "index.test.ts"), { default: false });
+await jiti.import(path.join(root, "sandbox", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "web-search", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "web-browse", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "web-browse", "handoff.test.ts"), { default: false });

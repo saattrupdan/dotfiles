@@ -10,6 +10,7 @@ import { resolvePiPackage } from "./pi-runtime.mjs";
 export { resolvePiPackage } from "./pi-runtime.mjs";
 import { parseAgentProfile } from "./definition.mjs";
 import { prepareProfileContinuation, prepareProfileReload, profileReloadEnabled, profileReloadEnvironment } from "./reload.mjs";
+import { repositorySandbox, sandboxArguments } from "../sandbox/policy.mjs";
 
 const NAME = /^[a-z][a-z0-9-]*$/;
 const PROFILE_DIR = "profile-sessions";
@@ -234,6 +235,10 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
 		return runCli(cli, args, env);
 	}
 	const agentDir = env.PI_CODING_AGENT_DIR ?? path.join(os.homedir(), ".pi", "agent");
+	if (agent === "sandbox" || (agent === "main" && repositorySandbox(process.cwd()))) {
+		const { runSandbox } = await import("../sandbox/runtime.mjs");
+		return runSandbox({ agentDir, pkg, args: sandboxArguments(args), cwd: process.cwd() });
+	}
 	const profile = await loadProfile(agent, agentDir, pkg);
 	return runCli(
 		cli,
@@ -268,6 +273,7 @@ function runCli(cli, args, env, identity) {
 		});
 		let continuation,
 			reloadPlan,
+			sandboxPlan,
 			preparing = false;
 		const cancelled = new Set();
 		const rollback = () => { reloadPlan = undefined; };
@@ -295,17 +301,54 @@ function runCli(cli, args, env, identity) {
 				message.args.every((a) => typeof a === "string") &&
 				typeof message.cwd === "string"
 			) {
-				if (!continuation && !reloadPlan && !preparing) continuation = message;
+				if (!continuation && !reloadPlan && !sandboxPlan && !preparing) continuation = message;
 				return;
 			}
 			if (!identity || message?.token !== token || typeof message.id !== "string") return;
+			if (message.type === "pi-sandbox-cancel") {
+				cancelled.add(message.id);
+				if (sandboxPlan?.id === message.id) sandboxPlan = undefined;
+				return;
+			}
+			if (message.type === "pi-sandbox-request") {
+				const send = (result) => {
+					if (child.connected) child.send({ type: "pi-sandbox-result", token, id: message.id, ...result }, (error) => { if (error) sandboxPlan = undefined; });
+				};
+				if (preparing || continuation || reloadPlan || sandboxPlan) {
+					send({ status: "rejected", error: "Another session handoff is pending" });
+					return;
+				}
+				preparing = true;
+				try {
+					const state = message.state;
+					if (!state || typeof state.cwd !== "string" || !path.isAbsolute(state.cwd)) throw new Error("Invalid sandbox working directory");
+					if (state.model && (typeof state.model.provider !== "string" || typeof state.model.id !== "string")) throw new Error("Invalid sandbox model");
+					const { preflightSandbox } = await import("../sandbox/runtime.mjs");
+					preflightSandbox(identity.pkg);
+					await loadProfile("sandbox", identity.agentDir, identity.pkg);
+					const tuiIndex = identity.userArgs.findIndex((arg) => arg === "--tui-mode" || arg.startsWith("--tui-mode="));
+					const tuiMode = tuiIndex < 0 ? undefined : identity.userArgs[tuiIndex].split("=")[1] ?? identity.userArgs[tuiIndex + 1];
+					const args = sandboxArguments([
+						...(tuiMode ? ["--tui-mode", tuiMode] : []),
+						...(state.thinking ? ["--thinking", state.thinking] : []),
+						...(["rpc", "json"].includes(state.mode) ? ["--mode", state.mode] : []),
+					]);
+					if (cancelled.has(message.id) || !child.connected || child.exitCode !== null) return;
+					sandboxPlan = { id: message.id, cwd: fs.realpathSync(state.cwd), model: state.model, args };
+					send({ status: "restart" });
+				} catch (error) {
+					sandboxPlan = undefined;
+					send({ status: "rejected", error: error.message });
+				} finally { preparing = false; cancelled.delete(message.id); }
+				return;
+			}
 			if (message.type === "pi-profile-reload-cancel") {
 				cancelled.add(message.id);
 				if (reloadPlan?.id === message.id) rollback();
 				return;
 			}
 			if (message.type !== "pi-profile-reload-request") return;
-			if (preparing || continuation || reloadPlan) {
+			if (preparing || continuation || reloadPlan || sandboxPlan) {
 				reply(message.id, {
 					status: "rejected",
 					error: "Another session handoff is already pending",
@@ -349,7 +392,10 @@ function runCli(cli, args, env, identity) {
 			process.off("SIGINT", forward);
 			process.off("SIGTERM", forward);
 			try {
-				if (reloadPlan && !signal && !interrupted && code === 0) {
+				if (sandboxPlan && !signal && !interrupted && code === 0) {
+					const { runSandbox } = await import("../sandbox/runtime.mjs");
+					resolve(await runSandbox({ agentDir: identity.agentDir, pkg: identity.pkg, ...sandboxPlan }));
+				} else if (reloadPlan && !signal && !interrupted && code === 0) {
 					process.chdir(reloadPlan.cwd);
 					resolve(
 						await runCli(

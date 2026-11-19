@@ -105,6 +105,7 @@ extensions:
   - precomputed-compaction
   - question
   - rate-limit-retry
+  - sandbox
   - read
   - read-groups
   - remote-control
@@ -132,6 +133,24 @@ avoid delegation merely because you could complete the task yourself.
 pages). Use `web_browse` only for interactive/JS-heavy pages.
 
 **Working directory:** project root. Use relative paths. No `cd` prefix in bash.
+
+## Sandbox sessions
+
+`/sandbox` opens a **fresh sandbox-profile session inside an Apple Container**.
+The current conversation is not transferred. The sandbox footer shows **📦**.
+The sandbox uses Linux tools, blocks general networking, and excludes macOS-only
+integrations, host memory access, and disk snapshots. Model inference is brokered
+through the host without exposing credentials. The mounted repository remains
+writable; isolation is not rollback protection for project files.
+
+When asked to "enable sandboxing for this repo", create `.pi/sandbox.json` at the
+repository root with `{"enabled": true}` (create `.pi` if needed). This selects the
+sandbox profile for future ordinary sessions in that repository and its
+subdirectories; it does not convert the current session. Set `enabled` to `false`
+or remove the file to disable automatic selection. Preserve unrelated `.pi` files.
+The sandbox profile is editable in `agents/sandbox.md`, with its own explicit
+prompt, tools, skills, and extensions. Guest-only `sandbox-guest` stays out of this
+main profile's extension allow-list.
 
 ## Core rules
 

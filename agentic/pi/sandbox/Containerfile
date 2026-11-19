@@ -1,0 +1,19 @@
+FROM node:24.20.0-bookworm-slim
+ARG PI_VERSION=1.5.2
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash ca-certificates git ripgrep fd-find jq python3 python3-venv python3-pip \
+    build-essential util-linux iproute2 curl && \
+    rm -rf /var/lib/apt/lists/* && \
+    npm install -g @earendil-works/pi-coding-agent@${PI_VERSION} && \
+    pip3 install --break-system-packages uv && \
+    mkdir -p /home/pi /opt/pi-config /sessions /cache /mailbox /workspace && \
+    ln -s /usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules /opt/node_modules && \
+    ln -s /usr/local/lib/node_modules/@earendil-works/pi-coding-agent \
+      /opt/node_modules/@earendil-works/pi-coding-agent
+COPY entrypoint.sh /usr/local/bin/pi-sandbox-entrypoint
+COPY inner.sh /usr/local/bin/pi-sandbox-inner
+RUN chmod 755 /usr/local/bin/pi-sandbox-entrypoint /usr/local/bin/pi-sandbox-inner
+ENV HOME=/home/pi PI_PACKAGE_DIR=/usr/local/lib/node_modules/@earendil-works/pi-coding-agent \
+    PI_CODING_AGENT_DIR=/opt/pi-config PI_SANDBOX_MAILBOX=/mailbox PI_SANDBOX=1 \
+    UV_CACHE_DIR=/cache/uv
+ENTRYPOINT ["/usr/local/bin/pi-sandbox-entrypoint"]

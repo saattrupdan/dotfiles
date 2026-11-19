@@ -208,7 +208,7 @@ export default function (pi: ExtensionAPI) {
 		// the next message. Force past any `installed` bookkeeping left over from
 		// the previous load; the message guard still defers install while the
 		// splash owns the chrome (a session with no messages yet).
-		setupFooter(ctx, { force: true, allowWithoutMessages: incognitoRequested() });
+		setupFooter(ctx, { force: true, allowWithoutMessages: incognitoRequested() || process.env.PI_SANDBOX === "1" });
 		maybeRender?.();
 	});
 	pi.on("agent_start", (_event, ctx) => {
@@ -246,6 +246,7 @@ export default function (pi: ExtensionAPI) {
  * stays cheap; forced calls (after a turn / on install) always run.
  */
 function refreshQuota(ctx: ExtensionContext, options: { force?: boolean } = {}): void {
+	if (process.env.PI_SANDBOX === "1") return;
 	const source = quotaSourceForContext(ctx);
 	if (!source) return;
 	if (quotaFetchInFlight) return;
