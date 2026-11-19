@@ -1,6 +1,9 @@
 ---
 name: grilling
-description: Grill the user relentlessly about a plan, decision, or idea. Use when the user wants to stress-test their thinking, or uses any 'grill' trigger phrases.
+description: >-
+  Interview-only component for grill-with-docs. Use directly only when the user
+  explicitly asks to be grilled without documentation. For ordinary "grill me"
+  or stress-test requests, use grill-with-docs instead.
 ---
 
 Interview the user relentlessly until you reach a shared understanding. Map this as a
