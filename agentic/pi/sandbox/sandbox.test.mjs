@@ -172,6 +172,8 @@ test("actual staged resources include render dependencies but exclude host exten
 	for (const file of ["web-browse/index.ts", "mcp-collapse/index.ts", "file-protection/index.ts", "memory/index.ts"]) assert.ok(!fs.existsSync(path.join(target, "extensions", file)), file);
 	assert.ok(!fs.existsSync(path.join(target, "auth.json")));
 	assert.ok(!fs.existsSync(path.join(target, "models.json")));
+	for (const file of ["container-lifecycle.mjs", "runtime.mjs", "broker.mjs", "pty-close.test.py"]) assert.ok(!fs.existsSync(path.join(target, "sandbox", file)), file);
+	assert.ok(fs.existsSync(path.join(target, "sandbox/guest-provider.mjs")));
 });
 
 test("staging carries theme and UI preferences without host bootstrap settings", async () => {

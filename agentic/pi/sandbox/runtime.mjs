@@ -7,6 +7,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createHostModel, startBroker } from "./broker.mjs";
 import { sandboxArguments } from "./policy.mjs";
+import { runSandboxContainer } from "./container-lifecycle.mjs";
 
 const source = path.dirname(fileURLToPath(import.meta.url));
 export const CONTAINER = "/usr/local/bin/container";
@@ -39,7 +40,10 @@ export async function stageSandboxResources(agentDir, pkg, target) {
 	fs.mkdirSync(path.join(target, "agents"), { recursive: true });
 	fs.copyFileSync(path.join(agentDir, "agents/sandbox.md"), path.join(target, "agents/sandbox.md"));
 	copyTree(path.join(agentDir, "profile"), path.join(target, "profile"));
-	copyTree(source, path.join(target, "sandbox"));
+	fs.mkdirSync(path.join(target, "sandbox"), { recursive: true });
+	for (const file of ["guest-run.mjs", "guest-provider.mjs", "protocol.mjs", "events.mjs", "policy.mjs", "handoff.mjs"]) {
+		fs.copyFileSync(path.join(source, file), path.join(target, "sandbox", file));
+	}
 	for (const extension of profile.extensions) {
 		if (!["codemode", "mcp"].includes(extension)) copyTree(path.join(agentDir, "extensions", extension), path.join(target, "extensions", extension));
 	}
@@ -146,18 +150,19 @@ export async function runSandbox({ agentDir, pkg, cwd = process.cwd(), args = []
 	const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "pi-sandbox-"));
 	const resources = path.join(temporary, "resources"), mailbox = path.join(temporary, "mailbox");
 	for (const directory of [resources, mailbox, path.join(project, "sessions"), path.join(project, "cache")]) fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-	let broker;
+	let broker, lifecycleOwnsResources = false;
 	const name = `pi-${randomUUID()}`;
 	try {
 		await stageSandboxResources(agentDir, pkg, resources);
 		const host = await createHostModel(pkg, agentDir, model);
 		broker = startBroker(mailbox, host);
 		console.error("📦 Opening a fresh offline sandbox session. Project changes write through to the host.");
-		return await command(containerArguments({ name, image: image.tag, root, cwd: fs.realpathSync(cwd), resources, mailbox,
-			sessions: path.join(project, "sessions"), cache: path.join(project, "cache"), uid: process.getuid(), gid: process.getgid(), args: guestArgs, tty: Boolean(process.stdin.isTTY && process.stdout.isTTY) }));
+		const containerArgs = containerArguments({ name, image: image.tag, root, cwd: fs.realpathSync(cwd), resources, mailbox,
+			sessions: path.join(project, "sessions"), cache: path.join(project, "cache"), uid: process.getuid(), gid: process.getgid(), args: guestArgs, tty: Boolean(process.stdin.isTTY && process.stdout.isTTY) });
+		lifecycleOwnsResources = true;
+		return await runSandboxContainer({ container: CONTAINER, args: containerArgs, name, temporary });
 	} finally {
-		try { execFileSync(CONTAINER, ["stop", name], { stdio: "pipe", timeout: 10000 }); } catch {}
 		await broker?.stop();
-		fs.rmSync(temporary, { recursive: true, force: true });
+		if (!lifecycleOwnsResources) fs.rmSync(temporary, { recursive: true, force: true });
 	}
 }
