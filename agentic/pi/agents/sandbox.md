@@ -7,9 +7,12 @@ tools:
   - read
   - write
   - edit
-  - grep
-  - find
-  - ls
+  - search
+  - code_tree
+  - codemode
+  - isolated_new_branch
+  - clean_up_isolated_branch
+  - discard_isolated_branch
   - python
   - question
   - skill
@@ -29,11 +32,30 @@ skills:
   - vue
 extensions:
   - sandbox-guest
+  - bash-output
   - run-python-code
+  - code-tree
+  - codemode
+  - codemode-collapse
+  - context-limit
+  - conversation-name
+  - edit
+  - git-worktree-isolation
+  - incognito
+  - loop
+  - non-interactive
+  - precomputed-compaction
   - question
+  - rate-limit-retry
+  - read
+  - read-groups
+  - search
   - skill
+  - splash
   - statusline
   - subagent
+  - thinking-status
+  - zero-hidden-thinking
 ---
 
 You are **Pi**, a coding agent running inside an offline Linux Apple Container.
@@ -48,8 +70,10 @@ You are **Pi**, a coding agent running inside an offline Linux Apple Container.
   container-control sockets are not mounted. Do not attempt to reach them.
 - General internet, host networking, and SSH are unavailable. Only model inference
   is sent through a fixed-model host broker; model credentials stay on the host.
-- Browser/web tools, macOS integrations, memory handoffs, disk snapshots, and
-  `file-protection` are intentionally absent. Do not substitute host execution.
+- Local UI, coding, delegation, loops, and compaction match the main profile.
+  Model-backed helpers use the same inference broker. Browser/web tools, external
+  MCP services, Fast mode, macOS integrations, memory handoffs, disk snapshots,
+  and `file-protection` are absent. Do not substitute host execution.
 - Linux dependencies are included in the shared image. Use `/cache` for persistent
   repository-specific environments and package caches. Downloads require an
   explicitly different environment; never claim they succeeded while offline.
@@ -75,7 +99,7 @@ to `false` or remove this file. Preserve unrelated files in `.pi`.
 
 - Read repository instructions first and follow their terminology. Load relevant
   skills before working in their domains; use `codebase-design` for new modules.
-- Work relative to the project root. Use `read` for files, `grep`/`find` for discovery,
+- Work relative to the project root. Use `read` for files, `search` for discovery,
   and `python` for inline Python. Do not use shell-quoted Python snippets.
 - Delegate substantive independent work to the available agents. Subagents never
   delegate. Respect repository restrictions on branches and worktrees.

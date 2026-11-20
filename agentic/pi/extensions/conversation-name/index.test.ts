@@ -14,6 +14,7 @@ function harness(initialName = "") {
 	let name = initialName;
 	let sessionId = "session-1";
 	const prompts: string[] = [];
+	const invocations: Array<{ command: string; args: string[] }> = [];
 	const names: string[] = [];
 	const responses: Array<(value: { code: number; stdout: string }) => void> = [];
 	const pi = {
@@ -21,7 +22,8 @@ function harness(initialName = "") {
 			if (event === "message_end") handler = callback as Handler;
 			if (event === "session_shutdown") shutdown = callback as () => void;
 		},
-		exec: (_command: string, args: string[]) => {
+		exec: (command: string, args: string[]) => {
+			invocations.push({ command, args });
 			prompts.push(args.at(-1) ?? "");
 			return new Promise<{ code: number; stdout: string }>((resolve) => { responses.push(resolve); });
 		},
@@ -37,7 +39,7 @@ function harness(initialName = "") {
 		},
 	};
 	return {
-		prompts, names, responses,
+		prompts, names, responses, invocations,
 		shutdown: () => shutdown?.(),
 		get name() { return name; },
 		set sessionId(value: string) { sessionId = value; },
@@ -51,6 +53,22 @@ function harness(initialName = "") {
 async function flush() {
 	await new Promise((resolve) => setImmediate(resolve));
 }
+
+test("sandbox naming retains the guest inference provider", async () => {
+	const previous = process.env.PI_SANDBOX;
+	try {
+		process.env.PI_SANDBOX = "1";
+		const app = harness();
+		await app.message("Name this sandbox task");
+		assert.ok(app.invocations[0].args.some(arg => arg.endsWith("extensions/sandbox-guest")));
+		app.responses.shift()?.({ code: 0, stdout: "Sandbox Task" });
+		await flush();
+		assert.equal(app.name, "Sandbox Task");
+	} finally {
+		if (previous === undefined) delete process.env.PI_SANDBOX;
+		else process.env.PI_SANDBOX = previous;
+	}
+});
 
 test("updates the title after every user message with bounded context", async () => {
 	const app = harness();

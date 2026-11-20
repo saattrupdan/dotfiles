@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { afterEach, test } from "node:test";
 import { pathToFileURL } from "node:url";
-import { loadProfile, resolvePiPackage } from "../profile/launcher.mjs";
+import { checkSessionPaths, loadProfile, resolvePiPackage, runCli } from "../profile/launcher.mjs";
 import { repositorySandbox, sandboxArguments } from "./policy.mjs";
 import { inferenceRequest, publishJson, readRegularFile, sleep } from "./protocol.mjs";
 import { publicModel, startBroker } from "./broker.mjs";
@@ -174,6 +174,20 @@ test("actual staged resources include render dependencies but exclude host exten
 	assert.ok(!fs.existsSync(path.join(target, "models.json")));
 });
 
+test("staging carries theme and UI preferences without host bootstrap settings", async () => {
+	const original = process.env.PI_CODING_AGENT_DIR ?? path.join(os.homedir(), ".pi/agent");
+	const agentDir = temporary(), target = temporary();
+	for (const name of ["agents", "extensions", "skills", "profile", "themes"]) fs.symlinkSync(path.join(original, name), path.join(agentDir, name));
+	fs.writeFileSync(path.join(agentDir, "settings.json"), JSON.stringify({ theme: "gruvbox", quietStartup: true, terminal: { clearOnShrink: false, showImages: false, private: "secret" }, shellPath: "/host-shell", shellCommandPrefix: "host-command", packages: ["host-package"], extensions: ["host-extension"] }));
+	await stageSandboxResources(agentDir, resolvePiPackage(), target);
+	const settings = JSON.parse(fs.readFileSync(path.join(target, "settings.json"), "utf8"));
+	assert.equal(settings.theme, "gruvbox"); assert.equal(settings.quietStartup, true);
+	assert.deepEqual(settings.terminal, { clearOnShrink: false, showImages: false });
+	assert.deepEqual(settings.packages, []); assert.deepEqual(settings.extensions, []);
+	assert.equal(settings.shellPath, undefined); assert.equal(settings.shellCommandPrefix, undefined);
+	assert.ok(fs.existsSync(path.join(target, "themes/gruvbox.json")));
+});
+
 test("cancelling a guest inference aborts the corresponding host request", async () => {
 	const root = temporary(); let signal;
 	const broker = startBroker(root, { model, async *stream(_context, options) {
@@ -200,6 +214,33 @@ test("container mounts expose only project, curated resources, mailbox, and priv
 	assert.throws(() => containerArguments({ name: "test", root: "/project,bad", resources: "a", mailbox: "b", sessions: "c", cache: "d" }), /mount paths/);
 	assert.throws(() => containerArguments({ root: "/project", cwd: "/other", resources: "a", mailbox: "b", sessions: "c", cache: "d" }), /inside/);
 	assert.equal(sandboxImage(resolvePiPackage()).tag, sandboxImage(resolvePiPackage()).tag);
+});
+
+test("private session links accept their own histories and stay private from other profiles", () => {
+	const agentDir = temporary(), sessions = temporary();
+	fs.mkdirSync(path.join(agentDir, "profile-sessions"));
+	fs.symlinkSync(sessions, path.join(agentDir, "profile-sessions/sandbox"));
+	const session = path.join(sessions, "saved.jsonl"); fs.writeFileSync(session, "{}");
+	assert.doesNotThrow(() => checkSessionPaths(["--session", session], "sandbox", agentDir));
+	assert.throws(() => checkSessionPaths(["--session", session], "main", agentDir), /another agent/);
+	assert.throws(() => checkSessionPaths(["--session", session], "librarian", agentDir), /another agent/);
+	assert.throws(() => checkSessionPaths(["--session-dir", sessions], "main", agentDir), /storage/);
+	assert.throws(() => checkSessionPaths([], "main", agentDir, agentDir, sessions), /private profile/);
+});
+
+test("guest supervisor keeps approved model flags separate from user arguments", async () => {
+	const root = temporary(), cli = path.join(root, "cli.mjs"), capture = path.join(root, "argv.json");
+	fs.writeFileSync(cli, "import fs from 'node:fs'; fs.writeFileSync(process.env.CAPTURE_PATH, JSON.stringify(process.argv.slice(2)));\n");
+	const code = await runCli(cli, ["--", "prompt"], { ...process.env, PI_SANDBOX: "1", CAPTURE_PATH: capture }, { profile: { name: "sandbox" }, userArgs: ["-p"], fixedModel: { provider: "approved", id: "model" } });
+	assert.equal(code, 0);
+	assert.deepEqual(JSON.parse(fs.readFileSync(capture, "utf8")), ["--provider", "approved", "--model", "model", "--", "prompt"]);
+});
+
+test("sandbox retains main's offline UI and coding extensions", async () => {
+	const agentDir = path.resolve(import.meta.dirname, "..");
+	const profile = await loadProfile("sandbox", agentDir, resolvePiPackage());
+	for (const name of ["bash-output", "code-tree", "codemode", "codemode-collapse", "context-limit", "conversation-name", "edit", "git-worktree-isolation", "incognito", "loop", "non-interactive", "precomputed-compaction", "rate-limit-retry", "read", "read-groups", "search", "splash", "thinking-status", "zero-hidden-thinking"]) assert.ok(profile.extensions.includes(name), `Missing offline extension: ${name}`);
+	assert.ok(profile.tools.includes("search")); assert.ok(profile.tools.includes("code_tree")); assert.ok(profile.tools.includes("codemode"));
 });
 
 test("sandbox profile excludes snapshots, web, host memory, and macOS integrations", async () => {

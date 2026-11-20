@@ -18,7 +18,7 @@
  *     ■ · · ■
  */
 
-import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import { CustomEditor, type ExtensionAPI, type ExtensionContext, type Theme } from "@earendil-works/pi-coding-agent";
 import type { TUI, Component } from "@earendil-works/pi-tui";
 import { visibleWidth, truncateToWidth } from "@earendil-works/pi-tui";
 
@@ -223,7 +223,8 @@ function sessionHasMessages(ctx: ExtensionContext): boolean {
 function createSplashEditorFactory(): SplashEditorFactory {
 	return (tui, editorTheme, keybindings) => {
 		splashTui = tui;
-		const inner = new PttEditor(tui, editorTheme, keybindings);
+		const Editor = process.env.PI_SANDBOX === "1" ? CustomEditor : PttEditor;
+		const inner = new Editor(tui, editorTheme, keybindings);
 		const innerRender = inner.render.bind(inner);
 		// Horizontal padding inside the box, matching the visual breathing
 		// room provided by the top/bottom rules. Done in the wrapper rather
@@ -397,7 +398,8 @@ function installSplash(pi: ExtensionAPI, ctx: ExtensionContext, clearScreen: boo
 			render(width: number): string[] {
 				const modelText = ctx.model?.name || ctx.model?.id;
 				const voiceStatus = getStatusText();
-				const line = voiceStatus ? `${modelText || ""} — ${voiceStatus}` : (modelText || "");
+				const detail = process.env.PI_SANDBOX === "1" ? "📦 sandbox · offline" : voiceStatus;
+				const line = detail ? `${modelText || ""} — ${detail}` : (modelText || "");
 				if (!line) return [];
 				const targetW = Math.max(20, Math.floor(width * EDITOR_WIDTH_FRACTION));
 				const leftPad = " ".repeat(Math.max(0, Math.floor((width - targetW) / 2)));

@@ -40,7 +40,9 @@ export async function stageSandboxResources(agentDir, pkg, target) {
 	fs.copyFileSync(path.join(agentDir, "agents/sandbox.md"), path.join(target, "agents/sandbox.md"));
 	copyTree(path.join(agentDir, "profile"), path.join(target, "profile"));
 	copyTree(source, path.join(target, "sandbox"));
-	for (const extension of profile.extensions) copyTree(path.join(agentDir, "extensions", extension), path.join(target, "extensions", extension));
+	for (const extension of profile.extensions) {
+		if (!["codemode", "mcp"].includes(extension)) copyTree(path.join(agentDir, "extensions", extension), path.join(target, "extensions", extension));
+	}
 	// Shared helper libraries expose no tools by themselves; selected extensions import them.
 	for (const entry of fs.readdirSync(path.join(agentDir, "extensions"))) {
 		if (entry.startsWith("_") && fs.statSync(path.join(agentDir, "extensions", entry)).isDirectory())
@@ -64,14 +66,29 @@ export async function stageSandboxResources(agentDir, pkg, target) {
 		const file = path.join(agentDir, "agents", `${name}.md`);
 		if (!fs.existsSync(file)) continue;
 		const { frontmatter, body } = parseFrontmatter(fs.readFileSync(file, "utf8"));
-		const mapped = (frontmatter.tools ?? []).map((tool) => tool === "search" ? "grep" : tool === "code_tree" ? "ls" : tool);
-		const tools = mapped.filter((tool) => profile.tools.includes(tool) && tool !== "subagent");
+		const tools = (frontmatter.tools ?? []).filter((tool) => profile.tools.includes(tool) && tool !== "subagent");
 		const extensions = profile.extensions.filter((extension) => !["subagent", "statusline"].includes(extension));
 		const fields = { name, description: frontmatter.description ?? name, subagent: true, worktree: frontmatter.worktree ?? false, tools, skills: profile.skills, extensions };
 		const header = Object.entries(fields).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join("\n");
 		fs.writeFileSync(path.join(target, "agents", `${name}.md`), `---\n${header}\n---\n${body}\n\nYou run inside the same offline Apple Container as your parent. Never request host execution.\n`);
 	}
-	fs.writeFileSync(path.join(target, "settings.json"), JSON.stringify({ defaultThinkingLevel: "high", defaultProjectTrust: "never", hideThinkingBlock: true, packages: [], compaction: { enabled: true } }));
+	// Carry presentation preferences, never host packages, shell settings, or credentials.
+	const host = JSON.parse(fs.readFileSync(path.join(agentDir, "settings.json"), "utf8"));
+	const keys = ["theme", "tuiMode", "quietStartup", "hideThinkingBlock", "collapseChangelog", "editorPaddingX", "autocompleteMaxVisible", "doubleEscapeAction", "defaultThinkingLevel"];
+	const settings = Object.fromEntries(keys.filter((key) => Object.hasOwn(host, key)).map((key) => [key, host[key]]));
+	if (host.terminal) settings.terminal = Object.fromEntries(["clearOnShrink", "showImages"].filter((key) => typeof host.terminal[key] === "boolean").map((key) => [key, host.terminal[key]]));
+	Object.assign(settings, { defaultProjectTrust: "never", packages: [], extensions: [], compaction: { enabled: true } });
+	fs.mkdirSync(path.join(target, "themes"), { recursive: true });
+	if (settings.theme !== undefined) {
+		if (typeof settings.theme !== "string" || !/^[a-zA-Z0-9_-]+$/.test(settings.theme)) throw new Error("Invalid sandbox theme name");
+		const theme = path.join(agentDir, "themes", `${settings.theme}.json`);
+		if (fs.existsSync(theme)) {
+			const relative = path.relative(fs.realpathSync(path.dirname(theme)), fs.realpathSync(theme));
+			if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("Sandbox theme must stay inside its theme directory");
+			fs.copyFileSync(theme, path.join(target, "themes", `${settings.theme}.json`));
+		}
+	}
+	fs.writeFileSync(path.join(target, "settings.json"), JSON.stringify(settings));
 	return profile;
 }
 

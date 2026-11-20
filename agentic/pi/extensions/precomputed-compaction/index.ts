@@ -34,7 +34,7 @@ function loadConfig(): Config {
 }
 
 async function summarise(ctx: ExtensionContext, work: Work, config: Config, signal: AbortSignal): Promise<string> {
-	const model = ctx.modelRegistry.find(config.provider, config.model);
+	const model = process.env.PI_SANDBOX === "1" ? ctx.model : ctx.modelRegistry.find(config.provider, config.model);
 	if (!model) throw new Error(`Checkpoint model not found: ${config.provider}/${config.model}`);
 	const source = work.entries.map(entry => {
 		const text = convertToLlm(entry.messages).map(message => {
@@ -131,7 +131,7 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 		if (running || proactive || Date.now() < retryAfter) return;
-		const model = ctx.modelRegistry.find(config.provider, config.model);
+		const model = process.env.PI_SANDBOX === "1" ? ctx.model : ctx.modelRegistry.find(config.provider, config.model);
 		const previous = state.checkpoint?.summary ?? state.history.previousSummary ?? "";
 		const outputBudget = Math.min(model?.maxTokens ?? 16_000, Math.max(4096, state.config.summaryMaxTokens * 2));
 		// Leave room for the previous checkpoint, request framing, reasoning and output.

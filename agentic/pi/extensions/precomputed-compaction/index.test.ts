@@ -78,6 +78,21 @@ function setup(t: TestContext, initial = conversation(), ignoreAbort = false) {
 	};
 }
 
+test("sandbox compaction uses the approved current model rather than the host-configured model", async t => {
+	const previous = process.env.PI_SANDBOX;
+	try {
+		process.env.PI_SANDBOX = "1";
+		const app = setup(t);
+		app.ctx.modelRegistry.find = () => { throw new Error("Host model lookup forbidden in sandbox"); };
+		app.event("session_start");
+		assert.equal(app.calls.length, 1);
+		await app.complete();
+	} finally {
+		if (previous === undefined) delete process.env.PI_SANDBOX;
+		else process.env.PI_SANDBOX = previous;
+	}
+});
+
 test("worker is detached, singleton, separately configured and does not rewrite the live context", async t => {
 	const app = setup(t);
 	const before = [...app.branch];

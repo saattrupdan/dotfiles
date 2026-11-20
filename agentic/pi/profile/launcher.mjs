@@ -105,8 +105,14 @@ function canonical(target) {
 /** Reject explicit paths that would resume another profile under the wrong tools. */
 export function checkSessionPaths(args, agent, agentDir, cwd = process.cwd(), sessionEnv) {
 	const root = canonical(path.join(agentDir, PROFILE_DIR));
-	const own = path.join(root, agent);
-	if (agent === "main" && sessionEnv && within(canonical(path.resolve(cwd, sessionEnv)), root)) {
+	const own = canonical(path.join(root, agent));
+	const privateRoots = [root];
+	if (agent === "main" && fs.existsSync(root)) {
+		for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+			if (entry.name !== "main" && (entry.isDirectory() || entry.isSymbolicLink())) privateRoots.push(canonical(path.join(root, entry.name)));
+		}
+	}
+	if (agent === "main" && sessionEnv && privateRoots.some((dir) => within(canonical(path.resolve(cwd, sessionEnv)), dir))) {
 		throw new Error("Main cannot resume a private profile through PI_CODING_AGENT_SESSION_DIR");
 	}
 	for (let i = 0; i < args.length; i++) {
@@ -119,14 +125,14 @@ export function checkSessionPaths(args, agent, agentDir, cwd = process.cwd(), se
 		const value = inline ?? args[++i];
 		if (!value) throw new Error(`${flag} needs a value`);
 		if (flag === "--session-dir") {
-			if (agent !== "main" || within(canonical(path.resolve(cwd, value)), root)) {
+			if (agent !== "main" || privateRoots.some((dir) => within(canonical(path.resolve(cwd, value)), dir))) {
 				throw new Error("Profile session storage cannot be overridden");
 			}
 			continue;
 		}
 		if (!value.includes("/") && !value.includes("\\") && !value.endsWith(".jsonl")) continue;
 		const target = canonical(path.resolve(cwd, value));
-		if (agent === "main" ? within(target, root) : !within(target, own)) {
+		if (agent === "main" ? privateRoots.some((dir) => within(target, dir)) : !within(target, own)) {
 			throw new Error(`${flag} cannot open a session from another agent profile`);
 		}
 	}
@@ -260,14 +266,20 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
 	);
 }
 
-function runCli(cli, args, env, identity) {
+export function runCli(cli, args, env, identity) {
 	return new Promise((resolve, reject) => {
 		const supervised = identity && profileReloadEnabled(identity.userArgs);
 		const token = supervised ? randomUUID() : undefined;
 		const childEnv = { ...env };
 		if (token) childEnv.PI_PROFILE_RELOAD_TOKEN = token;
 		else delete childEnv.PI_PROFILE_RELOAD_TOKEN;
-		const child = spawn(process.execPath, [cli, ...args], {
+		let childArgs = args;
+		if (env.PI_SANDBOX === "1" && identity?.profile.name === "sandbox" && identity.fixedModel) {
+			const separator = args.indexOf("--");
+			const at = separator < 0 ? args.length : separator;
+			childArgs = [...args.slice(0, at), "--provider", identity.fixedModel.provider, "--model", identity.fixedModel.id, ...args.slice(at)];
+		}
+		const child = spawn(process.execPath, [cli, ...childArgs], {
 			stdio: supervised ? ["inherit", "inherit", "inherit", "ipc"] : "inherit",
 			env: childEnv,
 		});
@@ -295,7 +307,7 @@ function runCli(cli, args, env, identity) {
 				return;
 			}
 			if (
-				identity?.profile.name === "main" &&
+				(identity?.profile.name === "main" || (identity?.profile.name === "sandbox" && env.PI_SANDBOX === "1")) &&
 				message?.type === "pi-profile-continuation" &&
 				Array.isArray(message.args) &&
 				message.args.every((a) => typeof a === "string") &&

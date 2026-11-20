@@ -77,7 +77,7 @@ export function toolPresentationBlock(
 			),
 			details: details?.args,
 		} as never);
-	return displayBlock(row.render(2048), name, colors);
+	return displayBlock([...row.render(2048)], name, colors);
 }
 
 /** The same native text for consumers that do not need line styling. */

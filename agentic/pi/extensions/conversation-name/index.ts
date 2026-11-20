@@ -22,6 +22,7 @@ import { markGuard } from "../_remote_bridge/guards.ts";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { isIncognito } from "../_incognito_state/state.js";
+import { getPiInvocation } from "../subagent/pi-invocation.ts";
 
 const MAX_NAME_LENGTH = 30;
 const NAMING_TIMEOUT_MS = 30_000;
@@ -200,7 +201,9 @@ async function generateNameWithModel(
 		`Current session title: ${previousTitle || "(none)"}\n` +
 		`Latest user message: ${request}`;
 
-		const result = await pi.exec("pi", ["-p", "--no-extensions", "--no-session", instruction], {
+		const args = ["-p", "--no-extensions", "--no-session", instruction];
+		const invocation = process.env.PI_SANDBOX === "1" ? getPiInvocation(args) : { command: "pi", args };
+		const result = await pi.exec(invocation.command, invocation.args, {
 			cwd,
 			timeout: NAMING_TIMEOUT_MS,
 		});

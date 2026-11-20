@@ -11,6 +11,9 @@ import { containerArguments, CONTAINER, sandboxImage, stageSandboxResources } fr
 
 const enabled = process.env.PI_SANDBOX_INTEGRATION === "1";
 const model = { id: "sandbox-test", name: "Sandbox test", provider: "sandbox-test", api: "sandbox-inference", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 100000, maxTokens: 4096 };
+function namingRequest(context) {
+	return JSON.stringify(context.messages).includes("Update the session title (max 30 chars)");
+}
 function response(content, stopReason = "stop") {
 	return { role: "assistant", content, api: model.api, provider: model.provider, model: model.id, stopReason, usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, timestamp: Date.now() };
 }
@@ -55,6 +58,14 @@ import os from 'node:os';
 import net from 'node:net';
 import http from 'node:http';
 import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
+const require = createRequire('/opt/pi-config/extensions/search/index.ts');
+const Database = require('better-sqlite3');
+const db = new Database(':memory:');
+assert.equal(db.prepare('select 1 as ok').get().ok, 1); db.close();
+const Parser = require('tree-sitter');
+const parser = new Parser(); parser.setLanguage(require('tree-sitter-typescript').typescript);
+assert.equal(parser.parse('export const value: number = 1;').rootNode.namedChildren[0].type, 'export_statement');
 const status = fs.readFileSync('/proc/self/status', 'utf8');
 assert.notEqual(process.getuid(), 0);
 for (const key of ['CapInh', 'CapPrm', 'CapEff', 'CapBnd', 'CapAmb']) assert.match(status, new RegExp(key + ':\\\\s+0+'));
@@ -95,7 +106,8 @@ console.log('ISOLATION_OK');
 test("real sandbox profile loads Linux extensions, executes tools, and completes brokered turns", { skip: !enabled, timeout: 120000 }, async (t) => {
 	await fixture(async ({ root, project, args }) => {
 		let turns = 0;
-		const broker = startBroker(path.join(root, "mailbox"), { model, async *stream() {
+		const broker = startBroker(path.join(root, "mailbox"), { model, async *stream(context) {
+			if (namingRequest(context)) { const message = response([{ type: "text", text: "Sandbox Test" }]); yield { type: "start", partial: { ...message, content: [] } }; yield { type: "done", reason: "stop", message }; return; }
 			const message = turns++ === 0
 				? response([{ type: "toolCall", id: "sandbox-proof", name: "bash", arguments: { command: "printf tool-ran > /workspace/tool-proof; uname -s" } }], "toolUse")
 				: response([{ type: "text", text: "SANDBOX_READY" }]);				yield { type: "start", partial: { ...message, content: [] } };
@@ -116,7 +128,8 @@ test("real sandbox profile loads Linux extensions, executes tools, and completes
 test("sandbox subagents run inside the guest and keep brokered inference", { skip: !enabled, timeout: 120000 }, async () => {
 	await fixture(async ({ root, args }) => {
 		let turns = 0;
-		const broker = startBroker(path.join(root, "mailbox"), { model, async *stream() {
+		const broker = startBroker(path.join(root, "mailbox"), { model, async *stream(context) {
+			if (namingRequest(context)) { const message = response([{ type: "text", text: "Sandbox Test" }]); yield { type: "start", partial: { ...message, content: [] } }; yield { type: "done", reason: "stop", message }; return; }
 			const turn = turns++;
 			const message = turn === 0
 				? response([{ type: "toolCall", id: "sandbox-child", name: "subagent", arguments: { agent: "explorer", taskName: "Inspect sandbox", task: "Reply CHILD_OK. Do not call tools." } }], "toolUse")
