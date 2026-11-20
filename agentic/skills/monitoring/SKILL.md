@@ -22,8 +22,9 @@ impossible.
    identifier. Do not rely only on a process name if IDs, job names, or run IDs exist.
 2. Determine the signals for successful completion, failure, cancellation, a stall, and
    normal progress.
-3. Find an authoritative total and completed count where possible. Examples include
-   tasks completed, bytes transferred, epochs run, or pipeline stages finished.
+3. Identify the user's end goal and all remaining stages needed to reach it. Progress
+   and ETA refer to that entire run, not just the active stage. Find an authoritative
+   total and completed count where possible, such as tasks, bytes, or epochs.
 4. Record the start time and an initial baseline when available, but sleep before the
    first reported monitoring check unless the expected runtime is shorter than the
    initial interval.
@@ -79,11 +80,18 @@ Every report must include:
   separators such as `T`.
 - **Status:** A concise state such as `queued`, `running`, `stalled`, `succeeded`,
   `failed`, or `cancelled`, plus the current stage or useful detail.
-- **Progress:** A percentage when a trustworthy total exists. Prefer an authoritative
-  metric; otherwise derive it from `completed / total` and show those counts. Never
-  invent a percentage.
-- **ETA:** Both an approximate duration and expected completion timestamp when they can
-  be estimated. If not, write `unknown` and briefly explain why.
+- **Progress:** Whole-run completion percentage toward the user's end goal. Prefer an
+  authoritative metric or derive it from `completed / total` and show those counts.
+  Without a total, give a rough percentage based on completed and remaining work,
+  explicitly labeled `estimated`; never present a guess as a measured percentage.
+- **ETA:** Always give an estimated remaining duration and expected completion
+  timestamp for the entire run. Use a rough guess when data is sparse or absent;
+  label it `rough estimate` and briefly state its basis. Low confidence is a reason
+  to use a wider range, not to omit the estimate or write `unknown`.
+- **Stage estimates:** When useful, add separately labeled progress and ETA for the
+  current stage, alongside the whole-run estimates. If only stage timings are known,
+  use them for the stage ETA and make a rough guess for the full run, including the
+  remaining stages. Never silently substitute stage completion for the user's goal.
 - **Next check:** The planned interval, unless this is the final report.
 
 Always convert timestamps to the `Europe/Copenhagen` timezone, including timestamps
@@ -100,33 +108,47 @@ ETA: about 24 minutes, around Saturday, 26 Sep 2026, 14:56
 Next check: 5 minutes
 ```
 
-For unknown progress or ETA, retain the fields:
+With sparse data, give explicit whole-run guesses rather than withholding estimates:
 
 ```text
 [Saturday, 26 Sep 2026, 14:32]
-Status: running — waiting for the remote build stage
-Progress: unavailable — the service exposes no work total
-ETA: unknown — no completed unit or historical rate is available
+Status: running — remote build, then deployment and verification
+Progress: roughly 30% of full run (estimated from remaining stages)
+ETA: rough estimate 30–60 minutes, around Saturday, 26 Sep 2026, 15:02–15:32
+Basis: no timing data yet; estimated build, deployment, and verification time
+Stage ETA: build about 20 minutes, around Saturday, 26 Sep 2026, 14:52
 Next check: 10 minutes
 ```
 
 ## Estimating the ETA
 
-Prefer an ETA reported by the process itself. Otherwise:
+Always estimate; do not wait for enough data to make the estimate reliable. An ETA
+is a working prediction, not a guarantee. Use the best available basis:
 
-1. Measure progress over at least two checks rather than extrapolating from a single
-   sample.
-2. Estimate the recent rate and calculate `remaining work / rate`.
-3. Smooth noisy rates over several healthy checks when possible.
-4. Label the result as approximate, and revise it as new information arrives.
-5. Do not provide a numeric ETA when progress is stalled, moving backward, or too
-   irregular for a defensible estimate.
+1. Prefer a process-reported ETA, checking whether it covers the full run or only the
+   current stage. Add time for all remaining stages to obtain the whole-run ETA.
+2. Use recent iteration durations or progress deltas as soon as any are available:
+   estimate `remaining work / recent rate`. A single completed iteration is enough
+   for an initial guess; refine it over subsequent checks and smooth noisy rates.
+3. If no timing data exists, make an informed guess based on the task type, apparent
+   size, and remaining stages. Even a very rough guess is better than no ETA.
+4. Weight stages by expected duration or effort when estimating overall progress;
+   completing one of four stages does not necessarily mean 25% of the run is done.
+5. Use a range for highly variable work and state the main assumption briefly.
+   Revise both progress and ETA on every check as evidence arrives, including when
+   an earlier guess proves wrong. Do not keep an expired completion time.
+6. For stalls, queues, or retries, include a rough allowance for the delay and name
+   the recovery assumption. Continue estimating while the run remains active. If
+   completion requires user action, state that dependency and estimate the remaining
+   runtime after it. For terminal states, report the outcome rather than predicting
+   future completion.
 
 ## Failures and stalls
 
 - Report errors and abnormal states immediately; do not wait for the next scheduled
   update once detected.
-- Include the last known progress and ETA, but do not present a stale ETA as current.
+- Include the last known progress and revise the whole-run ETA for the delay using
+  an explicit recovery assumption; do not present a stale ETA as current.
 - Retry transient status-check failures on the frequent interval before concluding that
   the monitored operation failed. Distinguish a monitoring failure from a process
   failure.
