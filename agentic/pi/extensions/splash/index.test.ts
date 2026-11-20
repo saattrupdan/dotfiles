@@ -21,7 +21,8 @@ test("sandbox splash keeps the normal layout and displays isolation before the f
 		const tui = { terminal: { rows: 36 }, requestRender() {} } as unknown as TUI;
 		const theme = { fg: (_name: string, text: string) => text };
 		const lines = [...widgets.values()].flatMap(factory => factory(tui, theme).render(100));
-		assert.match(lines.join("\n"), /Test model — 📦 sandbox · offline/);
+		assert.match(lines.join("\n"), /Test model — 📦\s*$/m);
+		assert.doesNotMatch(lines.join("\n"), /sandbox|offline/);
 		assert.ok(widgets.size >= 3, "logo, editor footer, and spacing stay installed");
 	} finally {
 		await hooks.get("session_shutdown")?.({}, ctx);

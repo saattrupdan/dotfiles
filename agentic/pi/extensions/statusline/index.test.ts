@@ -65,8 +65,9 @@ test("sandbox footer installs before messages and retains the box indicator on s
 		hooks.get("session_start")!({}, ctx);
 		hooks.get("session_start")!({}, ctx);
 		assert.equal(installs, 2);
-		const lines = wrapStatusline("model | context | 📦 sandbox · offline", 18);
-		assert.match(lines.join(" "), /📦 sandbox/);
+		const lines = wrapStatusline("model | context | 📦", 18);
+	assert.match(lines.join(" "), /📦/);
+	assert.doesNotMatch(lines.join(" "), /sandbox|offline/);
 	} finally {
 		if (previous === undefined) delete process.env.PI_SANDBOX;
 		else process.env.PI_SANDBOX = previous;

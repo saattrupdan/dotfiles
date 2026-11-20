@@ -94,7 +94,7 @@ export async function installGuestProvider(pi) {
 		models: [model],
 		streamSimple: (selected, context, options) => mailboxStream(createAssistantMessageEventStream, directory, selected, context, options),
 	});
-	const show = (_event, ctx) => ctx.ui.setStatus("sandbox", "📦 sandbox · offline");
+	const show = (_event, ctx) => ctx.ui.setStatus("sandbox", "📦");
 	pi.on("session_start", show);
 	pi.on("agent_start", show);
 	pi.registerCommand("sandbox", { description: "Open a fresh conversation inside this sandbox", handler: async (args, ctx) => {

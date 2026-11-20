@@ -398,7 +398,7 @@ function installSplash(pi: ExtensionAPI, ctx: ExtensionContext, clearScreen: boo
 			render(width: number): string[] {
 				const modelText = ctx.model?.name || ctx.model?.id;
 				const voiceStatus = getStatusText();
-				const detail = process.env.PI_SANDBOX === "1" ? "📦 sandbox · offline" : voiceStatus;
+				const detail = process.env.PI_SANDBOX === "1" ? "📦" : voiceStatus;
 				const line = detail ? `${modelText || ""} — ${detail}` : (modelText || "");
 				if (!line) return [];
 				const targetW = Math.max(20, Math.floor(width * EDITOR_WIDTH_FRACTION));
