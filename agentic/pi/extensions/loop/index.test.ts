@@ -198,9 +198,10 @@ test("checker keeps the captured file prompt across iterations", async () => {
 });
 
 type Handler = (event: unknown, ctx: ExtensionContext) => unknown;
+type CompactionCallbacks = { onComplete?: () => void; onError?: (error: Error) => void };
 function harness(
 	check?: typeof checkCondition,
-	options: { sessionId?: string; plugins?: Array<(pi: ExtensionAPI) => void>; notifications?: string[]; mode?: "tui" | "rpc" | "print"; autoStart?: boolean; compact?: "complete" | "small" | "fail" | "pending" | "rateOnce"; contextTokens?: number; cwd?: string; listIssues?: (cwd: string, signal?: AbortSignal) => Promise<number[]> } = {},
+	options: { sessionId?: string; plugins?: Array<(pi: ExtensionAPI) => void>; notifications?: string[]; mode?: "tui" | "rpc" | "print"; autoStart?: boolean; compact?: "complete" | "small" | "fail" | "pending" | "rateOnce" | ((callbacks: CompactionCallbacks, attempt: number) => void); contextTokens?: number; cwd?: string; listIssues?: (cwd: string, signal?: AbortSignal) => Promise<number[]> } = {},
 ) {
 	const handlers = new Map<string, Handler[]>();
 	const emit = async (name: string, event: unknown = {}) => {
@@ -239,9 +240,10 @@ function harness(
 		getContextUsage: () => options.contextTokens === undefined ? undefined : {
 			tokens: options.contextTokens, contextWindow: 128_000, percent: options.contextTokens / 1_280,
 		},
-		compact: (callbacks: { onComplete?: () => void; onError?: (error: Error) => void }) => {
+		compact: (callbacks: CompactionCallbacks) => {
 			compactions++;
-			if (options.compact === "rateOnce" && compactions === 1) callbacks.onError?.(new Error('429: {"detail":"Rate limit exceeded"}'));
+			if (typeof options.compact === "function") options.compact(callbacks, compactions);
+			else if (options.compact === "rateOnce" && compactions === 1) callbacks.onError?.(new Error('429: {"detail":"Rate limit exceeded"}'));
 			else if (options.compact === "small") callbacks.onError?.(new Error("Nothing to compact (session too small)"));
 			else if (options.compact === "fail") callbacks.onError?.(new Error("provider failed"));
 			else if (options.compact === "pending") finishCompaction = () => callbacks.onComplete?.();
@@ -1200,6 +1202,232 @@ test("stop during compaction invalidates its eventual callback", async () => {
 	assert.equal(h.timers.size, 0);
 	assert.equal(h.sent.length, 1);
 });
+
+test("checker timeout retries the same completed iteration", async () => {
+	let checks = 0;
+	const h = harness(async (_condition, _prompt, output) => {
+		assert.equal(output, "completed work");
+		if (++checks === 1) throw new Error("Checker timed out.");
+		return { done: true, evidence: "verified after retry" };
+	});
+	try {
+		await h.command("--max-runs 1 work --until good");
+		await h.finish("completed work");
+		assert.equal(isLoopActive(), true, "a checker timeout must not terminate the loop");
+		assert.equal(h.tick(), 60_000);
+		await settle();
+		assert.equal(checks, 2);
+		assert.deepEqual(h.sent, ["work"], "the completed work must not be repeated");
+		assert.match(h.notices.at(-1) ?? "", /complete after 1 run/);
+	} finally {
+		await h.command("stop");
+	}
+});
+
+test("compaction timeout retries before starting the next iteration", async () => {
+	const h = harness(undefined, { compact: (callbacks, attempt) => {
+		if (attempt === 1) callbacks.onError?.(new Error("Request timed out."));
+		else callbacks.onComplete?.();
+	} });
+	try {
+		await h.command("--max-runs 2 work");
+		await h.finish();
+		h.tick();
+		assert.equal(isLoopActive(), true, "a compaction timeout must not terminate the loop");
+		assert.deepEqual(h.sent, ["work"]);
+		assert.equal(h.tick(), 60_000);
+		assert.equal(h.compactions(), 2);
+		assert.equal(h.tick(), 0);
+		assert.deepEqual(h.sent, ["work", "work"]);
+		await h.finish();
+		assert.match(h.notices.at(-1) ?? "", /complete after 2 run/);
+	} finally {
+		await h.command("stop");
+	}
+});
+
+for (const failure of [
+	new Error("Request timeout."),
+	Object.assign(new Error("deadline exceeded"), { name: "TimeoutError" }),
+	Object.assign(new Error("deadline exceeded"), { name: "APIConnectionTimeoutError" }),
+	Object.assign(new Error("connect failed"), { code: "ETIMEDOUT" }),
+	Object.assign(new Error("headers stalled"), { code: "UND_ERR_HEADERS_TIMEOUT" }),
+	new Error("Checker exited 1: APIConnectionTimeoutError: request stalled"),
+]) {
+	test(`checker retries timeout variants: ${failure.name}: ${failure.message} ${"code" in failure ? failure.code : ""}`, async () => {
+		let checks = 0;
+		const h = harness(async () => {
+			if (++checks === 1) throw failure;
+			return { done: true, evidence: "verified" };
+		});
+		try {
+			await h.command("--max-runs 1 work --until done");
+			await h.finish();
+			assert.equal(h.statuses.at(-1), "↻ 1/1 timed out 1m0s");
+			assert.equal(h.tick(), 60_000);
+			await settle();
+			assert.equal(checks, 2);
+			assert.equal(h.sent.length, 1);
+			assert.match(h.notices.at(-1) ?? "", /complete after 1 run/);
+		} finally {
+			await h.command("stop");
+		}
+	});
+	for (const throws of [false, true]) {
+		test(`compaction ${throws ? "throws" : "reports"} timeout: ${failure.name}: ${failure.message} ${"code" in failure ? failure.code : ""}`, async () => {
+			const h = harness(undefined, { compact: (callbacks, attempt) => {
+				if (attempt > 1) callbacks.onComplete?.();
+				else if (throws) throw failure;
+				else callbacks.onError?.(failure);
+			} });
+			try {
+				await h.command("--max-runs 2 work");
+				await h.finish();
+				h.tick();
+				assert.equal(h.statuses.at(-1), "↻ 1/2 timed out 1m0s");
+				assert.equal(h.tick(), 60_000);
+				assert.equal(h.compactions(), 2);
+				h.tick();
+				assert.equal(h.sent.length, 2);
+				await h.finish();
+				assert.match(h.notices.at(-1) ?? "", /complete after 2 run/);
+			} finally {
+				await h.command("stop");
+			}
+		});
+	}
+}
+
+for (const command of ["loop", "implement-all-issues"]) {
+	test(`${command} recovers checker and compaction timeouts and resets backoff after success`, async () => {
+		let checks = 0;
+		const outputs: string[] = [];
+		const h = harness(async (_condition, _prompt, output) => {
+			outputs.push(output);
+			if (++checks % 2 === 1) throw new Error("Checker timed out.");
+			return { done: checks === 4, evidence: "checked current state" };
+		}, { compact: (callbacks, attempt) => {
+			if (attempt === 1) callbacks.onError?.(new Error("Request timed out."));
+			else callbacks.onComplete?.();
+		} });
+		try {
+			await h.command(command === "loop" ? "--max-runs 2 work --until done" : "", command);
+			await h.finish("first result");
+			assert.equal(h.tick(), 60_000);
+			await settle();
+			assert.equal(h.tick(), 0); // attempt compaction only after the check succeeds
+			assert.equal(h.sent.length, 1);
+			assert.equal(h.tick(), 60_000, "successful checking resets the backoff for compaction");
+			assert.equal(h.tick(), 0); // start the second iteration after successful compaction
+			await settle();
+			assert.equal(h.sent.length, 2);
+			await h.finish("second result");
+			assert.equal(h.tick(), 60_000, "successful compaction resets the backoff for the next check");
+			await settle();
+			assert.deepEqual(outputs, ["first result", "first result", "second result", "second result"]);
+			assert.equal(h.compactions(), 2);
+			assert.equal(h.timers.size, 0);
+			assert.equal(h.intervals.size, 0);
+			assert.match(h.notices.at(-1) ?? "", /complete after 2 run/);
+		} finally {
+			await h.command("stop");
+		}
+	});
+}
+
+for (const stage of ["checker", "compaction"] as const) {
+	test(`persistent ${stage} timeouts use capped backoff without completion or extra iterations`, async () => {
+		let attempts = 0;
+		const completions: string[] = [];
+		const off = onLoopCompletion("timeout-backoff-test", (event) => { completions.push(event.outcome); });
+		const h = harness(async () => {
+			attempts++;
+			throw new Error("Checker timed out.");
+		}, stage === "compaction" ? { compact: (callbacks) => {
+			attempts++;
+			callbacks.onError?.(new Error("Request timed out."));
+		} } : {});
+		try {
+			await h.command(stage === "checker" ? "work --until done" : "work");
+			await h.finish();
+			if (stage === "compaction") h.tick();
+			for (const delay of [60_000, 120_000, 240_000, 300_000, 300_000]) {
+				assert.equal(h.tick(), delay);
+				await settle();
+				assert.equal(isLoopActive(), true);
+				assert.match(h.statuses.at(-1) ?? "", /^↻ 1 timed out/);
+			}
+			assert.equal(attempts, 6);
+			assert.deepEqual(h.sent, ["work"]);
+			assert.deepEqual(completions, [], "a timeout is neither success nor terminal failure");
+		} finally {
+			await h.command("stop");
+			off();
+		}
+	});
+
+	for (const cancel of ["stop", "session_shutdown", "session_start"] as const) {
+		test(`${stage} timeout retry is cancelled by ${cancel} and cannot affect a replacement loop`, async () => {
+			let attempts = 0;
+			let checkerSignal: AbortSignal | undefined;
+			const h = harness(async (_condition, _prompt, _output, _ctx, signal) => {
+				checkerSignal = signal;
+				attempts++;
+				throw new Error("Checker timed out.");
+			}, stage === "compaction" ? { compact: (callbacks) => {
+				attempts++;
+				callbacks.onError?.(new Error("Request timed out."));
+			} } : {});
+			try {
+				await h.command(stage === "checker" ? "work --until done" : "work");
+				await h.finish();
+				if (stage === "compaction") h.tick();
+				const staleRetry = [...h.timers.values()][0]?.callback;
+				assert.ok(staleRetry);
+				if (cancel === "stop") await h.command("stop");
+				else await h.emit(cancel);
+				assert.equal(isLoopActive(), false);
+				assert.equal(h.timers.size, 0);
+				assert.equal(h.intervals.size, 0);
+				if (stage === "checker") assert.equal(checkerSignal?.aborted, true);
+				await h.command("replacement");
+				staleRetry();
+				await settle();
+				assert.equal(attempts, 1);
+				assert.deepEqual(h.sent, ["work", "replacement"]);
+				assert.match(h.statuses.at(-1) ?? "", /^↻ 1 running$/);
+			} finally {
+				await h.command("stop");
+			}
+		});
+	}
+}
+
+for (const failure of [
+	new Error("Checker did not return JSON."),
+	new Error("Checker verdict needs a boolean done and nonempty evidence."),
+	new Error("401: authentication failed"),
+	Object.assign(new Error("Request timed out."), { name: "AbortError" }),
+	new Error("Compaction cancelled"),
+	new Error("Invalid timeout configuration"),
+]) {
+	test(`non-transient stage failure remains terminal: ${failure.name}: ${failure.message}`, async () => {
+		const check = harness(async () => { throw failure; });
+		await check.command("work --until done");
+		await check.finish();
+		assert.equal(isLoopActive(), false);
+		assert.equal(check.timers.size, 0);
+		assert.match(check.notices.at(-1) ?? "", /completion check failed/);
+
+		const compact = harness(undefined, { compact: (callbacks) => callbacks.onError?.(failure) });
+		await compact.command("work");
+		await compact.finish();
+		compact.tick();
+		assert.equal(isLoopActive(), false);
+		assert.equal(compact.timers.size, 0);
+		assert.match(compact.notices.at(-1) ?? "", /compaction failed/);
+	});
+}
 
 test("checker error and aborted iteration fail closed", async () => {
 	const h = harness(async () => { throw new Error("unavailable"); });

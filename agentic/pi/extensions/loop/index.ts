@@ -21,6 +21,16 @@ const MAIN_RETURN_RETRY_MS = 30_000;
 function isRateLimitError(error: unknown): boolean {
 	return /rate[ -]?limit|too many requests|\b429\b/i.test(String(error));
 }
+/** Timeouts are retryable stage failures, not completion or user cancellation. */
+function isTimeoutError(error: unknown): boolean {
+	const details = error && typeof error === "object"
+		? error as { name?: unknown; message?: unknown; code?: unknown }
+		: undefined;
+	if (details?.name === "AbortError") return false;
+	if (details?.name === "TimeoutError" || details?.name === "APIConnectionTimeoutError") return true;
+	const text = [String(error), details?.message, details?.code].join("\n");
+	return /\btimed[ -]?out\b|\b(?:TimeoutError|APIConnectionTimeoutError|ETIMEDOUT|ESOCKETTIMEDOUT|UND_ERR_(?:CONNECT|HEADERS|BODY)_TIMEOUT)\b|\b(?:request|connection|connect|read|headers|body|socket|operation|compaction|checker) timeout\b/i.test(text);
+}
 /** Retry read-only GitHub transport failures, not authentication, schema, or parsing errors. */
 function isTransientGitHubError(error: unknown): boolean {
 	const details = error && typeof error === "object"
@@ -104,7 +114,7 @@ interface ActiveLoop extends LoopOptions {
 	completionId: string;
 	aborted?: boolean;
 	runs: number;
-	phase: "running" | "selecting" | "checking" | "waiting" | "complete" | "compacting" | "rate limited" | "GitHub unavailable";
+	phase: "running" | "selecting" | "checking" | "waiting" | "complete" | "compacting" | "rate limited" | "GitHub unavailable" | "timed out";
 	compacted: boolean;
 	retryCount: number;
 	waitUntil?: number;
@@ -211,7 +221,7 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 			?? settings?.keepRecentTokens ?? 20_000;
 		return tokens > keepRecent;
 	}
-	function retryAfterFailure(loop: ActiveLoop, callback: () => void, reason: "rate limited" | "GitHub unavailable" = "rate limited") {
+	function retryAfterFailure(loop: ActiveLoop, callback: () => void, reason: "rate limited" | "GitHub unavailable" | "timed out" = "rate limited") {
 		if (active !== loop) return;
 		loop.phase = reason;
 		const delay = Math.min(RETRY_DELAY_MS * 2 ** Math.min(loop.retryCount++, 3), MAX_RETRY_DELAY_MS);
@@ -262,20 +272,22 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 					// is still completing its own cleanup and idle transition.
 					timer = setTimer(tick, 0);
 				};
+				const onError = (error: unknown) => {
+					if (active !== loop || generation !== token) return;
+					const message = error instanceof Error ? error.message : String(error);
+					if (/^(Nothing to compact \(session too small\)|Already compacted)$/.test(message)) resume();
+					else if (isRateLimitError(error)) retryAfterFailure(loop, tick);
+					else if (isTimeoutError(error)) retryAfterFailure(loop, tick, "timed out");
+					else stop(`Loop stopped: compaction failed (${message}).`, "failed");
+				};
 				try {
 					loop.ctx.compact({
 						customInstructions: COMPACTION_INSTRUCTIONS,
 						onComplete: resume,
-						onError: (error) => {
-							if (active !== loop || generation !== token) return;
-							if (/^(Nothing to compact \(session too small\)|Already compacted)$/.test(error.message)) resume();
-							else if (isRateLimitError(error)) retryAfterFailure(loop, tick);
-							else stop(`Loop stopped: compaction failed (${error.message}).`, "failed");
-						},
+						onError,
 					});
 				} catch (error) {
-					if (isRateLimitError(error)) retryAfterFailure(loop, tick);
-					else stop(`Loop stopped: compaction failed (${String(error)}).`, "failed");
+					onError(error);
 				}
 				return;
 			}
@@ -470,13 +482,13 @@ export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
 			verdict = await check(loop.condition!, loop.prompt, loop.lastOutput!, ctx, controller.signal);
 		} catch (error) {
 			if (active === loop && !controller.signal.aborted &&
-				(isRateLimitError(error) || (loop.returnToBase && isTransientGitHubError(error)))) {
+				(isRateLimitError(error) || isTimeoutError(error) || (loop.returnToBase && isTransientGitHubError(error)))) {
 				retryAfterFailure(loop, () => {
 					if (active !== loop || controller.signal.aborted) return;
 					loop.phase = "checking";
 					updateStatus(ctx);
 					void evaluate(loop, ctx, controller);
-				}, isRateLimitError(error) ? "rate limited" : "GitHub unavailable");
+				}, isRateLimitError(error) ? "rate limited" : isTimeoutError(error) ? "timed out" : "GitHub unavailable");
 			} else if (active === loop) stop(`Loop stopped: completion check failed (${String(error)}).`, "failed");
 			return;
 		}
