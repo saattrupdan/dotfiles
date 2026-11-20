@@ -862,7 +862,7 @@ export class PttEditor extends CustomEditor {
 	wantsKeyRelease = true;
 
 	constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) {
-		super(tui, theme, keybindings);
+		super(tui, theme, keybindings, { embedWorkingStatus: true });
 		// eslint-disable-next-line @typescript-eslint/no-this-alias
 		liveEditor = this;
 	}

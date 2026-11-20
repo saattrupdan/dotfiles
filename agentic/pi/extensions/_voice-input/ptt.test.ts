@@ -1,7 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { applyStreamEventToText, needsStreamFallback } from "./ptt.ts";
+import { applyStreamEventToText, needsStreamFallback, PttEditor } from "./ptt.ts";
+
+test("voice editor keeps Pi's default top-border activity indicator and normal typing", () => {
+	const tui = { terminal: { rows: 40 }, requestRender() {} } as ConstructorParameters<typeof PttEditor>[0];
+	const theme = { borderColor: (text: string) => text } as ConstructorParameters<typeof PttEditor>[1];
+	const keys = { matches: () => false } as unknown as ConstructorParameters<typeof PttEditor>[2];
+	const editor = new PttEditor(tui, theme, keys);
+	editor.setWorkingStatusIndicator({
+		renderInBorder: () => "Thinking...",
+		renderSpinnerInBorder: () => "*",
+	} as Parameters<PttEditor["setWorkingStatusIndicator"]>[0]);
+	editor.handleInput("x");
+	assert.equal(editor.getText(), "x");
+	assert.match(editor.render(80)[0], /Thinking\.\.\./);
+	assert.equal(editor.embedWorkingStatus, true);
+	assert.equal(editor.wantsKeyRelease, true, "push-to-talk key handling stays enabled");
+});
 
 test("an empty but successfully received final does not trigger batch fallback", () => {
 	assert.equal(needsStreamFallback({ finalReceived: true, failed: false }), false);
