@@ -16,7 +16,7 @@ export function entry(id: string, role: "user" | "assistant" | "toolResult", tex
 	} as SessionEntry;
 }
 
-export function conversation(count = 20, chars = 20_000): SessionEntry[] {
+export function conversation(count = 20, chars = 24_000): SessionEntry[] {
 	return linkEntries(Array.from({ length: count }, (_, i) => entry(`message-${i}`, i % 2 ? "assistant" : "user", `${i}:` + "x".repeat(chars))));
 }
 

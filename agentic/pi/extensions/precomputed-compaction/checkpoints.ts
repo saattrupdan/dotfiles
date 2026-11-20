@@ -23,7 +23,8 @@ export interface Config {
 	startTokens: number;
 	updateTokens: number;
 	keepRecentTokens: number;
-	compactAtTokens: number;
+	startHeadroomTokens: number;
+	compactHeadroomTokens: number;
 	maxChunkTokens: number;
 	summaryMaxTokens: number;
 	timeoutMs: number;
@@ -32,7 +33,8 @@ export interface Config {
 export const DEFAULT_CONFIG: Config = {
 	enabled: true, provider: "openai-codex", model: "gpt-6-luna", thinkingLevel: "low",
 	startTokens: 50_000, updateTokens: 15_000, keepRecentTokens: 30_000,
-	compactAtTokens: 200_000, maxChunkTokens: 30_000, summaryMaxTokens: 8_000, timeoutMs: 180_000,
+	startHeadroomTokens: 150_000, compactHeadroomTokens: 50_000,
+	maxChunkTokens: 30_000, summaryMaxTokens: 8_000, timeoutMs: 180_000,
 };
 
 export interface Checkpoint {
@@ -69,25 +71,28 @@ export function parseConfig(value: unknown): Config {
 		if (typeof config[key] !== "string" || !config[key].trim()) throw new Error(`${key} must be a nonempty string`);
 	}
 	if (!["off", "minimal", "low", "medium", "high"].includes(config.thinkingLevel)) throw new Error("Invalid thinkingLevel");
-	for (const key of ["startTokens", "updateTokens", "keepRecentTokens", "compactAtTokens", "maxChunkTokens", "summaryMaxTokens", "timeoutMs"] as const) {
+	for (const key of ["startTokens", "updateTokens", "keepRecentTokens", "startHeadroomTokens", "compactHeadroomTokens", "maxChunkTokens", "summaryMaxTokens", "timeoutMs"] as const) {
 		if (!Number.isSafeInteger(config[key]) || config[key] <= 0) throw new Error(`${key} must be a positive integer`);
 	}
-	if (config.keepRecentTokens >= config.startTokens || config.startTokens >= config.compactAtTokens) {
-		throw new Error("Expected keepRecentTokens < startTokens < compactAtTokens");
+	if (config.keepRecentTokens >= config.startTokens || config.startHeadroomTokens <= config.compactHeadroomTokens) {
+		throw new Error("Expected keepRecentTokens < startTokens and startHeadroomTokens > compactHeadroomTokens");
 	}
 	return config;
 }
 
-export function scaledConfig(config: Config, window: number, reserveTokens: number): Config {
-	const scale = Math.min(1, window / 256_000);
-	const scaled = { ...config };
-	for (const key of ["startTokens", "updateTokens", "keepRecentTokens", "compactAtTokens", "summaryMaxTokens"] as const) {
+export function scaledConfig(config: Config, window: number, reserveTokens: number): Config & { compactAtTokens: number } {
+	const startTokens = Math.max(config.startTokens, window - config.startHeadroomTokens);
+	const compactAtTokens = Math.min(window - config.compactHeadroomTokens, window - reserveTokens - 1024);
+	const scaled = {
+		...config, startTokens, compactAtTokens,
+		// Windows without room for preparation retain native compaction, including overflow recovery.
+		enabled: config.enabled && Number.isFinite(window) && Number.isFinite(reserveTokens)
+			&& startTokens < compactAtTokens,
+	};
+	const scale = Math.min(1, Math.max(0, window / 256_000));
+	for (const key of ["updateTokens", "keepRecentTokens", "summaryMaxTokens"] as const) {
 		scaled[key] = Math.max(1, Math.floor(config[key] * scale));
 	}
-	// Respect native model-specific reserves, including smaller windows.
-	scaled.compactAtTokens = Math.max(1, Math.min(scaled.compactAtTokens, Math.floor((window - reserveTokens) * 0.9)));
-	scaled.startTokens = Math.min(scaled.startTokens, Math.floor(scaled.compactAtTokens * 0.6));
-	scaled.keepRecentTokens = Math.min(scaled.keepRecentTokens, Math.floor(scaled.startTokens * 0.6));
 	return scaled;
 }
 
@@ -145,8 +150,8 @@ export function latestCheckpoint(branch: SessionEntry[], history = projectHistor
 	return undefined;
 }
 
-export function planCheckpoint(history: History, config: Config, checkpoint?: Checkpoint): Work | undefined {
-	if (history.tokens < config.startTokens) return undefined;
+export function planCheckpoint(history: History, config: Config, checkpoint?: Checkpoint, contextTokens = history.tokens): Work | undefined {
+	if (contextTokens < config.startTokens) return undefined;
 	const from = checkpoint ? cutIndex(history, checkpoint) : history.startIndex;
 	if (from < history.startIndex) return undefined;
 	let tailTokens = 0;

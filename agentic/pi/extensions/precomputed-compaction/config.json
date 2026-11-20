@@ -6,7 +6,8 @@
   "startTokens": 50000,
   "updateTokens": 15000,
   "keepRecentTokens": 30000,
-  "compactAtTokens": 200000,
+  "startHeadroomTokens": 150000,
+  "compactHeadroomTokens": 50000,
   "maxChunkTokens": 30000,
   "summaryMaxTokens": 8000,
   "timeoutMs": 180000

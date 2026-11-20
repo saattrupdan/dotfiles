@@ -16,19 +16,34 @@ import { summary, entry, conversation, checkpointFor, storedCheckpoint, linkEntr
 
 const small = { ...DEFAULT_CONFIG, startTokens: 200, updateTokens: 60, keepRecentTokens: 100, maxChunkTokens: 180 };
 
-test("configuration is independent, validated, and scales below native model reserves", () => {
+test("configuration validates preparation floors and ordered headroom", () => {
 	assert.deepEqual(parseConfig({}), DEFAULT_CONFIG);
 	assert.equal(parseConfig({ model: "other" }).model, "other");
-	for (const invalid of [null, [], { enabled: "yes" }, { model: "" }, { thinkingLevel: "turbo" }, { updateTokens: -1 }, { startTokens: 20 }]) {
+	for (const invalid of [null, [], { enabled: "yes" }, { model: "" }, { thinkingLevel: "turbo" }, { updateTokens: -1 }, { startTokens: 20 }, { startHeadroomTokens: 50_000 }, { compactHeadroomTokens: 0 }]) {
 		assert.throws(() => parseConfig(invalid));
 	}
-	const normal = scaledConfig(DEFAULT_CONFIG, 256_000, 16_384);
-	assert.deepEqual(normal, DEFAULT_CONFIG);
-	const smaller = scaledConfig(DEFAULT_CONFIG, 32_000, 16_384);
-	assert.ok(smaller.compactAtTokens < 32_000 - 16_384);
-	assert.ok(smaller.keepRecentTokens < smaller.startTokens);
-	assert.ok(smaller.startTokens < smaller.compactAtTokens);
-	assert.ok(smaller.summaryMaxTokens < DEFAULT_CONFIG.summaryMaxTokens);
+});
+
+test("thresholds follow the effective context window without a large-window ceiling", () => {
+	for (const window of [200_000, 250_000, 256_000, 300_000, 1_000_000]) {
+		const resolved = scaledConfig(DEFAULT_CONFIG, window, 16_384);
+		assert.equal(resolved.enabled, true);
+		assert.equal(resolved.startTokens, Math.max(50_000, window - 150_000));
+		assert.equal(resolved.compactAtTokens, window - 50_000);
+		assert.equal(resolved.keepRecentTokens, Math.floor(30_000 * Math.min(1, window / 256_000)));
+	}
+	assert.equal(scaledConfig(DEFAULT_CONFIG, 128_000, 16_384).startTokens, 50_000);
+	assert.equal(scaledConfig({ ...DEFAULT_CONFIG, enabled: false }, 256_000, 16_384).enabled, false);
+});
+
+test("small or invalid windows leave native compaction in charge", () => {
+	for (const window of [0, 2048, 32_000, 100_000, Infinity, NaN]) {
+		assert.equal(scaledConfig(DEFAULT_CONFIG, window, 16_384).enabled, false);
+	}
+	const reserved = scaledConfig(DEFAULT_CONFIG, 250_000, 120_000);
+	assert.equal(reserved.compactAtTokens, 128_976);
+	assert.equal(reserved.enabled, true);
+	assert.equal(scaledConfig(DEFAULT_CONFIG, 250_000, 160_000).enabled, false);
 });
 
 test("short histories and a tail with no eligible source do not start summaries", () => {

@@ -5,7 +5,7 @@ import path from "node:path";
 import test, { type TestContext } from "node:test";
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import extension from "./index.ts";
-import { CHECKPOINT_TYPE, latestCheckpoint } from "./checkpoints.ts";
+import { CHECKPOINT_TYPE, latestCheckpoint, projectHistory } from "./checkpoints.ts";
 import { checkpointFor, conversation, entry, storedCheckpoint, summary, linkEntries } from "./fixtures.ts";
 
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
@@ -22,7 +22,7 @@ function setup(t: TestContext, initial = conversation(), ignoreAbort = false) {
 	let sessionId = "session-one";
 	let idle = true;
 	let pending = false;
-	let tokens = 150_000;
+	let tokens = projectHistory(branch).tokens;
 	let command: ((args: string, ctx: ExtensionContext) => Promise<void>) | undefined;
 	const model = { provider: "openai-codex", id: "gpt-6-luna", contextWindow: 256_000, maxTokens: 32_000 };
 	const ctx = {
@@ -120,10 +120,13 @@ test("worker is detached, singleton, separately configured and does not rewrite 
 });
 
 test("footer shows the same symbol for preparation and retry, and nothing when ready or inactive", async t => {
-	const app = setup(t, conversation(12));
+	const app = setup(t, conversation(12, 36_000));
 	app.event("session_start");
 	assert.equal(app.statuses.at(-1), "🫸💬🫷");
-	await app.complete();
+	for (let i = 0; i < app.calls.length; i++) {
+		assert.ok(i < 20, "background preparation must finish");
+		await app.complete(i);
+	}
 	assert.equal(app.statuses.at(-1), undefined, "ready checkpoints are silent");
 	assert.ok(app.statuses.every(status => status === undefined || status === "🫸💬🫷"));
 
@@ -145,6 +148,52 @@ test("short conversations do not spend summary requests", t => {
 	app.event("session_start");
 	app.event("turn_end");
 	assert.equal(app.calls.length, 0);
+});
+
+test("preparation uses reported usage and follows model-window changes", async t => {
+	const app = setup(t);
+	app.tokens = 105_999;
+	app.event("session_start");
+	assert.equal(app.calls.length, 0);
+	app.tokens = 106_000;
+	app.event("turn_end");
+	assert.equal(app.calls.length, 1);
+	app.event("session_before_switch");
+	await tick();
+	app.ctx.model!.contextWindow = 300_000;
+	app.event("session_start");
+	assert.equal(app.calls.length, 1);
+	app.tokens = 150_000;
+	app.event("turn_end");
+	assert.equal(app.calls.length, 2);
+});
+
+test("small windows skip background work and preserve native automatic compaction", t => {
+	const branch = conversation();
+	const app = setup(t, [...branch, storedCheckpoint(checkpointFor(branch))]);
+	app.ctx.model!.contextWindow = 32_000;
+	app.event("session_start");
+	assert.equal(app.calls.length, 0);
+	assert.equal(app.hook("threshold"), undefined);
+	app.event("session_compact_failed");
+	assert.equal(app.hook("overflow"), undefined);
+});
+
+test("idle swaps wait until the model-relative replacement threshold", async t => {
+	for (const window of [250_000, 300_000]) {
+		const branch = conversation();
+		const app = setup(t, [...branch, storedCheckpoint(checkpointFor(branch))]);
+		app.ctx.model!.contextWindow = window;
+		app.tokens = window - 50_001;
+		app.event("session_start");
+		app.event("agent_settled");
+		await new Promise(resolve => setTimeout(resolve, 10));
+		assert.equal(app.compactCalls.length, 0);
+		app.tokens = window - 50_000;
+		app.event("agent_settled");
+		await new Promise(resolve => setTimeout(resolve, 10));
+		assert.equal(app.compactCalls.length, 1);
+	}
 });
 
 test("manual compaction is untouched; automatic compaction uses a saved checkpoint without awaiting a worker", t => {
@@ -289,7 +338,7 @@ test("the background source includes full tool outputs rather than Pi's native t
 		entry("request", "user", "Read the log and preserve the final diagnostic."),
 		entry("call", "assistant", "", { content: [{ type: "toolCall", id: "read-log", name: "read", arguments: { path: "build.log" } }] }),
 		entry("result", "toolResult", longResult, { toolCallId: "read-log", toolName: "read" }),
-		...conversation(12, 20_000),
+		...conversation(12, 36_000),
 	]);
 	const app = setup(t, branch);
 	app.event("session_start");

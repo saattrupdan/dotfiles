@@ -93,10 +93,11 @@ export default function (pi: ExtensionAPI) {
 		// /settings can change this between turns; never retain a private stale copy.
 		const native = SettingsManager.create(ctx.cwd).getCompactionSettings(ctx.model);
 		if (!native.enabled || ctx.model.contextWindow <= native.reserveTokens + 2048) return undefined;
+		const resolved = scaledConfig(config, ctx.model.contextWindow, native.reserveTokens);
+		if (!resolved.enabled) return undefined;
 		const branch = ctx.sessionManager.getBranch();
 		const history = projectHistory(branch);
-		return { native, branch, history, checkpoint: latestCheckpoint(branch, history),
-			config: scaledConfig(config, ctx.model.contextWindow, native.reserveTokens) };
+		return { native, branch, history, checkpoint: latestCheckpoint(branch, history), config: resolved };
 	};
 
 	const scheduleSwap = (ctx: ExtensionContext) => {
@@ -138,7 +139,7 @@ export default function (pi: ExtensionAPI) {
 		const maxChunkTokens = Math.min(config.maxChunkTokens, Math.floor((model?.contextWindow ?? 0) * 0.75) - Math.ceil(previous.length / 4) - outputBudget - 4096);
 		if (maxChunkTokens <= 0) return;
 		const workConfig = { ...state.config, maxChunkTokens };
-		const work = planCheckpoint(state.history, workConfig, state.checkpoint);
+		const work = planCheckpoint(state.history, workConfig, state.checkpoint, ctx.getContextUsage()?.tokens ?? state.history.tokens);
 		if (!work) {
 			if (!lastError) status(ctx, state.checkpoint ? "ready" : undefined);
 			return;
