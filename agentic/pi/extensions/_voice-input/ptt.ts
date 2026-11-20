@@ -678,8 +678,8 @@ async function stopStreamingBackend(ctx: ExtensionContext): Promise<string> {
 		} catch {
 			// already closed
 		}
-		// The remote SYV batch endpoint can take longer than local whisper-server.
-		const closeTimeoutMs = CONFIG.backend === "syv" ? CONFIG.streamTimeoutMs + 2_000 : 1500;
+		// Give either backend its full final-request timeout plus a shutdown margin.
+		const closeTimeoutMs = CONFIG.streamTimeoutMs + 2_000;
 		await waitForClose(proc, closeTimeoutMs);
 		if (proc.exitCode === null) proc.kill("SIGTERM");
 		await waitForClose(proc, 500);
