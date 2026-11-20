@@ -129,6 +129,12 @@ test(
         nativeSessionId: native ? "nvim-phone-resume-fixture" : undefined,
         name: "Phone layout fixture",
         cwd: "/Users/fixture",
+        capabilities: [
+          { name: "review", supported: true },
+          { name: "implement", supported: true },
+          { name: "skill:python", supported: true },
+          { name: "reload", supported: false, reason: "Use the local terminal" },
+        ],
         epoch: stopped ? 0 : 1,
         sequence: promptSequence,
         lastActivity: 1000,
@@ -2080,6 +2086,88 @@ test(
           await expect
             .poll(() => page.evaluate("window.__notificationAcks"))
             .toEqual([{ type: "notification-opened", id: 7 }]);
+        },
+      );
+      await t.test(
+        "composer completes and sends slash commands without treating them as messages",
+        async () => {
+          const input = page.getByRole("textbox", { name: "Message Pi" });
+          const menu = page.getByRole("listbox", { name: "Slash commands" });
+          const before = submissions.length;
+          await input.fill("/");
+          await expect(menu.getByRole("option")).toHaveCount(4);
+          await input.press("ArrowDown");
+          await expect(input).toHaveAttribute("aria-activedescendant", "composer-command-1");
+          await input.press("Escape");
+          await expect(menu).toHaveCount(0);
+          await input.fill("/re");
+          await expect(menu.getByRole("option")).toHaveCount(2);
+          await expect(menu.getByRole("option", { name: /reload/ })).toHaveAttribute(
+            "aria-disabled", "true",
+          );
+          await menu.getByRole("option", { name: /reload/ }).click({ force: true });
+          await expect(input).toHaveValue("/re");
+          await input.press("ArrowDown");
+          await input.press("Enter");
+          await expect(input).toHaveValue("/review ");
+          await expect(menu).toHaveCount(0);
+          assert.equal(submissions.length, before);
+          await page.getByRole("button", { name: "Send message", exact: true }).click();
+          await expect.poll(() => submissions.length).toBe(before + 1);
+          assert.deepEqual(submissions.at(-1), { action: "slash", name: "review", args: "" });
+          await expect(input).toHaveValue("");
+
+          await input.fill("/skill:p");
+          await menu.getByRole("option", { name: "/skill:python", exact: true }).click();
+          await expect(input).toBeFocused();
+          await expect(input).toHaveValue("/skill:python ");
+          await input.fill("/skill:python explain this\nand that");
+          await page.getByRole("button", { name: "Send message", exact: true }).click();
+          await expect.poll(() => submissions.length).toBe(before + 2);
+          assert.deepEqual(submissions.at(-1), {
+            action: "slash", name: "skill:python", args: "explain this\nand that",
+          });
+
+          await input.fill("/im");
+          await input.press("Tab");
+          await expect(input).toHaveValue("/implement ");
+          await input.fill("/no-such-command");
+          await expect(page.getByText("No matching commands", { exact: true })).toBeVisible();
+          await page.getByRole("button", { name: "Send message", exact: true }).click();
+          await expect(page.getByRole("alert")).toHaveText("Unknown command /no-such-command.");
+          await expect(input).toHaveValue("/no-such-command");
+          await input.fill("/reload");
+          await page.getByRole("button", { name: "Send message", exact: true }).click();
+          await expect(page.getByRole("alert")).toHaveText("Use the local terminal");
+          assert.equal(submissions.length, before + 2);
+          await input.fill("ordinary /review text");
+          await expect(menu).toHaveCount(0);
+          await page.getByRole("button", { name: "Send message", exact: true }).click();
+          await expect.poll(() => submissions.length).toBe(before + 3);
+          assert.deepEqual(submissions.at(-1), {
+            action: "message", text: "ordinary /review text", images: [],
+          });
+
+          let attempts = 0;
+          const failCommand = async (route: Route) => {
+            attempts++;
+            await route.fulfill({ status: 503, json: { error: "lost_response" } });
+          };
+          const unknownStatus = (route: Route) =>
+            route.fulfill({ json: { status: "delivery_unknown" } });
+          await page.route("**/api/v1/sessions/*/actions", failCommand);
+          await page.route("**/api/v1/commands/*", unknownStatus);
+          try {
+            await input.fill("/review   check this");
+            await page.getByRole("button", { name: "Send message", exact: true }).click();
+            await expect(page.getByRole("alert")).toHaveText("lost_response");
+            await expect(input).toHaveValue("");
+            assert.equal(attempts, 1);
+            await expect(page.getByRole("button", { name: "Explicitly retry" })).toBeVisible();
+          } finally {
+            await page.unroute("**/api/v1/sessions/*/actions", failCommand);
+            await page.unroute("**/api/v1/commands/*", unknownStatus);
+          }
         },
       );
       await t.test(

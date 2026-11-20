@@ -9,6 +9,11 @@ import { isUntitled } from "../lib/conversation-name.ts";
 import Icon from "../components/Icon.vue";
 import { remoteCommandId, receiptLabel } from "../lib/receipts.ts";
 import type { Command } from "../../../../protocol/src/index.ts";
+import {
+  composerCommand,
+  matchingCommands,
+  slashQuery,
+} from "../lib/slash-commands.ts";
 const toolsExpanded = ref(false),
   thinkingExpanded = ref(false);
 let disposed = false;
@@ -161,6 +166,67 @@ watch(
   { flush: "pre" },
 );
 const composerInput = ref<HTMLTextAreaElement>();
+const commandMenu = ref<HTMLElement>();
+const composerFocused = ref(false);
+const commandsDismissed = ref(false);
+const activeCommand = ref(0);
+const commandMatches = computed(() =>
+  matchingCommands(draft.value, session.value?.capabilities ?? []),
+);
+const commandsVisible = computed(
+  () =>
+    composerFocused.value &&
+    !sending.value &&
+    !commandsDismissed.value &&
+    slashQuery(draft.value) !== undefined,
+);
+watch([draft, id, commandMatches], () => {
+  commandsDismissed.value = false;
+  activeCommand.value = commandMatches.value.findIndex((command) => command.supported);
+});
+watch(activeCommand, async () => {
+  await nextTick();
+  const menu = commandMenu.value;
+  const row = menu?.children[activeCommand.value] as HTMLElement | undefined;
+  if (!menu || !row) return;
+  if (row.offsetTop < menu.scrollTop) menu.scrollTop = row.offsetTop;
+  else if (row.offsetTop + row.offsetHeight > menu.scrollTop + menu.clientHeight)
+    menu.scrollTop = row.offsetTop + row.offsetHeight - menu.clientHeight;
+});
+function chooseCommand(index: number) {
+  const command = commandMatches.value[index];
+  if (!command?.supported) return;
+  draft.value = `/${command.name} `;
+  composerInput.value?.focus();
+}
+function composerKeydown(event: KeyboardEvent) {
+  if (
+    !commandsVisible.value ||
+    event.isComposing ||
+    event.shiftKey ||
+    event.ctrlKey ||
+    event.metaKey ||
+    event.altKey
+  )
+    return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    commandsDismissed.value = true;
+  } else if (["ArrowDown", "ArrowUp"].includes(event.key)) {
+    event.preventDefault();
+    const available = commandMatches.value
+      .map((command, index) => (command.supported ? index : -1))
+      .filter((index) => index >= 0);
+    if (!available.length) return;
+    const step = event.key === "ArrowDown" ? 1 : -1;
+    const current = available.indexOf(activeCommand.value);
+    activeCommand.value =
+      available[(current + step + available.length) % available.length]!;
+  } else if (["Enter", "Tab"].includes(event.key) && activeCommand.value >= 0) {
+    event.preventDefault();
+    chooseCommand(activeCommand.value);
+  }
+}
 let automaticUntil = 0;
 let loadGeneration = 0;
 function nearBottom() {
@@ -401,18 +467,25 @@ async function send() {
     sending.value = false;
     return;
   }
+  let command: Command;
+  try {
+    command = composerCommand(text, attached, session.value?.capabilities ?? []);
+  } catch (e) {
+    error.value = (e as Error).message;
+    sending.value = false;
+    return;
+  }
   draft.value = "";
   images.value = [];
   const urls = previews.value;
   previews.value = [];
-  const sent = await action({ action: "message", text, images: attached });
+  const sent = await action(command);
   if (
     !sent &&
     !Object.values(store.pending).some(
       (entry) =>
         entry.sessionId === target &&
-        entry.text === text &&
-        JSON.stringify(entry.images) === JSON.stringify(attached),
+        JSON.stringify(entry.command) === JSON.stringify(command),
     ) &&
     !disposed &&
     id.value === target &&
@@ -574,7 +647,7 @@ async function upload(event: Event) {
             v-model="args"
             placeholder="Command arguments"
           /><button
-            :disabled="!slash || !args.trim()"
+            :disabled="!slash"
             @click="action({ action: 'slash', name: slash, args })"
           >
             Run command
@@ -775,6 +848,36 @@ async function upload(event: Event) {
           continue.
         </p>
       </div>
+      <div
+        v-if="commandsVisible && question?.state !== 'pending'"
+        class="slash-commands"
+      >
+        <ul
+          id="composer-commands"
+          ref="commandMenu"
+          role="listbox"
+          aria-label="Slash commands"
+        >
+          <li
+            v-for="(command, index) in commandMatches"
+            :id="`composer-command-${index}`"
+            :key="command.name"
+            role="option"
+            :aria-selected="index === activeCommand"
+            :aria-disabled="!command.supported"
+            @pointerdown.prevent
+            @click="chooseCommand(index)"
+          >
+            <span>/{{ command.name }}</span>
+            <span v-if="!command.supported" class="small muted">
+              {{ command.reason || 'Only available on your laptop' }}
+            </span>
+          </li>
+        </ul>
+        <p v-if="!commandMatches.length" class="small muted" role="status">
+          No matching commands
+        </p>
+      </div>
       <form
         v-if="question?.state !== 'pending'"
         class="message-form"
@@ -795,6 +898,17 @@ async function upload(event: Event) {
           placeholder="Message"
           rows="1"
           aria-label="Message Pi"
+          aria-autocomplete="list"
+          aria-haspopup="listbox"
+          :aria-controls="commandsVisible ? 'composer-commands' : undefined"
+          :aria-activedescendant="
+            commandsVisible && activeCommand >= 0
+              ? `composer-command-${activeCommand}`
+              : undefined
+          "
+          @focus="composerFocused = true"
+          @blur="composerFocused = false"
+          @keydown="composerKeydown"
           @input="growComposer"
         />
         <div class="row">
@@ -830,6 +944,44 @@ async function upload(event: Event) {
   </section>
 </template>
 <style scoped>
+.slash-commands {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.slash-commands ul {
+  position: relative;
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  max-height: min(240px, 35dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.slash-commands li {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 10px;
+  min-height: 44px;
+  justify-content: center;
+  border-radius: 10px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.slash-commands li[aria-selected="true"] {
+  background: var(--bg);
+  color: var(--accent);
+}
+.slash-commands li[aria-disabled="true"] {
+  cursor: default;
+  color: var(--muted);
+}
+.slash-commands p {
+  padding: 8px 14px;
+  margin: 0;
+}
 .working-status {
   display: flex;
   align-items: center;
