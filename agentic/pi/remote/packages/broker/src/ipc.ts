@@ -420,6 +420,7 @@ export class Connections {
                     : session.loop,
               };
             const before = JSON.stringify([
+              session.name,
               session.state,
               session.loop,
               session.prompt,
@@ -478,6 +479,7 @@ export class Connections {
             if (
               before !==
               JSON.stringify([
+                session.name,
                 session.state,
                 session.loop,
                 session.prompt,

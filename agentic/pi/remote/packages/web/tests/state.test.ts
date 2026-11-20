@@ -1323,3 +1323,55 @@ test("locking during bulk acknowledgement cannot repopulate conversations", asyn
     t.mock.timers.reset();
   }
 });
+
+for (const view of ["home", "folder", "conversation"] as const)
+  test(`title notifications refresh generated titles and later renames in ${view}`, async (t) => {
+    t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
+    Object.assign(globalThis, {
+      document: { visibilityState: "visible", addEventListener() {} },
+      window: { addEventListener() {} },
+      location: { protocol: "https:", host: "fixture.test.ts.net" },
+      WebSocket: Socket,
+    });
+    setActivePinia(createPinia());
+    const auth = useAuth(),
+      store = useSessions();
+    auth.unlocked = true;
+    auth.visible = true;
+    const id = crypto.randomUUID();
+    let name = "Untitled";
+    const row = () => ({
+      sessionId: id,
+      name,
+      cwd: "/fixture",
+      epoch: 1,
+      sequence: 0,
+      state: "idle",
+    }) as Session;
+    auth.request = (async (url: string) => {
+      if (url === "/session-folders") return [];
+      if (url === `/sessions/${id}`) return row();
+      if (url.startsWith("/sessions")) return [row()];
+      throw new Error(`Unexpected request: ${url}`);
+    }) as typeof auth.request;
+    const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+    try {
+      await store.loadFolders();
+      if (view === "folder") await store.refresh("/fixture");
+      store.connect(view === "conversation" ? id : "");
+      Socket.latest.onopen?.();
+      await flush();
+      for (name of ["Generated title", "Changed topic", "Later local rename"]) {
+        Socket.latest.onmessage?.({
+          data: JSON.stringify({ version: 1, type: "sessions.changed", data: null }),
+        });
+        await flush();
+        assert.equal(store.sessions.find((s) => s.sessionId === id)?.name, name);
+        assert.equal(store.listing.find((s) => s.sessionId === id)?.name, name);
+        assert.equal(store.homeListing.find((s) => s.sessionId === id)?.name, name);
+      }
+    } finally {
+      auth.clear();
+      t.mock.timers.reset();
+    }
+  });
