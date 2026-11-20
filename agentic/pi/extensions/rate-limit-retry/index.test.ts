@@ -64,6 +64,12 @@ const rateLimited = () => ({
 });
 const codexError = "Error: Codex error: An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists.";
 const upstreamBufferError = "exceeded request buffer limit while retrying upstream";
+const disconnectedErrors = [
+	"Error: upstream connect error or disconnect/reset before headers. retried and the latest reset reason: remote connection failure",
+	"Error: terminated: other side closed (UND_ERR_SOCKET)",
+	"Error: terminated: other side closed",
+	"Error: WebSocket error",
+];
 const success = () => ({ message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Done" }] } });
 
 test("masks rate-limit errors, keeps one run, counts each retry and resets on success", async () => {
@@ -121,6 +127,41 @@ test("empty transient transport errors retry until connectivity returns", async 
 	await run.emit("message_end", success());
 	assert.equal(await run.emit("turn_end"), undefined);
 });
+
+for (const errorMessage of disconnectedErrors) {
+	test(`connection failures retry without displaying errors: ${errorMessage}`, async () => {
+		const run = harness();
+		const failed = () => ({ message: {
+			role: "assistant", stopReason: "error", errorMessage, content: [],
+		} });
+		for (let attempt = 0; attempt < 6; attempt++) {
+			const start = failed();
+			await run.emit("message_start", start);
+			assert.equal(start.message.stopReason, "pending");
+			assert.equal(start.message.errorMessage, undefined);
+			const masked = await run.emit("message_end", failed()) as { message: {
+				stopReason: string; errorMessage?: string; diagnostics: Array<{ error: { message: string } }>;
+			} };
+			assert.equal(masked.message.stopReason, "stop");
+			assert.equal(masked.message.errorMessage, undefined);
+			assert.equal(masked.message.diagnostics[0].error.message, errorMessage);
+			const turn = await run.emit("turn_end") as { continue: boolean; entries: Array<{ display: boolean }> };
+			assert.equal(turn.continue, true);
+			assert.equal(turn.entries[0].display, false);
+		}
+		assert.deepEqual(run.delays, [2000, 4000, 8000, 16000, 32000, 60000]);
+		assert.equal(run.messages.length, 0);
+		await run.emit("message_end", success());
+		assert.equal(run.retryStates.at(-1), false);
+		assert.equal(await run.emit("turn_end"), undefined);
+		run.command("off");
+		const disabled = failed();
+		await run.emit("message_start", disabled);
+		assert.equal(disabled.message.stopReason, "error");
+		assert.equal(await run.emit("message_end", disabled), undefined);
+		assert.equal(await run.emit("turn_end"), undefined);
+	});
+}
 
 test("empty server overload errors retry quietly until recovery", async () => {
 	const run = harness();
@@ -384,7 +425,7 @@ test("other errors and partial retryable responses keep Pi's normal rendering", 
 	const otherError = { message: { role: "assistant", stopReason: "error", errorMessage: "HTTP 500", content: [] } };
 	assert.equal(await run.emit("message_end", otherError), undefined);
 	assert.equal(await run.emit("turn_end"), undefined);
-	for (const error of [rateLimited().message.errorMessage, "fetch failed", "WebSocket closed 1000", "Error: WebSocket closed 1012", "Our servers are currently overloaded. Please try again later.", codexError, upstreamBufferError]) {
+	for (const error of [...disconnectedErrors, rateLimited().message.errorMessage, "fetch failed", "WebSocket closed 1000", "Error: WebSocket closed 1012", "Our servers are currently overloaded. Please try again later.", codexError, upstreamBufferError]) {
 		const partial = { message: { ...rateLimited().message, errorMessage: error, content: [{ type: "text", text: "partial" }] } };
 		assert.equal(await run.emit("message_end", partial), undefined);
 		assert.equal(await run.emit("turn_end"), undefined);

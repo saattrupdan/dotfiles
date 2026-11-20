@@ -40,6 +40,9 @@ function isRetryableError(error: string | undefined): boolean {
 	const text = (error ?? "").toLowerCase();
 	return isTransientWebSocketClosure(error) || isTransientCodexError(error) || /\b429\b/.test(text) ||
 		text.includes("exceeded request buffer limit while retrying upstream") ||
+		text.includes("upstream connect error or disconnect/reset before headers") ||
+		/^\s*(?:error:\s*)?websocket error\s*$/i.test(error ?? "") ||
+		/\b(?:und_err_socket|terminated: other side closed)\b/.test(text) ||
 		/rate[ _-]?limit/.test(text) || text.includes("too many requests") ||
 		/\b(?:servers?|service) (?:is|are) (?:currently )?overloaded\b/.test(text) ||
 		/\b(econnreset|econnrefused|etimedout|enotfound|eai_again|enetunreach|ehostunreach)\b/.test(text) ||
