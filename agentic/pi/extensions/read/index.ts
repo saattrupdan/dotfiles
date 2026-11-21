@@ -516,7 +516,7 @@ function listDirectory(absolutePath: string): AgentToolResult<unknown> {
 // ---------------------------------------------------------------------------
 
 const Params = Type.Object({
-	path: Type.String({ description: "Path to the file to read (relative or absolute)." }),
+	path: Type.String({ description: "Path to the file to read (relative, absolute, or ~/ for the home directory)." }),
 	symbol: Type.Optional(
 		Type.String({
 			description:
@@ -657,7 +657,12 @@ export default function (pi: ExtensionAPI, overrides: ReadExtensionOverrides = {
 				return rendered;
 			}
 
-			const absolutePath = path.resolve(filePath);
+			const localPath = filePath === "~"
+				? os.homedir()
+				: filePath.startsWith("~/")
+					? path.join(os.homedir(), filePath.slice(2))
+					: filePath;
+			const absolutePath = path.resolve(localPath);
 
 			// 0. Keep the active main prompt preview-only (also through its symlink).
 			const agentDir = process.env.PI_CODING_AGENT_DIR ?? path.join(os.homedir(), ".pi", "agent");
