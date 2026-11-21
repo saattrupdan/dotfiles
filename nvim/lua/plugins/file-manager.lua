@@ -15,15 +15,11 @@ return {
     "nvim-tree/nvim-web-devicons"
   },
   config = function()
-    local memory_dir = vim.fn.expand("~/memory")
-
     require("nvim-tree").setup({
       filesystem_watchers = {
-        -- Memory writes create high-churn directories when the tree is rooted at home.
-        ignore_dirs = function(path)
-          return path == memory_dir or vim.startswith(path, memory_dir .. "/")
-        end,
+        enable = false,
       },
+      reload_on_bufenter = true,
       git = {
         enable = true,
         ignore = true,
