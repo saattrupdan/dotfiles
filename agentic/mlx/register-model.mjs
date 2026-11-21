@@ -13,7 +13,7 @@ export const provider = {
   apiKey: "local",
   models: [{
     id: MODEL_ID,
-    name: "Inkling 2 Mini",
+    name: "Inkling 2 Small",
     reasoning: true,
     input: ["text", "image"],
     contextWindow: 262144,
@@ -24,6 +24,12 @@ export const provider = {
     compat: { supportsStore: false, supportsDeveloperRole: false, maxTokensField: "max_tokens" },
   }],
 };
+
+const legacyProvider = { ...provider, models: [{ ...provider.models[0], id: "inkling-2-mini", name: "Inkling 2 Mini" }] };
+const retiredProviders = Object.fromEntries([
+  ["openuncensored", "Inkling 2 Mini (OpenUncensored)"],
+  ["atomicchat", "Inkling 2 Mini (AtomicChat GGUF)"],
+].map(([variant, name]) => [variant, { ...legacyProvider, headers: { "X-Inkling-Variant": variant }, models: [{ ...legacyProvider.models[0], name }] }]));
 
 /** Preserve provider-qualified IDs while routing all variants through one worker. */
 export function providersFor(models) {
@@ -64,13 +70,20 @@ async function mergeModel(file, { readFile, writeFile, rename, unlink }, provide
       const previousProviders = [
         { id: "inkling-2-mini-heretic", name: "Inkling 2 Mini Heretic · MLX 4-bit" },
         { id: "mlx-inkling-2-mini", name: "Inkling 2 Mini" },
-        { id: MODEL_ID, name: "Inkling 2 Mini" },
-      ].map((previous) => ({ ...provider, models: [{ ...provider.models[0], contextWindow: 32768, ...previous }] }));
+        { id: "inkling-2-mini", name: "Inkling 2 Mini" },
+      ].map((previous) => ({ ...legacyProvider, models: [{ ...legacyProvider.models[0], contextWindow: 32768, ...previous }] }));
+      previousProviders.push(legacyProvider);
       if (name !== "mlx" || !previousProviders.some((previous) => isDeepStrictEqual(existing, previous))) {
         throw new Error(`Pi already has a different '${name}' provider; file unchanged`);
       }
     }
     merged[name] = desired;
+    changed = true;
+  }
+  for (const [name, expected] of Object.entries(retiredProviders)) {
+    if (name in providers || merged[name] === undefined) continue;
+    if (!isDeepStrictEqual(merged[name], expected)) throw new Error(`Pi has a customized '${name}' provider; file unchanged`);
+    delete merged[name];
     changed = true;
   }
   if (!changed) return false;

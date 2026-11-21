@@ -9,14 +9,14 @@ import { pathToFileURL } from "node:url";
 import { MODEL_ID, DEFAULT_VARIANT, installedModels, workerCommand as commandForModel, modelReady } from "./models.mjs";
 export { MODEL_ID } from "./models.mjs";
 // Open Pi sessions retain their selected ID after a registry rename.
-const INFERENCE_MODEL_IDS = new Set([MODEL_ID, "mlx-inkling-2-mini", "inkling-2-mini-heretic"]);
+const INFERENCE_MODEL_IDS = new Set([MODEL_ID, "inkling-2-mini", "mlx-inkling-2-mini", "inkling-2-mini-heretic"]);
 
 /** Own one lazy worker; discovery never loads model weights. */
 export function createGateway({
   port = 8084,
   backendPort = 18084,
-  modelPath = resolve(homedir(), "local-models/.cache/inkling-mlx-heretic-4bit"),
-  draftPath = resolve(homedir(), "local-models/.cache/inkling-mlx-regular"),
+  modelPath = resolve(homedir(), "local-models/.cache/inkling-mlx-openuncensored-4bit"),
+  draftPath = modelPath,
   python = resolve(homedir(), "local-models/.cache/inkling-mlx-env/bin/python"),
   workerCommand,
   models,
@@ -35,7 +35,7 @@ export function createGateway({
   const sockets = new Set();
   const backend = `http://127.0.0.1:${backendPort}`;
   const targets = new Map((models ?? [{
-    variant: DEFAULT_VARIANT, name: "Inkling 2 Mini", kind: "mlx", modelPath,
+    variant: DEFAULT_VARIANT, name: "Inkling 2 Small", kind: "mlx", modelPath,
     draftPath, python, upstreamModel: modelPath, command: workerCommand,
   }]).map((model) => [model.variant, model]));
 
@@ -133,10 +133,10 @@ export function createGateway({
   const server = http.createServer(async (request, response) => {
     if (closed) return reply(response, 503, "Gateway is shutting down");
     if (request.method === "GET" && request.url === "/health") {
-      return json(response, 200, { status: "healthy", service: "inkling-mlx-gateway-v2", model: MODEL_ID, loadedVariant: worker?.model.variant ?? null, worker: stopping ? "stopping" : worker?.ready ? "ready" : starting ? "starting" : "stopped", active });
+      return json(response, 200, { status: "healthy", service: "inkling-mlx-gateway-v3", model: MODEL_ID, loadedVariant: worker?.model.variant ?? null, worker: stopping ? "stopping" : worker?.ready ? "ready" : starting ? "starting" : "stopped", active });
     }
     const variant = request.headers["x-inkling-variant"] ?? DEFAULT_VARIANT;
-    const target = targets.get(variant);
+    const target = targets.get(variant) ?? (variant === "openuncensored" ? targets.get(DEFAULT_VARIANT) : undefined);
     if (request.method === "GET" && request.url === "/v1/models") {
       if (!target) return reply(response, 404, "Inkling variant is not installed");
       return json(response, 200, { object: "list", data: [{ id: MODEL_ID, object: "model", owned_by: variant }] });
@@ -248,7 +248,7 @@ async function main() {
     if (error.code !== "EADDRINUSE") throw error;
     const response = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(1000) });
     const health = await response.json();
-    if (!response.ok || health.service !== "inkling-mlx-gateway-v2" || health.model !== MODEL_ID) {
+    if (!response.ok || health.service !== "inkling-mlx-gateway-v3" || health.model !== MODEL_ID) {
       throw new Error(`Port ${port} belongs to another service`);
     }
     console.error("MLX: reusing the existing lightweight gateway");

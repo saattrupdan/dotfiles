@@ -3,18 +3,15 @@ import { constants } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 
-export const MODEL_ID = "inkling-2-mini";
+export const MODEL_ID = "inkling-2-small";
 export const DEFAULT_VARIANT = "mlx";
 
 /** Describe installed backends without importing MLX or loading any weights. */
 export async function installedModels({ home = homedir(), python, strict = true } = {}) {
   const root = resolve(home, "local-models/.cache");
   python ??= resolve(root, "inkling-mlx-env/bin/python");
-  const specs = [
-    { variant: "mlx", name: "Inkling 2 Mini", kind: "mlx", modelPath: resolve(root, "inkling-mlx-heretic-4bit"), draftPath: resolve(root, "inkling-mlx-regular") },
-    { variant: "openuncensored", name: "Inkling 2 Mini (OpenUncensored)", kind: "mlx", modelPath: resolve(root, "inkling-mlx-openuncensored-4bit"), draftPath: resolve(root, "inkling-openuncensored-native") },
-    { variant: "atomicchat", name: "Inkling 2 Mini (AtomicChat GGUF)", kind: "llamacpp", modelPath: resolve(root, "inkling-atomic-gguf/Inkling-2-Mini-Uncensored-AD-Q4_K.gguf"), projectorPath: resolve(root, "inkling-atomic-gguf/mmproj-Inkling-2-Mini-Uncensored-F16.gguf"), binary: resolve(root, "inkling-llama-b12608/llama-b12608/llama-server") },
-  ];
+  const modelPath = resolve(root, "inkling-mlx-openuncensored-4bit");
+  const specs = [{ variant: "mlx", name: "Inkling 2 Small", kind: "mlx", modelPath, draftPath: modelPath }];
   const available = [];
   for (const spec of specs) {
     try {

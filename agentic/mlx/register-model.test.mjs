@@ -21,8 +21,8 @@ test("adds image-capable model without changing unrelated credentials and settin
   assert.equal(await registerModel(file), true);
   const config = JSON.parse(await readFile(file, "utf8"));
   assert.deepEqual(config, { ...original, providers: { ...original.providers, mlx: provider } });
-  assert.equal(provider.models[0].id, "inkling-2-mini");
-  assert.equal(provider.models[0].name, "Inkling 2 Mini");
+  assert.equal(provider.models[0].id, "inkling-2-small");
+  assert.equal(provider.models[0].name, "Inkling 2 Small");
   assert.deepEqual(provider.models[0].input, ["text", "image"]);
   assert.equal(provider.models[0].contextWindow, 262144);
   assert.equal(provider.models[0].maxTokens, 8192);
@@ -120,5 +120,26 @@ test("an alternative-provider conflict leaves every proposed addition unapplied"
   await writeFile(file, original);
   const providers = providersFor([{ variant: "mlx" }, { variant: "openuncensored", name: "OpenUncensored" }, { variant: "atomicchat", name: "AtomicChat" }]);
   await assert.rejects(registerModel(file, { providers }), /different 'atomicchat' provider/);
+  assert.equal(await readFile(file, "utf8"), original);
+});
+
+
+test("current Mini256k and both exact retired providers migrate to one Small alias", async (t) => {
+  const legacy = { ...provider, models: [{ ...provider.models[0], id: "inkling-2-mini", name: "Inkling 2 Mini" }] };
+  const retired = Object.fromEntries([["openuncensored", "Inkling 2 Mini (OpenUncensored)"], ["atomicchat", "Inkling 2 Mini (AtomicChat GGUF)"]].map(([name, display]) => [name, { ...legacy, headers: { "X-Inkling-Variant": name }, models: [{ ...legacy.models[0], name: display }] }]));
+  for (const current of [legacy, provider]) {
+    const original = { unknown: true, providers: { mlx: current, ...retired, private: { apiKey: "keep" } } };
+    const { file } = await fixture(t, JSON.stringify(original));
+    assert.equal(await registerModel(file), true);
+    assert.deepEqual(JSON.parse(await readFile(file, "utf8")), { unknown: true, providers: { mlx: provider, private: { apiKey: "keep" } } });
+    assert.equal(await registerModel(file), false);
+  }
+});
+
+test("retirement refuses customized credentials without partially renaming the current provider", async (t) => {
+  const legacy = { ...provider, models: [{ ...provider.models[0], id: "inkling-2-mini", name: "Inkling 2 Mini" }] };
+  const original = JSON.stringify({ providers: { mlx: legacy, openuncensored: { apiKey: "custom-private" } } });
+  const { file } = await fixture(t, original);
+  await assert.rejects(registerModel(file), /customized 'openuncensored'/);
   assert.equal(await readFile(file, "utf8"), original);
 });

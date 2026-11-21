@@ -257,7 +257,7 @@ test("previous model ID remains usable without appearing in discovery", async (t
     assert.deepEqual(received.body.messages, messages);
   }
   const models = await (await fetch(`${base}/v1/models`)).json();
-  assert.deepEqual(models.data.map((model) => model.id), ["inkling-2-mini"]);
+  assert.deepEqual(models.data.map((model) => model.id), ["inkling-2-small"]);
 });
 
 
@@ -344,4 +344,25 @@ test("shutdown cancels queued variants without spawning their workers", async (t
   await gateway.close();
   await Promise.all([stream, queued]);
   assert.equal(logs.some((line) => line.includes("starting atomicchat")), false);
+});
+
+
+test("old OpenUncensored sessions share the canonical worker; retired Atomic sessions are rejected", async (t) => {
+  const { base, health } = await setup(t, { idleMs: 5000 });
+  const canonical = await (await infer(base)).json();
+  const legacy = await (await infer(base, { model: "inkling-2-mini" }, selected("openuncensored"))).json();
+  assert.equal(legacy.pid, canonical.pid);
+  assert.equal((await health()).loadedVariant, "mlx");
+  assert.equal((await infer(base, {}, selected("atomicchat"))).status, 404);
+  assert.equal((await (await fetch(`${base}/v1/models`)).json()).data[0].id, "inkling-2-small");
+});
+
+test("CLI refuses a stale v2 gateway even if it advertises the new model alias", async (t) => {
+  const listener = http.createServer((_request, response) => response.end(JSON.stringify({ service: "inkling-mlx-gateway-v2", model: MODEL_ID })));
+  listener.listen(0, "127.0.0.1");
+  await once(listener, "listening");
+  t.after(() => new Promise((done) => listener.close(done)));
+  const child = spawn(process.execPath, [fileURLToPath(new URL("./gateway.mjs", import.meta.url)), "--port", String(listener.address().port)], { stdio: "ignore" });
+  assert.equal((await once(child, "close"))[0], 1);
+  assert.ok(listener.listening);
 });

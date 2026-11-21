@@ -18,7 +18,7 @@ async function main() {
   if (process.platform !== "darwin" || process.arch !== "arm64") {
     throw new Error("Inkling MLX requires Apple Silicon macOS");
   }
-  const model = resolve(root, "inkling-mlx-heretic-4bit");
+  const model = resolve(root, "inkling-mlx-openuncensored-4bit");
   const config = JSON.parse(await readFile(resolve(model, "config.json"), "utf8"));
   if (config.text_config?.loop_config?.num_passes !== 3) {
     throw new Error("Inkling configuration must retain all three loop passes");
@@ -26,7 +26,7 @@ async function main() {
   const index = JSON.parse(await readFile(resolve(model, "model.safetensors.index.json"), "utf8"));
   for (const file of new Set(Object.values(index.weight_map))) await access(resolve(model, file));
   for (const file of ["chat_template.jinja", "tokenizer.json", "processor_config.json"]) await access(resolve(model, file));
-  await access(resolve(root, "inkling-mlx-regular/mtp.safetensors"));
+  await access(resolve(model, "mtp.safetensors"));
   const digest = createHash("sha256").update(await readFile(lock)).digest("hex");
   const installed = await readFile(stamp, "utf8").catch(() => "");
   let hasPython = true;
@@ -39,7 +39,7 @@ async function main() {
   }
   const models = await installedModels();
   if (await registerModel(resolve(homedir(), ".pi/agent/models.json"), { providers: providersFor(models) })) {
-    console.log(`Pi: ${models.map((model) => `${model.variant}/inkling-2-mini`).join(", ")} registered (text + images)`);
+    console.log(`Pi: ${models.map((model) => `${model.variant}/inkling-2-small`).join(", ")} registered (text + images)`);
   }
 }
 
