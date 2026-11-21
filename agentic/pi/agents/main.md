@@ -55,6 +55,7 @@ skills:
   - gws-shared
   - hf-cli
   - holi
+  - improve-codebase-architecture
   - jotta-cli
   - kultunaut-dk
   - lex-dk
