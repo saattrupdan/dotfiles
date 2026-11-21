@@ -37,7 +37,7 @@ async function main() {
     await writeFile(stamp, digest);
   }
   if (await registerModel(resolve(homedir(), ".pi/agent/models.json"))) {
-    console.log("Pi: mlx/inkling-2-mini-heretic registered (text + images)");
+    console.log("Pi: mlx/mlx-inkling-2-mini registered (text + images)");
   }
 }
 

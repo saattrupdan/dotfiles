@@ -49,6 +49,7 @@ test("discovery and invalid requests never start a worker", async (t) => {
   const { base, health } = await setup(t);
   assert.equal((await (await fetch(`${base}/v1/models`)).json()).data[0].id, MODEL_ID);
   assert.equal((await infer(base, { model: "arbitrary-model" })).status, 400);
+  assert.equal((await infer(base, { model: "inkling-2-mini-heretic" })).status, 400);
   assert.equal((await fetch(`${base}/unload`, { method: "POST" })).status, 404);
   assert.equal((await fetch(`${base}/v1/chat/completions`, { method: "POST", body: "{}" })).status, 415);
   for (const extra of [{ messages: [null] }, { messages: [{}] }, { messages: [] }, { messages: [{ role: "user", content: 42 }] }, { max_tokens: -1 }, { temperature: "hot" }, { tools: [null] }]) {

@@ -13,7 +13,7 @@ export const provider = {
   apiKey: "local",
   models: [{
     id: MODEL_ID,
-    name: "Inkling 2 Mini Heretic · MLX 4-bit",
+    name: "Inkling 2 Mini",
     reasoning: true,
     input: ["text", "image"],
     contextWindow: 32768,
@@ -48,7 +48,13 @@ async function mergeModel(file, { readFile, writeFile, rename, unlink }) {
   }
   if (config.providers?.mlx !== undefined) {
     if (isDeepStrictEqual(config.providers.mlx, provider)) return false;
-    throw new Error("Pi already has a different 'mlx' provider; file unchanged");
+    const previousProvider = {
+      ...provider,
+      models: [{ ...provider.models[0], id: "inkling-2-mini-heretic", name: "Inkling 2 Mini Heretic · MLX 4-bit" }],
+    };
+    if (!isDeepStrictEqual(config.providers.mlx, previousProvider)) {
+      throw new Error("Pi already has a different 'mlx' provider; file unchanged");
+    }
   }
   await mkdir(dirname(file), { recursive: true, mode: 0o700 });
   const temporary = `${file}.${randomUUID()}.tmp`;

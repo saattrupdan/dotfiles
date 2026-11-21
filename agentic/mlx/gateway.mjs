@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-export const MODEL_ID = "inkling-2-mini-heretic";
+export const MODEL_ID = "mlx-inkling-2-mini";
 
 /** Own one lazy worker; discovery never loads model weights. */
 export function createGateway({
