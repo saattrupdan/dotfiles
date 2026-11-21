@@ -47,7 +47,8 @@ export function workerCommand(model, port) {
     "--mmproj", model.projectorPath, "--alias", MODEL_ID, "--jinja",
     "--ctx-size", "262144", "--parallel", "1", "--gpu-layers", "99", "--ubatch-size", "128",
     "--flash-attn", "on", "--cache-type-k", "q8_0", "--cache-type-v", "q8_0"];
-  return [model.python, "-m", "mlx_vlm.server",
+  return ["/usr/bin/env", "APC_ENABLED=1", "APC_DISK_ENABLED=0", "APC_MEMORY_MAX_GB=4",
+    model.python, "-m", "mlx_vlm.server",
     "--host", "127.0.0.1", "--port", String(port), "--model", model.modelPath,
     "--draft-model", model.draftPath, "--draft-kind", "dflash", "--draft-block-size", "4",
     "--prefill-step-size", "256", "--max-num-seqs", "1"];

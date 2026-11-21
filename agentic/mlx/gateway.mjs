@@ -133,7 +133,7 @@ export function createGateway({
   const server = http.createServer(async (request, response) => {
     if (closed) return reply(response, 503, "Gateway is shutting down");
     if (request.method === "GET" && request.url === "/health") {
-      return json(response, 200, { status: "healthy", service: "inkling-mlx-gateway-v3", model: MODEL_ID, loadedVariant: worker?.model.variant ?? null, worker: stopping ? "stopping" : worker?.ready ? "ready" : starting ? "starting" : "stopped", active });
+      return json(response, 200, { status: "healthy", service: "inkling-mlx-gateway-v4", model: MODEL_ID, loadedVariant: worker?.model.variant ?? null, worker: stopping ? "stopping" : worker?.ready ? "ready" : starting ? "starting" : "stopped", active });
     }
     const variant = request.headers["x-inkling-variant"] ?? DEFAULT_VARIANT;
     const target = targets.get(variant) ?? (variant === "openuncensored" ? targets.get(DEFAULT_VARIANT) : undefined);
@@ -248,7 +248,7 @@ async function main() {
     if (error.code !== "EADDRINUSE") throw error;
     const response = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(1000) });
     const health = await response.json();
-    if (!response.ok || health.service !== "inkling-mlx-gateway-v3" || health.model !== MODEL_ID) {
+    if (!response.ok || health.service !== "inkling-mlx-gateway-v4" || health.model !== MODEL_ID) {
       throw new Error(`Port ${port} belongs to another service`);
     }
     console.error("MLX: reusing the existing lightweight gateway");

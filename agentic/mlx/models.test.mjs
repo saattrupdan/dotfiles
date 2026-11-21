@@ -34,6 +34,7 @@ test("only the self-contained retained model is advertised without any retired d
   assert.equal(models[0].modelPath, resolve(root, "inkling-mlx-openuncensored-4bit"));
   assert.equal(models[0].draftPath, models[0].modelPath);
   const command = workerCommand(models[0], 18084);
+  assert.deepEqual(command.slice(0, 5), ["/usr/bin/env", "APC_ENABLED=1", "APC_DISK_ENABLED=0", "APC_MEMORY_MAX_GB=4", models[0].python]);
   assert.equal(command[command.indexOf("--draft-model") + 1], models[0].modelPath);
   assert.equal(command[command.indexOf("--draft-block-size") + 1], "4");
   assert.equal(modelReady(models[0], { model_ready: true, loaded_model: models[0].modelPath }), true);

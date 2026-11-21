@@ -357,8 +357,8 @@ test("old OpenUncensored sessions share the canonical worker; retired Atomic ses
   assert.equal((await (await fetch(`${base}/v1/models`)).json()).data[0].id, "inkling-2-small");
 });
 
-test("CLI refuses a stale v2 gateway even if it advertises the new model alias", async (t) => {
-  const listener = http.createServer((_request, response) => response.end(JSON.stringify({ service: "inkling-mlx-gateway-v2", model: MODEL_ID })));
+test("CLI refuses a stale v3 gateway even if it advertises the new model alias", async (t) => {
+  const listener = http.createServer((_request, response) => response.end(JSON.stringify({ service: "inkling-mlx-gateway-v3", model: MODEL_ID })));
   listener.listen(0, "127.0.0.1");
   await once(listener, "listening");
   t.after(() => new Promise((done) => listener.close(done)));
