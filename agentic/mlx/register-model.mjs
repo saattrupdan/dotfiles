@@ -16,7 +16,7 @@ export const provider = {
     name: "Inkling 2 Mini",
     reasoning: true,
     input: ["text", "image"],
-    contextWindow: 32768,
+    contextWindow: 262144,
     maxTokens: 8192,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     samplingParams: { temperature: 1, top_p: 1, top_k: 0, min_p: 0 },
@@ -51,7 +51,8 @@ async function mergeModel(file, { readFile, writeFile, rename, unlink }) {
     const previousProviders = [
       { id: "inkling-2-mini-heretic", name: "Inkling 2 Mini Heretic · MLX 4-bit" },
       { id: "mlx-inkling-2-mini", name: "Inkling 2 Mini" },
-    ].map((previous) => ({ ...provider, models: [{ ...provider.models[0], ...previous }] }));
+      { id: MODEL_ID, name: "Inkling 2 Mini" },
+    ].map((previous) => ({ ...provider, models: [{ ...provider.models[0], contextWindow: 32768, ...previous }] }));
     if (!previousProviders.some((previous) => isDeepStrictEqual(config.providers.mlx, previous))) {
       throw new Error("Pi already has a different 'mlx' provider; file unchanged");
     }

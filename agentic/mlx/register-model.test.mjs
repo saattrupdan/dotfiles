@@ -23,7 +23,8 @@ test("adds image-capable model without changing unrelated credentials and settin
   assert.equal(provider.models[0].id, "inkling-2-mini");
   assert.equal(provider.models[0].name, "Inkling 2 Mini");
   assert.deepEqual(provider.models[0].input, ["text", "image"]);
-  assert.equal(provider.models[0].contextWindow, 32768);
+  assert.equal(provider.models[0].contextWindow, 262144);
+  assert.equal(provider.models[0].maxTokens, 8192);
   assert.equal((await stat(file)).mode & 0o777, 0o600);
   assert.equal((await stat(`${file}.pre-mlx`)).mode & 0o777, 0o600);
   assert.deepEqual(JSON.parse(await readFile(`${file}.pre-mlx`, "utf8")), original);
@@ -77,12 +78,13 @@ test("external credentials changed during registration are not overwritten", asy
   assert.equal(await readFile(file, "utf8"), changed);
 });
 
-test("renames previous managed models without changing other providers", async (t) => {
+test("upgrades previous managed models without changing other providers", async (t) => {
   for (const previousName of [
     { id: "inkling-2-mini-heretic", name: "Inkling 2 Mini Heretic · MLX 4-bit" },
     { id: "mlx-inkling-2-mini", name: "Inkling 2 Mini" },
+    { id: "inkling-2-mini", name: "Inkling 2 Mini" },
   ]) {
-    const previous = { ...provider, models: [{ ...provider.models[0], ...previousName }] };
+    const previous = { ...provider, models: [{ ...provider.models[0], contextWindow: 32768, ...previousName }] };
     const original = { providers: { mlx: previous, other: { apiKey: "keep" } } };
     const { file } = await fixture(t, JSON.stringify(original));
     assert.equal(await registerModel(file), true);
