@@ -47,6 +47,7 @@ test("complete alternatives preserve three passes and build independent backend 
   const gguf = workerCommand(models[2], 18084);
   assert.equal(gguf[gguf.indexOf("--ctx-size") + 1], "262144");
   assert.equal(gguf[gguf.indexOf("--parallel") + 1], "1");
+  assert.equal(gguf[gguf.indexOf("--ubatch-size") + 1], "128");
   assert.equal(models[2].upstreamModel, MODEL_ID);
   assert.equal(modelReady(models[1], { model_ready: true, loaded_model: models[0].modelPath }), false);
   assert.equal(modelReady(models[1], { model_ready: true, loaded_model: models[1].modelPath }), true);
