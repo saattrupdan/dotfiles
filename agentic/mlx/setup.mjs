@@ -4,7 +4,8 @@ import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { registerModel } from "./register-model.mjs";
+import { registerModel, providersFor } from "./register-model.mjs";
+import { installedModels } from "./models.mjs";
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const root = resolve(homedir(), "local-models/.cache");
@@ -36,8 +37,9 @@ async function main() {
     run("uv", ["pip", "sync", "--python", python, lock]);
     await writeFile(stamp, digest);
   }
-  if (await registerModel(resolve(homedir(), ".pi/agent/models.json"))) {
-    console.log("Pi: mlx/inkling-2-mini registered (text + images)");
+  const models = await installedModels();
+  if (await registerModel(resolve(homedir(), ".pi/agent/models.json"), { providers: providersFor(models) })) {
+    console.log(`Pi: ${models.map((model) => `${model.variant}/inkling-2-mini`).join(", ")} registered (text + images)`);
   }
 }
 

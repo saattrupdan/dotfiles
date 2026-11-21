@@ -6,7 +6,8 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-export const MODEL_ID = "inkling-2-mini";
+import { MODEL_ID, DEFAULT_VARIANT, installedModels, workerCommand as commandForModel, modelReady } from "./models.mjs";
+export { MODEL_ID } from "./models.mjs";
 // Open Pi sessions retain their selected ID after a registry rename.
 const INFERENCE_MODEL_IDS = new Set([MODEL_ID, "mlx-inkling-2-mini", "inkling-2-mini-heretic"]);
 
@@ -18,6 +19,7 @@ export function createGateway({
   draftPath = resolve(homedir(), "local-models/.cache/inkling-mlx-regular"),
   python = resolve(homedir(), "local-models/.cache/inkling-mlx-env/bin/python"),
   workerCommand,
+  models,
   idleMs = 60_000,
   startupMs = 180_000,
   stopMs = 10_000,
@@ -29,12 +31,13 @@ export function createGateway({
   let idleTimer;
   let active = 0;
   let closed = false;
+  let queue = Promise.resolve();
   const sockets = new Set();
   const backend = `http://127.0.0.1:${backendPort}`;
-  const command = workerCommand ?? [python, "-m", "mlx_vlm.server",
-    "--host", "127.0.0.1", "--port", String(backendPort), "--model", modelPath,
-    "--draft-model", draftPath, "--draft-kind", "dflash", "--draft-block-size", "4",
-    "--prefill-step-size", "256", "--max-num-seqs", "1"];
+  const targets = new Map((models ?? [{
+    variant: DEFAULT_VARIANT, name: "Inkling 2 Mini", kind: "mlx", modelPath,
+    draftPath, python, upstreamModel: modelPath, command: workerCommand,
+  }]).map((model) => [model.variant, model]));
 
   async function stopWorker() {
     if (stopping) return stopping;
@@ -64,27 +67,28 @@ export function createGateway({
     }
   }
 
-  async function ensureWorker() {
+  async function ensureWorker(target, signal) {
     if (stopping) {
       await stopping;
       await starting?.catch(() => {});
     }
     if (closed) throw new Error("Gateway is shutting down");
     if (starting) return starting;
-    if (worker?.ready && worker.child.exitCode === null && worker.child.signalCode === null) return;
+    if (worker?.ready && worker.model.variant === target.variant && worker.child.exitCode === null && worker.child.signalCode === null) return;
     if (worker) {
       await stopWorker();
-      return ensureWorker();
+      return ensureWorker(target, signal);
     }
     starting = (async () => {
       await assertPortFree(backendPort);
       if (closed) throw new Error("Gateway is shutting down");
-      log("MLX: starting worker on demand");
+      log(`Inkling: starting ${target.variant} on demand`);
+      const command = target.command ?? commandForModel(target, backendPort);
       const child = spawn(command[0], command.slice(1), {
         stdio: ["ignore", "inherit", "inherit"], detached: true,
       });
       let failure;
-      const owned = { child, ready: false, alive: true };
+      const owned = { child, model: target, ready: false, alive: true };
       owned.exited = new Promise((done) => {
         child.once("error", (error) => { failure = error; });
         child.once("close", () => {
@@ -97,15 +101,16 @@ export function createGateway({
       if (active === 0) scheduleIdle();
       const deadline = Date.now() + startupMs;
       try {
-        while (Date.now() < deadline && !closed && !stopping && owned.alive && worker === owned) {
+        while (Date.now() < deadline && !closed && !stopping && !signal.aborted && owned.alive && worker === owned) {
           if (failure) throw failure;
           try {
-            const response = await fetch(`${backend}/health`, { signal: AbortSignal.timeout(1000) });
+            const response = await fetch(`${backend}/health`, { signal: AbortSignal.any([AbortSignal.timeout(1000), signal]) });
             const health = await response.json();
             if (Object.keys(health.preload_failures ?? {}).length) {
               throw new Error("MLX model preload failed");
             }
-            if (response.ok && health.model_ready === true && health.loaded_model === modelPath) {
+            if (signal.aborted) throw new Error("Inference was cancelled during startup");
+            if (response.ok && modelReady(target, health)) {
               owned.ready = true;
               log("MLX: worker ready");
               return;
@@ -128,14 +133,18 @@ export function createGateway({
   const server = http.createServer(async (request, response) => {
     if (closed) return reply(response, 503, "Gateway is shutting down");
     if (request.method === "GET" && request.url === "/health") {
-      return json(response, 200, { status: "healthy", service: "inkling-mlx-gateway-v1", model: MODEL_ID, worker: stopping ? "stopping" : worker?.ready ? "ready" : starting ? "starting" : "stopped", active });
+      return json(response, 200, { status: "healthy", service: "inkling-mlx-gateway-v2", model: MODEL_ID, loadedVariant: worker?.model.variant ?? null, worker: stopping ? "stopping" : worker?.ready ? "ready" : starting ? "starting" : "stopped", active });
     }
+    const variant = request.headers["x-inkling-variant"] ?? DEFAULT_VARIANT;
+    const target = targets.get(variant);
     if (request.method === "GET" && request.url === "/v1/models") {
-      return json(response, 200, { object: "list", data: [{ id: MODEL_ID, object: "model", owned_by: "local" }] });
+      if (!target) return reply(response, 404, "Inkling variant is not installed");
+      return json(response, 200, { object: "list", data: [{ id: MODEL_ID, object: "model", owned_by: variant }] });
     }
     if (request.method !== "POST" || request.url !== "/v1/chat/completions") {
       return reply(response, 404, "Unknown endpoint");
     }
+    if (!target) return reply(response, 404, "Inkling variant is not installed");
     if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
       return reply(response, 415, "Content-Type must be application/json");
     }
@@ -150,38 +159,52 @@ export function createGateway({
     active += 1;
     clearTimeout(idleTimer);
     let upstream;
+    const cancellation = new AbortController();
     let finished = false;
+    let complete;
+    const completion = new Promise((done) => { complete = done; });
     const finish = () => {
       if (finished) return;
       finished = true;
+      cancellation.abort();
       upstream?.destroy();
       active -= 1;
       scheduleIdle();
+      complete();
     };
     response.once("close", finish);
     response.once("finish", finish);
-    try {
-      await ensureWorker();
-      if (finished || response.destroyed) return;
-      const payload = Buffer.from(JSON.stringify({ ...body, model: modelPath }));
-      const headers = cleanHeaders(request.headers);
-      headers["content-length"] = String(payload.length);
-      upstream = http.request(`${backend}/v1/chat/completions`, {
-        method: "POST", headers, agent: false,
-      }, (incoming) => {
-        response.writeHead(incoming.statusCode ?? 502, cleanHeaders(incoming.headers));
-        incoming.once("error", (error) => response.destroy(error));
-        incoming.pipe(response);
-      });
-      upstream.once("error", (error) => {
-        if (response.destroyed) return;
-        if (response.headersSent) response.destroy(error);
-        else reply(response, 502, "MLX upstream request failed");
-      });
-      upstream.end(payload);
-    } catch (error) {
+    // A slot covers startup and the whole response, not just dispatch. Cancelling
+    // a queued client leaves its place in the chain until its predecessor finishes.
+    queue = queue.then(async () => {
+      if (finished || closed) return;
+      try {
+        await ensureWorker(target, cancellation.signal);
+        if (finished || response.destroyed) return;
+        const payload = Buffer.from(JSON.stringify({ ...body, model: target.upstreamModel ?? target.modelPath }));
+        const headers = cleanHeaders(request.headers);
+        headers["content-length"] = String(payload.length);
+        upstream = http.request(`${backend}/v1/chat/completions`, {
+          method: "POST", headers, agent: false,
+        }, (incoming) => {
+          response.writeHead(incoming.statusCode ?? 502, cleanHeaders(incoming.headers));
+          incoming.once("error", (error) => response.destroy(error));
+          incoming.pipe(response);
+        });
+        upstream.once("error", (error) => {
+          if (response.destroyed) return;
+          if (response.headersSent) response.destroy(error);
+          else reply(response, 502, "MLX upstream request failed");
+        });
+        upstream.end(payload);
+      } catch (error) {
+        if (!response.destroyed) reply(response, 503, error.message);
+      }
+      await completion;
+    }).catch((error) => {
       if (!response.destroyed) reply(response, 503, error.message);
-    }
+      finish();
+    });
   });
   server.requestTimeout = 0;
   server.on("connection", (socket) => {
@@ -203,6 +226,7 @@ export function createGateway({
       await stopWorker();
       await starting?.catch(() => {});
       await stopWorker();
+      await queue;
       await done;
     },
   };
@@ -216,13 +240,15 @@ async function main() {
   const portIndex = gatewayArgs.indexOf("--port");
   const port = portIndex >= 0 ? Number(gatewayArgs[portIndex + 1]) : 8084;
   if (!Number.isSafeInteger(port) || port < 1 || port > 65535) throw new Error("Invalid gateway port");
-  const gateway = createGateway({ port, ...(pythonIndex >= 0 ? { python: gatewayArgs[pythonIndex + 1] } : {}) });
+  const python = pythonIndex >= 0 ? gatewayArgs[pythonIndex + 1] : undefined;
+  const models = await installedModels({ python, strict: false });
+  const gateway = createGateway({ port, models });
   try { await gateway.start(); }
   catch (error) {
     if (error.code !== "EADDRINUSE") throw error;
     const response = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(1000) });
     const health = await response.json();
-    if (!response.ok || health.service !== "inkling-mlx-gateway-v1" || health.model !== MODEL_ID) {
+    if (!response.ok || health.service !== "inkling-mlx-gateway-v2" || health.model !== MODEL_ID) {
       throw new Error(`Port ${port} belongs to another service`);
     }
     console.error("MLX: reusing the existing lightweight gateway");
@@ -299,7 +325,7 @@ function validateRequest(body) {
 }
 
 function cleanHeaders(headers) {
-  const blocked = new Set(["connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade", "host"]);
+  const blocked = new Set(["connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade", "host", "x-inkling-variant"]);
   for (const name of String(headers.connection ?? "").split(",")) blocked.add(name.trim().toLowerCase());
   return Object.fromEntries(Object.entries(headers).filter(([name]) => !blocked.has(name.toLowerCase())));
 }

@@ -9,7 +9,7 @@ if (args.includes("--crash")) process.exit(9);
 http.createServer(async (request, response) => {
   if (request.url === "/health") {
     response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify({ model_ready: Date.now() >= readyAt, loaded_model: value("--model", "/fake/model"), preload_failures: args.includes("--preload-fail") ? { model: "failed" } : {} }));
+    response.end(JSON.stringify({ status: args.includes("--llamacpp") && Date.now() >= readyAt ? "ok" : "loading", model_ready: !args.includes("--llamacpp") && Date.now() >= readyAt, loaded_model: value("--model", "/fake/model"), preload_failures: args.includes("--preload-fail") ? { model: "failed" } : {} }));
     return;
   }
   const chunks = [];
@@ -37,5 +37,5 @@ http.createServer(async (request, response) => {
   }
   if (body.test_delay) await new Promise((done) => setTimeout(done, body.test_delay));
   response.setHeader("content-type", "application/json");
-  response.end(JSON.stringify({ pid: process.pid, body }));
+  response.end(JSON.stringify({ pid: process.pid, body, headers: request.headers }));
 }).listen(Number(value("--port", "0")), "127.0.0.1");

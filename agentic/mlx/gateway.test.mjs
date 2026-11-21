@@ -10,7 +10,7 @@ import { createGateway, MODEL_ID } from "./gateway.mjs";
 const fixture = fileURLToPath(new URL("./fixtures/fake-worker.mjs", import.meta.url));
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
-async function setup(t, { flags = [], ...options } = {}) {
+async function setup(t, { flags = [], variants, ...options } = {}) {
   const probe = net.createServer();
   probe.listen(0, "127.0.0.1");
   await once(probe, "listening");
@@ -20,6 +20,11 @@ async function setup(t, { flags = [], ...options } = {}) {
     port: 0, backendPort, modelPath: "/fake/model", idleMs: 80, startupMs: 2000,
     stopMs: 100, log: () => {},
     workerCommand: [process.execPath, fixture, "--port", String(backendPort), "--model", "/fake/model", ...flags],
+    ...(variants ? { models: variants.map((variant) => ({
+      modelPath: `/fake/${variant.variant}`, upstreamModel: variant.kind === "llamacpp" ? MODEL_ID : `/fake/${variant.variant}`,
+      ...variant,
+      command: [process.execPath, fixture, "--port", String(backendPort), "--model", `/fake/${variant.variant}`, ...(variant.kind === "llamacpp" ? ["--llamacpp"] : []), ...flags],
+    })) } : {}),
     ...options,
   });
   const port = await gateway.start();
@@ -219,9 +224,10 @@ test("CLI refuses an unrelated frontend service", async (t) => {
   assert.ok(listener.listening);
 });
 
-test("CLI leaves llama.cpp port arguments after the separator untouched", async () => {
+test("CLI leaves llama.cpp port arguments after the separator untouched", async (t) => {
+  const { base } = await setup(t);
   const child = spawn(process.execPath, [
-    fileURLToPath(new URL("./gateway.mjs", import.meta.url)), "--", process.execPath,
+    fileURLToPath(new URL("./gateway.mjs", import.meta.url)), "--port", new URL(base).port, "--", process.execPath,
     fileURLToPath(new URL("./fixtures/fake-peer.mjs", import.meta.url)), "--port", "8080",
   ], { stdio: ["ignore", "pipe", "pipe"] });
   let output = "";
@@ -252,4 +258,90 @@ test("previous model ID remains usable without appearing in discovery", async (t
   }
   const models = await (await fetch(`${base}/v1/models`)).json();
   assert.deepEqual(models.data.map((model) => model.id), ["inkling-2-mini"]);
+});
+
+
+const variants = [{ variant: "mlx", kind: "mlx" }, { variant: "openuncensored", kind: "mlx" }, { variant: "atomicchat", kind: "llamacpp" }];
+const selected = (variant, options = {}) => ({ ...options, headers: { "content-type": "application/json", "x-inkling-variant": variant } });
+
+test("variant discovery and unavailable headers never spawn workers", async (t) => {
+  const { base, health } = await setup(t, { variants });
+  for (const variant of variants) {
+    const reply = await fetch(`${base}/v1/models`, selected(variant.variant));
+    assert.equal(reply.status, 200);
+    assert.equal((await reply.json()).data[0].id, MODEL_ID);
+  }
+  assert.equal((await infer(base, {}, selected("missing"))).status, 404);
+  assert.equal((await health()).worker, "stopped");
+});
+
+test("switching reaps the old model only after its full stream and consumes routing headers", async (t) => {
+  const { base, health } = await setup(t, { variants, idleMs: 5000 });
+  const first = await (await infer(base)).json();
+  const stream = await infer(base, { stream: true, test_chunks: 12 });
+  let switched = false;
+  const next = infer(base, { temperature: 0.3 }, selected("atomicchat")).then((response) => { switched = true; return response.json(); });
+  await until(async () => (await health()).active === 2);
+  await sleep(40);
+  assert.equal(switched, false);
+  assert.equal((await health()).loadedVariant, "mlx");
+  assert.match(await stream.text(), /\[DONE\]/);
+  const second = await next;
+  assert.notEqual(first.pid, second.pid);
+  assert.throws(() => process.kill(first.pid, 0), { code: "ESRCH" });
+  assert.equal(second.body.model, MODEL_ID);
+  assert.equal(second.body.temperature, 0.3);
+  assert.equal(second.headers["x-inkling-variant"], undefined);
+  assert.equal((await health()).loadedVariant, "atomicchat");
+  const third = await (await infer(base, {}, selected("openuncensored"))).json();
+  assert.equal(third.body.model, "/fake/openuncensored");
+  assert.throws(() => process.kill(second.pid, 0), { code: "ESRCH" });
+});
+
+test("a cancelled queued variant neither starts nor lets its successor bypass an active stream", async (t) => {
+  const logs = [];
+  const { base, health } = await setup(t, { variants, idleMs: 5000, log: (message) => logs.push(message) });
+  const stream = await infer(base, { stream: true, test_chunks: 16 });
+  const controller = new AbortController();
+  const cancelled = assert.rejects(infer(base, {}, selected("openuncensored", { signal: controller.signal })));
+  await until(async () => (await health()).active === 2);
+  let completed = false;
+  const next = infer(base, {}, selected("atomicchat")).then((response) => { completed = true; return response.json(); });
+  await until(async () => (await health()).active === 3);
+  controller.abort();
+  await cancelled;
+  await sleep(50);
+  assert.equal(completed, false);
+  assert.equal((await health()).loadedVariant, "mlx");
+  await stream.text();
+  assert.equal((await next).body.model, MODEL_ID);
+  assert.equal(logs.some((line) => line.includes("starting openuncensored")), false);
+});
+
+test("startup cancellation and an upstream failure do not poison cross-model admission", async (t) => {
+  const { base, health } = await setup(t, { variants, flags: ["--ready-delay", "200"], idleMs: 5000 });
+  const controller = new AbortController();
+  const cancelled = assert.rejects(infer(base, {}, { signal: controller.signal }));
+  await until(async () => (await health()).worker === "starting");
+  controller.abort();
+  await cancelled;
+  const response = await infer(base, {}, selected("atomicchat"));
+  assert.equal(response.status, 200);
+  await response.json();
+  assert.equal((await infer(base, { test_action: "error" }, selected("atomicchat"))).status, 429);
+  const recovered = await infer(base, {}, selected("openuncensored"));
+  assert.equal(recovered.status, 200);
+  assert.equal((await recovered.json()).body.model, "/fake/openuncensored");
+});
+
+test("shutdown cancels queued variants without spawning their workers", async (t) => {
+  const logs = [];
+  const { base, health, gateway } = await setup(t, { variants, log: (message) => logs.push(message) });
+  const response = await infer(base, { stream: true, test_chunks: 100 });
+  const stream = assert.rejects(response.text());
+  const queued = assert.rejects(infer(base, {}, selected("atomicchat")));
+  await until(async () => (await health()).active === 2);
+  await gateway.close();
+  await Promise.all([stream, queued]);
+  assert.equal(logs.some((line) => line.includes("starting atomicchat")), false);
 });

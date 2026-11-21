@@ -4,7 +4,8 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile, readdir, stat, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { registerModel, provider } from "./register-model.mjs";
+import { registerModel, provider, providersFor } from "./register-model.mjs";
+import { MODEL_ID } from "./models.mjs";
 
 async function fixture(t, content) {
   const directory = await mkdtemp(join(tmpdir(), "pi-mlx-models-"));
@@ -74,7 +75,7 @@ test("external credentials changed during registration are not overwritten", asy
       if (path.endsWith(".tmp")) await filesystem.writeFile(file, changed);
     },
   };
-  await assert.rejects(registerModel(file, concurrentWriter), /changed during registration/);
+  await assert.rejects(registerModel(file, { io: concurrentWriter }), /changed during registration/);
   assert.equal(await readFile(file, "utf8"), changed);
 });
 
@@ -94,4 +95,30 @@ test("upgrades previous managed models without changing other providers", async 
     assert.deepEqual(JSON.parse(await readFile(`${file}.pre-mlx`, "utf8")), original);
     assert.equal(await registerModel(file), false);
   }
+});
+
+
+test("all installed providers register atomically with private headers and preserve defaults", async (t) => {
+  const { file } = await fixture(t);
+  const original = { defaultProvider: "unchanged", providers: { private: { apiKey: "do-not-replace" }, mlx: provider } };
+  await writeFile(file, JSON.stringify(original));
+  const providers = providersFor([{ variant: "mlx" }, { variant: "openuncensored", name: "OpenUncensored" }, { variant: "atomicchat", name: "AtomicChat" }]);
+  assert.equal(await registerModel(file, { providers }), true);
+  const actual = JSON.parse(await readFile(file, "utf8"));
+  assert.deepEqual(actual.providers.mlx, provider);
+  assert.deepEqual(actual.providers.private, original.providers.private);
+  assert.equal(actual.defaultProvider, original.defaultProvider);
+  assert.equal(actual.providers.openuncensored.headers["X-Inkling-Variant"], "openuncensored");
+  assert.equal(actual.providers.atomicchat.models[0].id, MODEL_ID);
+  assert.equal(actual.providers.atomicchat.models[0].contextWindow, 262144);
+  assert.equal(await registerModel(file, { providers }), false);
+});
+
+test("an alternative-provider conflict leaves every proposed addition unapplied", async (t) => {
+  const { file } = await fixture(t);
+  const original = JSON.stringify({ providers: { atomicchat: { apiKey: "private" } } });
+  await writeFile(file, original);
+  const providers = providersFor([{ variant: "mlx" }, { variant: "openuncensored", name: "OpenUncensored" }, { variant: "atomicchat", name: "AtomicChat" }]);
+  await assert.rejects(registerModel(file, { providers }), /different 'atomicchat' provider/);
+  assert.equal(await readFile(file, "utf8"), original);
 });

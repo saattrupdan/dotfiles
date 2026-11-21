@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
-import { MODEL_ID } from "./gateway.mjs";
+import { MODEL_ID } from "./models.mjs";
 
 export const provider = {
   baseUrl: "http://127.0.0.1:8084/v1",
@@ -25,19 +25,28 @@ export const provider = {
   }],
 };
 
-/** Add one provider atomically without replacing local credentials or defaults. */
-export async function registerModel(file, io = filesystem) {
+/** Preserve provider-qualified IDs while routing all variants through one worker. */
+export function providersFor(models) {
+  return Object.fromEntries(models.map((model) => [model.variant, model.variant === "mlx" ? provider : {
+    ...provider,
+    headers: { "X-Inkling-Variant": model.variant },
+    models: [{ ...provider.models[0], name: model.name }],
+  }]));
+}
+
+/** Merge managed providers atomically without replacing local credentials or defaults. */
+export async function registerModel(file, { io = filesystem, providers = { mlx: provider } } = {}) {
   await mkdir(dirname(file), { recursive: true, mode: 0o700 });
   const lockPath = `${file}.mlx-lock`;
   const lock = await acquireLock(lockPath);
-  try { return await mergeModel(file, io); }
+  try { return await mergeModel(file, io, providers); }
   finally {
     await lock.close();
     await unlink(lockPath);
   }
 }
 
-async function mergeModel(file, { readFile, writeFile, rename, unlink }) {
+async function mergeModel(file, { readFile, writeFile, rename, unlink }, providers) {
   let original;
   try { original = await readFile(file, "utf8"); }
   catch (error) { if (error.code !== "ENOENT") throw error; }
@@ -46,21 +55,29 @@ async function mergeModel(file, { readFile, writeFile, rename, unlink }) {
       (config.providers !== undefined && (!config.providers || typeof config.providers !== "object" || Array.isArray(config.providers)))) {
     throw new Error("Invalid Pi models configuration; file unchanged");
   }
-  if (config.providers?.mlx !== undefined) {
-    if (isDeepStrictEqual(config.providers.mlx, provider)) return false;
-    const previousProviders = [
-      { id: "inkling-2-mini-heretic", name: "Inkling 2 Mini Heretic · MLX 4-bit" },
-      { id: "mlx-inkling-2-mini", name: "Inkling 2 Mini" },
-      { id: MODEL_ID, name: "Inkling 2 Mini" },
-    ].map((previous) => ({ ...provider, models: [{ ...provider.models[0], contextWindow: 32768, ...previous }] }));
-    if (!previousProviders.some((previous) => isDeepStrictEqual(config.providers.mlx, previous))) {
-      throw new Error("Pi already has a different 'mlx' provider; file unchanged");
+  const merged = { ...config.providers };
+  let changed = false;
+  for (const [name, desired] of Object.entries(providers)) {
+    const existing = merged[name];
+    if (isDeepStrictEqual(existing, desired)) continue;
+    if (existing !== undefined) {
+      const previousProviders = [
+        { id: "inkling-2-mini-heretic", name: "Inkling 2 Mini Heretic · MLX 4-bit" },
+        { id: "mlx-inkling-2-mini", name: "Inkling 2 Mini" },
+        { id: MODEL_ID, name: "Inkling 2 Mini" },
+      ].map((previous) => ({ ...provider, models: [{ ...provider.models[0], contextWindow: 32768, ...previous }] }));
+      if (name !== "mlx" || !previousProviders.some((previous) => isDeepStrictEqual(existing, previous))) {
+        throw new Error(`Pi already has a different '${name}' provider; file unchanged`);
+      }
     }
+    merged[name] = desired;
+    changed = true;
   }
+  if (!changed) return false;
   await mkdir(dirname(file), { recursive: true, mode: 0o700 });
   const temporary = `${file}.${randomUUID()}.tmp`;
   try {
-    await writeFile(temporary, `${JSON.stringify({ ...config, providers: { ...config.providers, mlx: provider } }, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+    await writeFile(temporary, `${JSON.stringify({ ...config, providers: merged }, null, 2)}\n`, { mode: 0o600, flag: "wx" });
     if (original !== undefined) {
       const backup = `${file}.pre-mlx`;
       // Keep the first rollback copy; never print its contents or place it in Git.
