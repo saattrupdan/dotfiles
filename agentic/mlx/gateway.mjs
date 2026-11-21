@@ -7,6 +7,8 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 export const MODEL_ID = "mlx-inkling-2-mini";
+// Open Pi sessions retain their selected ID after a registry rename.
+const INFERENCE_MODEL_IDS = new Set([MODEL_ID, "inkling-2-mini-heretic"]);
 
 /** Own one lazy worker; discovery never loads model weights. */
 export function createGateway({
@@ -270,7 +272,9 @@ function validateRequest(body) {
     (part.type === "image_url" && object(part.image_url) && text(part.image_url.url) &&
       /^(https?:\/\/|data:image\/)/.test(part.image_url.url))
   );
-  if (!object(body) || body.model !== MODEL_ID || !Array.isArray(body.messages) || !body.messages.length) fail();
+  if (!object(body)) fail();
+  if (!INFERENCE_MODEL_IDS.has(body.model)) throw new Error(`Unknown model; use '${MODEL_ID}'`);
+  if (!Array.isArray(body.messages) || !body.messages.length) fail();
   for (const message of body.messages) {
     if (!object(message) || !["system", "user", "assistant", "tool"].includes(message.role)) fail();
     const calls = message.tool_calls;

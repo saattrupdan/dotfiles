@@ -49,7 +49,6 @@ test("discovery and invalid requests never start a worker", async (t) => {
   const { base, health } = await setup(t);
   assert.equal((await (await fetch(`${base}/v1/models`)).json()).data[0].id, MODEL_ID);
   assert.equal((await infer(base, { model: "arbitrary-model" })).status, 400);
-  assert.equal((await infer(base, { model: "inkling-2-mini-heretic" })).status, 400);
   assert.equal((await fetch(`${base}/unload`, { method: "POST" })).status, 404);
   assert.equal((await fetch(`${base}/v1/chat/completions`, { method: "POST", body: "{}" })).status, 415);
   for (const extra of [{ messages: [null] }, { messages: [{}] }, { messages: [] }, { messages: [{ role: "user", content: 42 }] }, { max_tokens: -1 }, { temperature: "hot" }, { tools: [null] }]) {
@@ -232,4 +231,23 @@ test("CLI leaves llama.cpp port arguments after the separator untouched", async 
   const [code] = await once(child, "close");
   assert.equal(code, 0, errors);
   assert.deepEqual(JSON.parse(output), ["--port", "8080"]);
+});
+
+test("previous model ID remains usable without appearing in discovery", async (t) => {
+  const { base } = await setup(t);
+  const messages = [
+    { role: "user", content: "Read the image and recall any notes" },
+    { role: "assistant", content: null, tool_calls: [{ id: "read-1", type: "function", function: { name: "read", arguments: "{}" } }] },
+    { role: "tool", tool_call_id: "read-1", content: "Read image file [image/png]" },
+    { role: "user", content: [{ type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } }] },
+    { role: "assistant", content: null, tool_calls: [{ id: "recall-1", type: "function", function: { name: "recall_memory", arguments: "{}" } }] },
+    { role: "tool", tool_call_id: "recall-1", content: "No notes" },
+  ];
+  const response = await infer(base, { model: "inkling-2-mini-heretic", messages });
+  assert.equal(response.status, 200);
+  const received = await response.json();
+  assert.equal(received.body.model, "/fake/model");
+  assert.deepEqual(received.body.messages, messages);
+  const models = await (await fetch(`${base}/v1/models`)).json();
+  assert.deepEqual(models.data.map((model) => model.id), ["mlx-inkling-2-mini"]);
 });
