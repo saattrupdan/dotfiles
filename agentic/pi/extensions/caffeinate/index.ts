@@ -32,7 +32,10 @@ import { markGuard } from "../_remote_bridge/guards.ts";
  * Pi state files under a shared lock. This keeps one session's cleanup from
  * releasing another's hold, and restores normal sleep after the last active
  * session ends or dies. It rechecks the actual pmset setting each second in
- * case another process or a power transition changed it.
+ * case another process or a power transition changed it. At the 35 °C battery
+ * cutoff it disables the hold and explicitly requests sleep when the lid is
+ * closed. Unreadable sensors inhibit the hold. A shared latch prevents another
+ * session from restoring it until the lid is opened; failed requests are retried.
  *
  * macOS-only and orchestrator-only: subagents share the parent's machine and
  * the parent's run already brackets their work, so they never touch power. On
@@ -47,7 +50,7 @@ import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isLoopActive, onLoopChange } from "../_loop_state/state.ts";
 import { PowerLifecycle } from "./lifecycle.ts";
-import { watcherShell } from "./watcher.ts";
+import { watcherMessage, watcherShell } from "./watcher.ts";
 
 const IS_MACOS = os.platform() === "darwin";
 
@@ -57,9 +60,8 @@ const STATUS_KEY = "caffeinate";
 // sleep. Keyed by pid so concurrent pi processes don't collide.
 const STATE_PATH = path.join(os.tmpdir(), `pi-caffeinate-${process.pid}.state`);
 
-/** Marker written by the shell watcher when the battery hits the thermal
- *  threshold (35 °C). The parent TypeScript side polls for it and calls
- *  `piApi.sendMessage()` once so the user knows sleep was re-enabled. */
+/** Atomic status notices from the shell watcher. Sleep requests happen there,
+ *  without waiting for the parent's notification poll. */
 const HOT_MARKER_PATH = path.join(os.tmpdir(), `pi-caffeinate-${process.pid}.hot`);
 
 /** Drop-in sudoers file that unlocks the extension — scoped to pmset alone. */
@@ -141,7 +143,7 @@ function hasPasswordlessPmset(): boolean {
 
 function isSleepDisabled(): boolean {
 	try {
-		const result = spawnSync("/usr/bin/pmset", ["-g", "custom"], { encoding: "utf8", timeout: 2000 });
+		const result = spawnSync("/usr/bin/pmset", ["-g"], { encoding: "utf8", timeout: 2000 });
 		return result.status === 0 && /^\s*(?:SleepDisabled|disablesleep)\s+1\s*$/im.test(result.stdout);
 	} catch {
 		return false;
@@ -171,6 +173,9 @@ function nudge(): void {
 /** Launch the session-lived watcher exactly once. */
 function startWatcher(): void {
 	if (watcherStarted) return;
+	// Clear only a previous process's stale notice, never an unread warning
+	// from this session's existing watcher when a new run begins.
+	fs.rmSync(HOT_MARKER_PATH, { force: true });
 	watcherStarted = true;
 	try {
 		const child = spawn("sh", ["-c", watcherShell(process.pid, STATE_PATH, HOT_MARKER_PATH)], { stdio: "ignore", detached: true });
@@ -190,9 +195,6 @@ function engage(ctx: ExtensionContext): void {
 	if (!IS_MACOS || !sessionEnabled || engaged) return;
 	// RPC loops are live sessions too, even though RPC has no TUI.
 	if (!ctx.hasUI && !isLoopActive()) return;
-
-	// Clean up any stale hot-marker left from a prior crashed session.
-	fs.rmSync(HOT_MARKER_PATH, { force: true });
 
 	// No passwordless pmset → stay inert and nudge once. Never prompt.
 	if (!hasPasswordlessPmset()) {
@@ -217,19 +219,31 @@ function engage(ctx: ExtensionContext): void {
 		caffeinateChild = null;
 	}
 
-	// Poll for the hot-marker file so we can notify the user once the shell
-	// watcher has re-enabled sleep due to battery temperature.
+	// Claim a complete notice before reading: the watcher can publish a newer
+	// status concurrently without our cleanup deleting that newer warning.
 	hotCheckRef = setInterval(() => {
-		if (fs.existsSync(HOT_MARKER_PATH)) {
+		const notice = `${HOT_MARKER_PATH}.read`;
+		try {
+			fs.renameSync(HOT_MARKER_PATH, notice);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
 			piApi?.sendMessage({
 				customType: "caffeinate:battery-warning",
-				content:
-					"Battery temperature reached 35 °C — sleep mode re-enabled to protect the battery. The agent run will continue.",
+				content: watcherMessage("watcher-failed"),
 				display: true,
 			});
-			// Remove the marker so we don't re-notify.
-			fs.rmSync(HOT_MARKER_PATH, { force: true });
+			return;
 		}
+		try {
+			piApi?.sendMessage({
+				customType: "caffeinate:battery-warning",
+				content: watcherMessage(fs.readFileSync(notice, "utf8")),
+				display: true,
+			});
+		} finally {
+			fs.rmSync(notice, { force: true });
+		}
+		setStatus(ctx);
 	}, 5000);
 	// Safety cap: clear the interval after 24h even if release is never called.
 	setTimeout(() => {
