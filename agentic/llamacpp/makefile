@@ -3,12 +3,17 @@
 WHISPER_COREML_DIR := ./.cache/whisper.cpp-coreml
 WHISPER_COREML_SERVER := $(WHISPER_COREML_DIR)/build/bin/whisper-server
 
-.PHONY: whisper whisper-setup whisper-tiny
+# Pinned Inkling-compatible Metal build.
+LLAMA_SERVER ?= ./.cache/llama.cpp-inkling/llama-b12588-mix-c0c3de8/llama-server
+
+.PHONY: llamacpp whisper whisper-setup whisper-tiny
 
 llamacpp:
-	@llama-server \
+	@$(LLAMA_SERVER) \
+		--host 127.0.0.1 \
 		--models-preset ./preset.ini \
 		--models-dir ./ \
+		--models-memory-margin 4096 \
 		--port 8080 \
 		--cache-prompt \
 		--ubatch-size 2048 \
