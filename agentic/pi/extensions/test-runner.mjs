@@ -66,3 +66,5 @@ await jiti.import(path.join(root, "sandbox", "index.test.ts"), { default: false 
 await jiti.import(path.join(root, "web-search", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "web-browse", "index.test.ts"), { default: false });
 await jiti.import(path.join(root, "web-browse", "handoff.test.ts"), { default: false });
+
+await jiti.import(path.join(root, "question", "index.test.ts"), { default: false });

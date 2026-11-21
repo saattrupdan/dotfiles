@@ -10,6 +10,7 @@ import * as net from "node:net";
 import type { AgentToolResult, ExtensionAPI, ExtensionContext, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 
 import { Type } from "typebox";
+import { Key, matchesKey, Text } from "@earendil-works/pi-tui";
 
 import { isLidClosed } from "../_lid_state/lid.ts";
 import { askRemote, remotePromptsEnabled } from "../_remote_bridge/prompts.ts";
@@ -23,16 +24,6 @@ import {
 } from "../_question_protocol/protocol.ts";
 
 const OTHER_LABEL = "Other (type your own)…";
-
-// ANSI color codes
-const colors = {
-	reset: "\x1b[0m",
-	bold: "\x1b[1m",
-	dim: "\x1b[2m",
-	orange: "\x1b[38;5;208m",
-	green: "\x1b[32m",
-	cyan: "\x1b[36m",
-};
 
 const Params = Type.Object({
 	question: Type.String({
@@ -77,81 +68,51 @@ async function askOneLocally(
 	const choiceList: string[] = item.options ?? [];
 	try {
 		if (choiceList.length > 0 && item.multiSelect) {
-			const selected = new Set<number>();
-			return new Promise<AskOutcome>((resolve) => {
-				let cursorIndex = 0;
-
-				const unsubscribe = ui.onTerminalInput((data) => {
-					const key = data;
-					// Down Arrow
-					if (key === "\x1b[B") {
-						cursorIndex = (cursorIndex + 1) % choiceList.length;
-						render();
-						return { consume: true };
-					}
-					// Up Arrow
-					if (key === "\x1b[A") {
-						cursorIndex = (cursorIndex - 1 + choiceList.length) % choiceList.length;
-						render();
-						return { consume: true };
-					}
-					// Space - toggle selection
-					if (key === " ") {
-						if (selected.has(cursorIndex)) {
-							selected.delete(cursorIndex);
-						} else {
-							selected.add(cursorIndex);
+			if (signal?.aborted) return { error: "aborted" };
+			const choices = [...choiceList, OTHER_LABEL];
+			const indices = await ui.custom<number[] | undefined>((tui, _theme, _keys, done) => {
+				const selected = new Set<number>();
+				let cursor = 0;
+				const abort = () => done(undefined);
+				signal?.addEventListener("abort", abort, { once: true });
+				if (signal?.aborted) abort();
+				return {
+					render(width: number) {
+						const lines = [title, "", ...choices.map((choice, i) =>
+							`${i === cursor ? "→" : " "} [${selected.has(i) ? "✓" : " "}] ${choice}`),
+						"", "↑↓ navigate · Space: toggle · Enter: submit · Esc: cancel"];
+						return new Text(lines.join("\n"), 1, 1).render(width);
+					},
+					invalidate() {},
+					handleInput(data: string) {
+						if (matchesKey(data, Key.up)) cursor = (cursor - 1 + choices.length) % choices.length;
+						else if (matchesKey(data, Key.down)) cursor = (cursor + 1) % choices.length;
+						else if (matchesKey(data, Key.space)) {
+							if (selected.has(cursor)) selected.delete(cursor);
+							else selected.add(cursor);
+						} else if (matchesKey(data, Key.enter)) {
+							done([...selected].sort((a, b) => a - b));
+							return;
+						} else if (matchesKey(data, Key.escape)) {
+							done(undefined);
+							return;
 						}
-						render();
-						return { consume: true };
-					}
-					// Enter - submit
-					if (key === "\r" || key === "\n") {
-						unsubscribe();
-						if (selected.size === 0) {
-							resolve({ error: "empty" });
-						} else {
-							const answers = Array.from(selected).map((i) => choiceList[i]);
-							resolve({ answer: answers.join(", ") });
-						}
-						return { consume: true };
-					}
-					// Esc - dismiss
-					if (key === "\x1b") {
-						unsubscribe();
-						resolve({ error: "dismissed" });
-						return { consume: true };
-					}
-					return { consume: true };
-				});
-
-				if (signal) {
-					signal.addEventListener("abort", () => {
-						unsubscribe();
-						resolve({ error: "aborted" });
-					}, { once: true });
-				}
-
-				const render = () => {
-					const lines: string[] = [];
-					lines.push(colors.orange + colors.bold + title + colors.reset);
-					lines.push("");
-					for (let i = 0; i < choiceList.length; i++) {
-						const isSelected = selected.has(i);
-						const isCursor = i === cursorIndex;
-						const cursor = isCursor ? colors.orange + "→" + colors.reset : " ";
-						const box = isSelected ? colors.green + "[✓]" + colors.reset : colors.dim + "[ ]" + colors.reset;
-						const optionText = isCursor ? colors.orange + colors.bold + choiceList[i] + colors.reset : choiceList[i];
-						lines.push(cursor + " " + box + " " + optionText);
-					}
-					lines.push("");
-					lines.push(colors.dim + "↑↓ navigate · Space: toggle · Enter: submit · Esc: cancel" + colors.reset);
-					ui.setWorkingMessage(lines.join("\n"));
+						tui.requestRender();
+					},
+					dispose() { signal?.removeEventListener("abort", abort); },
 				};
-				void signal;
-
-				render();
 			});
+			if (signal?.aborted) return { error: "aborted" };
+			if (indices === undefined) return { error: "dismissed" };
+			if (!indices.length) return { error: "empty" };
+			const answers = indices.filter((i) => i < choiceList.length).map((i) => choiceList[i]);
+			if (indices.includes(choiceList.length)) {
+				const typed = await ui.input(title, undefined, { signal });
+				if (typed === undefined) return { error: "dismissed" };
+				if (!typed.trim()) return { error: "empty" };
+				answers.push(typed.trim());
+			}
+			return { answer: answers.join(", ") };
 		}
 
 		if (choiceList.length > 0) {
