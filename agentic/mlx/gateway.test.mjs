@@ -243,11 +243,13 @@ test("previous model ID remains usable without appearing in discovery", async (t
     { role: "assistant", content: null, tool_calls: [{ id: "recall-1", type: "function", function: { name: "recall_memory", arguments: "{}" } }] },
     { role: "tool", tool_call_id: "recall-1", content: "No notes" },
   ];
-  const response = await infer(base, { model: "inkling-2-mini-heretic", messages });
-  assert.equal(response.status, 200);
-  const received = await response.json();
-  assert.equal(received.body.model, "/fake/model");
-  assert.deepEqual(received.body.messages, messages);
+  for (const previousId of ["mlx-inkling-2-mini", "inkling-2-mini-heretic"]) {
+    const response = await infer(base, { model: previousId, messages });
+    assert.equal(response.status, 200);
+    const received = await response.json();
+    assert.equal(received.body.model, "/fake/model");
+    assert.deepEqual(received.body.messages, messages);
+  }
   const models = await (await fetch(`${base}/v1/models`)).json();
-  assert.deepEqual(models.data.map((model) => model.id), ["mlx-inkling-2-mini"]);
+  assert.deepEqual(models.data.map((model) => model.id), ["inkling-2-mini"]);
 });

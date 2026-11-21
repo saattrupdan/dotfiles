@@ -48,11 +48,11 @@ async function mergeModel(file, { readFile, writeFile, rename, unlink }) {
   }
   if (config.providers?.mlx !== undefined) {
     if (isDeepStrictEqual(config.providers.mlx, provider)) return false;
-    const previousProvider = {
-      ...provider,
-      models: [{ ...provider.models[0], id: "inkling-2-mini-heretic", name: "Inkling 2 Mini Heretic · MLX 4-bit" }],
-    };
-    if (!isDeepStrictEqual(config.providers.mlx, previousProvider)) {
+    const previousProviders = [
+      { id: "inkling-2-mini-heretic", name: "Inkling 2 Mini Heretic · MLX 4-bit" },
+      { id: "mlx-inkling-2-mini", name: "Inkling 2 Mini" },
+    ].map((previous) => ({ ...provider, models: [{ ...provider.models[0], ...previous }] }));
+    if (!previousProviders.some((previous) => isDeepStrictEqual(config.providers.mlx, previous))) {
       throw new Error("Pi already has a different 'mlx' provider; file unchanged");
     }
   }

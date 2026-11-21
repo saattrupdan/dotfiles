@@ -6,9 +6,9 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-export const MODEL_ID = "mlx-inkling-2-mini";
+export const MODEL_ID = "inkling-2-mini";
 // Open Pi sessions retain their selected ID after a registry rename.
-const INFERENCE_MODEL_IDS = new Set([MODEL_ID, "inkling-2-mini-heretic"]);
+const INFERENCE_MODEL_IDS = new Set([MODEL_ID, "mlx-inkling-2-mini", "inkling-2-mini-heretic"]);
 
 /** Own one lazy worker; discovery never loads model weights. */
 export function createGateway({
