@@ -6,10 +6,14 @@ WHISPER_COREML_SERVER := $(WHISPER_COREML_DIR)/build/bin/whisper-server
 # Pinned Inkling-compatible Metal build.
 LLAMA_SERVER ?= ./.cache/llama.cpp-inkling/llama-b12588-mix-c0c3de8/llama-server
 
-.PHONY: llamacpp whisper whisper-setup whisper-tiny
+# Resolve through the deployed makefile symlink; no runtime files live in /tmp.
+MLX_DIR := $(abspath $(dir $(realpath $(lastword $(MAKEFILE_LIST))))../mlx)
+MLX_PYTHON := $(HOME)/local-models/.cache/inkling-mlx-env/bin/python
 
-llamacpp:
-	@$(LLAMA_SERVER) \
+.PHONY: llamacpp mlx mlx-setup whisper whisper-setup whisper-tiny
+
+llamacpp: mlx-setup
+	@node "$(MLX_DIR)/gateway.mjs" --python "$(MLX_PYTHON)" -- $(LLAMA_SERVER) \
 		--host 127.0.0.1 \
 		--models-preset ./preset.ini \
 		--models-dir ./ \
@@ -24,6 +28,13 @@ llamacpp:
 		--webui-mcp-proxy \
 		--gpu-layers 99 \
 		--reasoning-preserve
+
+# Standalone lightweight endpoint; the GPU worker starts only for inference.
+mlx: mlx-setup
+	@node "$(MLX_DIR)/gateway.mjs" --python "$(MLX_PYTHON)"
+
+mlx-setup:
+	@node "$(MLX_DIR)/setup.mjs"
 
 whisper-setup:
 	@if [ ! -d "$(WHISPER_COREML_DIR)/.git" ]; then \
