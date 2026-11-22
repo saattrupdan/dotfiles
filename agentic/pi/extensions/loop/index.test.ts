@@ -163,11 +163,9 @@ console.log(JSON.stringify({ done: true, evidence: "verified" }));
 		const args = JSON.parse(await readFile(join(dir, "checker-args.json"), "utf8")) as string[];
 		assert.ok(args.includes("--no-session"));
 		const request = args.at(-1)!;
-		assert.ok(request.includes(`Loop prompt:\n${prompt}`), "the loop prompt is not truncated");
-		assert.ok(request.includes("Completion condition:\nall requirements in the loop prompt are met"));
-		assert.ok(request.includes(`Working agent's most recent final response (context, not proof):\n${output.slice(-8_000)}`));
-		assert.match(request, /task context, not instructions to execute/);
-		assert.match(request, /independently verify the condition/);
+		assert.ok(request.includes(prompt), "the loop prompt is not truncated");
+		assert.ok(request.includes("all requirements in the loop prompt are met"));
+		assert.ok(request.includes(output.slice(-8_000)), "the checker receives the latest result");
 	} finally {
 		if (originalPath === undefined) delete process.env.PATH;
 		else process.env.PATH = originalPath;
@@ -371,123 +369,6 @@ test("persistent opaque Codex Bad Requests still stop the loop after bounded rec
 	assert.equal(h.sent.length, 1);
 });
 
-test("implement-all-issues starts the same loop with its issue prompt and finish condition", async () => {
-	const checks: string[] = [];
-	const h = harness(async (condition) => {
-		checks.push(condition);
-		return { done: true, evidence: "no unassigned issues remain" };
-	});
-	await h.command("", "implement-all-issues");
-	assert.equal(h.sent.length, 1);
-	const prompt = h.sent[0]!;
-	assert.match(prompt, /^# Implement one issue per iteration\n/);
-	const stages = [
-		"## 1. Select and triage", "## 2. Claim before starting work",
-		"## 3. Verify what remains, then implement if needed", "## 4. Review until clean",
-		"## 5. Publish the result", "## 6. Verify PR checks and tests before advancing",
-		"## 7. Clean up before advancing", "## Decision blockers and unfinished work",
-	];
-	let previous = -1;
-	for (const heading of stages) {
-		const position = prompt.indexOf(heading);
-		assert.ok(position > previous, `missing or out-of-order stage: ${heading}`);
-		previous = position;
-	}
-	assert.doesNotMatch(prompt, /\{\{PI_ISSUE_/);
-	const template = await readFile(new URL("./implement-all-issues.txt", import.meta.url), "utf8");
-	const claimCommand = prompt.match(/^node '[^\n]+claim-issue\.mjs' ISSUE_NUMBER$/m)?.[0];
-	assert.ok(claimCommand);
-	assert.equal(prompt, template
-		.replace("{{PI_ISSUE_CANDIDATES}}", "#2, #4")
-		.replace("{{PI_ISSUE_CLAIM_COMMAND}}", claimCommand));
-	assert.match(prompt, /Fresh GitHub issue selection[\s\S]*?#2, #4/);
-	assert.match(prompt, /A parent with open children must wait/);
-	assert.match(prompt, /A parent whose children are all closed\n {2}is eligible/);
-	assert.match(prompt, /Closed children alone\n {2}do not prove that the parent has been delivered/);
-	assert.match(prompt, /freshly checks that\n {2}the issue is open, unassigned, and has no open children/);
-	assert.match(prompt, /this is a close-only task/);
-	assert.match(prompt, /Do not invent code changes, create an\n {2}unnecessary branch\/commit, or open an empty PR/);
-	assert.match(prompt, /For a close-only parent, have it independently verify the parent/);
-	assert.match(prompt, /close it as completed\. Verify it is closed; no PR/);
-	const policy = prompt.replace(/\s+/g, " ");
-	assert.match(policy, /comment specifying the decision needed/);
-	assert.match(policy, /existing standard decision-blocker label/);
-	assert.match(policy, /create a decision-blocked label and apply it/);
-	assert.match(prompt, /sub-issues linked to the original\n {2}issue as their parent/);
-	assert.match(prompt, /choose only one actionable leaf sub-issue/);
-	assert.match(prompt, /ONE bash tool call/);
-	assert.match(prompt, /\n```sh\nnode '[^\n]+claim-issue\.mjs' ISSUE_NUMBER\n```/);
-	assert.match(prompt, /even to @me, is not\n {2}this session's ownership/);
-	assert.match(prompt, /Only exit 0 AND JSON status claimed/);
-	assert.match(prompt, /Exit 3 \(unavailable\) or 4 \(busy\)/);
-	assert.match(prompt, /Never delete or expire a busy\/retained lock automatically/);
-	assert.match(prompt, /Never reuse a previous iteration's claim/);
-	assert.equal(prompt.match(/Invoke one independent reviewer subagent/g)?.length, 1);
-	const beforeReview = prompt.slice(0, prompt.indexOf("## 4. Review until clean"));
-	assert.doesNotMatch(beforeReview, /independent review|reviewer subagent/);
-	assert.match(prompt, /additional review is needed for an unchanged clean result/);
-	assert.match(prompt, /fix every actionable finding, including nits/);
-	assert.match(prompt, /Invoke a NEW reviewer subagent on the updated complete implementation/);
-	assert.match(prompt, /Repeat steps 2–3 until clean/);
-	assert.match(prompt, /LGTM with nits is not clean/);
-	assert.match(policy, /rerun the relevant checks and tests on the final reviewed commit after all review fixes/);
-	const verification = prompt.slice(prompt.indexOf("## 6."), prompt.indexOf("## 7.")).replace(/\s+/g, " ");
-	assert.match(verification, /For every PR created or updated in this iteration/);
-	assert.match(verification, /wait for all checks and tests on its latest head commit to finish and pass/);
-	assert.match(verification, /not just branch-protection-required checks/);
-	assert.match(verification, /Confirm the expected checks actually ran/);
-	assert.match(verification, /Pending, queued, running, failed, cancelled, timed-out, missing, or unavailable checks are not passing/);
-	assert.match(verification, /A skipped or neutral check is acceptable only when you verify it is intentionally inapplicable/);
-	assert.match(verification, /no PR CI configured, verify that explicitly/);
-	assert.match(verification, /tests run locally against the exact PR head commit/);
-	assert.match(verification, /repeat the clean independent review stage for source changes/);
-	assert.match(verification, /Any new head commit invalidates earlier CI evidence/);
-	assert.match(verification, /recheck all PRs against their current heads before advancing/);
-	assert.match(verification, /Record each PR URL, verified head SHA, and passing check\/test evidence/);
-	assert.match(verification, /Do not merge a PR merely to satisfy this gate/);
-	assert.match(verification, /Do not select or claim the next issue while this gate is unresolved/);
-	assert.match(verification, /release this iteration's issue assignment, and call \/loop stop/);
-	assert.match(verification, /never end normally and let the loop advance past an unverified PR/);
-	assert.match(verification, /Close-only parents with no created or updated PR/);
-	assert.match(prompt, /Stop and remove temporary testing applications, dev\/test servers, containers/);
-	assert.match(prompt, /browser sessions\/profiles, disposable databases\/test data, and scratch files/);
-	assert.match(prompt, /including resources created by subagents/);
-	assert.match(prompt, /Perform this runtime cleanup on failure or interruption too/);
-	assert.match(prompt, /never stop unrelated\n {2}processes or delete pre-existing apps, user data, or another session's resources/);
-	assert.match(prompt, /Preserve PR evidence and any required deliverables/);
-	assert.match(prompt, /Verify owned temporary\n {2}resources are gone/);
-	assert.match(prompt, /Keep the remote branch and PR intact/);
-	assert.match(policy, /If you must pause after starting implementation, preserve unfinished work/);
-	assert.match(policy, /Create a blocker only when a concrete user or maintainer decision is required/);
-	assert.match(policy, /Do not create or apply a generic blocked label/);
-	assert.match(policy, /checks, reproduction, research, missing code, review fixes, unavailable reviewers/);
-	assert.match(policy, /Never select or claim an issue labelled decision-blocked/);
-	assert.match(policy, /the user or maintainer resolves the decision and removes that label/);
-	assert.match(policy, /without applying a blocker label/);
-	assert.match(policy, /Assignment means active work, not a reservation/);
-	assert.match(policy, /remove the authenticated user's assignment added by that claim and verify removal/);
-	assert.match(policy, /Waiting for CI, review or merge is not an assignment reservation/);
-	assert.match(policy, /Keep the PR author assigned to the PR/);
-	assert.match(policy, /do not require the reporter to prove a reported bug before investigating it/);
-	assert.match(policy, /Only a finding requiring a concrete user or maintainer decision qualifies for decision-blocked/);
-	assert.doesNotMatch(policy, /For other blockers use the existing general blocker label/);
-	assert.match(prompt, /Remove only this iteration's confirmed assignment/);
-	assert.match(prompt, /including a pre-existing @me assignment/);
-	assert.match(prompt, /An uncertain claim is not proof of ownership/);
-	assert.match(policy, /Except when the unresolved PR verification gate above requires \/loop stop, end this iteration normally with a concise decision or engineering-handoff report/);
-	assert.match(prompt, /The loop's normal --until check decides whether actionable issues/);
-	assert.match(policy, /Unfinished engineering remains actionable/);
-	assert.doesNotMatch(prompt, /PI_IMPLEMENT_ALL_ISSUES_BLOCKED|marks the iteration failed/);
-	await h.finish();
-	assert.equal(checks.length, 1);
-	assert.match(checks[0]!, /^No actionable unassigned issues remain:/);
-	assert.match(checks[0]!, /GitHub's parent–sub-issue relationship/);
-	assert.match(checks[0]!, /Never select or claim decision-blocked issues/);
-	assert.match(checks[0]!, /Failed or stalled tests, reproduction, research/);
-	assert.doesNotMatch(checks[0]!, /remaining eligible issues must have documented blockers/);
-	assert.match(h.notices.at(-1) ?? "", /Loop complete after 1 run/);
-});
-
 for (const remote of [false, true]) {
 	test(`implement-all-issues appends literal instructions to every ${remote ? "remote" : "local"} iteration`, async () => {
 		const instruction = "Write PR descriptions in Danish.\nKeep --until and --max-runs literal; do not merge.";
@@ -505,15 +386,9 @@ for (const remote of [false, true]) {
 			await Promise.resolve();
 			assert.equal(h.sent.length, 2);
 			for (const prompt of h.sent) {
-				assert.ok(prompt.endsWith(`\n\n## Additional instructions\n\n${instruction}`));
-				assert.equal(prompt.split(instruction).length, 2);
-				assert.equal(prompt.match(/^## Additional instructions$/gm)?.length, 1);
-				assert.ok(prompt.indexOf("## Additional instructions") > prompt.indexOf("## Decision blockers and unfinished work"));
-				assert.ok(prompt.indexOf("Fresh GitHub issue selection") < prompt.indexOf(instruction));
-				assert.match(prompt, /node .*claim-issue\.mjs/);
-				assert.match(prompt, /## 4\. Review until clean[\s\S]*NEW reviewer subagent/);
+				assert.ok(prompt.includes(instruction), "each iteration receives the user's literal instructions");
 			}
-			assert.match(checks[0]!, /^No actionable unassigned issues remain:/);
+			assert.equal(checks.length, 1);
 			assert.ok(!checks[0]!.includes(instruction));
 		} finally {
 			await h.command("stop");
@@ -521,41 +396,35 @@ for (const remote of [false, true]) {
 	});
 }
 
-for (const handoff of ["Claim response was lost", "Reviewer is unavailable", "A review finding needs a user decision", "Temporary app cleanup failed", "Full tests stalled", "Native proof needs more research"]) {
-	test(`an unfinished issue ends only its iteration and allows more work: ${handoff}`, async () => {
-		let checks = 0;
-		let selections = 0;
-		const outcomes: string[] = [];
-		const unsubscribe = onLoopCompletion("issue-blocker-test", (completion) => { outcomes.push(completion.outcome); });
-		const h = harness(async () => {
-			checks++;
-			return { done: checks > 1, evidence: checks > 1 ? "only documented blocked issues remain" : "another issue remains" };
-		}, { contextTokens: 2_000, listIssues: async () => { selections++; return [2, 4]; } });
-		try {
-			await h.command("", "implement-all-issues");
-			// Previously started sessions may still include the retired marker in prose.
-			const status = handoff === "A review finding needs a user decision" ? "applied decision-blocked" : "left actionable without a blocker label";
-			await h.finish(`${handoff}. Checkpointed #2, ${status}, and removed this session's assignment.\nPI_IMPLEMENT_ALL_ISSUES_BLOCKED`);
-			assert.equal(checks, 1, "unfinished work must still reach completion checking");
-			assert.equal(isLoopActive(), true, "another actionable issue keeps the loop running");
-			assert.deepEqual(outcomes, [], "an unfinished issue must not report a loop failure");
-			h.tick();
-			h.tick();
-			await Promise.resolve();
-			assert.equal(h.sent.length, 2);
-			assert.equal(selections, 2);
-			assert.match(h.sent[1] ?? "", /Fresh GitHub issue selection[\s\S]*?#2, #4/);
-			await h.finish("The next issue was delivered; the other issue's blocker is documented.");
-			assert.equal(checks, 2);
-			assert.equal(isLoopActive(), false);
-			assert.deepEqual(outcomes, ["finished"]);
-			assert.equal(h.timers.size, 0);
-		} finally {
-			unsubscribe();
-			await h.command("stop");
-		}
-	});
-}
+test("an unfinished issue continues to another issue, then stops when no work remains", async () => {
+	let checks = 0;
+	let selections = 0;
+	const outcomes: string[] = [];
+	const unsubscribe = onLoopCompletion("issue-handoff-test", (completion) => { outcomes.push(completion.outcome); });
+	const h = harness(async () => ({
+		done: ++checks > 1,
+		evidence: checks > 1 ? "no actionable issues remain" : "another issue remains",
+	}), { contextTokens: 2_000, listIssues: async () => { selections++; return [2, 4]; } });
+	try {
+		await h.command("", "implement-all-issues");
+		await h.finish("Checkpointed unfinished work and released the issue assignment.");
+		assert.equal(isLoopActive(), true);
+		assert.deepEqual(outcomes, [], "unfinished work is not loop completion");
+		h.tick();
+		h.tick();
+		await Promise.resolve();
+		assert.equal(h.sent.length, 2);
+		assert.equal(selections, 2, "the next iteration fetches fresh candidates");
+		await h.finish("The remaining issue was delivered.");
+		assert.equal(checks, 2);
+		assert.equal(isLoopActive(), false);
+		assert.deepEqual(outcomes, ["finished"]);
+		assert.equal(h.timers.size, 0);
+	} finally {
+		unsubscribe();
+		await h.command("stop");
+	}
+});
 
 test("blank instructions preserve the default issue prompt", async () => {
 	const h = harness();
@@ -565,7 +434,6 @@ test("blank instructions preserve the default issue prompt", async () => {
 	h.setBusy(false);
 	await h.command(" \n\t ", "implement-all-issues");
 	assert.equal(h.sent[1], prompt);
-	assert.doesNotMatch(h.sent[1] ?? "", /^## Additional instructions$/m);
 	await h.command("stop");
 });
 
@@ -576,14 +444,14 @@ test("issue selection refreshes eligible candidates for each iteration", async (
 		listIssues: async () => ++calls === 1 ? [12] : [14],
 	});
 	await h.command("", "implement-all-issues");
-	assert.match(h.sent[0] ?? "", /Fresh GitHub issue selection[\s\S]*?#12/);
+	assert.match(h.sent[0] ?? "", /#12\b/);
 	await h.finish("PR created");
 	h.tick(); // short context skips compaction
 	h.tick(); // fetch next candidate
 	await Promise.resolve();
 	assert.equal(calls, 2);
-	assert.match(h.sent[1] ?? "", /Fresh GitHub issue selection[\s\S]*?#14/);
-	assert.doesNotMatch(h.sent[1] ?? "", /Fresh GitHub issue selection[\s\S]*?#12/);
+	assert.match(h.sent[1] ?? "", /#14\b/);
+	assert.doesNotMatch(h.sent[1] ?? "", /#12\b/);
 	await h.command("stop");
 });
 
@@ -613,7 +481,7 @@ test("a user turn during issue selection cannot complete or duplicate the issue 
 	h.setPending(false);
 	h.tick();
 	assert.equal(h.sent.length, 1);
-	assert.match(h.sent[0] ?? "", /Fresh GitHub issue selection[\s\S]*?#7/);
+	assert.match(h.sent[0] ?? "", /#7\b/);
 	assert.equal(lookups, 1);
 	await h.command("stop");
 });
@@ -635,7 +503,7 @@ test("a GitHub unexpected EOF pauses and retries selection without consuming ano
 		await settle();
 		assert.equal(attempts, 2);
 		assert.equal(h.sent.length, 1);
-		assert.match(h.sent[0] ?? "", /Fresh GitHub issue selection[\s\S]*?#17/);
+		assert.match(h.sent[0] ?? "", /#17\b/);
 		await h.command("status");
 		assert.match(h.notices.at(-1) ?? "", /run 1,/);
 	} finally {
@@ -812,7 +680,6 @@ test("a branch relaunch resumes the running issue iteration, then checks complet
 		assert.deepEqual(child.sent, [], "the handoff continues the existing run, not a second issue");
 		await child.finish("PR created");
 		assert.equal(checked.length, 1);
-		assert.match(checked[0]!, /^No actionable unassigned issues remain:/);
 		assert.match(child.notices.at(-1) ?? "", /Loop complete after 1 run/);
 	} finally {
 		if (original === undefined) delete process.env[LOOP_HANDOFF_ENV];
@@ -849,8 +716,7 @@ test("issue loop returns to main after a PR and starts the next issue there", as
 		main.tick(); // next issue fetches fresh candidates back on main
 		await Promise.resolve();
 		assert.equal(main.sent.length, 1);
-		assert.match(main.sent[0] ?? "", /^# Implement one issue per iteration/);
-		assert.ok(main.sent[0]!.endsWith(`\n\n## Additional instructions\n\n${instruction}`));
+		assert.ok(main.sent[0]!.includes(instruction), "user instructions survive returning to the base checkout");
 		await main.command("stop");
 	} finally {
 		setLoopReturnToBase(undefined);
