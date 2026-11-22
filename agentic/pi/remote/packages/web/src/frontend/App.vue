@@ -97,7 +97,8 @@ async function openNotification(event: MessageEvent) {
 let notificationListening = false;
 function notificationReady() {
   const worker = navigator.serviceWorker;
-  if (!worker || !notificationListening) return;
+  if (!worker || !notificationListening || document.visibilityState !== "visible")
+    return;
   if (worker.controller) worker.controller.postMessage({ type: "notification-ready" });
   else
     void worker
@@ -114,6 +115,7 @@ onMounted(() => {
   notificationListening = true;
   navigator.serviceWorker?.addEventListener("message", openNotification);
   window.addEventListener("focus", notificationReady);
+  document.addEventListener("visibilitychange", notificationReady);
   navigator.serviceWorker?.addEventListener("controllerchange", notificationReady);
   notificationReady();
   void auth.initialize();
@@ -126,6 +128,7 @@ onMounted(() => {
 onUnmounted(() => {
   notificationListening = false;
   window.removeEventListener("focus", notificationReady);
+  document.removeEventListener("visibilitychange", notificationReady);
   navigator.serviceWorker?.removeEventListener("controllerchange", notificationReady);
   if (connectionWarningTimer) clearTimeout(connectionWarningTimer);
   window.history.scrollRestoration = previousRestoration;
