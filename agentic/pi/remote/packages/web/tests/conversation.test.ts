@@ -102,6 +102,15 @@ test(
       let extraFolders: unknown[] = [];
       let extraHistory: unknown[] = [];
       let historyGate: Promise<void> | undefined;
+      let detailRelease!: () => void;
+      let detailGate: Promise<void> | undefined = new Promise<void>(
+        (resolve) => (detailRelease = resolve),
+      );
+      let acknowledgeRelease!: () => void;
+      let acknowledgeGate: Promise<void> | undefined = new Promise<void>(
+        (resolve) => (acknowledgeRelease = resolve),
+      );
+      let historyRequested = false;
       let emptyHistory = false;
       let homeGate: Promise<void> | undefined;
       let emptyHomeListing = false;
@@ -114,7 +123,10 @@ test(
         timestamp: 2000 + index,
         remoteHistoryKey: index.toString(16).padStart(64, "0"),
       }));
-      let completion: { id: string; outcome: "finished" | "failed" } | undefined;
+      let completion: { id: string; outcome: "finished" | "failed" } | undefined = {
+        id: "opening-completion",
+        outcome: "finished",
+      };
       let acknowledgementCount = 0;
       let promptSequence = 0;
       let stopped = false,
@@ -152,7 +164,12 @@ test(
           ["/api/v1/sessions", "/api/v1/session-folders"].includes(url.pathname)
         )
           await homeGate;
-        if (url.pathname.endsWith("/history") && historyGate) await historyGate;
+        if (url.pathname.endsWith("/history")) {
+          historyRequested = true;
+          if (historyGate) await historyGate;
+        }
+        if (url.pathname === `/api/v1/sessions/${id}` && detailGate)
+          await detailGate;
         let body: unknown = {};
         if (
           url.pathname === "/api/v1/sessions" &&
@@ -169,6 +186,7 @@ test(
           body = session();
         } else if (url.pathname.endsWith("/acknowledge")) {
           acknowledgementCount++;
+          if (acknowledgeGate) await acknowledgeGate;
           if (route.request().postDataJSON().completionId === completion?.id)
             completion = undefined;
           body = session();
@@ -334,7 +352,26 @@ test(
         content: `window.__scrollModes=[];const originalScroll=window.scrollTo.bind(window);window.scrollTo=(...args)=>{if(typeof args[0]==="object")window.__scrollModes.push(args[0].behavior);originalScroll(...args);};`,
       });
       await page.clock.setFixedTime(1000);
-      await page.goto(`http://127.0.0.1:${address.port}/`);
+      await t.test("opening overlaps reads and does not wait for read receipts", async () => {
+        try {
+          await page.goto(`http://127.0.0.1:${address.port}/`);
+          await expect.poll(() => historyRequested, { timeout: 2000 }).toBe(true);
+          detailRelease();
+          detailGate = undefined;
+          await expect.poll(() => acknowledgementCount).toBe(1);
+          await expect(page.locator(".conversation")).toHaveAttribute(
+            "aria-busy", "false", { timeout: 2000 },
+          );
+          await expect(page.getByText("Describe the attached image.", {
+            exact: true,
+          })).toBeVisible();
+        } finally {
+          detailRelease();
+          detailGate = undefined;
+          acknowledgeRelease();
+          acknowledgeGate = undefined;
+        }
+      });
       await expect(page.getByRole("heading", { name: session().name })).toBeVisible();
       await expect.poll(() => Boolean(socket)).toBe(true);
       await t.test(

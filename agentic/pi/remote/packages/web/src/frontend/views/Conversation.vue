@@ -349,12 +349,14 @@ async function load(initial = true) {
     loadError.value = "";
   }
   try {
-    await store.detail(target);
-    await store.history(target, initial);
+    await Promise.all([store.detail(target), store.history(target, initial)]);
     if (disposed || expected !== loadGeneration || target !== id.value) return;
     store.connect(target);
-    await store.acknowledge(target);
-    if (disposed || expected !== loadGeneration || target !== id.value) return;
+    // Read receipts must not keep an already-loaded transcript hidden.
+    void store.acknowledge(target).catch((e) => {
+      if (!disposed && expected === loadGeneration && target === id.value)
+        error.value = (e as Error).message;
+    });
     name.value = isUntitled(session.value?.name) ? "" : (session.value?.name ?? "");
     const parts = (session.value?.model ?? "").split("/");
     provider.value = parts.shift() ?? "";
