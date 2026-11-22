@@ -384,7 +384,8 @@ test("implement-all-issues starts the same loop with its issue prompt and finish
 	const stages = [
 		"## 1. Select and triage", "## 2. Claim before starting work",
 		"## 3. Verify what remains, then implement if needed", "## 4. Review until clean",
-		"## 5. Publish the result", "## 6. Clean up before advancing", "## Decision blockers and unfinished work",
+		"## 5. Publish the result", "## 6. Verify PR checks and tests before advancing",
+		"## 7. Clean up before advancing", "## Decision blockers and unfinished work",
 	];
 	let previous = -1;
 	for (const heading of stages) {
@@ -429,6 +430,25 @@ test("implement-all-issues starts the same loop with its issue prompt and finish
 	assert.match(prompt, /Invoke a NEW reviewer subagent on the updated complete implementation/);
 	assert.match(prompt, /Repeat steps 2–3 until clean/);
 	assert.match(prompt, /LGTM with nits is not clean/);
+	assert.match(policy, /rerun the relevant checks and tests on the final reviewed commit after all review fixes/);
+	const verification = prompt.slice(prompt.indexOf("## 6."), prompt.indexOf("## 7.")).replace(/\s+/g, " ");
+	assert.match(verification, /For every PR created or updated in this iteration/);
+	assert.match(verification, /wait for all checks and tests on its latest head commit to finish and pass/);
+	assert.match(verification, /not just branch-protection-required checks/);
+	assert.match(verification, /Confirm the expected checks actually ran/);
+	assert.match(verification, /Pending, queued, running, failed, cancelled, timed-out, missing, or unavailable checks are not passing/);
+	assert.match(verification, /A skipped or neutral check is acceptable only when you verify it is intentionally inapplicable/);
+	assert.match(verification, /no PR CI configured, verify that explicitly/);
+	assert.match(verification, /tests run locally against the exact PR head commit/);
+	assert.match(verification, /repeat the clean independent review stage for source changes/);
+	assert.match(verification, /Any new head commit invalidates earlier CI evidence/);
+	assert.match(verification, /recheck all PRs against their current heads before advancing/);
+	assert.match(verification, /Record each PR URL, verified head SHA, and passing check\/test evidence/);
+	assert.match(verification, /Do not merge a PR merely to satisfy this gate/);
+	assert.match(verification, /Do not select or claim the next issue while this gate is unresolved/);
+	assert.match(verification, /release this iteration's issue assignment, and call \/loop stop/);
+	assert.match(verification, /never end normally and let the loop advance past an unverified PR/);
+	assert.match(verification, /Close-only parents with no created or updated PR/);
 	assert.match(prompt, /Stop and remove temporary testing applications, dev\/test servers, containers/);
 	assert.match(prompt, /browser sessions\/profiles, disposable databases\/test data, and scratch files/);
 	assert.match(prompt, /including resources created by subagents/);
@@ -454,7 +474,7 @@ test("implement-all-issues starts the same loop with its issue prompt and finish
 	assert.match(prompt, /Remove only this iteration's confirmed assignment/);
 	assert.match(prompt, /including a pre-existing @me assignment/);
 	assert.match(prompt, /An uncertain claim is not proof of ownership/);
-	assert.match(policy, /End this iteration normally with a concise decision or engineering-handoff report/);
+	assert.match(policy, /Except when the unresolved PR verification gate above requires \/loop stop, end this iteration normally with a concise decision or engineering-handoff report/);
 	assert.match(prompt, /The loop's normal --until check decides whether actionable issues/);
 	assert.match(policy, /Unfinished engineering remains actionable/);
 	assert.doesNotMatch(prompt, /PI_IMPLEMENT_ALL_ISSUES_BLOCKED|marks the iteration failed/);

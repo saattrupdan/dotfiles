@@ -122,7 +122,8 @@ ISSUE_NUMBER with the chosen positive issue number:
   explaining how its requirements were delivered, link the completed children/PRs
   and verification evidence, and close it as completed. Verify it is closed; no PR,
   feature branch, or new implementation commit is required.
-- For implemented changes, only after checks pass and the final commit has a clean
+- For implemented changes, rerun the relevant checks and tests on the final reviewed
+  commit after all review fixes. Only after they pass and that commit has a clean
   independent review, push all implementation commits and create the PR. Assign
   me to the PR and copy all GitHub labels from the issue to it. Include visual
   evidence when applicable. Verify it contains the reviewed commits.
@@ -131,7 +132,34 @@ ISSUE_NUMBER with the chosen positive issue number:
   retain it only while actually performing active follow-up. Keep the PR author
   assigned to the PR. Leave the issue open until its merged result meets acceptance.
 
-## 6. Clean up before advancing
+## 6. Verify PR checks and tests before advancing
+
+- For every PR created or updated in this iteration, wait for all checks and tests
+  on its latest head commit to finish and pass, not just branch-protection-required
+  checks. Use gh to inspect the PR's checks and workflow runs; local success alone
+  does not establish PR CI success. Confirm the expected checks actually ran.
+- Pending, queued, running, failed, cancelled, timed-out, missing, or unavailable
+  checks are not passing. A skipped or neutral check is acceptable only when you
+  verify it is intentionally inapplicable; never count skipped tests as executed.
+  If the repository has no PR CI configured, verify that explicitly and record the
+  passing repository checks and tests run locally against the exact PR head commit.
+- Diagnose failures, fix their causes, rerun the relevant checks and tests, and
+  repeat the clean independent review stage for source changes. Push the fixes to
+  the same PR and wait again. Any new head commit invalidates earlier CI evidence;
+  recheck all PRs against their current heads before advancing.
+- Record each PR URL, verified head SHA, and passing check/test evidence in the
+  iteration report. Do not merge a PR merely to satisfy this gate.
+- Do not select or claim the next issue while this gate is unresolved. If you
+  cannot finish verification, preserve the work, record the exact failing or
+  unavailable checks and recovery steps, clean up owned disposable resources,
+  release this iteration's issue assignment, and call /loop stop. This is an
+  exception to the normal unfinished-work continuation below: never end normally
+  and let the loop advance past an unverified PR. Do not label it decision-blocked
+  unless a concrete user or maintainer decision is required.
+- Close-only parents with no created or updated PR retain their independent
+  verification requirement; no empty PR or artificial CI run is needed.
+
+## 7. Clean up before advancing
 
 - Stop and remove temporary testing applications, dev/test servers, containers,
   browser sessions/profiles, disposable databases/test data, and scratch files
@@ -143,9 +171,9 @@ ISSUE_NUMBER with the chosen positive issue number:
   resources are gone; if cleanup fails, diagnose it and document the exact owned
   resources still remaining. Cleanup failure alone is not a decision blocker.
   Do not hide cleanup failures or touch unrelated resources.
-- After successful publication and cleanup, confirm any changes are committed and
-  pushed, return to the base checkout, and discard only the task's local feature
-  branch and worktree, if created. Keep the remote branch and PR intact and preserve
+- After successful publication, the PR verification gate, and cleanup, confirm any
+  changes are committed and pushed, return to the base checkout, and discard only
+  the task's local feature branch and worktree, if created. Keep the remote branch and PR intact and preserve
   unrelated local changes. Close-only tasks must not create branches/worktrees just
   to clean them up. Follow repository rules when they prohibit branches/worktrees.
 - If you must pause after starting implementation, preserve unfinished work in its
@@ -186,9 +214,10 @@ Do not create or apply a generic blocked label for any of these reasons.
 - If GitHub is unavailable or unassignment fails, report exactly which comment,
   label, or assignment updates could not be made instead of claiming success.
 - Clean up owned disposable runtime resources and preserve unfinished work as above.
-- End this iteration normally with a concise decision or engineering-handoff report.
-  Do not call /loop stop,
-  request that the whole loop stop, emit a special stop token, or treat the issue as
+- Except when the unresolved PR verification gate above requires /loop stop, end
+  this iteration normally with a concise decision or engineering-handoff report.
+  Otherwise, do not call /loop stop, request that the whole loop stop, emit a
+  special stop token, or treat the issue as
   implemented. The loop's normal --until check decides whether actionable issues
   remain and starts the next iteration when they do.
 
