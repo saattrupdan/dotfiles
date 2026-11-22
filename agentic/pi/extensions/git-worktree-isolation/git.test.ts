@@ -281,7 +281,7 @@ test("registers an opt-in branch tool without isolating ordinary sessions", asyn
 		assert.deepEqual(branchGuard?.(), {
 			block: true, reason: "Branch transition is already in progress.", terminate: true,
 		});
-		assert.ok(handlers.get("turn_end")?.length, "handoff waits until the tool result is persisted");
+		assert.ok(handlers.get(process.env.PI_PROFILE_RELOAD_TOKEN ? "agent_settled" : "turn_end")?.length, "handoff waits until the tool result is persisted");
 		assert.match(JSON.stringify(result), /feat\/from-tool/);
 		assert.match(JSON.stringify(result), /Do not call isolated_new_branch again/);
 		const render = tools.get("isolated_new_branch")!.renderResult!;
@@ -1844,7 +1844,7 @@ test("cleanup retires a legacy managed worktree whose target branch was deleted"
 	assert.deepEqual(cleanupGuard?.(), {
 		block: true, reason: "Branch cleanup is already in progress.", terminate: true,
 	});
-	assert.ok(handlers.get("turn_end")?.length, "cleanup waits until the tool result is persisted");
+	assert.ok(handlers.get(process.env.PI_PROFILE_RELOAD_TOKEN ? "agent_settled" : "turn_end")?.length, "cleanup waits until the tool result is persisted");
 	const { mainRoot, branchSha, branchExists } = await prepareBranchCleanup(plan.manifest);
 	assert.equal(branchExists, false);
 	assert.equal(await finishBranchCleanup(plan.manifest, sessionFile, mainRoot, branchSha, branchExists), fs.realpathSync(root));
