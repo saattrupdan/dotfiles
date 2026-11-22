@@ -12,6 +12,7 @@ import type {
 import type { Message } from "../stores/sessions.ts";
 const props = defineProps<{
   messages: Message[];
+  offline?: boolean;
   streaming?: Message;
   toolsExpanded?: boolean;
   thinkingExpanded?: boolean;
@@ -24,7 +25,15 @@ const clean = (s: string) =>
       async: false,
     }),
     {
-      FORBID_TAGS: ["script", "style", "iframe", "form", "input", "button"],
+      FORBID_TAGS: [
+        "script",
+        "style",
+        "iframe",
+        "form",
+        "input",
+        "button",
+        ...(props.offline ? ["img", "svg", "video", "audio", "source", "object"] : []),
+      ],
       FORBID_ATTR: ["style"],
     },
   );

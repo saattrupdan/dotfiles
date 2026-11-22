@@ -7,6 +7,10 @@ import { activateNotifications } from "./lib/notifications.ts";
 import Icon from "./components/Icon.vue";
 import { useAuth } from "./stores/auth.ts";
 import { useSessions } from "./stores/sessions.ts";
+import { useOffline } from "./stores/offline.ts";
+import OfflineReader from "./components/OfflineReader.vue";
+import { windowProof } from "./lib/history-window.ts";
+import type { HistoryPage } from "../../../protocol/src/index.ts";
 const auth = useAuth();
 const notificationError = ref("");
 let notificationSync = false;
@@ -28,6 +32,58 @@ async function syncNotifications() {
   }
 }
 const sessions = useSessions();
+const offline = useOffline();
+offline.begin(true);
+void offline.reload();
+let refreshingCopy = false;
+async function refreshCopy() {
+  if (
+    refreshingCopy ||
+    !offline.active ||
+    !auth.unlocked ||
+    !auth.online ||
+    !auth.visible
+  )
+    return;
+  refreshingCopy = true;
+  const target = String(route.params.id ?? "");
+  offline.requestRefresh();
+  try {
+    if (target) {
+      const saved = offline.copies.find((row) => row.sessionId === target);
+      await Promise.all([sessions.detail(target), sessions.history(target)]);
+      if (saved?.messages.length) {
+        const proof = await windowProof(saved.messages);
+        if (proof) {
+          const page = await auth.request<HistoryPage>(
+            `/sessions/${target}/history?window=latest${proof}`,
+          );
+          const first = page.messages[0]?.remoteHistoryKey;
+          const position = saved.messages.findIndex(
+            (m) => m.remoteHistoryKey === first,
+          );
+          if (page.anchorFound && position >= 0)
+            sessions.messages[target] = [
+              ...saved.messages.slice(0, position),
+              ...page.messages,
+            ];
+        }
+      }
+    } else await sessions.loadFolders();
+    if (auth.unlocked && auth.online && target === String(route.params.id ?? ""))
+      offline.complete();
+  } catch {
+    /* Keep the saved reader until fresh live state is available. */
+  } finally {
+    refreshingCopy = false;
+  }
+}
+const offlineTimer = setInterval(() => {
+  if (!auth.visible) return;
+  if (offline.active) {
+    void auth.reconnect().then(refreshCopy);
+  } else void offline.synchronize();
+}, 15000);
 const connectionWarning = ref(false);
 const connectionRecovering = computed(
   () => auth.connectionFailed && !connectionWarning.value,
@@ -53,7 +109,9 @@ const deviceName = ref("My iPhone");
 const route = useRoute(),
   router = useRouter();
 const current = computed(() =>
-  sessions.sessions.find((s) => s.sessionId === route.params.id),
+  offline.active
+    ? offline.copies.find((s) => s.sessionId === route.params.id)
+    : sessions.sessions.find((s) => s.sessionId === route.params.id),
 );
 const headerTitle = computed(() =>
   route.path.startsWith("/session/")
@@ -126,6 +184,7 @@ onMounted(() => {
   document.addEventListener("touchmove", preventPinch, { passive: false });
 });
 onUnmounted(() => {
+  clearInterval(offlineTimer);
   notificationListening = false;
   window.removeEventListener("focus", notificationReady);
   document.removeEventListener("visibilitychange", notificationReady);
@@ -145,18 +204,54 @@ watch(
     if (unlocked) pairing.value = "";
     if (!unlocked || !visible || !online) sessions.disconnect();
     else {
-      sessions.resume();
+      if (offline.active) void refreshCopy();
+      else {
+        sessions.resume();
+        if (!route.path.startsWith("/session/")) offline.complete();
+      }
+      void offline.synchronize();
       void syncNotifications();
     }
   },
   { immediate: true, flush: "sync" },
+);
+watch(
+  () => offline.active,
+  (active) => {
+    if (active) void refreshCopy();
+  },
+);
+watch(
+  () => [auth.initializing, auth.paired, auth.connectionFailed],
+  () => {
+    if (!auth.initializing && !auth.paired && !auth.connectionFailed && auth.online)
+      offline.complete();
+  },
+);
+watch(
+  () => auth.connectionFailed,
+  (failed) => {
+    if (failed) offline.failed();
+  },
+);
+watch(
+  () => offline.revision,
+  () => {
+    if (!refreshingCopy) void auth.reconnect().then(refreshCopy);
+  },
+);
+watch(
+  () => route.path,
+  () => {
+    if (!offline.active && route.path.startsWith("/session/")) offline.begin();
+  },
 );
 </script>
 <template>
   <div class="shell">
     <header>
       <button
-        v-if="auth.unlocked && auth.visible && route.path !== '/'"
+        v-if="(auth.unlocked || offline.active) && auth.visible && route.path !== '/'"
         class="icon-button back"
         aria-label="Go back"
         title="Go back"
@@ -178,7 +273,7 @@ watch(
         />
       </RouterLink>
       <span
-        v-if="auth.unlocked && auth.visible"
+        v-if="(auth.unlocked || offline.active) && auth.visible"
         class="header-title"
         >{{ headerTitle }}</span
       >
@@ -193,7 +288,7 @@ watch(
         :label="connectionRecovering ? 'Reconnecting...' : 'Loading'"
       />
       <RouterLink
-        v-if="auth.unlocked && auth.visible"
+        v-if="(auth.unlocked || offline.active) && auth.visible"
         to="/settings"
         class="icon-button settings-link"
         aria-label="Settings"
@@ -220,7 +315,7 @@ watch(
       </RouterLink>
     </header>
     <section
-      v-if="connectionWarning && !auth.initializing && auth.visible"
+      v-if="connectionWarning && !auth.initializing && auth.visible && !offline.active"
       class="connection-error"
       :class="{ compact: auth.unlocked }"
       role="alert"
@@ -253,14 +348,16 @@ watch(
       {{ notificationError }}
     </p>
     <main
-      v-if="auth.unlocked"
+      v-if="auth.unlocked || offline.active"
       v-show="auth.visible"
       :class="{ chat: route.path.startsWith('/session/') }"
     >
-      <RouterView />
+      <OfflineReader v-if="offline.active" />
+      <RouterView v-else />
     </main>
     <main
       v-if="
+        !offline.active &&
         (!auth.unlocked || !auth.visible) &&
         (!connectionWarning || auth.initializing || !auth.visible)
       "

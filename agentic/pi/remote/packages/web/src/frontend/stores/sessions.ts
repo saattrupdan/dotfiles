@@ -19,6 +19,7 @@ import { mergeHistory, sameMessage, windowProof } from "../lib/history-window.ts
 import type { HistoryPage } from "../../../../protocol/src/index.ts";
 import { remoteCommandId } from "../lib/receipts.ts";
 import { useAuth, onLock } from "./auth.ts";
+import { useOffline } from "./offline.ts";
 export interface Message {
   role?: string;
   content?:
@@ -47,6 +48,7 @@ export interface Message {
 }
 export const useSessions = defineStore("sessions", () => {
   const auth = useAuth();
+  const offline = useOffline();
   const sessions = ref<Session[]>([]);
   const folders = ref<SessionFolder[]>([]);
   const listing = ref<Session[]>([]);
@@ -55,6 +57,7 @@ export const useSessions = defineStore("sessions", () => {
   const hiddenSessions = ref(new Set<string>());
   const isHidden = (id: string) => hiddenSessions.value.has(id);
   function hideSession(id: string) {
+    void offline.remove([id]);
     hiddenSessions.value.add(id);
     if (homePosition.value?.anchor?.key === id) homePosition.value = undefined;
     historyRequests.set(id, (historyRequests.get(id) ?? 0) + 1);
@@ -169,7 +172,7 @@ export const useSessions = defineStore("sessions", () => {
     socket = undefined;
     if (retry) clearTimeout(retry);
   }
-  onLock(() => {
+  onLock((preserveDrafts) => {
     generation++;
     disconnect();
     pending.value = {};
@@ -199,7 +202,7 @@ export const useSessions = defineStore("sessions", () => {
     olderRequests.clear();
     latestRequests.clear();
     statuses.value = {};
-    drafts.value = {};
+    if (!preserveDrafts && !auth.connectionFailed) drafts.value = {};
     prompt.value = {};
     selected = "";
   });
@@ -385,6 +388,7 @@ export const useSessions = defineStore("sessions", () => {
       historyRequests.get(id) !== request
     )
       return;
+    const epoch = offline.ticket();
     const page = await auth.request<HistoryPage>(
       `/sessions/${id}/history?window=latest${proof}`,
     );
@@ -415,6 +419,16 @@ export const useSessions = defineStore("sessions", () => {
       loading: false,
       error: "",
     };
+    const summary = sessions.value.find((row) => row.sessionId === id);
+    if (summary)
+      void epoch.then((ticket) =>
+        offline.save(
+          summary,
+          messages.value[id]!,
+          ticket,
+          !!page.older || !!page.truncated,
+        ),
+      );
   }
   function loadOlder(id: string): Promise<void> {
     const running = olderRequests.get(id);
@@ -436,6 +450,7 @@ export const useSessions = defineStore("sessions", () => {
         state.loading = true;
         state.error = "";
         try {
+          const epoch = offline.ticket();
           const page = await auth.request<HistoryPage>(
             `/sessions/${id}/history?before=${encodeURIComponent(state.older)}`,
           );
@@ -459,6 +474,11 @@ export const useSessions = defineStore("sessions", () => {
           ];
           state.older = page.older;
           persistHistory(id, incoming);
+          const summary = sessions.value.find((row) => row.sessionId === id);
+          if (summary)
+            void epoch.then((ticket) =>
+              offline.save(summary, messages.value[id]!, ticket, !!page.older),
+            );
           return;
         } catch (error) {
           if (expected !== generation || !auth.unlocked) return;
@@ -756,6 +776,8 @@ export const useSessions = defineStore("sessions", () => {
     return session;
   }
   async function command(id: string, command: Command, retryOf?: string) {
+    if (offline.active || !auth.unlocked || !auth.online)
+      throw new Error("Offline copies are read-only.");
     if (isHidden(id)) throw new Error("session_not_found");
     const expected = generation;
     if (command.action === "message") await ensureOwner(id);

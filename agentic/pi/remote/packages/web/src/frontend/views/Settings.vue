@@ -2,8 +2,10 @@
 import { onMounted, ref } from "vue";
 import LoadingIndicator from "../components/LoadingIndicator.vue";
 import Icon from "../components/Icon.vue";
+import { useOffline } from "../stores/offline.ts";
 import { useAuth } from "../stores/auth.ts";
 const auth = useAuth();
+const offline = useOffline();
 const devices = ref<{ id: string; name: string; created: number }[]>([]);
 const error = ref("");
 const note = ref("");
@@ -76,6 +78,16 @@ async function notifications() {
 <template>
   <section class="settings">
     <h1>Settings</h1>
+    <div class="card">
+      <p>{{ offline.copies.length }} conversations saved for offline reading.</p>
+      <button @click="offline.clear()">Clear all offline conversations</button>
+      <p
+        v-if="offline.error"
+        role="alert"
+      >
+        {{ offline.error }}
+      </p>
+    </div>
     <div class="identity card">
       <span class="setting-icon"><Icon name="phone" /></span>
       <div>

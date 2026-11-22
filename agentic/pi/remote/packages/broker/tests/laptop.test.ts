@@ -1044,3 +1044,48 @@ test("folder counts retry an archive snapshot invalidated by privacy", async () 
     f.close();
   }
 });
+
+test("offline catalog includes unopened histories, caps twenty and purges hidden/deleted copies", async () => {
+  const f = fixture();
+  const saved = Array.from({ length: 23 }, (_, i) =>
+    f.seed(
+      path.join(f.config.agentDir, `sessions/folder${i}`),
+      randomUUID(),
+      `Saved ${i}`,
+    ),
+  );
+  const hidden = saved[0]!;
+  const deleted = saved[1]!;
+  const b = await createBroker(f.config, { ipc: false });
+  const headers = authentication(b, f.config.origin);
+  try {
+    const listing = await b.app.inject({ url: "/api/v1/offline-catalog", headers });
+    assert.equal(listing.statusCode, 200);
+    assert.equal(listing.json().sessions.length, 20);
+    assert(!listing.payload.includes("PRIVATE_FIRST_MESSAGE"));
+    b.store.hideSession(hidden.id);
+    fs.unlinkSync(deleted.file);
+    const response = await b.app.inject({
+      url: `/api/v1/offline-catalog?retained=${hidden.id},${deleted.id}`,
+      headers,
+    });
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(
+      new Set(response.json().removed),
+      new Set([hidden.id, deleted.id]),
+    );
+    assert(
+      !response
+        .json()
+        .sessions.some((row: { sessionId: string }) => row.sessionId === hidden.id),
+    );
+    const unauthenticated = await b.app.inject({
+      url: "/api/v1/offline-catalog",
+      headers: { host: headers.host },
+    });
+    assert.equal(unauthenticated.statusCode, 401);
+  } finally {
+    await b.app.close();
+    f.close();
+  }
+});

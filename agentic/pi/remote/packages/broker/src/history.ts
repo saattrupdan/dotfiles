@@ -149,13 +149,17 @@ export class History {
     }
     return files;
   }
-  private index() {
+  private index(includeOld = false) {
     const files = this.files(),
       rows: NativeSession[] = [];
     for (const file of files) {
       try {
         const stats = fs.statSync(file);
-        if (!stats.isFile() || stats.mtimeMs < Date.now() - RECENT_SESSION_MS) continue;
+        if (
+          !stats.isFile() ||
+          (!includeOld && stats.mtimeMs < Date.now() - RECENT_SESSION_MS)
+        )
+          continue;
         const cached = this.headers.get(file);
         if (cached?.stamp === stamp(stats)) {
           if (!visibleWorkingDirectory(this.config, cached.row.cwd)) continue;
@@ -304,8 +308,11 @@ export class History {
     }
     return [...groups.values()];
   }
-  async catalog(cwd?: string) {
-    const rows = this.index().filter((row) => cwd === undefined || row.cwd === cwd);
+  async catalog(cwd?: string, limit?: number) {
+    const rows = this.index()
+      .filter((row) => cwd === undefined || row.cwd === cwd)
+      .sort((a, b) => +b.modified - +a.modified)
+      .slice(0, limit);
     const result: NativeSession[] = [];
     for (let i = 0; i < rows.length; i += 4) {
       const batch = await Promise.all(
@@ -314,6 +321,9 @@ export class History {
       result.push(...batch.filter((row): row is NativeSession => !!row));
     }
     return result.filter((row) => this.visible(row.nativeId) && this.visible(row.id));
+  }
+  accessibleIds() {
+    return new Set(this.index(true).map((row) => row.id));
   }
   async byId(id: string) {
     const row = this.index().find((session) => session.id === id);

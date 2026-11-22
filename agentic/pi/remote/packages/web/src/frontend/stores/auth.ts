@@ -2,8 +2,13 @@ import { defineStore } from "pinia";
 import { ref } from "vue";
 class ConnectionError extends Error {}
 const pendingRequests = new Set<AbortController>();
-const resets = new Set<() => void>();
-export const onLock = (fn: () => void) => {
+const resets = new Set<(preserveDrafts?: boolean) => void>();
+const unpairs = new Set<() => void>();
+export const onUnpair = (fn: () => void) => {
+  unpairs.add(fn);
+  return () => unpairs.delete(fn);
+};
+export const onLock = (fn: (preserveDrafts?: boolean) => void) => {
   resets.add(fn);
   return () => resets.delete(fn);
 };
@@ -30,14 +35,14 @@ export const useAuth = defineStore("auth", () => {
   const name = ref("");
   let background = 0;
   let lastPresence = 0;
-  function clear() {
+  function clear(preserveDrafts = false) {
     authGeneration++;
     queuedGeneration = undefined;
     unlocked.value = false;
     visible.value = document.visibilityState === "visible";
     for (const request of pendingRequests) request.abort();
     pendingRequests.clear();
-    for (const reset of resets) reset();
+    for (const reset of resets) reset(preserveDrafts);
   }
   async function request<T = unknown>(
     url: string,
@@ -110,6 +115,7 @@ export const useAuth = defineStore("auth", () => {
         if (!result.ok) {
           if (result.status === 423 || result.status === 401) {
             if (result.status === 401) {
+              for (const purge of unpairs) purge();
               paired.value = false;
               csrf.value = "";
               name.value = "";
@@ -147,6 +153,7 @@ export const useAuth = defineStore("auth", () => {
       "/me",
     );
     paired.value = data.paired;
+    if (!data.paired) for (const purge of unpairs) purge();
     csrf.value = data.csrf ?? "";
     name.value = data.device ?? "";
   }
@@ -160,7 +167,7 @@ export const useAuth = defineStore("auth", () => {
     } catch (e) {
       error.value = e instanceof Error ? e.message : "Can't connect to your Mac.";
     }
-    clear();
+    clear(true);
     initializing.value = false;
     if (connected) await autoUnlock();
   }
@@ -321,7 +328,7 @@ export const useAuth = defineStore("auth", () => {
   window.addEventListener("focus", recoverConnection);
   document.addEventListener("visibilitychange", backgroundChanged);
   window.addEventListener("pagehide", () => {
-    clear();
+    clear(true);
     void request("/auth/lock", { method: "POST", keepalive: true }).catch(() => {});
   });
   setInterval(() => {

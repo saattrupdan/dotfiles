@@ -91,7 +91,16 @@ test(
         hasTouch: true,
       });
       const pageErrors: string[] = [];
-      page.on("pageerror", (error) => pageErrors.push(error.message));
+      page.on("pageerror", (error) => {
+        // WebKit reports cancelled background fetches during reload as page errors.
+        if (
+          /\/api\/v1\/sessions\/.*\/history\?.* due to access control checks\.$/.test(
+            error.message,
+          )
+        )
+          return;
+        pageErrors.push(error.message);
+      });
       let socket: WebSocketRoute | undefined;
       let prompt: Record<string, unknown> | undefined;
       const submissions: Array<Record<string, unknown>> = [];
@@ -168,8 +177,7 @@ test(
           historyRequested = true;
           if (historyGate) await historyGate;
         }
-        if (url.pathname === `/api/v1/sessions/${id}` && detailGate)
-          await detailGate;
+        if (url.pathname === `/api/v1/sessions/${id}` && detailGate) await detailGate;
         let body: unknown = {};
         if (
           url.pathname === "/api/v1/sessions" &&
@@ -352,26 +360,33 @@ test(
         content: `window.__scrollModes=[];const originalScroll=window.scrollTo.bind(window);window.scrollTo=(...args)=>{if(typeof args[0]==="object")window.__scrollModes.push(args[0].behavior);originalScroll(...args);};`,
       });
       await page.clock.setFixedTime(1000);
-      await t.test("opening overlaps reads and does not wait for read receipts", async () => {
-        try {
-          await page.goto(`http://127.0.0.1:${address.port}/`);
-          await expect.poll(() => historyRequested, { timeout: 2000 }).toBe(true);
-          detailRelease();
-          detailGate = undefined;
-          await expect.poll(() => acknowledgementCount).toBe(1);
-          await expect(page.locator(".conversation")).toHaveAttribute(
-            "aria-busy", "false", { timeout: 2000 },
-          );
-          await expect(page.getByText("Describe the attached image.", {
-            exact: true,
-          })).toBeVisible();
-        } finally {
-          detailRelease();
-          detailGate = undefined;
-          acknowledgeRelease();
-          acknowledgeGate = undefined;
-        }
-      });
+      await t.test(
+        "opening overlaps reads and does not wait for read receipts",
+        async () => {
+          try {
+            await page.goto(`http://127.0.0.1:${address.port}/`);
+            await expect.poll(() => historyRequested, { timeout: 2000 }).toBe(true);
+            detailRelease();
+            detailGate = undefined;
+            await expect.poll(() => acknowledgementCount).toBe(1);
+            await expect(page.locator(".conversation")).toHaveAttribute(
+              "aria-busy",
+              "false",
+              { timeout: 2000 },
+            );
+            await expect(
+              page.getByText("Describe the attached image.", {
+                exact: true,
+              }),
+            ).toBeVisible();
+          } finally {
+            detailRelease();
+            detailGate = undefined;
+            acknowledgeRelease();
+            acknowledgeGate = undefined;
+          }
+        },
+      );
       await expect(page.getByRole("heading", { name: session().name })).toBeVisible();
       await expect.poll(() => Boolean(socket)).toBe(true);
       await t.test(
@@ -2134,13 +2149,17 @@ test(
           await input.fill("/");
           await expect(menu.getByRole("option")).toHaveCount(4);
           await input.press("ArrowDown");
-          await expect(input).toHaveAttribute("aria-activedescendant", "composer-command-1");
+          await expect(input).toHaveAttribute(
+            "aria-activedescendant",
+            "composer-command-1",
+          );
           await input.press("Escape");
           await expect(menu).toHaveCount(0);
           await input.fill("/re");
           await expect(menu.getByRole("option")).toHaveCount(2);
           await expect(menu.getByRole("option", { name: /reload/ })).toHaveAttribute(
-            "aria-disabled", "true",
+            "aria-disabled",
+            "true",
           );
           await menu.getByRole("option", { name: /reload/ }).click({ force: true });
           await expect(input).toHaveValue("/re");
@@ -2151,27 +2170,39 @@ test(
           assert.equal(submissions.length, before);
           await page.getByRole("button", { name: "Send message", exact: true }).click();
           await expect.poll(() => submissions.length).toBe(before + 1);
-          assert.deepEqual(submissions.at(-1), { action: "slash", name: "review", args: "" });
+          assert.deepEqual(submissions.at(-1), {
+            action: "slash",
+            name: "review",
+            args: "",
+          });
           await expect(input).toHaveValue("");
 
           await input.fill("/skill:p");
-          await menu.getByRole("option", { name: "/skill:python", exact: true }).click();
+          await menu
+            .getByRole("option", { name: "/skill:python", exact: true })
+            .click();
           await expect(input).toBeFocused();
           await expect(input).toHaveValue("/skill:python ");
           await input.fill("/skill:python explain this\nand that");
           await page.getByRole("button", { name: "Send message", exact: true }).click();
           await expect.poll(() => submissions.length).toBe(before + 2);
           assert.deepEqual(submissions.at(-1), {
-            action: "slash", name: "skill:python", args: "explain this\nand that",
+            action: "slash",
+            name: "skill:python",
+            args: "explain this\nand that",
           });
 
           await input.fill("/im");
           await input.press("Tab");
           await expect(input).toHaveValue("/implement ");
           await input.fill("/no-such-command");
-          await expect(page.getByText("No matching commands", { exact: true })).toBeVisible();
+          await expect(
+            page.getByText("No matching commands", { exact: true }),
+          ).toBeVisible();
           await page.getByRole("button", { name: "Send message", exact: true }).click();
-          await expect(page.getByRole("alert")).toHaveText("Unknown command /no-such-command.");
+          await expect(page.getByRole("alert")).toHaveText(
+            "Unknown command /no-such-command.",
+          );
           await expect(input).toHaveValue("/no-such-command");
           await input.fill("/reload");
           await page.getByRole("button", { name: "Send message", exact: true }).click();
@@ -2182,7 +2213,9 @@ test(
           await page.getByRole("button", { name: "Send message", exact: true }).click();
           await expect.poll(() => submissions.length).toBe(before + 3);
           assert.deepEqual(submissions.at(-1), {
-            action: "message", text: "ordinary /review text", images: [],
+            action: "message",
+            text: "ordinary /review text",
+            images: [],
           });
 
           let attempts = 0;
@@ -2196,11 +2229,15 @@ test(
           await page.route("**/api/v1/commands/*", unknownStatus);
           try {
             await input.fill("/review   check this");
-            await page.getByRole("button", { name: "Send message", exact: true }).click();
+            await page
+              .getByRole("button", { name: "Send message", exact: true })
+              .click();
             await expect(page.getByRole("alert")).toHaveText("lost_response");
             await expect(input).toHaveValue("");
             assert.equal(attempts, 1);
-            await expect(page.getByRole("button", { name: "Explicitly retry" })).toBeVisible();
+            await expect(
+              page.getByRole("button", { name: "Explicitly retry" }),
+            ).toBeVisible();
           } finally {
             await page.unroute("**/api/v1/sessions/*/actions", failCommand);
             await page.unroute("**/api/v1/commands/*", unknownStatus);
@@ -2243,7 +2280,7 @@ test(
         },
       );
       await t.test(
-        "brief connection failures stay quiet; sustained failures become actionable",
+        "connection failures show read-only copies and restore drafts after recovery",
         async () => {
           await page.reload();
           await expect(
@@ -2278,10 +2315,11 @@ test(
           await page.route("**/api/v1/**", abort);
           await failed();
           await page.clock.fastForward(20001);
-          await expect(warning).toBeVisible();
+          await expect(page.locator(".offline-reader")).toBeVisible();
           await expect(
-            page.getByRole("button", { name: "Try again", exact: true }),
-          ).toBeVisible();
+            page.getByRole("button", { name: "Send", exact: true }),
+          ).toBeDisabled();
+          await page.unroute("**/api/v1/**", abort);
           await recovered();
           await expect(warning).toHaveCount(0);
           await expect(page.getByRole("textbox", { name: "Message Pi" })).toHaveValue(

@@ -121,7 +121,8 @@ export async function createBroker(
     }
     if (
       (event.type === "agent_settled" &&
-        (event.data as { worktreeHandoff?: boolean } | null)?.worktreeHandoff !== true &&
+        (event.data as { worktreeHandoff?: boolean } | null)?.worktreeHandoff !==
+          true &&
         !(
           (event.data as { loopIteration?: boolean } | null)?.loopIteration ??
           store.session(event.sessionId ?? "")?.loop
@@ -427,6 +428,62 @@ export async function createBroker(
         )
         .map(nativeSummary),
     ].sort((a, b) => b.lastActivity - a.lastActivity);
+  });
+  app.get("/api/v1/offline-catalog", async (req) => {
+    read(req);
+    const { retained } = z
+      .object({
+        retained: z.string().max(800).default(""),
+      })
+      .parse(req.query);
+    const ids = z
+      .array(z.string().uuid())
+      .max(20)
+      .parse(retained ? retained.split(",") : []);
+    const native = discoverLaptop
+      ? ((await catalog?.catalog(undefined, 20)) ?? [])
+      : [];
+    read(req);
+    const accessible = catalog?.accessibleIds() ?? new Set<string>();
+    const live = visibleLive().filter(
+      (row) =>
+        fs.existsSync(row.sessionFile) &&
+        !store.isPrivate(row.sessionId) &&
+        !store.isPrivate(row.nativeSessionId ?? row.sessionId),
+    );
+    const visible = native.filter(
+      (row) =>
+        accessible.has(row.id) &&
+        !store.isPrivate(row.id) &&
+        !store.isPrivate(row.nativeId),
+    );
+    store.rememberReferences(visible);
+    for (const row of live) accessible.add(row.sessionId);
+    const rows = [
+      ...live.map(liveSummary),
+      ...visible
+        .filter(
+          (row) =>
+            !live.some(
+              (s) =>
+                (s.nativeSessionId ?? s.sessionId) === row.nativeId &&
+                canonicalPath(s.sessionFile) === row.path,
+            ),
+        )
+        .map(nativeSummary),
+    ]
+      .sort((a, b) => b.lastActivity - a.lastActivity)
+      .slice(0, 20);
+    read(req);
+    return {
+      sessions: rows.map((row) => ({
+        sessionId: row.sessionId,
+        name: row.name,
+        cwd: row.cwd,
+        lastActivity: row.lastActivity,
+      })),
+      removed: ids.filter((id) => store.isPrivate(id) || !accessible.has(id)),
+    };
   });
   app.get("/api/v1/sessions/:id", async (req) => {
     read(req);

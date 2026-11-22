@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useAuth } from "../stores/auth.ts";
 import { useSessions } from "../stores/sessions.ts";
+import { useOffline } from "../stores/offline.ts";
 import Transcript from "../components/Transcript.vue";
 import LoadingIndicator from "../components/LoadingIndicator.vue";
 import { isUntitled } from "../lib/conversation-name.ts";
@@ -27,6 +28,7 @@ const route = useRoute();
 const router = useRouter();
 const auth = useAuth();
 const store = useSessions();
+const offline = useOffline();
 const id = computed(() => String(route.params.id));
 watch(
   () => store.isHidden(id.value),
@@ -351,6 +353,7 @@ async function load(initial = true) {
   try {
     await Promise.all([store.detail(target), store.history(target, initial)]);
     if (disposed || expected !== loadGeneration || target !== id.value) return;
+    offline.complete();
     store.connect(target);
     // Read receipts must not keep an already-loaded transcript hidden.
     void store.acknowledge(target).catch((e) => {
@@ -362,11 +365,30 @@ async function load(initial = true) {
     provider.value = parts.shift() ?? "";
     model.value = parts.join("/");
     await nextTick();
-    scrollBottom();
+    const savedAnchor = offline.resumeAnchor;
+    if (savedAnchor?.sessionId === target) {
+      following = false;
+      opening.value = false;
+      if (scrollFrame !== undefined) cancelAnimationFrame(scrollFrame);
+      scrollFrame = undefined;
+      smoothPending = false;
+      const row = [
+        ...(content.value?.querySelectorAll<HTMLElement>("[data-history-row]") ?? []),
+      ].find((item) => item.dataset.historyRow === savedAnchor.key);
+      if (row) {
+        heldAnchor = { key: savedAnchor.key!, offset: savedAnchor.offset };
+        restoreAnchor(heldAnchor);
+        requestAnimationFrame(() => {
+          if (!disposed) restoreAnchor(heldAnchor);
+        });
+      } else window.scrollTo(0, savedAnchor.top);
+      offline.resumeAnchor = undefined;
+    } else scrollBottom();
     requestAnimationFrame(() => {
       if (!disposed && expected === loadGeneration) opening.value = false;
     });
   } catch (e) {
+    if (!auth.online) offline.failed();
     if (!disposed && expected === loadGeneration)
       loadError.value = (e as Error).message;
     if (expected === loadGeneration) opening.value = false;
@@ -394,7 +416,7 @@ onMounted(() => {
   window.addEventListener("touchmove", touchMoved, { passive: true });
   window.addEventListener("resize", resized);
   window.visualViewport?.addEventListener("resize", resized);
-  void load();
+  void load(offline.resumeAnchor?.sessionId !== id.value);
 });
 watch(id, () => void load());
 watch(
@@ -871,12 +893,19 @@ async function upload(event: Event) {
             @click="chooseCommand(index)"
           >
             <span>/{{ command.name }}</span>
-            <span v-if="!command.supported" class="small muted">
-              {{ command.reason || 'Only available on your laptop' }}
+            <span
+              v-if="!command.supported"
+              class="small muted"
+            >
+              {{ command.reason || "Only available on your laptop" }}
             </span>
           </li>
         </ul>
-        <p v-if="!commandMatches.length" class="small muted" role="status">
+        <p
+          v-if="!commandMatches.length"
+          class="small muted"
+          role="status"
+        >
           No matching commands
         </p>
       </div>

@@ -15,6 +15,7 @@ test(
     timeout: 60000,
   },
   async () => {
+    const shots = process.env.PI_REMOTE_VISUAL_PROOF_DIR;
     assert(
       fs.existsSync(path.join(root, "index.html")),
       "Build the public shell before browser proofs",
@@ -91,31 +92,12 @@ test(
       await page.clock.install();
       await context.setOffline(true);
       await page.reload({ waitUntil: "domcontentloaded" });
-      await expect(page.getByRole("heading", { name: "You're offline" })).toHaveCount(
-        0,
-      );
       await expect(
-        page.getByRole("status").filter({ hasText: "Reconnecting..." }).first(),
+        page.getByRole("heading", { name: "Saved conversations" }),
       ).toBeVisible();
-      await page.clock.fastForward(20001);
-      await expect(page.getByRole("heading", { name: "You're offline" })).toBeVisible();
       await expect(
-        page.getByRole("button", { name: "Try again", exact: true }),
-      ).toBeVisible();
-      const alert = page.getByRole("alert");
-      assert.equal(
-        await alert.evaluate((element) => getComputedStyle(element).borderRadius),
-        "24px",
-      );
-      assert.equal(
-        await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
-        true,
-      );
-      const shots = process.env.PI_REMOTE_VISUAL_PROOF_DIR;
-      if (shots) {
-        fs.mkdirSync(shots, { recursive: true });
-        await page.screenshot({ path: path.join(shots, "offline.png") });
-      }
+        page.getByRole("button", { name: "New conversation", exact: true }),
+      ).toBeDisabled();
       const cached = await page.evaluate(async () =>
         (
           await Promise.all(
@@ -138,8 +120,10 @@ test(
         ),
       );
       const previous = calls.length;
-      await page.getByRole("button", { name: "Try again", exact: true }).click();
-      await expect(page.getByRole("heading", { name: "You're offline" })).toBeVisible();
+      await page.getByRole("button", { name: "Try reconnecting", exact: true }).click();
+      await expect(
+        page.getByRole("heading", { name: "Saved conversations" }),
+      ).toBeVisible();
       assert.equal(calls.length, previous);
       await context.setOffline(false);
       await expect(page.getByText("Pair a device", { exact: true })).toBeVisible();
@@ -187,7 +171,7 @@ test(
       );
       await paired.setOffline(true);
       await expect(
-        direct.getByRole("status").filter({ hasText: "Reconnecting..." }).first(),
+        direct.getByRole("heading", { name: "Saved conversations" }),
       ).toBeVisible();
       await direct.clock.fastForward(60001);
       await expect(
