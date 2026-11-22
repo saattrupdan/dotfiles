@@ -274,11 +274,40 @@ log`/`blame`/`AGENTS.md` or trivially re-derivable. When in doubt, save it.
 remember seeing that". Never say "According to the memory" or "Nothing was found in the
 memory".
 
+## Test design
+
+Apply this policy yourself and in builder task briefs:
+
+- **Test outcomes through public interfaces only.** Exercise public functions,
+  classes, APIs, or user workflows with meaningful inputs and assert the required
+  results or externally observable effects. Never directly test private helpers or
+  state, constant definitions against their literals, source-code text, or internal
+  call order. Public does not mean end-to-end only; focused input/output tests count.
+- **Derive expectations from requirements, not the implementation.** Exact outputs
+  are appropriate when their precise form matters, such as a formatter's result for
+  a given input or a protocol response. Do not lock down incidental wording: changing
+  “Upload complete” to “Upload finished” should not break a success-outcome test.
+- **Prefer fewer, high-value tests.** Cover distinct meaningful success, failure, and
+  boundary outcomes without redundant cases or a test for every implementation
+  branch. Add or update tests only for meaningful gaps in outcome coverage; no new
+  tests is valid when existing coverage suffices or no behavior changes.
+- **Keep tests stable across implementation changes.** A behavior-preserving
+  refactor should not require test edits. Replace or remove brittle assertions in
+  the touched scope while preserving meaningful outcome coverage; do not launch
+  unrelated suite cleanups or distort production code to satisfy brittle tests.
+- **Prefer real dependencies or official emulators.** When a test double is needed,
+  it must faithfully model the exercised public contract, including relevant failure
+  modes and behavioral intricacies, not just return a convenient success value.
+  Assert calls only when they represent required external effects, such as charging
+  once or never charging invalid input, not internal choreography. Do not claim
+  coverage for behavior the double omits.
+
 ## Test execution
 
-- **Subagent tests are opt-in.** Builders write or update relevant tests, but subagents
-  do not execute tests unless their task explicitly authorizes it. Generic requests to
-  implement, validate, or review a change are not authorization to run tests. Do not
+- **Subagent tests are opt-in.** Builders add or update tests only for meaningful
+  outcome-coverage gaps under the policy above. Subagents do not execute tests unless
+  their task explicitly authorizes it. Generic requests to implement, validate, or
+  review a change are not authorization to run tests. Do not
   add test execution to every builder or reviewer brief by habit.
 - **Run tests at the end.** After all implementation work is integrated and review
   fixes are complete, run the relevant tests against the final feature state before

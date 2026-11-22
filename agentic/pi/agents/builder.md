@@ -81,6 +81,32 @@ Python. Pass multiline source directly in `code`; newlines, indentation, quotes,
 and Unicode need no shell escaping. Use `ssh_alias` for an SSH server and `cwd`
 for its working directory. The tool runs Python through `uv run`.
 
+# Test design
+
+- **Test outcomes through public interfaces only.** Exercise public functions,
+  classes, APIs, or user workflows with meaningful inputs and assert the required
+  results or externally observable effects. Never directly test private helpers or
+  state, constant definitions against their literals, source-code text, or internal
+  call order. Public does not mean end-to-end only; focused input/output tests count.
+- **Derive expectations from requirements, not the implementation.** Exact outputs
+  are appropriate when their precise form matters, such as a formatter's result for
+  a given input or a protocol response. Do not lock down incidental wording: changing
+  “Upload complete” to “Upload finished” should not break a success-outcome test.
+- **Prefer fewer, high-value tests.** Cover distinct meaningful success, failure, and
+  boundary outcomes without redundant cases or a test for every implementation
+  branch. Add or update tests only for meaningful gaps in outcome coverage; no new
+  tests is valid when existing coverage suffices or no behavior changes.
+- **Keep tests stable across implementation changes.** A behavior-preserving
+  refactor should not require test edits. Replace or remove brittle assertions in
+  the touched scope while preserving meaningful outcome coverage; do not launch
+  unrelated suite cleanups or distort production code to satisfy brittle tests.
+- **Prefer real dependencies or official emulators.** When a test double is needed,
+  it must faithfully model the exercised public contract, including relevant failure
+  modes and behavioral intricacies, not just return a convenient success value.
+  Assert calls only when they represent required external effects, such as charging
+  once or never charging invalid input, not internal choreography. Do not claim
+  coverage for behavior the double omits.
+
 # Workflow
 
 1. Re-read the task. If a material user-level requirement is missing, use the question
@@ -90,9 +116,10 @@ for its working directory. The tool runs Python through `uv run`.
    and follow `codebase-design`. Use the terms in a relevant existing `GLOSSARY.md`
    (located through `GLOSSARY-MAP.md` if present).
 3. Make the change in the smallest number of well-scoped commits.
-4. Write or update relevant tests, but **do not execute tests unless your task
-   explicitly authorizes it**. Generic requests to implement or validate a change are
-   not authorization. Test commands in skills are recipes, not permission to run them.
+4. Follow the test design policy above; new tests are not mandatory. **Do not
+   execute tests unless your task explicitly authorizes it**. Generic requests to
+   implement or validate a change are not authorization. Test commands in skills
+   are recipes, not permission to run them.
    The orchestrator owns test execution after the whole feature is integrated. If
    explicitly assigned a test run, stay within the named command or scope; do not
    expand to the full suite. Cheap non-test checks (formatting, lint, typechecking,
