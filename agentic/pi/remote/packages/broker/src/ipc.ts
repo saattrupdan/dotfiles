@@ -22,6 +22,7 @@ import { Store, token } from "./store.ts";
 import type { ToolProgress } from "../../../../extensions/_tool-display/block-types.ts";
 export class Connections {
   private failures = new Map<string, boolean>();
+  private worktreeHandoffs = new Map<string, boolean>();
   private previews = new Map<string, Map<string, ToolProgress>>();
   progress(session: Session) {
     return this.isConnected(session) && !session.idle
@@ -391,7 +392,10 @@ export class Connections {
                 .get(session.sessionId)
                 ?.delete((value.data as { toolCallId: string }).toolCallId);
 
-            if (kind === "agent_start") this.failures.delete(session.sessionId);
+            if (kind === "agent_start") {
+              this.failures.delete(session.sessionId);
+              this.worktreeHandoffs.delete(session.sessionId);
+            }
             if (kind === "message_end" || kind === "snapshot") {
               const messages =
                 kind === "snapshot"
@@ -399,6 +403,19 @@ export class Connections {
                     ? value.data
                     : []
                   : [value.data];
+              // Cleanup/discard deliberately stops the owner before the launcher
+              // resumes on main. Match desktop notify: only a successful final
+              // tool result carrying the explicit marker is a handoff.
+              const last = messages.at(-1) as {
+                role?: string;
+                isError?: boolean;
+                details?: { worktreeHandoff?: boolean };
+              } | undefined;
+              this.worktreeHandoffs.set(
+                session.sessionId,
+                last?.role === "toolResult" && !last.isError &&
+                  last.details?.worktreeHandoff === true,
+              );
               for (let at = messages.length - 1; at >= 0; at--) {
                 const message = messages[at] as { role?: string; stopReason?: string };
                 if (message?.role === "assistant") {
@@ -413,6 +430,9 @@ export class Connections {
             if (kind === "agent_settled")
               value.data = {
                 outcome: this.failures.get(session.sessionId) ? "failed" : "finished",
+                ...(this.worktreeHandoffs.get(session.sessionId)
+                  ? { worktreeHandoff: true }
+                  : {}),
                 loopIteration:
                   typeof (value.data as { loopIteration?: unknown } | null)
                     ?.loopIteration === "boolean"
@@ -439,7 +459,8 @@ export class Connections {
             if (
               kind === "loop_completed" ||
               (kind === "agent_settled" &&
-                !(value.data as { loopIteration: boolean }).loopIteration)
+                !(value.data as { loopIteration: boolean }).loopIteration &&
+                !(value.data as { worktreeHandoff?: boolean }).worktreeHandoff)
             )
               session.completion = {
                 id: randomUUID(),
@@ -505,6 +526,7 @@ export class Connections {
       this.connections.delete(socket);
       if (instance && this.sockets.get(instance) === socket) {
         this.working.delete(current);
+        this.worktreeHandoffs.delete(current);
         this.previews.delete(current);
         this.sockets.delete(instance);
         this.activeSessions.delete(instance);

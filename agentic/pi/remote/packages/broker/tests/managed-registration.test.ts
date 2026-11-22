@@ -232,6 +232,40 @@ test("a resumed parent inside its managed worktree registers as active during su
     send({ type: "heartbeat", data: { idle: true, loop: false } });
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.deepEqual(store.session(publicId)!.completion, finished);
+    for (const toolName of ["clean_up_isolated_branch", "discard_isolated_branch"]) {
+      for (const isError of [false, true]) {
+        send({ type: "event", kind: "agent_start", data: null });
+        send({
+          type: "event",
+          kind: "message_end",
+          data: { role: "assistant", stopReason: "toolUse" },
+        });
+        send({
+          type: "event",
+          kind: "message_end",
+          data: {
+            role: "toolResult", toolName, isError,
+            details: { worktreeHandoff: true },
+          },
+        });
+        send({ type: "event", kind: "agent_settled", data: null });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        assert.equal(
+          Boolean(store.session(publicId)!.completion), isError,
+          `${toolName}: only successful handoffs suppress completion`,
+        );
+        const settled = store.db.prepare(
+          "SELECT data FROM events WHERE session=? AND type='agent_settled' ORDER BY sequence DESC LIMIT 1",
+        ).get(publicId)!;
+        assert.equal(JSON.parse(settled.data as string).worktreeHandoff === true, !isError);
+        // The successor's real completion must still be published.
+        send({ type: "event", kind: "agent_start", data: null });
+        send({ type: "event", kind: "message_end", data: { role: "assistant", stopReason: "stop" } });
+        send({ type: "event", kind: "agent_settled", data: null });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        assert.equal(store.session(publicId)!.completion?.outcome, "finished");
+      }
+    }
     send({ type: "event", kind: "agent_start", data: null });
     send({ type: "heartbeat", data: { idle: false, loop: true } });
     await new Promise((resolve) => setTimeout(resolve, 20));

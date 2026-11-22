@@ -121,6 +121,7 @@ export async function createBroker(
     }
     if (
       (event.type === "agent_settled" &&
+        (event.data as { worktreeHandoff?: boolean } | null)?.worktreeHandoff !== true &&
         !(
           (event.data as { loopIteration?: boolean } | null)?.loopIteration ??
           store.session(event.sessionId ?? "")?.loop

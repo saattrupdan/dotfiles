@@ -130,6 +130,11 @@ test("background, locked and stale clients receive completion, failure and input
       0,
       "a fast final check must not turn its iteration into a second alert",
     );
+    for (const outcome of ["finished", "failed"]) {
+      emit("agent_settled", { outcome, worktreeHandoff: true });
+      await tick();
+      assert.equal(sent.length, 0, "worktree handoffs must not notify the phone");
+    }
     emit("loop_completed", { id: randomUUID(), outcome: "finished" });
     await tick();
     assert.equal(
