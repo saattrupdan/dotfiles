@@ -54,9 +54,16 @@ Fresh GitHub issue selection (unassigned leaves and parents with all children cl
   equivalent decision-blocker label). Skip it without revisiting its decision,
   removing its label, or repeatedly commenting. It becomes eligible only after
   the user or maintainer resolves the decision and removes that label.
-- Before starting work, check for an existing open PR. Published work awaiting
-  merge is not a fresh implementation task: do not duplicate its branch or PR.
-  Claim it only if concrete active follow-up is needed on the existing work.
+- Before claiming an issue, look for associated open PRs, including drafts, in
+  its linked development items, timeline, comments and PR references. Do not rely
+  only on auto-closing links: partial work uses `Refs #N`.
+- An associated unfinished draft is work to resume, not a reason to skip the issue
+  or start over. Read its description, diff, review findings and checks, then claim
+  the issue normally and continue on that PR's remote head branch. Push subsequent
+  implementation and fixes to the same PR; do not create a replacement PR or
+  duplicate branch. Respect existing assignments, locks and explicit deferrals.
+- A review-ready PR only awaiting merge is not a fresh implementation task. Claim
+  its issue only if concrete active follow-up is needed on that existing PR.
 - Respect explicit user deferrals and permission limits. Historical engineering
   checkpoint labels do not turn unfinished work into a decision blocker.
 - A parent with open children must wait. A parent whose children are all closed
@@ -118,9 +125,10 @@ ISSUE_NUMBER with the chosen positive issue number:
 - If the parent is fully delivered and nothing remains, this is a close-only task:
   record concrete verification evidence. Do not invent code changes, create an
   unnecessary branch/commit, or open an empty PR. Still follow the review stage.
-- Otherwise, create a feature branch and implement the remaining work, following
-  repository rules. Run the relevant checks and tests; fix failures introduced by
-  the change, subject to the validation exceptions below.
+- Otherwise, resume the associated draft PR from its latest remote head, or create
+  a feature branch only if no existing PR covers the work. Follow repository rules
+  and implement the remaining scope. Run the relevant checks and tests; fix failures
+  introduced by the change, subject to the validation exceptions below.
 - Track the temporary resources you create so cleanup can distinguish them from
   pre-existing user resources and resources owned by other sessions.
 - For visual changes, capture screenshots or a short video of the actual feature
