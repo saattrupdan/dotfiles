@@ -9,13 +9,17 @@ Fresh GitHub issue selection (unassigned leaves and parents with all children cl
 
 - Select only from these issue numbers, except a new leaf sub-issue you create
   from a listed issue during this run. Verify GitHub's parent/sub-issue relationship.
-- Among actionable eligible issues, prefer older issues over newer ones so old
-  issues do not linger indefinitely.
-- Prefer finishing partially completed parent groups over starting unrelated work:
-  if some children are completed or ongoing, prioritise a remaining actionable,
-  unassigned child. If all children are closed, prioritise the eligible parent
-  and verify what remains. Within these groups, prefer older issues. These are
-  selection preferences, not exceptions to eligibility, blockers, or claim rules.
+- Check actionable eligible issues for marked priority in their labels, issue
+  fields, or linked project fields before choosing. Prefer priorities in this
+  order: urgent > high > medium > no marked priority > low. Medium or higher
+  outranks unmarked issues; low ranks below unmarked issues.
+- Within the same priority tier, prefer finishing partially completed parent
+  groups over starting unrelated work: if some children are completed or ongoing,
+  prioritise a remaining actionable, unassigned child. If all children are closed,
+  prioritise the eligible parent and verify what remains.
+- Within the same priority tier and parent-group preference, prefer older issues
+  over newer ones so old issues do not linger indefinitely. These selection
+  preferences never override eligibility, blockers, or claim rules.
 - Never select or claim an issue labelled decision-blocked (or the repository's
   equivalent decision-blocker label). Skip it without revisiting its decision,
   removing its label, or repeatedly commenting. It becomes eligible only after
