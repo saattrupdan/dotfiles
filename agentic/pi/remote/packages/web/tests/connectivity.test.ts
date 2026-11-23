@@ -92,8 +92,9 @@ test(
       await page.clock.install();
       await context.setOffline(true);
       await page.reload({ waitUntil: "domcontentloaded" });
+      await page.clock.fastForward(10001);
       await expect(
-        page.getByRole("heading", { name: "Saved conversations" }),
+        page.getByRole("heading", { name: "Conversations", exact: true }),
       ).toBeVisible();
       await expect(
         page.getByRole("button", { name: "New conversation", exact: true }),
@@ -120,9 +121,9 @@ test(
         ),
       );
       const previous = calls.length;
-      await page.getByRole("button", { name: "Try reconnecting", exact: true }).click();
+      await page.clock.fastForward(15001);
       await expect(
-        page.getByRole("heading", { name: "Saved conversations" }),
+        page.getByRole("heading", { name: "Conversations", exact: true }),
       ).toBeVisible();
       assert.equal(calls.length, previous);
       await context.setOffline(false);
@@ -170,13 +171,24 @@ test(
         0,
       );
       await paired.setOffline(true);
+      await direct.clock.fastForward(9000);
+      await expect(direct.getByText("Offline", { exact: true })).toHaveCount(0);
+      await paired.setOffline(false);
       await expect(
-        direct.getByRole("heading", { name: "Saved conversations" }),
+        direct.getByRole("status").filter({ hasText: "Reconnecting..." }),
+      ).toHaveCount(0);
+      await direct.clock.fastForward(2000);
+      await expect(direct.getByText("Offline", { exact: true })).toHaveCount(0);
+      await paired.setOffline(true);
+      await direct.clock.fastForward(10001);
+      await expect(direct.getByText("Offline", { exact: true })).toBeVisible();
+      await expect(
+        direct.getByRole("heading", { name: "Conversations", exact: true }),
       ).toBeVisible();
       await direct.clock.fastForward(60001);
       await expect(
         direct.getByRole("heading", { name: "Conversations", exact: true }),
-      ).toHaveCount(0);
+      ).toBeVisible();
       const beforeRecovery = openingCalls.length;
       await paired.setOffline(false);
       await expect(

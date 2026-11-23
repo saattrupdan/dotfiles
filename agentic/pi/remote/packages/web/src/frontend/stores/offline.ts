@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { useAuth, onUnpair } from "./auth.ts";
 import {
   OfflineLibrary,
@@ -8,13 +8,35 @@ import {
 } from "../lib/offline-library.ts";
 import type { Message } from "./sessions.ts";
 import { windowProof } from "../lib/history-window.ts";
-import type { HistoryPage } from "../../../../protocol/src/index.ts";
+import type { HistoryPage, Session } from "../../../../protocol/src/index.ts";
 
 export const useOffline = defineStore("offline", () => {
   const auth = useAuth();
   const library = new OfflineLibrary();
   const copies = ref<OfflineCopy[]>([]);
   const active = ref(false);
+  const sessions = computed<Session[]>(() =>
+    copies.value.map((copy) => ({
+      sessionId: copy.sessionId,
+      name: copy.name ?? "",
+      cwd: copy.cwd,
+      lastActivity: copy.lastActivity,
+      state: "idle",
+      epoch: 0,
+      sequence: 0,
+      version: 1,
+      instanceId: "",
+      sessionFile: "",
+      pid: 0,
+      managed: false,
+      model: "",
+      thinking: "off",
+      capabilities: [],
+      idle: true,
+      loop: false,
+    })),
+  );
+
   const error = ref("");
   const ready = ref(false);
   const revision = ref(0);
@@ -206,14 +228,15 @@ export const useOffline = defineStore("offline", () => {
   }
   function begin(startup = false) {
     if (active.value) return;
-    if (deadline) clearTimeout(deadline);
+    if (deadline) return;
     const elapsed =
       startup && typeof performance !== "undefined" ? performance.now() : 0;
     deadline = setTimeout(
       () => {
+        deadline = undefined;
         active.value = true;
       },
-      Math.max(0, 5000 - elapsed),
+      Math.max(0, 10000 - elapsed),
     );
   }
   function complete() {
@@ -222,14 +245,14 @@ export const useOffline = defineStore("offline", () => {
     active.value = false;
   }
   function failed() {
-    if (deadline) clearTimeout(deadline);
-    active.value = true;
+    begin();
   }
   function requestRefresh() {
     revision.value++;
   }
   return {
     copies,
+    sessions,
     active,
     error,
     ready,

@@ -5,9 +5,11 @@ import { isUsersDirectory } from "../lib/session-paths.ts";
 import LoadingIndicator from "../components/LoadingIndicator.vue";
 import { isUntitled } from "../lib/conversation-name.ts";
 import Icon from "../components/Icon.vue";
+import { useOffline } from "../stores/offline.ts";
 import { useSessions } from "../stores/sessions.ts";
 import { conversationStatus } from "../../../../protocol/src/session-status.ts";
 const store = useSessions();
+const offline = useOffline();
 const folder = computed(() => store.folder);
 const search = ref("");
 const filter = ref("all");
@@ -19,7 +21,7 @@ const hasFinished = computed(() =>
   store.sessions.some((session) => conversationStatus(session) === "finished"),
 );
 async function markAllRead() {
-  if (markingRead.value) return;
+  if (offline.active || markingRead.value) return;
   markingRead.value = true;
   markReadError.value = "";
   try {
@@ -31,15 +33,21 @@ async function markAllRead() {
   }
 }
 const error = computed(() =>
-  folder.value === undefined ? store.homeError : browseError.value,
+  offline.active
+    ? ""
+    : folder.value === undefined
+      ? store.homeError
+      : browseError.value,
 );
 const loading = computed(
-  () => browsing.value || (folder.value === undefined && store.homeLoading),
+  () =>
+    !offline.active &&
+    (browsing.value || (folder.value === undefined && store.homeLoading)),
 );
 const root = ref<HTMLElement>();
 let restoring: typeof store.homePosition;
 function captureHome() {
-  if (folder.value !== undefined || !store.homeLoaded) return;
+  if (folder.value !== undefined || (!store.homeLoaded && !offline.active)) return;
   const edge = document.querySelector("header")?.getBoundingClientRect().bottom ?? 0;
   const row = Array.from(
     root.value?.querySelectorAll<HTMLElement>("[data-home-key]") ?? [],
@@ -96,6 +104,7 @@ async function browse(cwd?: string) {
   if (restoring) restoreHome();
   else window.scrollTo({ top: 0, behavior: "instant" });
   try {
+    if (offline.active) return;
     if (cwd === undefined) await store.loadFolders();
     else await store.refresh(cwd);
   } catch (e) {
@@ -112,13 +121,49 @@ async function browse(cwd?: string) {
   }
 }
 onMounted(() => {
-  store.connect("");
+  if (!offline.active) store.connect("");
   restoreHome();
   window.addEventListener("wheel", cancelRestore, { passive: true });
   window.addEventListener("touchmove", cancelRestore, { passive: true });
   window.addEventListener("keydown", cancelRestore);
 });
 watch(folder, browse, { immediate: true });
+watch(
+  () => offline.active,
+  async (active) => {
+    if (active) return;
+    const currentSearch = search.value;
+    const currentFilter = filter.value;
+    const edge = document.querySelector("header")?.getBoundingClientRect().bottom ?? 0;
+    const row = [
+      ...(root.value?.querySelectorAll<HTMLElement>("[data-home-key]") ?? []),
+    ].find((row) => row.getBoundingClientRect().bottom > edge);
+    const position = {
+      top: window.scrollY,
+      key: row?.dataset.homeKey,
+      offset: row?.getBoundingClientRect().top,
+    };
+    try {
+      if (folder.value === undefined) await store.loadFolders();
+      else await store.refresh(folder.value);
+    } catch (e) {
+      browseError.value = (e as Error).message;
+    }
+    search.value = currentSearch;
+    filter.value = currentFilter;
+    await nextTick();
+    const anchor = [
+      ...(root.value?.querySelectorAll<HTMLElement>("[data-home-key]") ?? []),
+    ].find((row) => row.dataset.homeKey === position.key);
+    window.scrollTo({
+      top:
+        anchor && position.offset !== undefined
+          ? window.scrollY + anchor.getBoundingClientRect().top - position.offset
+          : position.top,
+      behavior: "instant",
+    });
+  },
+);
 onUnmounted(() => {
   navigation++;
   cancelRestore();
@@ -127,8 +172,14 @@ onUnmounted(() => {
   window.removeEventListener("keydown", cancelRestore);
   store.disconnect(true);
 });
+const savedFolders = computed(() =>
+  [...new Set(offline.copies.map((copy) => copy.cwd))].map((cwd) => ({
+    cwd,
+    count: offline.copies.filter((copy) => copy.cwd === cwd).length,
+  })),
+);
 const folders = computed(() =>
-  store.folders
+  (offline.active ? savedFolders.value : store.folders)
     .filter(
       (entry) =>
         isUsersDirectory(entry.cwd) &&
@@ -146,7 +197,14 @@ const showListing = computed(
   () => !loading.value || (folder.value === undefined && store.homeLoaded),
 );
 const filtered = computed(() =>
-  (folder.value === undefined ? store.homeListing : store.listing).filter(
+  (offline.active
+    ? offline.sessions.filter(
+        (session) => folder.value === undefined || session.cwd === folder.value,
+      )
+    : folder.value === undefined
+      ? store.homeListing
+      : store.listing
+  ).filter(
     (session) =>
       !isUntitled(session.name) &&
       isUsersDirectory(session.cwd) &&
@@ -175,13 +233,22 @@ const basename = (cwd: string) => cwd.split("/").filter(Boolean).at(-1) || cwd;
           class="icon-button"
           aria-label="Mark all as read"
           title="Mark all as read"
-          :disabled="markingRead || !hasFinished"
+          :disabled="offline.active || markingRead || !hasFinished"
           :aria-busy="markingRead"
           @click="markAllRead"
         >
           <Icon :name="markingRead ? 'spinner' : 'check'" />
         </button>
+        <button
+          v-if="offline.active"
+          class="new icon-button"
+          aria-label="New conversation"
+          disabled
+        >
+          +
+        </button>
         <RouterLink
+          v-else
           to="/new"
           class="new icon-button"
           aria-label="New conversation"

@@ -2,11 +2,13 @@
 import { onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { onLock, useAuth } from "../stores/auth.ts";
+import { useOffline } from "../stores/offline.ts";
 import { useSessions } from "../stores/sessions.ts";
 import FolderTree from "../components/FolderTree.vue";
 import LoadingIndicator from "../components/LoadingIndicator.vue";
 import Icon from "../components/Icon.vue";
 const auth = useAuth();
+const offline = useOffline();
 const sessions = useSessions();
 const router = useRouter();
 const root = ref<{ path: string; directories: { name: string; path: string }[] }>();
@@ -28,6 +30,10 @@ onUnmounted(() => {
 });
 onMounted(load);
 async function load() {
+  if (offline.active) {
+    loading.value = false;
+    return;
+  }
   loading.value = true;
   error.value = "";
   const expected = generation;
@@ -43,7 +49,7 @@ async function load() {
   }
 }
 async function create() {
-  if (!auth.networkAvailable) {
+  if (offline.active || !auth.networkAvailable) {
     error.value = "You're offline. Reconnect before starting Pi.";
     return;
   }
@@ -122,7 +128,7 @@ async function create() {
       </p>
       <button
         class="primary start"
-        :disabled="busy || loading || uncertain || !selected"
+        :disabled="offline.active || busy || loading || uncertain || !selected"
         :aria-busy="busy"
         @click="create"
       >

@@ -18,6 +18,10 @@ const notificationsSupported =
   typeof navigator !== "undefined" &&
   "serviceWorker" in navigator;
 async function refresh() {
+  if (offline.active) {
+    loading.value = false;
+    return;
+  }
   loading.value = true;
   try {
     devices.value = await auth.request("/devices");
@@ -27,7 +31,7 @@ async function refresh() {
 }
 onMounted(() => refresh().catch((e) => (error.value = e.message)));
 async function revoke(id: string) {
-  if (revoking.value) return;
+  if (offline.active || revoking.value) return;
   revoking.value = id;
   try {
     await auth.request(`/devices/${id}`, { method: "DELETE" });
@@ -39,7 +43,7 @@ async function revoke(id: string) {
   }
 }
 async function notifications() {
-  if (notifying.value) return;
+  if (offline.active || notifying.value) return;
   error.value = "";
   note.value = "";
   if (!notificationsSupported) {
@@ -113,7 +117,7 @@ async function notifications() {
       </div>
       <button
         class="primary notification-button"
-        :disabled="!notificationsSupported || notifying"
+        :disabled="offline.active || !notificationsSupported || notifying"
         :aria-busy="notifying"
         @click="notifications"
       >
@@ -165,7 +169,7 @@ async function notifications() {
         </div>
         <button
           class="danger"
-          :disabled="Boolean(revoking)"
+          :disabled="offline.active || Boolean(revoking)"
           :aria-busy="revoking === device.id"
           @click="revoke(device.id)"
         >
@@ -191,6 +195,7 @@ async function notifications() {
     </p>
     <button
       class="close-sessions"
+      :disabled="offline.active"
       @click="
         auth.clear();
         auth.request('/auth/lock', { method: 'POST' }).catch(() => {});

@@ -2305,19 +2305,22 @@ test(
             exact: true,
           });
           await failed();
-          await page.clock.fastForward(10000);
+          await page.clock.fastForward(9000);
+          await expect(page.getByText("Offline", { exact: true })).toHaveCount(0);
           await expect(warning).toHaveCount(0);
           await page.unroute("**/api/v1/**", abort);
           await recovered();
+          await page.waitForLoadState("networkidle");
           await page.clock.fastForward(25000);
+          await expect(page.getByText("Offline", { exact: true })).toHaveCount(0);
           await page.waitForLoadState("networkidle");
           await expect(warning).toHaveCount(0);
           await page.route("**/api/v1/**", abort);
           await failed();
           await page.clock.fastForward(20001);
-          await expect(page.locator(".offline-reader")).toBeVisible();
+          await expect(page.getByText("Offline", { exact: true })).toBeVisible();
           await expect(
-            page.getByRole("button", { name: "Send", exact: true }),
+            page.getByRole("button", { name: "Send message", exact: true }),
           ).toBeDisabled();
           await page.unroute("**/api/v1/**", abort);
           await recovered();

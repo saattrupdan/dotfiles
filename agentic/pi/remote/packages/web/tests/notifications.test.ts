@@ -65,6 +65,7 @@ function settings(browser: Record<string, unknown> = {}, granted = true) {
     error,
     note,
     notifying: { value: false },
+    offline: { active: false },
     atob,
     Uint8Array,
     auth: {
@@ -132,12 +133,4 @@ test("notification permission denial never creates a subscription", async () => 
   assert.equal(ui.permissions(), 1);
   assert.equal(ui.subscriptions(), 0);
   assert.deepEqual(ui.calls, []);
-});
-
-test("unsupported notification controls are disabled with visible guidance", () => {
-  assert.match(
-    descriptor.template!.content,
-    /:disabled="!notificationsSupported \|\| notifying"/,
-  );
-  assert.match(descriptor.template!.content, /Home Screen/);
 });

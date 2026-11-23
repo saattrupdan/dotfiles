@@ -8,7 +8,6 @@ import Icon from "./components/Icon.vue";
 import { useAuth } from "./stores/auth.ts";
 import { useSessions } from "./stores/sessions.ts";
 import { useOffline } from "./stores/offline.ts";
-import OfflineReader from "./components/OfflineReader.vue";
 import { windowProof } from "./lib/history-window.ts";
 import type { HistoryPage } from "../../../protocol/src/index.ts";
 const auth = useAuth();
@@ -277,8 +276,15 @@ watch(
         class="header-title"
         >{{ headerTitle }}</span
       >
+      <span
+        v-if="offline.active && auth.visible"
+        class="offline-badge"
+        role="status"
+        >Offline</span
+      >
       <LoadingIndicator
         v-if="
+          !offline.active &&
           (auth.pending || connectionRecovering) &&
           !auth.initializing &&
           !auth.verifying &&
@@ -352,8 +358,7 @@ watch(
       v-show="auth.visible"
       :class="{ chat: route.path.startsWith('/session/') }"
     >
-      <OfflineReader v-if="offline.active" />
-      <RouterView v-else />
+      <RouterView />
     </main>
     <main
       v-if="
@@ -453,6 +458,14 @@ header {
   justify-content: space-between;
   min-height: calc(var(--header-height) + env(safe-area-inset-top));
   border-bottom: 1px solid var(--line);
+}
+.offline-badge {
+  font-size: 11px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 2px 6px;
+  margin-right: 8px;
 }
 .header-title {
   overflow: hidden;

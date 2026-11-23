@@ -36,8 +36,18 @@ watch(
     if (hidden) void router.replace("/");
   },
 );
-const session = computed(() => store.sessions.find((s) => s.sessionId === id.value));
-const question = computed(() => store.prompt[id.value] ?? session.value?.prompt);
+const copy = computed(() => offline.copies.find((s) => s.sessionId === id.value));
+const session = computed(() =>
+  (offline.active ? offline.sessions : store.sessions).find(
+    (s) => s.sessionId === id.value,
+  ),
+);
+const messages = computed(() =>
+  offline.active ? (copy.value?.messages ?? []) : (store.messages[id.value] ?? []),
+);
+const question = computed(() =>
+  offline.active ? undefined : (store.prompt[id.value] ?? session.value?.prompt),
+);
 const recoveryReason = computed(
   () =>
     session.value?.controlBlockedReason ??
@@ -52,7 +62,7 @@ const recoveryReason = computed(
     }[session.value?.recoveryBlockedReason ?? ""],
 );
 const outgoing = computed(() =>
-  Object.entries(store.outgoing).filter(
+  Object.entries(offline.active ? {} : store.outgoing).filter(
     ([commandId, message]) =>
       message.sessionId === id.value &&
       !(store.messages[id.value] ?? []).some(
@@ -61,7 +71,7 @@ const outgoing = computed(() =>
   ),
 );
 const warnings = computed(() =>
-  Object.entries(store.statuses).filter(
+  Object.entries(offline.active ? {} : store.statuses).filter(
     ([commandId, status]) =>
       store.commandSessions[commandId] === id.value &&
       ["delivery_unknown", "rejected"].includes(status),
@@ -98,7 +108,9 @@ let following = true;
 const opening = ref(true);
 const paging = ref(false);
 let pagingOperation = 0;
-const page = computed(() => store.historyPages[id.value]);
+const page = computed(() =>
+  offline.active ? undefined : store.historyPages[id.value],
+);
 let upwardIntent = false;
 let lastScroll = 0;
 let lastHeight = 0;
@@ -306,7 +318,12 @@ function scrolled() {
 }
 let smoothPending = false;
 function scrollBottom(smooth = false) {
-  if (paging.value || !auth.unlocked || !auth.visible || (!opening.value && !following))
+  if (
+    paging.value ||
+    (!auth.unlocked && !offline.active) ||
+    !auth.visible ||
+    (!opening.value && !following)
+  )
     return;
   if (opening.value) smoothPending = false;
   else smoothPending ||= smooth;
@@ -316,7 +333,7 @@ function scrollBottom(smooth = false) {
     if (
       disposed ||
       paging.value ||
-      !auth.unlocked ||
+      (!auth.unlocked && !offline.active) ||
       !auth.visible ||
       (!opening.value && !following)
     )
@@ -334,7 +351,7 @@ function scrollBottom(smooth = false) {
   });
 }
 watch(
-  () => [store.messages[id.value], store.streaming[id.value], store.outgoing],
+  () => [messages.value, store.streaming[id.value], store.outgoing],
   () => scrollBottom(true),
   { deep: true, flush: "post" },
 );
@@ -349,6 +366,15 @@ async function load(initial = true) {
     upwardIntent = false;
     heldAnchor = undefined;
     loadError.value = "";
+  }
+  if (offline.active) {
+    loadError.value = "";
+    await nextTick();
+    scrollBottom();
+    requestAnimationFrame(() => {
+      if (expected === loadGeneration) opening.value = false;
+    });
+    return;
   }
   try {
     await Promise.all([store.detail(target), store.history(target, initial)]);
@@ -420,9 +446,27 @@ onMounted(() => {
 });
 watch(id, () => void load());
 watch(
-  () => auth.visible,
-  (value) => {
-    if (value && auth.unlocked) void load(false);
+  () => offline.active,
+  async (active) => {
+    if (active) {
+      void load(false);
+      return;
+    }
+    const anchor = captureAnchor();
+    heldAnchor = anchor;
+    following = false;
+    await load(false);
+    await nextTick();
+    restoreAnchor(anchor);
+    requestAnimationFrame(() => {
+      if (!disposed) restoreAnchor(anchor);
+    });
+  },
+);
+watch(
+  () => [auth.visible, auth.online],
+  ([visible, online]) => {
+    if (visible && online && auth.unlocked && !offline.active) void load(false);
   },
 );
 onUnmounted(() => {
@@ -470,7 +514,14 @@ async function action(command: Command) {
   }
 }
 async function send() {
-  if (sending.value || uploading.value || acting.value || opening.value) return;
+  if (
+    offline.active ||
+    sending.value ||
+    uploading.value ||
+    acting.value ||
+    opening.value
+  )
+    return;
   if (recoveryReason.value) {
     error.value = recoveryReason.value;
     return;
@@ -523,7 +574,7 @@ async function send() {
 }
 async function upload(event: Event) {
   const input = event.target as HTMLInputElement;
-  if (uploading.value) return;
+  if (offline.active || uploading.value) return;
   uploading.value = true;
   const target = id.value;
   error.value = "";
@@ -565,13 +616,19 @@ async function upload(event: Event) {
       <LoadingIndicator label="Opening conversation" />
     </div>
     <div
-      v-if="loadError"
+      v-if="loadError && !offline.active"
       class="card"
       role="alert"
     >
       <p>{{ loadError }}</p>
       <button @click="load()">Try again</button>
     </div>
+    <p
+      v-if="offline.active && !copy"
+      role="status"
+    >
+      This conversation is not saved on this phone. Reconnect to your Mac to open it.
+    </p>
     <h1 class="sr-only">
       {{
         isUntitled(session?.name) ? "New conversation" : session?.name || "Conversation"
@@ -603,7 +660,7 @@ async function upload(event: Event) {
       <button
         v-if="session?.state === 'running'"
         class="icon-button danger"
-        :disabled="acting || opening || Boolean(recoveryReason)"
+        :disabled="offline.active || acting || opening || Boolean(recoveryReason)"
         aria-label="Stop run"
         title="Stop run"
         @click="action({ action: 'stop_run' })"
@@ -620,7 +677,7 @@ async function upload(event: Event) {
         </summary>
         <fieldset
           class="card"
-          :disabled="acting || opening"
+          :disabled="offline.active || acting || opening"
         >
           <label>Name<input v-model="name" /></label
           ><button @click="action({ action: 'rename', name })">Rename</button
@@ -719,12 +776,13 @@ async function upload(event: Event) {
       </p>
     </div>
     <Transcript
-      :messages="store.messages[id] || []"
-      :streaming="store.streaming[id]"
-      :tool-progress="store.toolProgress[id]"
+      :messages="messages"
+      :offline="offline.active"
+      :streaming="offline.active ? undefined : store.streaming[id]"
+      :tool-progress="offline.active ? undefined : store.toolProgress[id]"
       :tools-expanded="toolsExpanded"
       :thinking-expanded="thinkingExpanded"
-      :statuses="store.statuses"
+      :statuses="offline.active ? {} : store.statuses"
     />
     <article
       v-for="[commandId, pending] in outgoing"
@@ -926,6 +984,7 @@ async function upload(event: Event) {
           ref="composerInput"
           v-model="draft"
           :readonly="sending"
+          :disabled="offline.active"
           placeholder="Message"
           rows="1"
           aria-label="Message Pi"
@@ -949,7 +1008,7 @@ async function upload(event: Event) {
             title="Attach image"
             ><Icon :name="uploading ? 'spinner' : 'image'" /><input
               type="file"
-              :disabled="sending || uploading"
+              :disabled="offline.active || sending || uploading"
               accept="image/png,image/jpeg,image/webp,image/heic,image/heif"
               multiple
               @change="upload" /></label
@@ -958,6 +1017,7 @@ async function upload(event: Event) {
             aria-label="Send message"
             title="Send message"
             :disabled="
+              offline.active ||
               sending ||
               acting ||
               uploading ||

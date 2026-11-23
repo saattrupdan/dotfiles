@@ -44,13 +44,13 @@ const messages = [
 const summary = (sessionId = id) => ({
   sessionId,
   name: sessionId === id ? "Cached conversation" : "Unopened conversation",
-  cwd: "/fixture",
+  cwd: "/Users/fixture",
   lastActivity: sessionId === id ? 2000 : 1000,
 });
 
 test(
   "persistent offline reading",
-  { skip: process.env.PI_REMOTE_BROWSER_PROOF !== "1", timeout: 90000 },
+  { skip: process.env.PI_REMOTE_BROWSER_PROOF !== "1", timeout: 120000 },
   async (t) => {
     const entry = "/__offline-fixture.ts";
     const server = await createServer({
@@ -171,10 +171,16 @@ test(
             page = await context.newPage();
             const started = Date.now();
             await page.goto(origin);
+            await expect(page.getByText("Offline", { exact: true })).toBeVisible({
+              timeout: 12000,
+            });
+            assert(
+              Date.now() - started >= 9000,
+              "Request failures must respect the fallback delay",
+            );
             await expect(
-              page.getByRole("heading", { name: "Saved conversations" }),
-            ).toBeVisible({ timeout: 6500 });
-            assert(Date.now() - started < 6500);
+              page.getByRole("heading", { name: "Conversations", exact: true }),
+            ).toBeVisible();
             await expect(
               page.getByRole("button", { name: "New conversation", exact: true }),
             ).toBeDisabled();
@@ -188,19 +194,21 @@ test(
             await expect(
               page.getByText("[Image unavailable offline]", { exact: true }).first(),
             ).toBeVisible();
-            await expect(page.locator(".offline-reader img")).toHaveCount(0);
+            await expect(page.locator(".conversation img")).toHaveCount(0);
             await expect(
-              page.getByRole("textbox", { name: "Message", exact: true }),
+              page.getByRole("textbox", { name: "Message Pi", exact: true }),
             ).toBeDisabled();
             await expect(
-              page.getByRole("button", { name: "Send", exact: true }),
+              page.getByRole("button", { name: "Send message", exact: true }),
             ).toBeDisabled();
-            await page.getByRole("button", { name: "Reasoning", exact: true }).click();
+            await page
+              .getByRole("button", { name: "Expand reasoning", exact: true })
+              .click();
             await expect(
               page.getByText("Offline reasoning", { exact: true }),
             ).toBeVisible();
             await page
-              .getByRole("button", { name: "Tool outputs", exact: true })
+              .getByRole("button", { name: "Expand tool outputs", exact: true })
               .click();
             await expect(
               page.getByText("Offline tool output", { exact: false }).first(),
@@ -237,19 +245,27 @@ test(
                 .toBeLessThan(4);
               state = "offline";
               await page.reload();
-              await expect(page.locator(".offline-reader")).toBeVisible();
+              await expect(page.getByText("Offline", { exact: true })).toBeVisible({
+                timeout: 12000,
+              });
             }
             await page.getByRole("link", { name: "Settings", exact: true }).click();
+            await expect(
+              page.getByRole("button", { name: "Enable notifications" }),
+            ).toBeDisabled();
+            await expect(
+              page.getByRole("heading", { name: "Devices", exact: true }),
+            ).toBeVisible();
             await page
               .getByRole("button", { name: "Clear all offline conversations" })
               .click();
             await expect(
-              page.getByText("0 conversations saved on this phone."),
+              page.getByText("0 conversations saved for offline reading."),
             ).toBeVisible();
             await page.reload();
             await expect(
-              page.getByText("No conversations saved on this phone.", { exact: false }),
-            ).toBeVisible({ timeout: 6500 });
+              page.getByRole("heading", { name: "Conversations", exact: true }),
+            ).toBeVisible({ timeout: 12000 });
             await context.close();
           },
         );
