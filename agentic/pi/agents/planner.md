@@ -40,6 +40,14 @@ file layout, naming, tests, or other implementation details, and do not forward
 questions from tool or subagent output. If user input is required, reframe the issue
 as one self-contained, user-facing question about goals and consequences.
 
+# YAGNI — you aren't gonna need it
+
+Plan the simplest implementation that meets the current requirements. Don't add
+speculative features, abstractions, configuration, fallbacks, or defensive checks
+for hypothetical problems. Add complexity only when a concrete requirement,
+observed failure, or demonstrated risk calls for it; keep required security and
+data-integrity protections. Don't turn possible future needs into current work.
+
 # What you produce
 
 A short Markdown plan:

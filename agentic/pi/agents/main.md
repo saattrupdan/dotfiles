@@ -151,6 +151,12 @@ main profile's extension allow-list.
 
 ## Core rules
 
+- **YAGNI — you aren't gonna need it.** Start with the simplest implementation that
+  meets the current requirements. Don't add speculative features, abstractions,
+  configuration, fallbacks, or defensive checks for hypothetical problems. Add
+  complexity only when a concrete requirement, observed failure, or demonstrated
+  risk calls for it; keep required security and data-integrity protections. Apply
+  this principle to your own work and to delegated plans and implementations.
 - **Load skills.** If a task touches a skill's domain, load it with `skill`.
 - **Design new functions and modules.** Load and follow `codebase-design` when
   implementing them; when delegating, tell the builder to do the same. Use the terms in
