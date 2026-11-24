@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { checkCondition, type Verdict } from "./checker.ts";
 import { ISSUE_CONDITION, listEligibleUnassignedIssues } from "./issue-candidates.ts";
-import { hasLoopReturnToBase, LOOP_HANDOFF_ENV, LOOP_MAIN_DIRTY, returnLoopToBase, reportLoopCompletion, setLoopActive, setLoopHandoffProvider, type LoopHandoff } from "../_loop_state/state.ts";
+import { hasLoopReturnToBase, isLoopActive, onLoopChange, onLoopCompletion, LOOP_HANDOFF_ENV, LOOP_MAIN_DIRTY, returnLoopToBase, reportLoopCompletion, setLoopActive, setLoopHandoffProvider, type LoopHandoff } from "../_loop_state/state.ts";
 import { NON_INTERACTIVE_BANNER } from "../non-interactive/prompt.ts";
 
 const STATUS_KEY = "loop";
@@ -126,6 +126,10 @@ interface ActiveLoop extends LoopOptions {
 }
 
 export default function (pi: ExtensionAPI, deps: Dependencies = {}) {
+	const publishLoopState = () => pi.events.emit("loop:state", { active: isLoopActive() });
+	onLoopChange("pane-status", publishLoopState);
+	onLoopCompletion("pane-status", (completion) => pi.events.emit("loop:completed", completion));
+	pi.events.on("loop:request-state", publishLoopState);
 	const check = deps.check ?? checkCondition;
 	const listIssues = deps.listIssues ?? listEligibleUnassignedIssues;
 	const setTimer = deps.setTimer ?? setTimeout;

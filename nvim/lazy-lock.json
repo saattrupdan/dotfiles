@@ -7,7 +7,7 @@
   "nvim-tree.lua": { "branch": "master", "commit": "9a2e0006d42f292eb3ade7dfdff201a7429a780c" },
   "nvim-treesitter": { "branch": "main", "commit": "c82bf96f0a773d85304feeb695e1e23b2207ac35" },
   "nvim-web-devicons": { "branch": "master", "commit": "0dc0cfb0c6858041174a53c7aa4adaf65e994b3c" },
-  "pi-agent.nvim": { "branch": "main", "commit": "d35375c1b9ecfe747a93db847dbf1cd19f37f270" },
+  "pi-agent.nvim": { "branch": "main", "commit": "006d7bc3590a86b44865e14b614e03de13f0695e" },
   "plenary.nvim": { "branch": "master", "commit": "74b06c6c75e4eeb3108ec01852001636d85a932b" },
   "remote-nvim.nvim": { "branch": "main", "commit": "9992c2fb8bf4f11aca2c8be8db286b506f92efcb" },
   "ripgrep": { "branch": "master", "commit": "4e588dd8b27693797984a71ee62aea1a9013c23b" },

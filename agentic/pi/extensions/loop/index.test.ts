@@ -202,6 +202,7 @@ function harness(
 	options: { sessionId?: string; plugins?: Array<(pi: ExtensionAPI) => void>; notifications?: string[]; mode?: "tui" | "rpc" | "print"; autoStart?: boolean; compact?: "complete" | "small" | "fail" | "pending" | "rateOnce" | ((callbacks: CompactionCallbacks, attempt: number) => void); contextTokens?: number; cwd?: string; listIssues?: (cwd: string, signal?: AbortSignal) => Promise<number[]> } = {},
 ) {
 	const handlers = new Map<string, Handler[]>();
+	const bus = new Map<string, Array<(data: unknown) => void>>();
 	const emit = async (name: string, event: unknown = {}) => {
 		let result: unknown;
 		for (const callback of handlers.get(name) ?? []) {
@@ -254,7 +255,10 @@ function harness(
 		getThinkingLevel: () => "off",
 		getSettings: () => ({ compaction: { keepRecentTokens: 20_000 } }),
 		on: (name: string, callback: Handler) => { handlers.set(name, [...handlers.get(name) ?? [], callback]); },
-		events: { on: () => {}, emit: () => {} },
+		events: {
+			on: (name: string, callback: (data: unknown) => void) => { bus.set(name, [...bus.get(name) ?? [], callback]); },
+			emit: (name: string, data: unknown) => { for (const callback of bus.get(name) ?? []) callback(data); },
+		},
 		registerCommand: (name: string, options: { handler: (args: string, ctx: ExtensionContext) => Promise<void> }) => {
 			assert.ok(name === "loop" || name === "implement-all-issues" || name === "rate-limit-retry");
 			commands.set(name, options.handler);
@@ -1601,4 +1605,38 @@ test("aborted settlement after successful output cannot check, continue or compl
 			} finally { await h.command("stop"); }
 		}
 	} finally { off(); }
+});
+
+
+test("pane status sees active loop work until its terminal verdict", async () => {
+	const states: boolean[] = [];
+	const outcomes: string[] = [];
+	let resolveCheck!: (verdict: Verdict) => void;
+	const h = harness(() => new Promise((resolve) => { resolveCheck = resolve; }), {
+		plugins: [(pi) => {
+			pi.events.on("loop:state", (data: { active: boolean }) => states.push(data.active));
+			pi.events.on("loop:completed", (data: { outcome: string }) => outcomes.push(data.outcome));
+			pi.events.emit("loop:request-state");
+		}],
+	});
+	assert.deepEqual(states, [false]);
+	await h.command("work --until done");
+	await h.finish();
+	assert.deepEqual(states, [false, true], "checking is still active after iteration settlement");
+	assert.deepEqual(outcomes, []);
+	resolveCheck({ done: false, evidence: "more work" });
+	await settle();
+	assert.deepEqual(states, [false, true], "waiting is still active");
+	h.tick();
+	h.tick();
+	await h.finish();
+	resolveCheck({ done: true, evidence: "finished" });
+	await settle();
+	assert.deepEqual(states, [false, true, false]);
+	assert.deepEqual(outcomes, ["finished"]);
+	await h.command("work");
+	await h.finish();
+	await h.command("stop");
+	assert.deepEqual(states.slice(-2), [true, false]);
+	assert.deepEqual(outcomes, ["finished"], "manual stop does not report completion");
 });
