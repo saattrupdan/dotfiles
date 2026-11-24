@@ -1,4 +1,4 @@
-# Implement one issue per iteration
+# Implement one issue
 
 Complete the stages below for one issue before advancing to another.
 
@@ -11,7 +11,7 @@ remove local work that has no PR.
 - After the first meaningful implementation checkpoint, commit, push and open a
   draft PR before lengthy validation or review. Keep working on that same PR;
   opening it is not permission to stop with a partial solution.
-- Before any voluntary pause, handoff, assignment release or iteration end, push
+- Before any voluntary pause, handoff, assignment release or task completion, push
   all implementation changes and verify the PR contains the latest commit. Partial
   implementation, review findings, unavailable reviewers, build/lint/test failures,
   missing native acceptance, time limits and resource contention never justify
@@ -25,7 +25,7 @@ remove local work that has no PR.
   the existing timeout exception. A draft preserves work; it does not satisfy those
   gates or justify advancing past unfinished actionable work.
 - If GitHub publication fails, keep the local work, report the exact failure and
-  call /loop stop. Do not discard the only copy or claim it was preserved remotely.
+  stop work. Do not discard the only copy or claim it was preserved remotely.
 - No empty or artificial PR is needed when there are no meaningful code changes:
   a verified close-only issue, a genuine decision blocker, or a bug that could not
   be reproduced after the investigation described below can end with a comment.
@@ -79,7 +79,7 @@ Fresh GitHub issue selection (unassigned leaves and parents with all children cl
   required before safe progress, leave the issue unassigned and add a comment
   specifying the decision needed unless already documented. Apply the repo's
   existing standard decision-blocker label; if none exists, create a
-  decision-blocked label and apply it. End this iteration normally.
+  decision-blocked label and apply it. End this task normally.
 - Other uncertainty, missing implementation, internal prerequisites, failed tests
   and incomplete verification remain actionable work, not blocker-label reasons.
   Follow Decision blockers and unfinished work below if you must pause.
@@ -109,12 +109,12 @@ ISSUE_NUMBER with the chosen positive issue number:
 - Exit 3 (unavailable) or 4 (busy): choose another fresh candidate without changing
   its assignment or lock. For any other failure or uncertain result, do not
   implement or retry assignment. Record the exact claim uncertainty and recovery
-  needed, without inventing a decision blocker, and end this iteration normally;
+  needed, without inventing a decision blocker, and end this task normally;
   never bypass or clear an uncertain claim.
 - Never delete or expire a busy/retained lock automatically. Recovery requires
   confirming its owning session has stopped.
-- Claim only one issue per iteration, including newly created leaf sub-issues.
-  Never reuse a previous iteration's claim or treat an earlier assignment as yours.
+- Claim only one issue per task, including newly created leaf sub-issues.
+  Never reuse a previous task's claim or treat an earlier assignment as yours.
 
 ## 3. Verify what remains, then implement if needed
 
@@ -144,12 +144,12 @@ ISSUE_NUMBER with the chosen positive issue number:
   do not repeatedly rerun expensive suites without a concrete reason. Create a
   normal review-ready PR, not a draft. Include exact commands, timeout limits,
   completed results, known hangs and outstanding verification in its description
-  and iteration report. Never count timed-out tests as passing or close the issue
+  and task report. Never count timed-out tests as passing or close the issue
   as delivered on this evidence. Leave the PR open and move on after cleanup.
 - For non-timeout test failures, establish whether the same failure occurs on the
   unchanged base. A pre-existing failure must be fixed in a separate PR, not mixed
   into the claimed issue's changes. Publish or retain the original issue PR as-is;
-  implement, independently review and publish the separate fix PR in this iteration
+  implement, independently review and publish the separate fix PR in this task
   without claiming another issue. Apply the same publication, verification and
   cleanup rules to that PR. Add a review comment to the original PR identifying
   the baseline failure and linking the fix PR. Once the fix PR passes its checks
@@ -212,14 +212,14 @@ ISSUE_NUMBER with the chosen positive issue number:
   discard_isolated_branch, not clean_up_isolated_branch (which requires a merge).
   Keep the remote branch and PR intact; do not wait for CI or merge to remove the
   local copies. Never discard unpushed work or unrelated local changes.
-- After publication and owned cleanup, release this iteration's issue assignment
+- After publication and owned cleanup, release this task's issue assignment
   and verify removal. Waiting for CI, review or merge is not an assignment reservation;
   retain it only while actually performing active follow-up. Keep the PR author
   assigned to the PR. Leave the issue open until its merged result meets acceptance.
 
 ## 6. Verify PR checks and tests before advancing
 
-- For every PR created or updated in this iteration, inspect all checks and tests
+- For every PR created or updated in this task, inspect all checks and tests
   on its latest head commit, not just branch-protection-required checks. Wait for
   them to finish and pass unless the validation exceptions apply. Use gh to inspect
   the PR's checks and workflow runs; local success alone does not establish PR CI
@@ -239,7 +239,7 @@ ISSUE_NUMBER with the chosen positive issue number:
   wait again. Any new head commit invalidates earlier CI evidence;
   recheck all PRs against their current heads before advancing.
 - Record each PR URL, verified head SHA, check/test outcomes and evidence for any
-  validation exceptions in the iteration report. Do not merge a PR merely to
+  validation exceptions in the task report. Do not merge a PR merely to
   satisfy this gate. Timeouts and baseline failures covered by a linked verified
   fix PR do not leave this gate unresolved: leave the PRs open, clean up and move on.
 - Otherwise, do not select or claim the next issue while this gate is unresolved.
@@ -249,8 +249,8 @@ ISSUE_NUMBER with the chosen positive issue number:
   never wait for those gates to open its preservation PR. Preserve the remote
   branch and PR, discard the task's local branch/worktree once all commits are pushed,
   record the exact failing or unavailable checks and recovery steps, clean up
-  owned disposable resources, release this iteration's issue assignment, and call
-  /loop stop. Outside the validation exceptions, never advance past an unverified
+  owned disposable resources, release this task's issue assignment, and stop work.
+  Outside the validation exceptions, never advance past an unverified
   PR. Do not label it decision-blocked unless a concrete user or maintainer
   decision is required.
 - Close-only parents with no created or updated PR retain their independent
@@ -260,9 +260,9 @@ ISSUE_NUMBER with the chosen positive issue number:
 
 - Stop and remove temporary testing applications, dev/test servers, containers,
   browser sessions/profiles, disposable databases/test data, and scratch files
-  created by this iteration, including resources created by subagents.
+  created by this task, including resources created by subagents.
 - Perform this runtime cleanup on failure or interruption too. Remove only
-  resources you can identify as belonging to this iteration; never stop unrelated
+  resources you can identify as belonging to this task; never stop unrelated
   processes or delete pre-existing apps, user data, or another session's resources.
 - Preserve PR evidence and any required deliverables. Verify owned temporary
   resources are gone; if cleanup fails, diagnose it and document the exact owned
@@ -274,16 +274,17 @@ ISSUE_NUMBER with the chosen positive issue number:
   Close-only tasks must not create branches/worktrees just to clean them up.
   Follow repository rules when they prohibit branches/worktrees.
 - If forced to pause with unfinished implementation, commit and push it to its
-  draft PR before releasing this iteration's assignment or returning to base.
+  draft PR before releasing this task's assignment or returning to base.
   Verify the PR head contains every implementation commit, then remove only the
   task-owned local copies. A local checkpoint plus an issue comment is not a
-  handoff. If push or PR creation fails, retain those copies and call /loop stop.
-  Clean up disposable runtime resources and leave unrelated local changes untouched.
+  handoff. If push or PR creation fails, retain those copies, stop work and report
+  the failure. Clean up disposable runtime resources and leave unrelated local
+  changes untouched.
 
 ## Decision blockers and unfinished work
 
 Create a blocker only when a concrete user or maintainer decision is required.
-Not finishing an iteration does not make the issue blocked. Failed or stalled
+Not finishing a task does not make the issue blocked. Failed or stalled
 checks, ongoing reproduction/research, missing code, review fixes, unavailable
 reviewers, internal dependency order, time limits and resource contention are work
 for the agent, not reasons to abandon implementation without a PR. Do not create
@@ -309,21 +310,22 @@ fixes as rejected rather than presenting them as solutions.
 - If a concrete decision is required, comment with the exact decision, why safe
   progress depends on it, progress/evidence and retained work. Apply only the
   repository's decision-blocker label, or decision-blocked if none exists.
-- Do not voluntarily end an iteration merely because implementation is partial,
+- Do not voluntarily end a task merely because implementation is partial,
   review found defects or technical work remains: continue on the same issue and
   PR. If forced to pause without a decision blocker, leave the issue open and
   actionable, preserve all implementation in its draft PR, and record remaining
-  steps there. Call /loop stop rather than silently moving to another issue with
-  unfinished work. Do not apply a blocker label or call the pause decision-blocked.
+  steps there. Report the pause and remaining work rather than silently moving to
+  another issue with unfinished work. Do not apply a blocker label or call the
+  pause decision-blocked.
   An external constraint alone does not justify creating a label unless a concrete
   user or maintainer decision is needed. Respect existing explicit user deferrals.
 - Update existing handoff comments rather than repeating unchanged information.
-- Assignment means active work, not a reservation. If this iteration successfully
+- Assignment means active work, not a reservation. If this task successfully
   claimed the issue and is no longer actively working on it, remove the authenticated
   user's assignment added by that claim and verify removal. This includes paused
   work, decision-blocked work and published PRs that are only waiting for merge.
-  An issue never claimed by this iteration stays unassigned.
-- Remove only this iteration's confirmed assignment. Never take over or remove
+  An issue never claimed by this task stays unassigned.
+- Remove only this task's confirmed assignment. Never take over or remove
   another session's assignment or lock, including a pre-existing @me assignment.
   An uncertain claim is not proof of ownership: do not clear its lock or guess whose
   assignment to remove. Document the uncertainty and any recovery needed.
@@ -333,13 +335,11 @@ fixes as rejected rather than presenting them as solutions.
 - End normally after completed publication/verification (including the validation
   exceptions), a verified close-only result, or an evidence-backed decision or
   reproduction blocker. For forced pauses with unfinished technical work or failed
-  PR preservation, call /loop stop as above. Report the PR URL and exact remaining
-  work; never count a draft or a blocker comment as an implemented issue. Otherwise,
-  the loop's normal --until check decides whether actionable issues remain and
-  starts the next iteration when they do.
+  PR preservation, stop work as above. Report the PR URL and exact remaining work;
+  never count a draft or a blocker comment as an implemented issue.
 
-Only when no actionable unassigned issue remains should the loop finish. Unfinished
-engineering remains actionable even when an earlier agent paused or called it
-blocked. A decision-blocked issue is skipped, not implemented or counted as
-unfinished engineering that this agent can resolve. Busy/unavailable candidates
-alone are not decision blockers; try another fresh candidate.
+Report when no actionable unassigned issue remains. Unfinished engineering remains
+actionable even when an earlier agent paused or called it blocked. A decision-blocked
+issue is skipped, not implemented or counted as unfinished engineering that this
+agent can resolve. Busy/unavailable candidates alone are not decision blockers;
+try another fresh candidate.
